@@ -8,6 +8,7 @@ use http_client::{
 use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, read_package_installed_version};
+use project::Fs;
 use project::lsp_store::language_server_settings_for;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -32,6 +33,7 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct EsLintLspAdapter {
     node: NodeRuntime,
+    fs: Arc<dyn Fs>,
 }
 
 impl EsLintLspAdapter {
@@ -66,8 +68,8 @@ impl EsLintLspAdapter {
         ".eslintrc.json",
     ];
 
-    pub fn new(node: NodeRuntime) -> Self {
-        EsLintLspAdapter { node }
+    pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
+        EsLintLspAdapter { node, fs }
     }
 
     fn build_destination_path(container_dir: &Path) -> PathBuf {
@@ -236,8 +238,9 @@ impl LspAdapter for EsLintLspAdapter {
             worktree_root,
             requested_file_path.as_deref(),
             eslint_version.as_ref(),
-            |path| path.is_file(),
-        );
+            self.fs.as_ref(),
+        )
+        .await;
         let eslint_settings_overrides =
             eslint_settings_overrides_for(eslint_version.as_ref(), config_kind);
 
@@ -350,23 +353,23 @@ fn flat_config_file_names(version: Option<&Version>) -> &'static [&'static str] 
     }
 }
 
-fn find_eslint_config_kind(
+async fn find_eslint_config_kind(
     worktree_root: &Path,
     requested_file: Option<&Path>,
     version: Option<&Version>,
-    path_exists: impl Fn(&Path) -> bool,
+    fs: &dyn Fs,
 ) -> Option<EslintConfigKind> {
     let flat_config_file_names = flat_config_file_names(version);
 
     for directory in ancestor_directories(worktree_root, requested_file) {
         for file_name in flat_config_file_names {
-            if path_exists(&directory.join(file_name)) {
+            if fs.is_file(&directory.join(file_name)).await {
                 return Some(EslintConfigKind::Flat);
             }
         }
 
         for file_name in EsLintLspAdapter::LEGACY_CONFIG_FILE_NAMES {
-            if path_exists(&directory.join(file_name)) {
+            if fs.is_file(&directory.join(file_name)).await {
                 return Some(EslintConfigKind::Legacy);
             }
         }
@@ -634,7 +637,6 @@ enum ResultWorkingDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
 
     mod glob_patterns {
         use super::*;
@@ -780,6 +782,8 @@ mod tests {
 
     mod eslint_settings {
         use super::*;
+        use ::fs::FakeFs;
+        use gpui::TestAppContext;
 
         #[test]
         fn test_ancestor_directories_for_package_local_file() {
@@ -850,103 +854,126 @@ mod tests {
             assert_eq!(settings, EslintSettingsOverrides::default());
         }
 
-        #[test]
-        fn test_eslint_8_56_does_not_treat_cjs_as_flat_config() {
+        #[gpui::test]
+        async fn test_eslint_8_56_does_not_treat_cjs_as_flat_config(cx: &mut TestAppContext) {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_file(
+                unix_path_to_platform("/workspace/eslint.config.cjs"),
+                vec![],
+            )
+            .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
             let requested_file = PathBuf::from(unix_path_to_platform("/workspace/src/index.js"));
             let version = Version::parse("8.56.0").expect("valid ESLint version");
-            let paths = path_set(&["/workspace/eslint.config.cjs"]);
 
             let config_kind = find_eslint_config_kind(
                 &worktree_root,
                 Some(&requested_file),
                 Some(&version),
-                |path| paths.contains(path),
-            );
+                fs.as_ref(),
+            )
+            .await;
 
             assert_eq!(config_kind, None);
         }
 
-        #[test]
-        fn test_eslint_8_57_treats_cjs_as_flat_config() {
+        #[gpui::test]
+        async fn test_eslint_8_57_treats_cjs_as_flat_config(cx: &mut TestAppContext) {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_file(
+                unix_path_to_platform("/workspace/eslint.config.cjs"),
+                vec![],
+            )
+            .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
             let requested_file = PathBuf::from(unix_path_to_platform("/workspace/src/index.js"));
             let version = Version::parse("8.57.0").expect("valid ESLint version");
-            let paths = path_set(&["/workspace/eslint.config.cjs"]);
 
             let config_kind = find_eslint_config_kind(
                 &worktree_root,
                 Some(&requested_file),
                 Some(&version),
-                |path| paths.contains(path),
-            );
+                fs.as_ref(),
+            )
+            .await;
 
             assert_eq!(config_kind, Some(EslintConfigKind::Flat));
         }
 
-        #[test]
-        fn test_eslint_10_treats_typescript_config_as_flat_config() {
+        #[gpui::test]
+        async fn test_eslint_10_treats_typescript_config_as_flat_config(cx: &mut TestAppContext) {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_file(unix_path_to_platform("/workspace/eslint.config.ts"), vec![])
+                .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
             let requested_file = PathBuf::from(unix_path_to_platform("/workspace/src/index.js"));
             let version = Version::parse("10.0.0").expect("valid ESLint version");
-            let paths = path_set(&["/workspace/eslint.config.ts"]);
 
             let config_kind = find_eslint_config_kind(
                 &worktree_root,
                 Some(&requested_file),
                 Some(&version),
-                |path| paths.contains(path),
-            );
+                fs.as_ref(),
+            )
+            .await;
 
             assert_eq!(config_kind, Some(EslintConfigKind::Flat));
         }
 
-        #[test]
-        fn test_package_local_flat_config_is_preferred_for_monorepo_file() {
+        #[gpui::test]
+        async fn test_package_local_flat_config_is_preferred_for_monorepo_file(
+            cx: &mut TestAppContext,
+        ) {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_file(unix_path_to_platform("/workspace/eslint.config.js"), vec![])
+                .await;
+            fs.insert_file(
+                unix_path_to_platform("/workspace/packages/web/eslint.config.js"),
+                vec![],
+            )
+            .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
             let requested_file = PathBuf::from(unix_path_to_platform(
                 "/workspace/packages/web/src/index.js",
             ));
             let version = Version::parse("8.56.0").expect("valid ESLint version");
-            let paths = path_set(&[
-                "/workspace/eslint.config.js",
-                "/workspace/packages/web/eslint.config.js",
-            ]);
 
             let config_kind = find_eslint_config_kind(
                 &worktree_root,
                 Some(&requested_file),
                 Some(&version),
-                |path| paths.contains(path),
-            );
+                fs.as_ref(),
+            )
+            .await;
 
             assert_eq!(config_kind, Some(EslintConfigKind::Flat));
         }
 
-        #[test]
-        fn test_package_local_legacy_config_is_detected_for_eslint_9() {
+        #[gpui::test]
+        async fn test_package_local_legacy_config_is_detected_for_eslint_9(
+            cx: &mut TestAppContext,
+        ) {
+            let fs = FakeFs::new(cx.executor());
+            fs.insert_file(
+                unix_path_to_platform("/workspace/packages/web/.eslintrc.cjs"),
+                vec![],
+            )
+            .await;
             let worktree_root = PathBuf::from(unix_path_to_platform("/workspace"));
             let requested_file = PathBuf::from(unix_path_to_platform(
                 "/workspace/packages/web/src/index.js",
             ));
             let version = Version::parse("9.0.0").expect("valid ESLint version");
-            let paths = path_set(&["/workspace/packages/web/.eslintrc.cjs"]);
 
             let config_kind = find_eslint_config_kind(
                 &worktree_root,
                 Some(&requested_file),
                 Some(&version),
-                |path| paths.contains(path),
-            );
+                fs.as_ref(),
+            )
+            .await;
 
             assert_eq!(config_kind, Some(EslintConfigKind::Legacy));
-        }
-
-        fn path_set(paths: &[&str]) -> HashSet<PathBuf> {
-            paths
-                .iter()
-                .map(|path| PathBuf::from(unix_path_to_platform(path)))
-                .collect()
         }
     }
 
