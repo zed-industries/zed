@@ -84,6 +84,63 @@ pub fn strip_diff_metadata(diff: &str) -> String {
     result
 }
 
+/// Marker used to encode cursor position in patch comment lines.
+pub const CURSOR_POSITION_MARKER: &str = "[CURSOR_POSITION]";
+
+/// Extract cursor offset from a patch and return `(clean_patch, cursor_offset)`.
+///
+/// Cursor position is encoded as a comment line (starting with `#`) containing
+/// `[CURSOR_POSITION]`. A `^` in the line indicates the cursor column; a `<`
+/// indicates column 0. The offset is computed relative to addition (`+`) and
+/// context (` `) lines accumulated so far in the hunk, which represent the
+/// cursor position within the new text contributed by the hunk.
+pub fn extract_cursor_from_patch(patch: &str) -> (String, Option<usize>) {
+    let mut clean_patch = String::new();
+    let mut cursor_offset: Option<usize> = None;
+    let mut line_start_offset = 0usize;
+    let mut prev_line_start_offset = 0usize;
+
+    for line in patch.lines() {
+        let diff_line = DiffLine::parse(line);
+
+        match &diff_line {
+            DiffLine::Garbage(content)
+                if content.starts_with('#') && content.contains(CURSOR_POSITION_MARKER) =>
+            {
+                let caret_column = if let Some(caret_pos) = content.find('^') {
+                    caret_pos
+                } else if content.find('<').is_some() {
+                    0
+                } else {
+                    continue;
+                };
+                let cursor_column = caret_column.saturating_sub('#'.len_utf8());
+                cursor_offset = Some(prev_line_start_offset + cursor_column);
+            }
+            _ => {
+                if !clean_patch.is_empty() {
+                    clean_patch.push('\n');
+                }
+                clean_patch.push_str(line);
+
+                match diff_line {
+                    DiffLine::Addition(content) | DiffLine::Context(content) => {
+                        prev_line_start_offset = line_start_offset;
+                        line_start_offset += content.len() + 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if patch.ends_with('\n') && !clean_patch.is_empty() {
+        clean_patch.push('\n');
+    }
+
+    (clean_patch, cursor_offset)
+}
+
 /// Find all byte offsets where `hunk.context` occurs as a substring of `text`.
 ///
 /// If no exact matches are found and the context ends with `'\n'` but `text`
