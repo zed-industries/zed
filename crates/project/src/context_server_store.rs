@@ -640,26 +640,82 @@ impl ContextServerStore {
         ) {
             self.stop_server(&id, cx).log_err();
         }
+
         let task = cx.spawn({
             let id = server.id();
             let server = server.clone();
             let configuration = configuration.clone();
 
             async move |this, cx| {
-                let new_state = match server.clone().start(cx).await {
-                    Ok(_) => {
-                        debug_assert!(server.client().is_some());
-                        ContextServerState::Running {
-                            server,
-                            configuration,
+                const MAX_START_RETRIES: usize = 3;
+                const RETRY_DELAY: Duration = Duration::from_secs(2);
+
+                for attempt in 0..=MAX_START_RETRIES {
+                    if attempt > 0 {
+                        log::info!(
+                            "{} context server: retry attempt {}/{} (delaying {:?})",
+                            id,
+                            attempt,
+                            MAX_START_RETRIES,
+                            RETRY_DELAY,
+                        );
+                        cx.background_executor().timer(RETRY_DELAY).await;
+                    }
+
+                    match server.clone().start(cx).await {
+                        Ok(_) => {
+                            debug_assert!(server.client().is_some());
+                            this.update(cx, |this, cx| {
+                                this.update_server_state(
+                                    id.clone(),
+                                    ContextServerState::Running {
+                                        server: server.clone(),
+                                        configuration: configuration.clone(),
+                                    },
+                                    cx,
+                                )
+                            })
+                            .log_err();
+                            return;
+                        }
+                        Err(err) => {
+                            let err_msg = err.to_string();
+                            let is_timeout = err_msg.contains("timeout")
+                                || err_msg.contains("Timeout")
+                                || err_msg.contains("timed out");
+
+                            if is_timeout && attempt < MAX_START_RETRIES {
+                                log::warn!(
+                                    "{} context server failed to start (attempt {}/{}): {} — will retry",
+                                    id,
+                                    attempt + 1,
+                                    MAX_START_RETRIES + 1,
+                                    err,
+                                );
+                                continue;
+                            }
+
+                            let new_state = resolve_start_failure(
+                                &id,
+                                err,
+                                server.clone(),
+                                configuration.clone(),
+                                cx,
+                            )
+                            .await;
+                            log::error!(
+                                "{} context server failed to start after {} attempts",
+                                id,
+                                attempt + 1,
+                            );
+                            this.update(cx, |this, cx| {
+                                this.update_server_state(id.clone(), new_state, cx)
+                            })
+                            .log_err();
+                            return;
                         }
                     }
-                    Err(err) => resolve_start_failure(&id, err, server, configuration, cx).await,
-                };
-                this.update(cx, |this, cx| {
-                    this.update_server_state(id.clone(), new_state, cx)
-                })
-                .log_err();
+                }
             }
         });
 
@@ -1379,22 +1435,45 @@ impl ContextServerStore {
             anyhow::Ok(())
         })??;
 
-        for (id, config) in servers_to_start {
-            match Self::create_context_server(this.clone(), id.clone(), config, cx).await {
-                Ok((server, config)) => {
-                    this.update(cx, |this, cx| {
-                        this.run_server(server, config, cx);
-                    })?;
+        if !servers_to_start.is_empty() {
+            // Wait for the app to fully initialize before connecting MCP servers.
+            // During startup, the gpui executor is busy loading projects, extensions, and UI.
+            // Spawning servers immediately causes IO tasks to be starved and responses dropped.
+            // This delay ensures the executor has settled before we begin connecting servers.
+            const STARTUP_DELAY: Duration = Duration::from_secs(3);
+            log::info!(
+                "context servers: waiting {:?} before starting {} server(s)",
+                STARTUP_DELAY,
+                servers_to_start.len(),
+            );
+            cx.background_executor().timer(STARTUP_DELAY).await;
+
+            // Start servers sequentially with a gap between each.
+            // This prevents the executor from being overwhelmed by simultaneous
+            // process spawns and JSON-RPC handshakes. See zed-industries/zed#38252.
+            const STAGGER_DELAY: Duration = Duration::from_millis(500);
+
+            for (i, (id, config)) in servers_to_start.into_iter().enumerate() {
+                if i > 0 {
+                    cx.background_executor().timer(STAGGER_DELAY).await;
                 }
-                Err(err) => {
-                    log::error!("{id} context server failed to create: {err:#}");
-                    this.update(cx, |_this, cx| {
-                        cx.emit(ServerStatusChangedEvent {
-                            server_id: id,
-                            status: ContextServerStatus::Error(err.to_string().into()),
-                        });
-                        cx.notify();
-                    })?;
+
+                match Self::create_context_server(this.clone(), id.clone(), config, cx).await {
+                    Ok((server, config)) => {
+                        this.update(cx, |this, cx| {
+                            this.run_server(server, config, cx);
+                        })?;
+                    }
+                    Err(err) => {
+                        log::error!("{id} context server failed to create: {err:#}");
+                        this.update(cx, |_this, cx| {
+                            cx.emit(ServerStatusChangedEvent {
+                                server_id: id,
+                                status: ContextServerStatus::Error(err.to_string().into()),
+                            });
+                            cx.notify();
+                        })?;
+                    }
                 }
             }
         }
