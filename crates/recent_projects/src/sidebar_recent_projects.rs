@@ -419,7 +419,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         })
                 })
                 .child(
-                    Button::new("open_remote_folder", "Open Remote Project")
+                    Button::new("open_remote_folder", "Add Remote Project")
                         .key_binding(KeyBinding::for_action(
                             &OpenRemote {
                                 from_existing_connection: false,
