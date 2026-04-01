@@ -698,7 +698,26 @@ impl Vim {
                 editor,
                 cx,
                 |vim, _: &SwitchToHelixNormalMode, window, cx| {
-                    vim.switch_mode(Mode::HelixNormal, true, window, cx)
+                    vim.switch_mode(Mode::HelixNormal, true, window, cx);
+                    // Dismiss the search bar on Escape, matching Vim's behavior
+                    // where editor::Cancel propagates to dismiss the search bar.
+                    if let Some(pane) = vim.pane(window, cx) {
+                        pane.update(cx, |pane, cx| {
+                            if let Some(search_bar) =
+                                pane.toolbar().read(cx).item_of_type::<BufferSearchBar>()
+                            {
+                                search_bar.update(cx, |bar, cx| {
+                                    if !bar.is_dismissed() {
+                                        bar.dismiss(
+                                            &search::buffer_search::Dismiss,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                });
+                            }
+                        });
+                    }
                 },
             );
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {

@@ -1446,4 +1446,41 @@ mod test {
         // The cursor should be at the match location on line 3 (row 2).
         cx.assert_state("hello world\nfoo bar\nhello ˇagain\n", Mode::Normal);
     }
+
+
+    #[gpui::test]
+    async fn test_helix_search_dismiss_on_escape(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇhello world
+foo bar
+hello again
+", Mode::HelixNormal);
+
+        // Open search
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        // Type query and submit
+        cx.simulate_keystrokes("h e l l o");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        // Search bar should be dismissed (like Vim mode), verify escape works
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        // Verify search bar is dismissed
+        cx.workspace(|workspace, _window, cx| {
+            let pane = workspace.active_pane().read(cx);
+            let search_bar = pane
+                .toolbar()
+                .read(cx)
+                .item_of_type::<search::BufferSearchBar>();
+            assert!(
+                search_bar.is_none_or(|bar| bar.read(cx).is_dismissed()),
+                "Search bar should be dismissed after pressing Escape in Helix normal mode"
+            );
+        });
+    }
 }
