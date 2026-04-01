@@ -390,6 +390,14 @@ impl RedistributableColumnsState {
         self.committed_widths.cols()
     }
 
+    pub fn initial_widths(&self) -> &TableRow<DefiniteLength> {
+        &self.initial_widths
+    }
+
+    pub fn resize_behavior(&self) -> &TableRow<TableResizeBehavior> {
+        &self.resize_behavior
+    }
+
     fn get_fraction(length: &DefiniteLength, bounds_width: Pixels, rem_size: Pixels) -> f32 {
         match length {
             DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels)) => *pixels / bounds_width,
@@ -958,19 +966,26 @@ impl RenderOnce for Table {
         let table_context = TableRenderContext::new(&self, cx);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
 
-        let header_double_click_info = self.column_width_config.header_double_click_info(cx);
+        let header_double_click_info = interaction_state
+            .as_ref()
+            .and_then(|_| self.column_width_config.header_double_click_info(cx));
 
         let table_width = self.column_width_config.table_width();
         let horizontal_sizing = self.column_width_config.list_horizontal_sizing();
         let no_rows_rendered = self.rows.is_empty();
 
         // Extract redistributable entity for drag/drop/prepaint handlers
-        let redistributable_entity = match &self.column_width_config {
-            ColumnWidthConfig::Redistributable { entity, .. } => Some(entity.downgrade()),
-            _ => None,
-        };
+        let redistributable_entity =
+            interaction_state
+                .as_ref()
+                .and_then(|_| match &self.column_width_config {
+                    ColumnWidthConfig::Redistributable { entity, .. } => Some(entity.downgrade()),
+                    _ => None,
+                });
 
-        let resize_handles = self.column_width_config.render_resize_handles(window, cx);
+        let resize_handles = interaction_state
+            .as_ref()
+            .and_then(|_| self.column_width_config.render_resize_handles(window, cx));
 
         let table = div()
             .when_some(table_width, |this, width| this.w(width))

@@ -46,7 +46,7 @@ use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
-    RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
+    HighlightedLabel, RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableResizeBehavior, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
@@ -2447,11 +2447,6 @@ impl Render for GitGraph {
             self.search_state.state = QueryState::Empty;
             self.search(query, cx);
         }
-        let description_width_fraction = 0.72;
-        let date_width_fraction = 0.12;
-        let author_width_fraction = 0.10;
-        let commit_width_fraction = 0.06;
-
         let (commit_count, is_loading) = match self.graph_data.max_commit_count {
             AllCommitCount::Loaded(count) => (count, true),
             AllCommitCount::NotLoaded => {

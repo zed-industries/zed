@@ -3,9 +3,7 @@ use gpui::{AnyElement, Entity};
 use std::ops::Range;
 use ui::RedistributableColumnsState;
 use ui::Table;
-use ui::TableResizeBehavior;
-use ui::UncheckedTableRow;
-use ui::{ColumnWidthConfig, DefiniteLength, div, prelude::*};
+use ui::{ColumnWidthConfig, UncheckedTableRow, div, prelude::*};
 
 use crate::{
     CsvPreviewView,
@@ -21,26 +19,6 @@ impl CsvPreviewView {
         current_widths: &Entity<RedistributableColumnsState>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let cols = current_widths.read(cx).cols();
-        let remaining_col_number = cols - 1;
-        let fraction = if remaining_col_number > 0 {
-            1. / remaining_col_number as f32
-        } else {
-            1. // only column with line numbers is present. Put 100%, but it will be overwritten anyways :D
-        };
-        let mut widths = vec![DefiniteLength::Fraction(fraction); cols];
-        let line_number_width = self.calculate_row_identifier_column_width();
-        widths[0] = DefiniteLength::Absolute(AbsoluteLength::Pixels(line_number_width.into()));
-
-        let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
-        resize_behaviors[0] = TableResizeBehavior::None;
-
-        // Update the entity with the calculated widths and resize behaviors
-        current_widths.update(cx, |state, _cx| {
-            *state =
-                RedistributableColumnsState::new(cols, widths.clone(), resize_behaviors.clone());
-        });
-
         self.create_table_inner(self.engine.contents.rows.len(), current_widths, cx)
     }
 
