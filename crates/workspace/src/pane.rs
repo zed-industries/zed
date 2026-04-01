@@ -1101,6 +1101,8 @@ impl Pane {
             }
         }
 
+        let preview_was_active = self.preview_item_idx() == Some(self.active_item_index);
+
         let set_up_existing_item =
             |index: usize, pane: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                 if !allow_preview && let Some(item) = pane.items.get(index) {
@@ -1115,8 +1117,10 @@ impl Pane {
                                pane: &mut Self,
                                window: &mut Window,
                                cx: &mut Context<Self>| {
-            if allow_preview {
-                pane.replace_preview_item_id(new_item.item_id(), window, cx);
+            let new_item_id = new_item.item_id();
+
+            if allow_preview && preview_was_active {
+                pane.set_preview_item_id(Some(new_item_id), cx);
             }
 
             if let Some(text) = new_item.telemetry_event_text(cx) {
@@ -1132,6 +1136,10 @@ impl Pane {
                 window,
                 cx,
             );
+
+            if allow_preview && !preview_was_active {
+                pane.set_preview_item_id(Some(new_item_id), cx);
+            }
         };
 
         if let Some((index, existing_item)) = existing_item {
@@ -1202,6 +1210,9 @@ impl Pane {
         let prev_active_item_index = self.active_item_index;
         self.remove_item(id, false, false, window, cx);
         self.active_item_index = prev_active_item_index;
+        if item_idx < prev_active_item_index {
+            self.active_item_index -= 1;
+        }
         self.nav_history.0.lock().preview_item_id = None;
 
         if item_idx < self.items.len() {
