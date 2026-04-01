@@ -350,9 +350,17 @@ mod ios {
         // Settings
         settings::init(cx);
 
-        // HTTP client
+        // HTTP client — use proxy_and_user_agent to get the platform TLS
+        // verifier (ReqwestClient::new() skips it and uses default rustls
+        // which doesn't trust iOS system root certificates).
+        let user_agent = format!(
+            "Zed-iPad/{} ({})",
+            release_channel::AppVersion::global(cx),
+            std::env::consts::OS,
+        );
         let http = Arc::new(
-            reqwest_client::ReqwestClient::new()
+            reqwest_client::ReqwestClient::proxy_and_user_agent(None, &user_agent)
+                .expect("failed to initialize HTTP client")
         );
         cx.set_http_client(http);
 
@@ -452,6 +460,11 @@ mod ios {
                 debugger_ui::init(cx);
                 debugger_tools::init(cx);
                 dap_adapters::init(cx);
+                project::AgentRegistryStore::init_global(
+                    cx,
+                    settings_fs.clone(),
+                    app_state.client.http_client(),
+                );
                 {
                     let prompt_builder =
                         prompt_store::PromptBuilder::load(settings_fs.clone(), false, cx);

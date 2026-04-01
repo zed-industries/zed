@@ -604,6 +604,106 @@ impl RemoteConnection for RusshRemoteConnection {
             })
         })
     }
+
+    fn open_command_channel(
+        &self,
+        command: &str,
+        args: &[String],
+        env: &HashMap<String, String>,
+        working_directory: Option<String>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SshShellChannel>> {
+        let session = self.session.clone();
+
+        // Build the full command line with env vars, cd, and exec.
+        // Wrap in a login shell so PATH is set up (needed for tools
+        // installed via version managers like fnm, nvm, rbenv, etc.)
+        let shell = self.remote_shell.clone();
+        let mut inner_parts = Vec::new();
+        for (key, value) in env {
+            inner_parts.push(format!("export {}={}", key, shell_escape(value)));
+            inner_parts.push("&&".to_string());
+        }
+        if let Some(dir) = working_directory {
+            inner_parts.push(format!("cd {}", shell_escape(&dir)));
+            inner_parts.push("&&".to_string());
+        }
+        inner_parts.push("exec".to_string());
+        inner_parts.push(command.to_string());
+        for arg in args {
+            inner_parts.push(shell_escape(arg));
+        }
+        let inner = inner_parts.join(" ");
+        let full_command = format!("{} -l -c {}", shell, shell_escape(&inner));
+
+        Tokio::spawn_result(cx, async move {
+            let handle = session.lock().await;
+            let channel = handle.channel_open_session().await?;
+
+            // No PTY — raw stdio for ACP protocol
+            channel
+                .exec(true, full_command.into_bytes())
+                .await
+                .map_err(|error| anyhow!("exec failed: {error}"))?;
+
+            drop(handle);
+
+            let (mut read_half, write_half) = channel.split();
+            let write_half = Arc::new(write_half);
+
+            let (input_tx, input_rx) = smol::channel::bounded::<Vec<u8>>(64);
+            let (resize_tx, _resize_rx) = smol::channel::bounded::<(u32, u32)>(1);
+            let (output_tx, output_rx) = smol::channel::bounded::<Vec<u8>>(64);
+            let (exit_tx, exit_rx) = smol::channel::bounded::<Option<u32>>(1);
+
+            // Writer task: client input → SSH channel stdin
+            tokio::spawn({
+                let write_half = write_half.clone();
+                async move {
+                    while let Ok(data) = input_rx.recv().await {
+                        if write_half.data(&data[..]).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            });
+
+            // Reader task: SSH channel stdout → output bytes
+            tokio::spawn(async move {
+                while let Some(msg) = read_half.wait().await {
+                    match msg {
+                        russh::ChannelMsg::Data { data } => {
+                            if output_tx.send(data.to_vec()).await.is_err() {
+                                break;
+                            }
+                        }
+                        russh::ChannelMsg::ExtendedData { data, .. } => {
+                            // stderr — forward as output for now
+                            if output_tx.send(data.to_vec()).await.is_err() {
+                                break;
+                            }
+                        }
+                        russh::ChannelMsg::ExitStatus { exit_status } => {
+                            exit_tx.send(Some(exit_status)).await.ok();
+                            break;
+                        }
+                        russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
+                            exit_tx.send(None).await.ok();
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            });
+
+            Ok(SshShellChannel {
+                input_tx,
+                resize_tx,
+                output_rx,
+                exit_rx,
+            })
+        })
+    }
 }
 
 fn shell_escape(s: &str) -> String {

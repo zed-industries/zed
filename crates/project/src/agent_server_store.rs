@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "ios"))]
 use remote::Interactive;
 use std::{
     any::Any,
@@ -1015,23 +1016,41 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                         })
                 })?
                 .await?;
+            #[cfg(not(target_os = "ios"))]
             let root_dir = response.root_dir;
             response.env.extend(extra_env);
-            let command = upstream_client.update(cx, |client, _| {
-                client.build_command_with_options(
-                    Some(response.path),
-                    &response.args,
-                    &response.env.into_iter().collect(),
-                    Some(root_dir.clone()),
-                    None,
-                    Interactive::No,
-                )
-            })??;
-            Ok(AgentServerCommand {
-                path: command.program.into(),
-                args: command.args,
-                env: Some(command.env),
-            })
+
+            #[cfg(target_os = "ios")]
+            {
+                // On iOS, use the raw command from the server directly.
+                // open_command_channel handles execution on the remote host.
+                let env: collections::HashMap<String, String> =
+                    response.env.into_iter().collect();
+                Ok(AgentServerCommand {
+                    path: response.path.into(),
+                    args: response.args,
+                    env: Some(env),
+                })
+            }
+
+            #[cfg(not(target_os = "ios"))]
+            {
+                let command = upstream_client.update(cx, |client, _| {
+                    client.build_command_with_options(
+                        Some(response.path),
+                        &response.args,
+                        &response.env.into_iter().collect(),
+                        Some(root_dir.clone()),
+                        None,
+                        Interactive::No,
+                    )
+                })??;
+                Ok(AgentServerCommand {
+                    path: command.program.into(),
+                    args: command.args,
+                    env: Some(command.env),
+                })
+            }
         })
     }
 

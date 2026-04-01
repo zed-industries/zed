@@ -51,7 +51,7 @@ pub struct AcpConnection {
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
-    child: Child,
+    child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
@@ -172,6 +172,47 @@ pub async fn connect(
     default_config_options: HashMap<String, String>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
+    #[cfg(target_os = "ios")]
+    let conn = {
+        // On iOS, execute the agent command on the remote host via SSH channel.
+        let (connection, working_dir) = cx.update(|cx| {
+            let project_ref = project.read(cx);
+            let conn = project_ref
+                .remote_client()
+                .and_then(|client| client.read(cx).connection())
+                .ok_or_else(|| anyhow!("No remote connection for external agent"))?;
+            let dir = project_ref
+                .visible_worktrees(cx)
+                .next()
+                .map(|wt| wt.read(cx).abs_path().to_string_lossy().to_string());
+            anyhow::Ok((conn, dir))
+        })?;
+
+        let env = command.env.clone().unwrap_or_default();
+        let channel = connection
+            .open_command_channel(
+                &command.path.display().to_string(),
+                &command.args,
+                &env,
+                working_dir,
+                cx,
+            )
+            .await?;
+
+        AcpConnection::ssh(
+            agent_id,
+            project,
+            command.clone(),
+            default_mode,
+            default_model,
+            default_config_options,
+            channel,
+            cx,
+        )
+        .await?
+    };
+
+    #[cfg(not(target_os = "ios"))]
     let conn = AcpConnection::stdio(
         agent_id,
         project,
@@ -182,6 +223,7 @@ pub async fn connect(
         cx,
     )
     .await?;
+
     Ok(Rc::new(conn) as _)
 }
 
@@ -374,7 +416,131 @@ impl AcpConnection {
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
-            child,
+            child: Some(child),
+        })
+    }
+
+    /// Create an ACP connection over an SSH channel.
+    /// Used on iPad where subprocess spawning is prohibited. The command is
+    /// executed on the remote host and stdin/stdout are tunneled over SSH.
+    pub async fn ssh(
+        agent_id: AgentId,
+        _project: Entity<Project>,
+        command: AgentServerCommand,
+        default_mode: Option<acp::SessionModeId>,
+        default_model: Option<acp::ModelId>,
+        default_config_options: HashMap<String, String>,
+        channel: remote::SshShellChannel,
+        cx: &mut AsyncApp,
+    ) -> Result<Self> {
+        let sessions = Rc::new(RefCell::new(HashMap::default()));
+
+        let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
+            (
+                release_channel::ReleaseChannel::try_global(cx)
+                    .map(|release_channel| release_channel.display_name()),
+                release_channel::AppVersion::global(cx).to_string(),
+            )
+        });
+
+        let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
+            Rc::new(RefCell::new(None));
+
+        let client = ClientDelegate {
+            sessions: sessions.clone(),
+            session_list: client_session_list.clone(),
+            cx: cx.clone(),
+        };
+
+        // Wrap the SSH channel's smol channels as AsyncRead/AsyncWrite
+        let stdin = SshChannelWriter(channel.input_tx);
+        let stdout = SshChannelReader {
+            rx: channel.output_rx,
+            buffer: Vec::new(),
+            offset: 0,
+        };
+
+        let (connection, io_task) = acp::ClientSideConnection::new(client, stdin, stdout, {
+            let foreground_executor = cx.foreground_executor().clone();
+            move |fut| {
+                foreground_executor.spawn(fut).detach();
+            }
+        });
+
+        let io_task = cx.background_spawn(io_task);
+
+        let wait_task = cx.background_spawn({
+            let exit_rx = channel.exit_rx;
+            async move {
+                let _status = exit_rx.recv().await;
+                anyhow::Ok(())
+            }
+        });
+
+        let connection = Rc::new(connection);
+
+        let response = connection
+            .initialize(
+                acp::InitializeRequest::new(acp::ProtocolVersion::V1)
+                    .client_capabilities(
+                        acp::ClientCapabilities::new()
+                            .fs(acp::FileSystemCapabilities::new()
+                                .read_text_file(true)
+                                .write_text_file(true))
+                            .terminal(true)
+                            .auth(acp::AuthCapabilities::new().terminal(true))
+                            .meta(acp::Meta::from_iter([
+                                ("terminal_output".into(), true.into()),
+                                ("terminal-auth".into(), true.into()),
+                            ])),
+                    )
+                    .client_info(
+                        acp::Implementation::new("zed", version)
+                            .title(release_channel.map(ToOwned::to_owned)),
+                    ),
+            )
+            .await?;
+
+        if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
+            return Err(UnsupportedVersion.into());
+        }
+
+        let telemetry_id = response
+            .agent_info
+            .map(|info| info.name.into())
+            .unwrap_or_else(|| agent_id.0.to_string().into());
+
+        let session_list = if response
+            .agent_capabilities
+            .session_capabilities
+            .list
+            .is_some()
+        {
+            let list = Rc::new(AcpSessionList::new(connection.clone()));
+            *client_session_list.borrow_mut() = Some(list.clone());
+            Some(list)
+        } else {
+            None
+        };
+
+        let auth_methods = response.auth_methods;
+
+        Ok(Self {
+            id: agent_id,
+            auth_methods,
+            command,
+            connection,
+            telemetry_id,
+            sessions,
+            agent_capabilities: response.agent_capabilities,
+            default_mode,
+            default_model,
+            default_config_options,
+            session_list,
+            _io_task: io_task,
+            _wait_task: wait_task,
+            _stderr_task: Task::ready(Ok(())),
+            child: None,
         })
     }
 
@@ -481,7 +647,9 @@ impl AcpConnection {
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        self.child.kill().log_err();
+        if let Some(ref mut child) = self.child {
+            child.kill().log_err();
+        }
     }
 }
 
@@ -1741,5 +1909,108 @@ impl ClientDelegate {
             .get(session_id)
             .context("Failed to get session")
             .map(|session| session.thread.clone())
+    }
+}
+
+// ─── SSH channel → AsyncRead/AsyncWrite adapters ─────────────────────────────
+
+/// Adapter: writes bytes to an SSH channel via smol::channel::Sender.
+struct SshChannelWriter(smol::channel::Sender<Vec<u8>>);
+
+impl Unpin for SshChannelWriter {}
+
+impl futures::AsyncWrite for SshChannelWriter {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let data = buf.to_vec();
+        let len = data.len();
+        match self.0.try_send(data) {
+            Ok(()) => std::task::Poll::Ready(Ok(len)),
+            Err(smol::channel::TrySendError::Full(_)) => {
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+            Err(smol::channel::TrySendError::Closed(_)) => {
+                std::task::Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "SSH channel closed",
+                )))
+            }
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.0.close();
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// Adapter: reads bytes from an SSH channel via smol::channel::Receiver.
+struct SshChannelReader {
+    rx: smol::channel::Receiver<Vec<u8>>,
+    buffer: Vec<u8>,
+    offset: usize,
+}
+
+impl Unpin for SshChannelReader {}
+
+impl futures::AsyncRead for SshChannelReader {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        // Return buffered data first
+        if self.offset < self.buffer.len() {
+            let remaining = &self.buffer[self.offset..];
+            let n = remaining.len().min(buf.len());
+            buf[..n].copy_from_slice(&remaining[..n]);
+            self.offset += n;
+            if self.offset >= self.buffer.len() {
+                self.buffer.clear();
+                self.offset = 0;
+            }
+            return std::task::Poll::Ready(Ok(n));
+        }
+
+        // Try non-blocking receive first
+        match self.rx.try_recv() {
+            Ok(data) => {
+                let n = data.len().min(buf.len());
+                buf[..n].copy_from_slice(&data[..n]);
+                if n < data.len() {
+                    self.buffer = data;
+                    self.offset = n;
+                }
+                std::task::Poll::Ready(Ok(n))
+            }
+            Err(smol::channel::TryRecvError::Empty) => {
+                // Register waker via a spawned task that waits on recv
+                let waker = cx.waker().clone();
+                let rx = self.rx.clone();
+                smol::spawn(async move {
+                    let _ = rx.recv().await;
+                    waker.wake();
+                })
+                .detach();
+                std::task::Poll::Pending
+            }
+            Err(smol::channel::TryRecvError::Closed) => {
+                std::task::Poll::Ready(Ok(0)) // EOF
+            }
+        }
     }
 }

@@ -1410,6 +1410,21 @@ pub trait RemoteConnection: Send + Sync {
         Task::ready(Err(anyhow!("open_shell_channel is not supported by this connection type")))
     }
 
+    /// Open an SSH channel that executes a command (no PTY).
+    /// Used for external agent processes (e.g. Claude Code) on iPad
+    /// where subprocess spawning is prohibited. The command's
+    /// stdin/stdout/stderr are tunneled through the SSH channel.
+    fn open_command_channel(
+        &self,
+        _command: &str,
+        _args: &[String],
+        _env: &HashMap<String, String>,
+        _working_directory: Option<String>,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<SshShellChannel>> {
+        Task::ready(Err(anyhow!("open_command_channel is not supported by this connection type")))
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}
 }
