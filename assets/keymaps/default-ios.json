@@ -596,5 +596,60 @@
       "fn-[": "pane::GoBack",
       "fn-]": "pane::GoForward"
     }
+  },
+  {
+    "context": "Terminal",
+    "use_key_equivalents": true,
+    "bindings": {
+      // Clipboard
+      "cmd-c": "terminal::Copy",
+      "cmd-v": "terminal::Paste",
+      // Search
+      "cmd-f": "buffer_search::Deploy",
+      "cmd-a": "editor::SelectAll",
+      // Terminal actions
+      "cmd-k": "terminal::Clear",
+      "cmd-n": "workspace::NewTerminal",
+      // Line editing conveniences
+      "cmd-backspace": ["terminal::SendText", "\u0015"],
+      "alt-delete": ["terminal::SendText", "\u001bd"],
+      "cmd-delete": ["terminal::SendText", "\u000b"],
+      "cmd-right": ["terminal::SendText", "\u0005"],
+      "cmd-left": ["terminal::SendText", "\u0001"],
+      // Word navigation (Terminal.app / iTerm2 compatibility)
+      "alt-left": ["terminal::SendText", "\u001bb"],
+      "alt-right": ["terminal::SendText", "\u001bf"],
+      "alt-b": ["terminal::SendText", "\u001bb"],
+      "alt-f": ["terminal::SendText", "\u001bf"],
+      "ctrl-delete": ["terminal::SendText", "\u001bd"],
+      // Keys that conflict with global bindings — forward to PTY
+      "escape": ["terminal::SendKeystroke", "escape"],
+      "enter": ["terminal::SendKeystroke", "enter"],
+      "up": ["terminal::SendKeystroke", "up"],
+      "down": ["terminal::SendKeystroke", "down"],
+      "pageup": ["terminal::SendKeystroke", "pageup"],
+      "pagedown": ["terminal::SendKeystroke", "pagedown"],
+      "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
+      // Scrollback
+      "shift-pageup": "terminal::ScrollPageUp",
+      "cmd-up": "terminal::ScrollPageUp",
+      "shift-pagedown": "terminal::ScrollPageDown",
+      "cmd-down": "terminal::ScrollPageDown",
+      "shift-up": "terminal::ScrollLineUp",
+      "shift-down": "terminal::ScrollLineDown",
+      "shift-home": "terminal::ScrollToTop",
+      "cmd-home": "terminal::ScrollToTop",
+      "shift-end": "terminal::ScrollToBottom",
+      "cmd-end": "terminal::ScrollToBottom",
+      // Vi mode
+      "ctrl-shift-space": "terminal::ToggleViMode",
+      // Pane splitting
+      "ctrl-alt-up": "pane::SplitUp",
+      "ctrl-alt-down": "pane::SplitDown",
+      "ctrl-alt-left": "pane::SplitLeft",
+      "ctrl-alt-right": "pane::SplitRight",
+      "cmd-d": "pane::SplitRight"
+    }
   }
 ]
