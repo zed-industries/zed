@@ -746,7 +746,6 @@ impl Render for ThreadsArchiveView {
 }
 
 struct ProjectPickerModal {
-    title: SharedString,
     picker: Entity<Picker<ProjectPickerDelegate>>,
     _subscription: Subscription,
 }
@@ -761,7 +760,7 @@ impl ProjectPickerModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let title: SharedString = thread.title.clone().into();
+
         let delegate = ProjectPickerDelegate {
             thread,
             archive_view,
@@ -810,7 +809,7 @@ impl ProjectPickerModal {
         picker.focus_handle(cx).focus(window, cx);
 
         Self {
-            title,
+
             picker,
             _subscription,
         }
