@@ -284,7 +284,7 @@ impl BookmarkStore {
     pub fn bookmarks_for_buffer(
         &mut self,
         buffer: Entity<Buffer>,
-        range: Option<Range<text::Anchor>>,
+        range: Range<text::Anchor>,
         buffer_snapshot: &BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> Vec<BookmarkAnchor> {
@@ -307,9 +307,8 @@ impl BookmarkStore {
                         return None;
                     }
 
-                    if let Some(range) = &range
-                        && (bookmark.anchor().cmp(&range.start, buffer_snapshot).is_lt()
-                            || bookmark.anchor().cmp(&range.end, buffer_snapshot).is_gt())
+                    if bookmark.anchor().cmp(&range.start, buffer_snapshot).is_lt()
+                        || bookmark.anchor().cmp(&range.end, buffer_snapshot).is_gt()
                     {
                         return None;
                     }

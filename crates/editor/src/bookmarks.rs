@@ -102,33 +102,26 @@ impl Editor {
             .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
 
-        let mut before = Self::bookmarks_in_range(
-            MultiBufferOffset(0)..selection.head(),
-            cx,
+        let mut all_bookmarks = Self::bookmarks_in_range(
+            MultiBufferOffset(0)..multi_buffer_snapshot.len(),
             &multi_buffer_snapshot,
             project,
             bookmark_store,
-        );
-        let mut after = Self::bookmarks_in_range(
-            selection.head()..multi_buffer_snapshot.len(),
             cx,
-            &multi_buffer_snapshot,
-            project,
-            bookmark_store,
         );
-        before.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
-        after.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
+        all_bookmarks.sort_by_key(|a| a.to_offset(&multi_buffer_snapshot));
 
         let anchor = match direction {
-            Direction::Next => after
-                .into_iter()
-                .chain(before)
-                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) != selection.head()),
-            Direction::Prev => [before, after]
-                .into_iter()
-                .flat_map(|bookmarks| bookmarks.into_iter().rev())
-                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) != selection.head()),
-        };
+            Direction::Next => all_bookmarks
+                .iter()
+                .find(|anchor| anchor.to_offset(&multi_buffer_snapshot) > selection.head())
+                .or_else(|| all_bookmarks.first()),
+            Direction::Prev => all_bookmarks
+                .iter()
+                .rfind(|anchor| anchor.to_offset(&multi_buffer_snapshot) < selection.head())
+                .or_else(|| all_bookmarks.last()),
+        }
+        .cloned();
 
         if let Some(anchor) = anchor {
             self.unfold_ranges(&[anchor..anchor], true, false, cx);
@@ -179,10 +172,10 @@ impl Editor {
 
     fn bookmarks_in_range(
         range: Range<MultiBufferOffset>,
-        cx: &mut Context<Self>,
         multi_buffer_snapshot: &MultiBufferSnapshot,
         project: &Entity<Project>,
         bookmark_store: &Entity<BookmarkStore>,
+        cx: &mut Context<Self>,
     ) -> Vec<Anchor> {
         multi_buffer_snapshot
             .range_to_buffer_ranges(range)
@@ -198,10 +191,8 @@ impl Editor {
                     .update(cx, |store, cx| {
                         store.bookmarks_for_buffer(
                             buffer,
-                            Some(
-                                buffer_snapshot.anchor_before(buffer_range.start)
-                                    ..buffer_snapshot.anchor_after(buffer_range.end),
-                            ),
+                            buffer_snapshot.anchor_before(buffer_range.start)
+                                ..buffer_snapshot.anchor_after(buffer_range.end),
                             buffer_snapshot,
                             cx,
                         )
