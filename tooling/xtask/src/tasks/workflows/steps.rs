@@ -513,12 +513,35 @@ pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
         .add_env(("REF_NAME", ref_name.to_string()))
 }
 
+/// Non-exhaustive list of the permissions to be set for a GitHub app token.
+///
+/// See https://github.com/actions/create-github-app-token?tab=readme-ov-file#permission-permission-name
+/// and beyond for a full list of available permissions.
+#[allow(unused)]
+pub(crate) enum TokenPermissions {
+    Contents,
+    Issues,
+    PullRequests,
+    Workflows,
+}
+
+impl TokenPermissions {
+    pub fn environment_name(&self) -> &'static str {
+        match self {
+            TokenPermissions::Contents => "permission-contents",
+            TokenPermissions::Issues => "permission-issues",
+            TokenPermissions::PullRequests => "permission-pull-requests",
+            TokenPermissions::Workflows => "permission-workflows",
+        }
+    }
+}
+
 pub(crate) struct GenerateAppToken<'a> {
     job_name: String,
     app_id: &'a str,
     app_secret: &'a str,
     repository_target: Option<RepositoryTarget>,
-    permissions: Option<Vec<(String, Level)>>,
+    permissions: Option<Vec<(TokenPermissions, Level)>>,
 }
 
 impl<'a> GenerateAppToken<'a> {
@@ -529,7 +552,7 @@ impl<'a> GenerateAppToken<'a> {
         }
     }
 
-    pub fn with_permissions(self, permissions: impl Into<Vec<(String, Level)>>) -> Self {
+    pub fn with_permissions(self, permissions: impl Into<Vec<(TokenPermissions, Level)>>) -> Self {
         Self {
             permissions: Some(permissions.into()),
             ..self
@@ -569,7 +592,7 @@ impl<'a> From<GenerateAppToken<'a>> for (Step<Use>, StepOutput) {
                             .into_iter()
                             .fold(input, |input, (permission, level)| {
                                 input.add(
-                                    permission,
+                                    permission.environment_name(),
                                     serde_json::to_value(&level).unwrap_or_default(),
                                 )
                             })

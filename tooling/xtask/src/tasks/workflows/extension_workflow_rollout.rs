@@ -6,6 +6,7 @@ use indoc::indoc;
 use serde_json::json;
 
 use crate::tasks::workflows::steps::CheckoutStep;
+use crate::tasks::workflows::steps::TokenPermissions;
 use crate::tasks::workflows::steps::cache_rust_dependencies_namespace;
 use crate::tasks::workflows::vars::JobOutput;
 use crate::tasks::workflows::{
@@ -315,9 +316,9 @@ fn rollout_workflows_to_extension(
                 &["${{ matrix.repo }}"],
             ))
             .with_permissions([
-                ("permission-pull-requests".to_owned(), Level::Write),
-                ("permission-contents".to_owned(), Level::Write),
-                ("permission-workflows".to_owned(), Level::Write),
+                (TokenPermissions::PullRequests, Level::Write),
+                (TokenPermissions::Contents, Level::Write),
+                (TokenPermissions::Workflows, Level::Write),
             ])
             .into();
 
@@ -378,7 +379,7 @@ fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput
     let (authenticate, token) =
         generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
             .for_repository(RepositoryTarget::current())
-            .with_permissions([("permission-contents".to_owned(), Level::Write)])
+            .with_permissions([(TokenPermissions::Contents, Level::Write)])
             .into();
 
     let job = Job::default()

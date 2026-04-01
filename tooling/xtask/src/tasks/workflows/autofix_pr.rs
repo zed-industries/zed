@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, FluentBuilder, NamedJob, RepositoryTarget, named},
+    steps::{self, FluentBuilder, NamedJob, RepositoryTarget, TokenPermissions, named},
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -164,8 +164,8 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
     let (authenticate, token) = steps::authenticate_as_zippy()
         .for_repository(RepositoryTarget::current())
         .with_permissions([
-            ("permission-contents".to_owned(), Level::Write),
-            ("permission-workflows".to_owned(), Level::Write),
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
         ])
         .into();
 

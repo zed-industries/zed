@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, RepositoryTarget, named},
+    steps::{self, NamedJob, RepositoryTarget, TokenPermissions, named},
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -47,8 +47,8 @@ fn run_cherry_pick(
     let (authenticate, token) = steps::authenticate_as_zippy()
         .for_repository(RepositoryTarget::current())
         .with_permissions([
-            ("permission-contents".to_owned(), Level::Write),
-            ("permission-workflows".to_owned(), Level::Write),
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
         ])
         .into();
 
