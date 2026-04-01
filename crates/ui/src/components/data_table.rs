@@ -23,6 +23,7 @@ pub mod table_row;
 mod tests;
 
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
+const RESIZE_DIVIDER_WIDTH: f32 = 1.0;
 
 /// Represents an unchecked table row, which is a vector of elements.
 /// Will be converted into `TableRow<T>` internally
@@ -151,12 +152,13 @@ mod resize_handles {
             let resizable_columns = Rc::clone(&resizable_columns_shared);
             let initial_sizes = Rc::clone(&initial_sizes_shared);
             window.with_id(column_ix, |window| {
-                let mut resize_divider =
-                    div().id(column_ix).relative().top_0().w_px().h_full().bg(cx
-                        .theme()
-                        .colors()
-                        .border
-                        .opacity(0.8));
+                let mut resize_divider = div()
+                    .id(column_ix)
+                    .relative()
+                    .top_0()
+                    .w(px(RESIZE_DIVIDER_WIDTH))
+                    .h_full()
+                    .bg(cx.theme().colors().border.opacity(0.8));
 
                 let mut resize_handle = div()
                     .id("column-resize-handle")
@@ -497,8 +499,8 @@ impl RedistributableColumnsState {
         let bounds_width = bounds.right() - bounds.left();
         let col_idx = drag_event.drag(cx).0;
 
-        let column_handle_width = Self::get_fraction(
-            &DefiniteLength::Absolute(AbsoluteLength::Pixels(px(RESIZE_COLUMN_WIDTH))),
+        let divider_width = Self::get_fraction(
+            &DefiniteLength::Absolute(AbsoluteLength::Pixels(px(RESIZE_DIVIDER_WIDTH))),
             bounds_width,
             rem_size,
         );
@@ -508,7 +510,7 @@ impl RedistributableColumnsState {
             .map_ref(|length| Self::get_fraction(length, bounds_width, rem_size));
 
         for length in widths[0..=col_idx].iter() {
-            col_position += length + column_handle_width;
+            col_position += length + divider_width;
         }
 
         let mut total_length_ratio = col_position;
@@ -516,11 +518,11 @@ impl RedistributableColumnsState {
             total_length_ratio += length;
         }
         let cols = self.resize_behavior.cols();
-        total_length_ratio += (cols - 1 - col_idx) as f32 * column_handle_width;
+        total_length_ratio += (cols - 1 - col_idx) as f32 * divider_width;
 
         let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
         let drag_fraction = drag_fraction * total_length_ratio;
-        let diff = drag_fraction - col_position - column_handle_width / 2.0;
+        let diff = drag_fraction - col_position - divider_width / 2.0;
 
         Self::drag_column_handle(diff, col_idx, &mut widths, &self.resize_behavior.clone());
 
@@ -889,9 +891,7 @@ pub fn render_table_header(
         .flex()
         .flex_row()
         .items_center()
-        .justify_between()
         .w_full()
-        .p_2()
         .border_b_1()
         .border_color(cx.theme().colors().border)
         .children(
@@ -902,6 +902,8 @@ pub fn render_table_header(
                 .zip(column_widths.into_vec())
                 .map(|((header_idx, h), width)| {
                     base_cell_style_text(width, table_context.use_ui_font, cx)
+                        .px_1()
+                        .py_0p5()
                         .child(h)
                         .id(ElementId::NamedInteger(
                             shared_element_id.clone(),

@@ -2507,7 +2507,10 @@ impl Render for GitGraph {
                         .flex_col()
                         .child(
                             div()
-                                .p_2()
+                                .flex()
+                                .items_center()
+                                .px_1()
+                                .py_0p5()
                                 .border_b_1()
                                 .whitespace_nowrap()
                                 .border_color(cx.theme().colors().border)
