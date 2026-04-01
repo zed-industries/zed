@@ -94,4 +94,4 @@ send, cmd-enter follow mode) — these are separate from the `AgentPanel` contex
 
 All public functions use `#[no_mangle] pub extern "C" fn` with C-compatible types.
 The Swift side imports them via `Zed-Bridging-Header.h`.
-See `docs/ios-port-plan.md` for full architecture details.
+See `ios/port-plan.md` for full architecture details.

@@ -19,4 +19,4 @@
 //!   gpui_macos/        — Closest code to fork (shares Metal + CoreText)
 //!   gpui_web/          — Minimal Platform implementation, async patterns
 //!
-//! See: docs/ios-port-plan.md Phase 1 for full details.
+//! See: ios/port-plan.md Phase 1 for full details.

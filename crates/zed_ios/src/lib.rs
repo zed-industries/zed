@@ -4,7 +4,7 @@
 //! It provides C FFI entry points that the Swift side calls to initialize GPUI,
 //! open windows, and manage the application lifecycle.
 //!
-//! See: docs/ios-port-plan.md for full architecture details.
+//! See: ios/port-plan.md for full architecture details.
 
 #[cfg(target_os = "ios")]
 mod connection_landing;

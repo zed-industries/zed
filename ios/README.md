@@ -93,8 +93,8 @@ require Xcode's toolchain. The Swift host is three files (~60 lines). See
 | `crates/zed_ios/` | Rust staticlib — app init, connection landing, edit prediction registry |
 | `crates/gpui_ios/` | GPUI iOS platform layer — Metal renderer, CoreText, UIKit integration |
 | `assets/keymaps/default-ios.json` | iPad keymap (standalone, not an overlay on macOS) |
-| `docs/ios-port-plan.md` | Full architecture and phase plan |
-| `docs/ios-checklist.md` | Working checklist of what's done and next |
+| `ios/port-plan.md` | Full architecture and phase plan |
+| `ios/checklist.md` | Working checklist of what's done and next |
 
 ## Editor setup for Swift files
 

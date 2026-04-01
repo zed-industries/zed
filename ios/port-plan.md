@@ -1099,7 +1099,7 @@ Swift host app (AppDelegate, SceneDelegate)
 ## Feature Delta: Desktop vs iPad
 
 Compared against desktop `crates/zed/Cargo.toml`, the iPad build is missing these
-feature areas. See `docs/ios-checklist.md` for the working task list.
+feature areas. See `ios/checklist.md` for the working task list.
 
 **No platform blockers (add crate + init):**
 notifications, sidebar, outline, tab_switcher, markdown/markdown_preview, image_viewer,

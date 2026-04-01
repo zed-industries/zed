@@ -1,6 +1,6 @@
 # iPad Port — Working Checklist
 
-Day-to-day reference for what's done and what's next. See `docs/ios-port-plan.md` for
+Day-to-day reference for what's done and what's next. See `ios/port-plan.md` for
 full architectural details.
 
 ---
