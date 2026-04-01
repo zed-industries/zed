@@ -74,7 +74,7 @@ use util::{
 };
 pub use worktree_settings::WorktreeSettings;
 
-use crate::ignore::IgnoreKind;
+use crate::ignore::{IgnoreKind, TrackedPaths};
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
@@ -247,6 +247,8 @@ pub struct LocalSnapshot {
     /// All of the gitignore files in the worktree, indexed by their absolute path.
     /// The boolean indicates whether the gitignore needs to be updated.
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
+    /// Tracked paths for all git repositories in the worktree, indexed by their work directory.
+    tracked_paths_by_work_dir_abs_path: HashMap<Arc<Path>, Arc<TrackedPaths>>,
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
@@ -412,6 +414,7 @@ impl Worktree {
                 ignores_by_parent_abs_path: Default::default(),
                 global_gitignore: Default::default(),
                 repo_exclude_by_work_dir_abs_path: Default::default(),
+                tracked_paths_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
                 snapshot: Snapshot::new(
                     worktree_id,
@@ -1940,6 +1943,7 @@ impl LocalWorktree {
     ) {
         self.snapshot.git_repositories = Default::default();
         self.snapshot.ignores_by_parent_abs_path = Default::default();
+        self.snapshot.tracked_paths_by_work_dir_abs_path = Default::default();
         let root_name = new_path
             .as_path()
             .file_name()
@@ -2728,10 +2732,20 @@ impl LocalSnapshot {
         {
             ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude.clone());
         }
-        ignore_stack.repo_root = repo_root;
+        ignore_stack.repo_root = repo_root.clone();
+        ignore_stack.tracked_paths = ignore_stack
+            .repo_root
+            .as_ref()
+            .and_then(|abs_path| self.tracked_paths_by_work_dir_abs_path.get(abs_path))
+            .cloned();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
+                ignore_stack.repo_root = repo_root.clone();
+                ignore_stack.tracked_paths = repo_root
+                    .as_ref()
+                    .and_then(|abs_path| self.tracked_paths_by_work_dir_abs_path.get(abs_path))
+                    .cloned();
                 break;
             } else if let Some(ignore) = ignore {
                 ignore_stack =
@@ -2741,6 +2755,11 @@ impl LocalSnapshot {
 
         if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
             ignore_stack = IgnoreStack::all();
+            ignore_stack.repo_root = repo_root.clone();
+            ignore_stack.tracked_paths = repo_root
+                .as_ref()
+                .and_then(|abs_path| self.tracked_paths_by_work_dir_abs_path.get(abs_path))
+                .cloned();
         }
 
         ignore_stack
@@ -3083,7 +3102,7 @@ impl BackgroundScannerState {
         dot_git_path: Arc<RelPath>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
-    ) {
+    ) -> Option<LocalRepositoryEntry> {
         let work_dir_path: Arc<RelPath> = match dot_git_path.parent() {
             Some(parent_dir) => {
                 // Guard against repositories inside the repository metadata
@@ -3094,7 +3113,7 @@ impl BackgroundScannerState {
                     log::debug!(
                         "not building git repository for nested `.git` directory, `.git` path in the worktree: {dot_git_path:?}"
                     );
-                    return;
+                    return None;
                 };
 
                 parent_dir.into()
@@ -3105,7 +3124,7 @@ impl BackgroundScannerState {
                 log::debug!(
                     "not building git repository for the worktree itself, `.git` path in the worktree: {dot_git_path:?}"
                 );
-                return;
+                return None;
             }
         };
 
@@ -3120,7 +3139,7 @@ impl BackgroundScannerState {
             watcher,
         )
         .await
-        .log_err();
+        .log_err()
     }
 
     async fn insert_git_repository_for_path(
@@ -3822,6 +3841,19 @@ enum BackgroundScannerPhase {
 }
 
 impl BackgroundScanner {
+    async fn load_tracked_paths_for_repository(
+        &self,
+        dot_git_abs_path: &Path,
+    ) -> Option<Arc<TrackedPaths>> {
+        let repository = self
+            .fs
+            .open_repo(dot_git_abs_path, None)
+            .with_context(|| format!("opening repository at {}", dot_git_abs_path.display()))
+            .log_err()?;
+        let tracked_paths = repository.tracked_paths().await.log_err()?;
+        Some(Arc::new(TrackedPaths::new(tracked_paths)))
+    }
+
     async fn run(&mut self, mut fs_events_rx: Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>) {
         let root_abs_path;
         let scanning_enabled;
@@ -3861,7 +3893,7 @@ impl BackgroundScanner {
             && scanning_enabled
         {
             maybe!(async {
-                self.state
+                let local_repository = self.state
                     .lock()
                     .await
                     .insert_git_repository_for_path(
@@ -3872,6 +3904,14 @@ impl BackgroundScanner {
                     )
                     .await
                     .log_err()?;
+                if let Some(tracked_paths) =
+                    self.load_tracked_paths_for_repository(&local_repository.dot_git_abs_path).await
+                {
+                    self.state.lock().await.snapshot.tracked_paths_by_work_dir_abs_path.insert(
+                        local_repository.work_directory_abs_path.clone(),
+                        tracked_paths,
+                    );
+                }
                 Some(ancestor_dot_git)
             })
             .await
@@ -4586,14 +4626,24 @@ impl BackgroundScanner {
             };
 
             if child_name == DOT_GIT {
-                let mut state = self.state.lock().await;
-                state
+                let local_repository = self.state.lock().await
                     .insert_git_repository(
                         child_path.clone(),
                         self.fs.as_ref(),
                         self.watcher.as_ref(),
                     )
                     .await;
+                if let Some(local_repository) = local_repository
+                    && let Some(tracked_paths) = self
+                        .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
+                        .await
+                {
+                    self.state.lock().await.snapshot.tracked_paths_by_work_dir_abs_path.insert(
+                        local_repository.work_directory_abs_path.clone(),
+                        tracked_paths.clone(),
+                    );
+                    ignore_stack.tracked_paths = Some(tracked_paths);
+                }
             } else if child_name == GITIGNORE {
                 match build_gitignore(&child_abs_path, self.fs.as_ref()).await {
                     Ok(ignore) => {
@@ -4870,19 +4920,15 @@ impl BackgroundScanner {
                         state.snapshot.ignores_by_parent_abs_path.extend(ignores);
                         if let Some((ancestor_dot_git, work_directory)) = repo {
                             if let Some(exclude) = exclude {
-                                let work_directory_abs_path = self
-                                    .state
-                                    .lock()
-                                    .await
-                                    .snapshot
-                                    .work_directory_abs_path(&work_directory);
+                                let work_directory_abs_path =
+                                    state.snapshot.work_directory_abs_path(&work_directory);
 
                                 state
                                     .snapshot
                                     .repo_exclude_by_work_dir_abs_path
                                     .insert(work_directory_abs_path.into(), (exclude, false));
                             }
-                            state
+                            if let Some(local_repository) = state
                                 .insert_git_repository_for_path(
                                     work_directory,
                                     ancestor_dot_git.into(),
@@ -4890,7 +4936,18 @@ impl BackgroundScanner {
                                     self.watcher.as_ref(),
                                 )
                                 .await
-                                .log_err();
+                                .log_err()
+                                && let Some(tracked_paths) = self
+                                    .load_tracked_paths_for_repository(
+                                        &local_repository.dot_git_abs_path,
+                                    )
+                                    .await
+                            {
+                                state.snapshot.tracked_paths_by_work_dir_abs_path.insert(
+                                    local_repository.work_directory_abs_path.clone(),
+                                    tracked_paths,
+                                );
+                            }
                         }
                     }
                 }
@@ -4916,7 +4973,11 @@ impl BackgroundScanner {
             && let Some(local_repo) = snapshot.local_repo_for_work_directory_path(&path)
         {
             let id = local_repo.work_directory_id;
+            let work_directory_abs_path = local_repo.work_directory_abs_path.clone();
             log::debug!("remove repo path: {:?}", path);
+            snapshot
+                .tracked_paths_by_work_dir_abs_path
+                .remove(&work_directory_abs_path);
             snapshot.git_repositories.remove(&id);
             return Some(());
         }
@@ -5008,6 +5069,7 @@ impl BackgroundScanner {
 
             for key in repo_exclude_keys_to_remove {
                 snapshot.repo_exclude_by_work_dir_abs_path.remove(&key);
+                snapshot.tracked_paths_by_work_dir_abs_path.remove(&key);
             }
 
             snapshot
@@ -5213,7 +5275,7 @@ impl BackgroundScanner {
                         return Vec::new();
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
-                    state
+                    if let Some(local_repository) = state
                         .insert_git_repository(
                             RelPath::new(relative, PathStyle::local())
                                 .unwrap()
@@ -5221,15 +5283,34 @@ impl BackgroundScanner {
                             self.fs.as_ref(),
                             self.watcher.as_ref(),
                         )
-                        .await;
+                        .await
+                        && let Some(tracked_paths) = self
+                            .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
+                            .await
+                    {
+                        state.snapshot.tracked_paths_by_work_dir_abs_path.insert(
+                            local_repository.work_directory_abs_path.clone(),
+                            tracked_paths,
+                        );
+                    }
                 }
                 Some(local_repository) => {
+                    affected_repo_roots.push(local_repository.work_directory_abs_path.clone());
                     state.snapshot.git_repositories.update(
                         &local_repository.work_directory_id,
                         |entry| {
                             entry.git_dir_scan_id = scan_id;
                         },
                     );
+                    if let Some(tracked_paths) = self
+                        .load_tracked_paths_for_repository(&local_repository.dot_git_abs_path)
+                        .await
+                    {
+                        state.snapshot.tracked_paths_by_work_dir_abs_path.insert(
+                            local_repository.work_directory_abs_path.clone(),
+                            tracked_paths,
+                        );
+                    }
                 }
             };
         }
@@ -5265,6 +5346,9 @@ impl BackgroundScanner {
                     affected_repo_roots.push(entry.dot_git_abs_path.parent().unwrap().into());
                     snapshot
                         .repo_exclude_by_work_dir_abs_path
+                        .remove(&entry.work_directory_abs_path);
+                    snapshot
+                        .tracked_paths_by_work_dir_abs_path
                         .remove(&entry.work_directory_abs_path);
                 }
                 preserve
