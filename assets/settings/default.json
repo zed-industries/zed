@@ -1117,8 +1117,8 @@
     "expand_terminal_card": true,
     // How thinking blocks should be displayed by default in the agent panel.
     //
-    // Default: automatic
-    "thinking_display": "automatic",
+    // Default: auto
+    "thinking_display": "auto",
     // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     //
