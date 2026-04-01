@@ -81,11 +81,14 @@ pub enum SidebarSide {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingBlockDisplay {
+    /// Thinking blocks fully expand during streaming, then auto-collapse
+    /// when the model finishes thinking. Users can re-expand after collapse.
+    #[default]
+    Auto,
     /// Thinking blocks auto-expand with a height constraint during streaming,
     /// then remain in their constrained state when complete. Users can click
     /// to fully expand or collapse.
-    #[default]
-    Automatic,
+    Preview,
     /// Thinking blocks are always fully expanded by default (no height constraint).
     AlwaysExpanded,
     /// Thinking blocks are always collapsed by default.
