@@ -448,6 +448,29 @@ impl TerminalBuilder {
         background_executor: &BackgroundExecutor,
         path_style: PathStyle,
     ) -> Result<TerminalBuilder> {
+        Self::new_ssh_with_task(
+            input_tx, resize_tx, output_rx, exit_rx, title_override, working_directory,
+            cursor_shape, alternate_scroll, max_scroll_history_lines, window_id,
+            background_executor, path_style, None, None,
+        )
+    }
+
+    pub fn new_ssh_with_task(
+        input_tx: smol::channel::Sender<Vec<u8>>,
+        resize_tx: smol::channel::Sender<(u32, u32)>,
+        output_rx: smol::channel::Receiver<Vec<u8>>,
+        exit_rx: smol::channel::Receiver<Option<u32>>,
+        title_override: Option<String>,
+        working_directory: Option<PathBuf>,
+        cursor_shape: CursorShape,
+        alternate_scroll: AlternateScroll,
+        max_scroll_history_lines: Option<usize>,
+        window_id: u64,
+        background_executor: &BackgroundExecutor,
+        path_style: PathStyle,
+        task_state: Option<TaskState>,
+        completion_tx: Option<Sender<Option<ExitStatus>>>,
+    ) -> Result<TerminalBuilder> {
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = max_scroll_history_lines
             .unwrap_or(DEFAULT_SCROLL_HISTORY_LINES)
@@ -472,9 +495,9 @@ impl TerminalBuilder {
         let term = Arc::new(FairMutex::new(term));
 
         let terminal = Terminal {
-            task: None,
+            task: task_state,
             terminal_type: TerminalType::Ssh { input_tx, resize_tx },
-            completion_tx: None,
+            completion_tx,
             term,
             term_config: config,
             title_override,
@@ -876,6 +899,7 @@ impl TerminalBuilder {
                                 futures::future::pending::<Option<Option<u32>>>().await
                             }
                         }.fuse() => {
+                            log::info!("[terminal] SSH exit received (in select): {:?}", exit);
                             if let Some(status) = exit {
                                 let code = status.map(|s| s as i32);
                                 terminal.update(cx, |terminal, cx| {
@@ -884,6 +908,17 @@ impl TerminalBuilder {
                             }
                             break;
                         }
+                    }
+                }
+                // If the loop broke because output_rx closed (data branch),
+                // the exit signal may already be waiting. Check it now.
+                if let Some(ref rx) = exit_rx {
+                    if let Ok(status) = rx.try_recv() {
+                        log::info!("[terminal] SSH exit received (after loop): {:?}", status);
+                        let code = status.map(|s| s as i32);
+                        terminal.update(cx, |terminal, cx| {
+                            terminal.register_task_finished(code, cx);
+                        })?;
                     }
                 }
                 anyhow::Ok(())

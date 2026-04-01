@@ -1528,15 +1528,19 @@ impl ConversationView {
                     let result = authenticate.await;
 
                     match &result {
-                        Ok(_) => telemetry::event!(
-                            "Authenticate Agent Succeeded",
-                            agent = agent_telemetry_id
-                        ),
-                        Err(_) => {
+                        Ok(_) => {
+                            log::info!("[auth] terminal auth succeeded, calling reset");
+                            telemetry::event!(
+                                "Authenticate Agent Succeeded",
+                                agent = agent_telemetry_id
+                            );
+                        }
+                        Err(err) => {
+                            log::error!("[auth] terminal auth failed: {err:?}");
                             telemetry::event!(
                                 "Authenticate Agent Failed",
                                 agent = agent_telemetry_id,
-                            )
+                            );
                         }
                     }
 
@@ -1559,6 +1563,15 @@ impl ConversationView {
                                 })
                             }
                         } else {
+                            // Force a fresh agent connection — the old process
+                            // may have cached auth failure state.
+                            this.connection_store.update(cx, |store, cx| {
+                                store.restart_connection(
+                                    this.connection_key.clone(),
+                                    this.agent.clone(),
+                                    cx,
+                                );
+                            });
                             this.reset(window, cx);
                         }
                         this.auth_task.take()
@@ -1725,12 +1738,18 @@ impl ConversationView {
                 })?
                 .await?;
 
-            let success_patterns = match method.0.as_ref() {
-                "claude-login" | GEMINI_TERMINAL_AUTH_METHOD_ID => vec![
-                    "Login successful".to_string(),
-                    "Type your message".to_string(),
-                ],
-                _ => Vec::new(),
+            let success_patterns: Vec<String> = if cfg!(target_os = "ios") {
+                // On iOS, the terminal auth runs `security unlock-keychain` which
+                // doesn't output login patterns. Use exit code detection instead.
+                Vec::new()
+            } else {
+                match method.0.as_ref() {
+                    "claude-login" | GEMINI_TERMINAL_AUTH_METHOD_ID => vec![
+                        "Login successful".to_string(),
+                        "Type your message".to_string(),
+                    ],
+                    _ => Vec::new(),
+                }
             };
             if success_patterns.is_empty() {
                 // No success patterns specified: wait for the process to exit and check exit code

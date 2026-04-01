@@ -7,7 +7,7 @@ use itertools::Itertools as _;
 use language::LanguageName;
 use remote::RemoteClient;
 use settings::{Settings, SettingsLocation};
-use smol::channel::bounded;
+use smol::channel::{Sender, bounded};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -63,6 +63,14 @@ impl Project {
         spawn_task: SpawnInTerminal,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
+        // On iOS, open an SSH shell terminal and send the task command as input.
+        // The desktop path uses `build_command` to construct a local SSH subprocess,
+        // which isn't available on iOS.
+        #[cfg(target_os = "ios")]
+        {
+            return self.create_terminal_task_ios(spawn_task, cx);
+        }
+
         let is_via_remote = self.remote_client.is_some();
 
         let path: Option<Arc<Path>> = if let Some(cwd) = &spawn_task.cwd {
@@ -308,6 +316,126 @@ impl Project {
             self.active_project_directory(cx).map(|p| p.to_path_buf())
         };
         self.create_terminal_shell_internal(working_directory, true, cx)
+    }
+
+    /// iOS-specific task terminal: opens an SSH shell and sends the task command.
+    /// After the command completes, the shell exits so the task completion is detected.
+    #[cfg(target_os = "ios")]
+    fn create_terminal_task_ios(
+        &mut self,
+        spawn_task: SpawnInTerminal,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Terminal>>> {
+        let path = spawn_task
+            .cwd
+            .as_ref()
+            .map(|p| Arc::from(p.as_ref()))
+            .or_else(|| self.active_project_directory(cx));
+
+        let mut settings_location = None;
+        if let Some(path) = path.as_ref()
+            && let Some((worktree, _)) = self.find_worktree(path, cx)
+        {
+            settings_location = Some(SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path: RelPath::empty(),
+            });
+        }
+        let settings = TerminalSettings::get(settings_location, cx).clone();
+        let path_style = self.path_style(cx);
+
+        let (completion_tx, completion_rx) = bounded(1);
+        let task_state = Some(TaskState {
+            spawned_task: spawn_task.clone(),
+            status: TaskStatus::Running,
+            completion_rx,
+        });
+
+        let remote_client = self.remote_client.clone();
+
+        cx.spawn(async move |project, cx| {
+            let remote_client = remote_client
+                .ok_or_else(|| anyhow::anyhow!("No remote connection for terminal task on iOS"))?;
+
+            let (connection, host) = cx.update(|cx| {
+                let client = remote_client.read(cx);
+                let conn = client
+                    .connection()
+                    .ok_or_else(|| anyhow::anyhow!("No active SSH connection"))?;
+                let name = client.connection_options().display_name();
+                anyhow::Ok((conn, name))
+            })?;
+
+            let working_dir = path.as_ref().map(|p| p.display().to_string());
+            let channel = connection
+                .open_shell_channel("xterm-256color", 80, 24, working_dir, cx)
+                .await?;
+
+            let input_tx = channel.input_tx.clone();
+
+            let builder = TerminalBuilder::new_ssh_with_task(
+                channel.input_tx,
+                channel.resize_tx,
+                channel.output_rx,
+                channel.exit_rx,
+                Some(format!("{host} — {}", spawn_task.label)),
+                path.as_ref().map(|p| p.to_path_buf()),
+                settings.cursor_shape,
+                settings.alternate_scroll,
+                settings.max_scroll_history_lines,
+                0,
+                cx.background_executor(),
+                path_style,
+                task_state,
+                Some(completion_tx),
+            )?;
+
+            // Build the command line to send to the shell
+            let command_line = if let Some(ref program) = spawn_task.command {
+                let mut parts = vec![program.clone()];
+                parts.extend(spawn_task.args.iter().cloned());
+                parts.join(" ")
+            } else {
+                String::new()
+            };
+
+            project.update(cx, move |this, cx| {
+                let terminal_handle = cx.new(|cx| builder.subscribe(cx));
+
+                // Send the command to the shell after a brief delay for shell init.
+                // Append "; exit $?" so the shell exits after the command,
+                // allowing wait_for_completed_task to detect completion.
+                if !command_line.is_empty() {
+                    let cmd_with_newline = format!("{command_line}; exit $?\n");
+                    cx.spawn(async move |_, cx| {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(500))
+                            .await;
+                        input_tx.send(cmd_with_newline.into_bytes()).await.ok();
+                    })
+                    .detach();
+                }
+
+                this.terminals
+                    .local_handles
+                    .push(terminal_handle.downgrade());
+
+                let id = terminal_handle.entity_id();
+                cx.observe_release(&terminal_handle, move |project, _terminal, cx| {
+                    let handles = &mut project.terminals.local_handles;
+                    if let Some(index) = handles
+                        .iter()
+                        .position(|terminal| terminal.entity_id() == id)
+                    {
+                        handles.remove(index);
+                        cx.notify();
+                    }
+                })
+                .detach();
+
+                terminal_handle
+            })
+        })
     }
 
     /// Internal method for creating terminal shells.

@@ -56,6 +56,7 @@ pub struct AcpConnection {
     _io_task: Task<Result<(), acp::Error>>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
+    _bridge_task: Option<Task<()>>,
 }
 
 struct ConfigOptions {
@@ -174,6 +175,7 @@ pub async fn connect(
 ) -> Result<Rc<dyn AgentConnection>> {
     #[cfg(target_os = "ios")]
     let conn = {
+        log::info!("[acp] iOS: connecting external agent {:?} cmd={:?} args={:?}", agent_id, command.path, command.args);
         // On iOS, execute the agent command on the remote host via SSH channel.
         let (connection, working_dir) = cx.update(|cx| {
             let project_ref = project.read(cx);
@@ -187,8 +189,10 @@ pub async fn connect(
                 .map(|wt| wt.read(cx).abs_path().to_string_lossy().to_string());
             anyhow::Ok((conn, dir))
         })?;
+        log::info!("[acp] iOS: got remote connection, working_dir={:?}", working_dir);
 
         let env = command.env.clone().unwrap_or_default();
+        log::info!("[acp] iOS: opening command channel...");
         let channel = connection
             .open_command_channel(
                 &command.path.display().to_string(),
@@ -198,6 +202,7 @@ pub async fn connect(
                 cx,
             )
             .await?;
+        log::info!("[acp] iOS: command channel opened, starting ACP handshake...");
 
         AcpConnection::ssh(
             agent_id,
@@ -209,7 +214,9 @@ pub async fn connect(
             channel,
             cx,
         )
-        .await?
+        .await
+        .inspect(|_| log::info!("[acp] iOS: ACP connection established successfully"))
+        .inspect_err(|e| log::error!("[acp] iOS: ACP connection failed: {e:?}"))?
     };
 
     #[cfg(not(target_os = "ios"))]
@@ -416,6 +423,7 @@ impl AcpConnection {
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: stderr_task,
+            _bridge_task: None,
             child: Some(child),
         })
     }
@@ -452,10 +460,24 @@ impl AcpConnection {
             cx: cx.clone(),
         };
 
-        // Wrap the SSH channel's smol channels as AsyncRead/AsyncWrite
+        // Wrap the SSH channel's smol channels as AsyncRead/AsyncWrite.
+        // The smol channel receiver can't be polled directly from GPUI's executor
+        // (smol::spawn wakers aren't driven), so we bridge through a futures mpsc
+        // channel via a background task.
         let stdin = SshChannelWriter(channel.input_tx);
-        let stdout = SshChannelReader {
-            rx: channel.output_rx,
+        let (bridge_tx, bridge_rx) = futures::channel::mpsc::unbounded::<Vec<u8>>();
+        let _bridge_task = cx.background_spawn({
+            let output_rx = channel.output_rx;
+            async move {
+                while let Ok(data) = output_rx.recv().await {
+                    if bridge_tx.unbounded_send(data).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+        let stdout = SshChannelBridgeReader {
+            rx: bridge_rx,
             buffer: Vec::new(),
             offset: 0,
         };
@@ -540,6 +562,7 @@ impl AcpConnection {
             _io_task: io_task,
             _wait_task: wait_task,
             _stderr_task: Task::ready(Ok(())),
+            _bridge_task: Some(_bridge_task),
             child: None,
         })
     }
@@ -1059,16 +1082,33 @@ impl AgentConnection for AcpConnection {
         method_id: &acp::AuthMethodId,
         cx: &App,
     ) -> Option<SpawnInTerminal> {
-        let method = self
-            .auth_methods
-            .iter()
-            .find(|method| method.id() == method_id)?;
+        // On iOS, the agent runs on a remote macOS host via SSH. Its credentials
+        // are in the macOS Keychain which is locked for SSH sessions. Instead of
+        // running the agent's own auth command (which would try to open a browser),
+        // we unlock the keychain so the agent can read its existing credentials.
+        // The user must have previously authenticated the agent on the server.
+        #[cfg(target_os = "ios")]
+        return Some(acp_thread::build_terminal_auth_task(
+            terminal_auth_task_id(&self.id, method_id),
+            "Unlock Keychain".to_string(),
+            "security".to_string(),
+            vec!["unlock-keychain".to_string()],
+            Default::default(),
+        ));
 
-        match method {
-            acp::AuthMethod::Terminal(terminal) if cx.has_flag::<AcpBetaFeatureFlag>() => {
-                Some(terminal_auth_task(&self.command, &self.id, terminal))
+        #[cfg(not(target_os = "ios"))]
+        {
+            let method = self
+                .auth_methods
+                .iter()
+                .find(|method| method.id() == method_id)?;
+
+            match method {
+                acp::AuthMethod::Terminal(terminal) if cx.has_flag::<AcpBetaFeatureFlag>() => {
+                    Some(terminal_auth_task(&self.command, &self.id, terminal))
+                }
+                _ => meta_terminal_auth_task(&self.id, method_id, method),
             }
-            _ => meta_terminal_auth_task(&self.id, method_id, method),
         }
     }
 
@@ -1958,21 +1998,25 @@ impl futures::AsyncWrite for SshChannelWriter {
     }
 }
 
-/// Adapter: reads bytes from an SSH channel via smol::channel::Receiver.
-struct SshChannelReader {
-    rx: smol::channel::Receiver<Vec<u8>>,
+/// Adapter: reads bytes bridged from an SSH channel via a futures mpsc channel.
+///
+/// A GPUI background task reads from the smol channel (SSH output) and forwards
+/// to a `futures::channel::mpsc::UnboundedReceiver`. This avoids depending on
+/// the global smol executor which isn't driven by GPUI.
+struct SshChannelBridgeReader {
+    rx: futures::channel::mpsc::UnboundedReceiver<Vec<u8>>,
     buffer: Vec<u8>,
     offset: usize,
 }
 
-impl Unpin for SshChannelReader {}
-
-impl futures::AsyncRead for SshChannelReader {
+impl futures::AsyncRead for SshChannelBridgeReader {
     fn poll_read(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
+        use futures::StreamExt as _;
+
         // Return buffered data first
         if self.offset < self.buffer.len() {
             let remaining = &self.buffer[self.offset..];
@@ -1986,9 +2030,9 @@ impl futures::AsyncRead for SshChannelReader {
             return std::task::Poll::Ready(Ok(n));
         }
 
-        // Try non-blocking receive first
-        match self.rx.try_recv() {
-            Ok(data) => {
+        // Poll the futures mpsc receiver — properly registers wakers
+        match self.rx.poll_next_unpin(cx) {
+            std::task::Poll::Ready(Some(data)) => {
                 let n = data.len().min(buf.len());
                 buf[..n].copy_from_slice(&data[..n]);
                 if n < data.len() {
@@ -1997,20 +2041,8 @@ impl futures::AsyncRead for SshChannelReader {
                 }
                 std::task::Poll::Ready(Ok(n))
             }
-            Err(smol::channel::TryRecvError::Empty) => {
-                // Register waker via a spawned task that waits on recv
-                let waker = cx.waker().clone();
-                let rx = self.rx.clone();
-                smol::spawn(async move {
-                    let _ = rx.recv().await;
-                    waker.wake();
-                })
-                .detach();
-                std::task::Poll::Pending
-            }
-            Err(smol::channel::TryRecvError::Closed) => {
-                std::task::Poll::Ready(Ok(0)) // EOF
-            }
+            std::task::Poll::Ready(None) => std::task::Poll::Ready(Ok(0)),
+            std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
 }

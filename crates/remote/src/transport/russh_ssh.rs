@@ -569,8 +569,11 @@ impl RemoteConnection for RusshRemoteConnection {
                 }
             });
 
-            // Reader task: SSH channel → output bytes
+            // Reader task: SSH channel → output bytes.
+            // Collect ExitStatus when it arrives, but don't break until
+            // EOF/Close so we don't miss it in a race.
             tokio::spawn(async move {
+                let mut exit_status = None;
                 while let Some(msg) = read_half.wait().await {
                     match msg {
                         russh::ChannelMsg::Data { data } => {
@@ -583,17 +586,15 @@ impl RemoteConnection for RusshRemoteConnection {
                                 break;
                             }
                         }
-                        russh::ChannelMsg::ExitStatus { exit_status } => {
-                            exit_tx.send(Some(exit_status)).await.ok();
-                            break;
+                        russh::ChannelMsg::ExitStatus { exit_status: s } => {
+                            exit_status = Some(s);
                         }
-                        russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
-                            exit_tx.send(None).await.ok();
-                            break;
-                        }
+                        russh::ChannelMsg::Eof => {}
+                        russh::ChannelMsg::Close => break,
                         _ => {}
                     }
                 }
+                exit_tx.send(exit_status).await.ok();
             });
 
             Ok(SshShellChannel {
@@ -635,6 +636,7 @@ impl RemoteConnection for RusshRemoteConnection {
         }
         let inner = inner_parts.join(" ");
         let full_command = format!("{} -l -c {}", shell, shell_escape(&inner));
+        log::info!("[ssh] open_command_channel: {full_command}");
 
         Tokio::spawn_result(cx, async move {
             let handle = session.lock().await;
@@ -668,7 +670,10 @@ impl RemoteConnection for RusshRemoteConnection {
                 }
             });
 
-            // Reader task: SSH channel stdout → output bytes
+            // Reader task: SSH channel stdout → output bytes.
+            // stderr (ExtendedData) is logged but NOT forwarded to output,
+            // because mixing it into the stream corrupts protocols like ACP
+            // that use JSON-RPC framing over stdin/stdout.
             tokio::spawn(async move {
                 while let Some(msg) = read_half.wait().await {
                     match msg {
@@ -678,16 +683,20 @@ impl RemoteConnection for RusshRemoteConnection {
                             }
                         }
                         russh::ChannelMsg::ExtendedData { data, .. } => {
-                            // stderr — forward as output for now
-                            if output_tx.send(data.to_vec()).await.is_err() {
-                                break;
+                            let text = String::from_utf8_lossy(&data);
+                            for line in text.lines() {
+                                if !line.is_empty() {
+                                    log::warn!("[ssh] command stderr: {line}");
+                                }
                             }
                         }
                         russh::ChannelMsg::ExitStatus { exit_status } => {
+                            log::info!("[ssh] command channel exited with status {exit_status}");
                             exit_tx.send(Some(exit_status)).await.ok();
                             break;
                         }
                         russh::ChannelMsg::Eof | russh::ChannelMsg::Close => {
+                            log::info!("[ssh] command channel closed");
                             exit_tx.send(None).await.ok();
                             break;
                         }

@@ -717,5 +717,40 @@
       "enter": "menu::Confirm",
       "alt-enter": "editor::Newline"
     }
+  },
+  {
+    "context": "AgentPanel && acp_thread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "agent::NewExternalAgentThread",
+      "cmd-alt-t": "agent::NewThread"
+    }
+  },
+  {
+    "context": "AcpThread > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "agent::ChatWithFollow",
+      "cmd-shift-enter": "agent::SendImmediately",
+      "cmd-shift-v": "agent::PasteRaw",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-tab": "agent::CycleModeSelector",
+      "ctrl-;": "agent::OpenAddContextMenu"
+    }
+  },
+  {
+    "context": "AcpThread > Editor && !use_modifier_to_send",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "agent::Chat"
+    }
+  },
+  {
+    "context": "AcpThread > Editor && use_modifier_to_send",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "agent::Chat",
+      "enter": "editor::Newline"
+    }
   }
 ]

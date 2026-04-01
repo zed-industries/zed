@@ -376,6 +376,7 @@ impl AgentServerStore {
     }
 
     pub fn init_remote(session: &AnyProtoClient) {
+        log::info!("[agent-server-store] init_remote: registering handlers");
         session.add_entity_message_handler(Self::handle_external_agents_updated);
         session.add_entity_message_handler(Self::handle_new_version_available);
     }
@@ -828,6 +829,7 @@ impl AgentServerStore {
         envelope: TypedEnvelope<proto::ExternalAgentsUpdated>,
         mut cx: AsyncApp,
     ) -> Result<()> {
+        log::info!("[agent-server-store] handle_external_agents_updated: received {} agents", envelope.payload.names.len());
         this.update(&mut cx, |this, cx| {
             let AgentServerStoreState::Remote {
                 project_id,
@@ -1024,6 +1026,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
             {
                 // On iOS, use the raw command from the server directly.
                 // open_command_channel handles execution on the remote host.
+                log::info!("[agent-server-store] iOS: got command path={:?} args={:?}", response.path, response.args);
                 let env: collections::HashMap<String, String> =
                     response.env.into_iter().collect();
                 Ok(AgentServerCommand {
