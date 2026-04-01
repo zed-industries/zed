@@ -4222,6 +4222,16 @@ chmod +x ./install.sh
 "#
         );
 
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+
+        let docker_run_command = docker_commands
+            .iter()
+            .find(|c| c.args.get(0).is_some_and(|a| a == "run"));
+
+        assert!(docker_run_command.is_some());
+
         let docker_exec_commands = test_dependencies
             .docker
             .exec_commands_recorded
