@@ -266,7 +266,10 @@ mod tests {
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState,
         ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
     };
-    use crate::{CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions, MarkdownStyle};
+    use crate::{
+        CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
+        MarkdownStyle,
+    };
     use collections::HashMap;
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
     use std::sync::Arc;
