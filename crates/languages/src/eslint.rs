@@ -218,7 +218,11 @@ impl LspAdapter for EsLintLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let worktree_root = delegate.worktree_root_path();
-        let requested_file_path = requested_file_path(requested_uri.as_ref(), worktree_root);
+        let requested_file_path = requested_uri
+            .as_ref()
+            .filter(|uri| uri.scheme() == "file")
+            .and_then(|uri| uri.to_file_path().ok())
+            .filter(|path| path.starts_with(worktree_root));
         let eslint_version = find_eslint_version(
             delegate.as_ref(),
             worktree_root,
@@ -316,45 +320,17 @@ impl LspAdapter for EsLintLspAdapter {
     }
 }
 
-fn requested_file_path(requested_uri: Option<&Uri>, worktree_root: &Path) -> Option<PathBuf> {
-    requested_uri
-        .filter(|uri| uri.scheme() == "file")
-        .and_then(|uri| uri.to_file_path().ok())
-        .filter(|path| path.starts_with(worktree_root))
-}
-
-// vscode-eslint 3.x already walks upward from the active file to choose its
-// working directory and config roots. We do a smaller upward walk here only to
-// answer the two compatibility questions that still belong to Zed:
-//
-// - Is this file using a flat config that needs experimental opt-in on ESLint 8.21-8.56?
-// - Is this file using a legacy config that needs useFlatConfig = false on ESLint 9?
 fn ancestor_directories(worktree_root: &Path, requested_file: Option<&Path>) -> Vec<PathBuf> {
-    let mut directory = requested_file
+    let start = requested_file
         .filter(|file| file.starts_with(worktree_root))
         .and_then(Path::parent)
-        .unwrap_or(worktree_root)
-        .to_path_buf();
-    let mut directories = Vec::new();
+        .unwrap_or(worktree_root);
 
-    loop {
-        if !directory.starts_with(worktree_root) {
-            break;
-        }
-
-        directories.push(directory.clone());
-
-        if directory == worktree_root {
-            break;
-        }
-
-        let Some(parent) = directory.parent() else {
-            break;
-        };
-        directory = parent.to_path_buf();
-    }
-
-    directories
+    start
+        .ancestors()
+        .take_while(|dir| dir.starts_with(worktree_root))
+        .map(Path::to_path_buf)
+        .collect()
 }
 
 fn flat_config_file_names(version: Option<&Version>) -> &'static [&'static str] {
