@@ -1694,7 +1694,7 @@ impl Element for MarkdownElement {
                             copy_button_visibility,
                             ..
                         } = &self.code_block_renderer
-                            && copy_button_visibility != CopyButtonVisibility::Hidden
+                            && *copy_button_visibility != CopyButtonVisibility::Hidden
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
@@ -1715,14 +1715,14 @@ impl Element for MarkdownElement {
                                         .absolute()
                                         .justify_end()
                                         .when_else(
-                                            copy_button_visibility
-                                                == &CopyButtonVisibility::AlwaysVisible,
-                                            |this| this.top_1p5().right_1p5(),
+                                            *copy_button_visibility
+                                                == CopyButtonVisibility::VisibleOnHover,
                                             |this| {
                                                 this.top_0()
                                                     .right_0()
                                                     .visible_on_hover("code_block")
                                             },
+                                            |this| this.top_1p5().right_1p5(),
                                         )
                                         .child(codeblock),
                                 )
