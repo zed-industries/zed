@@ -3488,6 +3488,7 @@ impl Sidebar {
 
         let archive_view = cx.new(|cx| {
             ThreadsArchiveView::new(
+                active_workspace.downgrade(),
                 agent_connection_store.clone(),
                 agent_server_store.clone(),
                 window,
