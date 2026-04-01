@@ -254,6 +254,14 @@ struct WorktreeEntry {
     is_new: bool,
 }
 
+impl WorktreeEntry {
+    fn can_delete(&self, forbidden_deletion_path: Option<&PathBuf>) -> bool {
+        !self.is_new
+            && !self.worktree.is_main
+            && forbidden_deletion_path != Some(&self.worktree.path)
+    }
+}
+
 pub struct WorktreeListDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Option<Vec<GitWorktree>>,
@@ -462,7 +470,7 @@ impl WorktreeListDelegate {
         let Some(entry) = self.matches.get(idx).cloned() else {
             return;
         };
-        if entry.is_new || self.forbidden_deletion_path.as_ref() == Some(&entry.worktree.path) {
+        if !entry.can_delete(self.forbidden_deletion_path.as_ref()) {
             return;
         }
         let Some(repo) = self.repo.clone() else {
@@ -719,6 +727,7 @@ impl PickerDelegate for WorktreeListDelegate {
                                 path: Default::default(),
                                 ref_name: Some(format!("refs/heads/{query}").into()),
                                 sha: Default::default(),
+                                is_main: false,
                             },
                             positions: Vec::new(),
                             is_new: true,
@@ -805,8 +814,7 @@ impl PickerDelegate for WorktreeListDelegate {
 
         let focus_handle = self.focus_handle.clone();
 
-        let can_delete =
-            !entry.is_new && self.forbidden_deletion_path.as_ref() != Some(&entry.worktree.path);
+        let can_delete = entry.can_delete(self.forbidden_deletion_path.as_ref());
 
         let delete_button = |entry_ix: usize| {
             IconButton::new(("delete-worktree", entry_ix), IconName::Trash)
@@ -876,12 +884,30 @@ impl PickerDelegate for WorktreeListDelegate {
                             }
                         })),
                 )
-                .when(can_delete, |this| {
-                    if selected {
-                        this.end_slot(delete_button(ix))
-                    } else {
-                        this.end_hover_slot(delete_button(ix))
-                    }
+                .when(!entry.is_new, |this| {
+                    let focus_handle = self.focus_handle.clone();
+                    let open_in_new_window_button =
+                        IconButton::new(("open-new-window", ix), IconName::ArrowUpRight)
+                            .icon_size(IconSize::Small)
+                            .tooltip(move |_, cx| {
+                                Tooltip::for_action_in(
+                                    "Open in New Window",
+                                    &menu::SecondaryConfirm,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                            });
+
+                    this.end_slot(
+                        h_flex()
+                            .gap_0p5()
+                            .child(open_in_new_window_button)
+                            .when(can_delete, |this| this.child(delete_button(ix))),
+                    )
+                    .show_end_slot_on_hover()
                 }),
         )
     }
@@ -894,9 +920,8 @@ impl PickerDelegate for WorktreeListDelegate {
         let focus_handle = self.focus_handle.clone();
         let selected_entry = self.matches.get(self.selected_index);
         let is_creating = selected_entry.is_some_and(|entry| entry.is_new);
-        let can_delete = selected_entry.is_some_and(|entry| {
-            !entry.is_new && self.forbidden_deletion_path.as_ref() != Some(&entry.worktree.path)
-        });
+        let can_delete = selected_entry
+            .is_some_and(|entry| entry.can_delete(self.forbidden_deletion_path.as_ref()));
 
         let footer_container = h_flex()
             .w_full()

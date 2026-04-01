@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::agent_connection_store::AgentConnectionStore;
-use crate::thread_import::{AcpThreadImportOnboarding, ThreadImportModal};
+
 use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use crate::{Agent, RemoveSelectedThread};
 
@@ -22,7 +22,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use project::{AgentId, AgentRegistryStore, AgentServerStore};
+use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::ThreadItem;
@@ -34,8 +34,8 @@ use ui_input::ErasedEditor;
 use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
-    ModalView, MultiWorkspace, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb,
-    WorkspaceId, resolve_worktree_workspaces,
+    ModalView, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
+    resolve_worktree_workspaces,
 };
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
@@ -125,20 +125,16 @@ pub struct ThreadsArchiveView {
     filter_editor: Entity<Editor>,
     _subscriptions: Vec<gpui::Subscription>,
     _refresh_history_task: Task<()>,
+    workspace: WeakEntity<Workspace>,
     agent_connection_store: WeakEntity<AgentConnectionStore>,
     agent_server_store: WeakEntity<AgentServerStore>,
-    agent_registry_store: WeakEntity<AgentRegistryStore>,
-    workspace: WeakEntity<Workspace>,
-    multi_workspace: WeakEntity<MultiWorkspace>,
 }
 
 impl ThreadsArchiveView {
     pub fn new(
+        workspace: WeakEntity<Workspace>,
         agent_connection_store: WeakEntity<AgentConnectionStore>,
         agent_server_store: WeakEntity<AgentServerStore>,
-        agent_registry_store: WeakEntity<AgentRegistryStore>,
-        workspace: WeakEntity<Workspace>,
-        multi_workspace: WeakEntity<MultiWorkspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -197,11 +193,9 @@ impl ThreadsArchiveView {
                 thread_metadata_store_subscription,
             ],
             _refresh_history_task: Task::ready(()),
-            agent_registry_store,
+            workspace,
             agent_connection_store,
             agent_server_store,
-            workspace,
-            multi_workspace,
         };
 
         this.update_items(cx);
@@ -581,43 +575,6 @@ impl ThreadsArchiveView {
         .detach_and_log_err(cx);
     }
 
-    fn should_render_acp_import_onboarding(&self, cx: &App) -> bool {
-        let has_external_agents = self
-            .agent_server_store
-            .upgrade()
-            .map(|store| store.read(cx).has_external_agents())
-            .unwrap_or(false);
-
-        has_external_agents && !AcpThreadImportOnboarding::dismissed(cx)
-    }
-
-    fn show_thread_import_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(agent_server_store) = self.agent_server_store.upgrade() else {
-            return;
-        };
-        let Some(agent_registry_store) = self.agent_registry_store.upgrade() else {
-            return;
-        };
-
-        let workspace_handle = self.workspace.clone();
-        let multi_workspace = self.multi_workspace.clone();
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    ThreadImportModal::new(
-                        agent_server_store,
-                        agent_registry_store,
-                        workspace_handle.clone(),
-                        multi_workspace.clone(),
-                        window,
-                        cx,
-                    )
-                });
-            })
-            .log_err();
-    }
-
     fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_query = !self.filter_editor.read(cx).text(cx).is_empty();
         let sidebar_on_left = matches!(
@@ -760,29 +717,6 @@ impl Render for ThreadsArchiveView {
             .size_full()
             .child(self.render_header(window, cx))
             .child(content)
-            .when(!self.should_render_acp_import_onboarding(cx), |this| {
-                this.child(
-                    div()
-                        .w_full()
-                        .p_1p5()
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border)
-                        .child(
-                            Button::new("import-acp", "Import ACP Threads")
-                                .full_width()
-                                .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
-                                .label_size(LabelSize::Small)
-                                .start_icon(
-                                    Icon::new(IconName::ArrowDown)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.show_thread_import_modal(window, cx);
-                                })),
-                        ),
-                )
-            })
     }
 }
 

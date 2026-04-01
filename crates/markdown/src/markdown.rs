@@ -1610,22 +1610,17 @@ impl Element for MarkdownElement {
 
                             let column_count = alignments.len();
                             builder.push_div(
-                                div().flex().flex_col().items_start(),
-                                range,
-                                markdown_end,
-                            );
-                            builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .min_w_0()
                                     .grid()
                                     .grid_cols(column_count as u16)
                                     .when(self.style.table_columns_min_size, |this| {
                                         this.grid_cols_min_content(column_count as u16)
                                     })
                                     .when(!self.style.table_columns_min_size, |this| {
-                                        this.grid_cols_max_content(column_count as u16)
+                                        this.grid_cols(column_count as u16)
                                     })
+                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
@@ -1770,7 +1765,6 @@ impl Element for MarkdownElement {
                         }
                     }
                     MarkdownTagEnd::Table => {
-                        builder.pop_div();
                         builder.pop_div();
                         builder.table.end();
                     }

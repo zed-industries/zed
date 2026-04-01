@@ -121,18 +121,6 @@ impl ThreadImportModal {
             .collect()
     }
 
-    fn set_agent_checked(&mut self, agent_id: AgentId, state: ToggleState, cx: &mut Context<Self>) {
-        match state {
-            ToggleState::Selected => {
-                self.unchecked_agents.remove(&agent_id);
-            }
-            ToggleState::Unselected | ToggleState::Indeterminate => {
-                self.unchecked_agents.insert(agent_id);
-            }
-        }
-        cx.notify();
-    }
-
     fn toggle_agent_checked(&mut self, agent_id: AgentId, cx: &mut Context<Self>) {
         if self.unchecked_agents.contains(&agent_id) {
             self.unchecked_agents.remove(&agent_id);
@@ -283,6 +271,11 @@ impl ModalView for ThreadImportModal {}
 
 impl Render for ThreadImportModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_agents = !self.agent_entries.is_empty();
+        let disabled_import_thread = self.is_importing
+            || !has_agents
+            || self.unchecked_agents.len() == self.agent_entries.len();
+
         let agent_rows = self
             .agent_entries
             .iter()
@@ -295,6 +288,7 @@ impl Render for ThreadImportModal {
                     .rounded()
                     .spacing(ListItemSpacing::Sparse)
                     .focused(is_focused)
+                    .disabled(self.is_importing)
                     .child(
                         h_flex()
                             .w_full()
@@ -311,22 +305,14 @@ impl Render for ThreadImportModal {
                             })
                             .child(Label::new(entry.display_name.clone())),
                     )
-                    .end_slot(
-                        Checkbox::new(
-                            ("thread-import-agent-checkbox", ix),
-                            if is_checked {
-                                ToggleState::Selected
-                            } else {
-                                ToggleState::Unselected
-                            },
-                        )
-                        .on_click({
-                            let agent_id = entry.agent_id.clone();
-                            cx.listener(move |this, state: &ToggleState, _window, cx| {
-                                this.set_agent_checked(agent_id.clone(), *state, cx);
-                            })
-                        }),
-                    )
+                    .end_slot(Checkbox::new(
+                        ("thread-import-agent-checkbox", ix),
+                        if is_checked {
+                            ToggleState::Selected
+                        } else {
+                            ToggleState::Unselected
+                        },
+                    ))
                     .on_click({
                         let agent_id = entry.agent_id.clone();
                         cx.listener(move |this, _event, _window, cx| {
@@ -335,11 +321,6 @@ impl Render for ThreadImportModal {
                     })
             })
             .collect::<Vec<_>>();
-
-        let has_agents = !self.agent_entries.is_empty();
-        let disabled_import_thread = self.is_importing
-            || !has_agents
-            || self.unchecked_agents.len() == self.agent_entries.len();
 
         v_flex()
             .id("thread-import-modal")
@@ -373,7 +354,7 @@ impl Render for ThreadImportModal {
                             v_flex()
                                 .id("thread-import-agent-list")
                                 .max_h(rems_from_px(320.))
-                                .pb_2()
+                                .pb_1()
                                 .overflow_y_scroll()
                                 .when(has_agents, |this| this.children(agent_rows))
                                 .when(!has_agents, |this| {
