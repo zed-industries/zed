@@ -9,9 +9,7 @@ use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
 use agent_ui::{AcpThreadImportOnboarding, ThreadImportModal};
-use agent_ui::{
-    Agent, AgentPanel, AgentPanelEvent, DEFAULT_THREAD_TITLE, NewThread, RemoveSelectedThread,
-};
+use agent_ui::{Agent, AgentPanel, AgentPanelEvent, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 use chrono::{DateTime, Utc};
 use editor::Editor;
 use gpui::{
@@ -30,7 +28,7 @@ use remote::RemoteConnectionOptions;
 use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
-use settings::{NewThreadLocation, Settings as _};
+use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::rc::Rc;
@@ -2531,9 +2529,7 @@ impl Sidebar {
                                 panel.clear_active_thread(window, cx);
                             });
                         }
-                    }
-                }
-            }
+                    });
             return;
         }
 
@@ -2556,7 +2552,7 @@ impl Sidebar {
         if let Some(workspace) = self.active_entry_workspace().cloned() {
             if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_thread(&NewThread, window, cx);
+                    panel.new_thread_from_sidebar(window, cx);
                 });
             }
         }
@@ -3171,16 +3167,6 @@ impl Sidebar {
             return;
         };
 
-        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
-            NewThreadLocation::LocalProject => "current_worktree",
-            NewThreadLocation::NewWorktree => "new_worktree",
-        };
-        telemetry::event!(
-            "New Thread Clicked",
-            source = "sidebar",
-            thread_location = thread_location
-        );
-
         self.active_entry = Some(ActiveEntry::Draft(workspace.clone()));
 
         multi_workspace.update(cx, |multi_workspace, cx| {
@@ -3190,7 +3176,7 @@ impl Sidebar {
         workspace.update(cx, |workspace, cx| {
             if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) {
                 agent_panel.update(cx, |panel, cx| {
-                    panel.new_thread(&NewThread, window, cx);
+                    panel.new_thread_from_sidebar(window, cx);
                 });
             }
             workspace.focus_panel::<AgentPanel>(window, cx);

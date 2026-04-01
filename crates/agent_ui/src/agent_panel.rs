@@ -1304,6 +1304,34 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
+        use settings::{NewThreadLocation, Settings};
+        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
+            NewThreadLocation::LocalProject => "current_worktree",
+            NewThreadLocation::NewWorktree => "new_worktree",
+        };
+        telemetry::event!(
+            "New Thread Clicked",
+            source = "agent_panel",
+            thread_location = thread_location
+        );
+        self.do_new_thread(window, cx);
+    }
+
+    pub fn new_thread_from_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use settings::{NewThreadLocation, Settings};
+        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
+            NewThreadLocation::LocalProject => "current_worktree",
+            NewThreadLocation::NewWorktree => "new_worktree",
+        };
+        telemetry::event!(
+            "New Thread Clicked",
+            source = "sidebar",
+            thread_location = thread_location
+        );
+        self.do_new_thread(window, cx);
+    }
+
+    fn do_new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.reset_start_thread_in_to_default(cx);
         let initial_content = self.take_active_draft_initial_content(cx);
         self.external_thread(None, None, None, None, initial_content, true, window, cx);
