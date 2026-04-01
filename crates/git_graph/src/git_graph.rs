@@ -41,9 +41,9 @@ use theme::AccentColors;
 use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    ButtonLike, Chip, CommonAnimationExt as _, ContextMenu, DiffStat, Divider, HighlightedLabel,
-    ScrollableHandle, Table, TableColumnWidths, TableInteractionState, TableResizeBehavior,
-    Tooltip, WithScrollbar, prelude::*,
+    ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
+    HighlightedLabel, RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
+    TableResizeBehavior, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::{
     Workspace,
@@ -901,7 +901,7 @@ pub struct GitGraph {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
-    table_column_widths: Entity<TableColumnWidths>,
+    table_column_widths: Entity<RedistributableColumnsState>,
     horizontal_scroll_offset: Pixels,
     graph_viewport_width: Pixels,
     selected_entry_idx: Option<usize>,
@@ -972,7 +972,23 @@ impl GitGraph {
         });
 
         let table_interaction_state = cx.new(|cx| TableInteractionState::new(cx));
-        let table_column_widths = cx.new(|cx| TableColumnWidths::new(4, cx));
+        let table_column_widths = cx.new(|_cx| {
+            RedistributableColumnsState::new(
+                4,
+                vec![
+                    DefiniteLength::Fraction(0.72),
+                    DefiniteLength::Fraction(0.12),
+                    DefiniteLength::Fraction(0.10),
+                    DefiniteLength::Fraction(0.06),
+                ],
+                vec![
+                    TableResizeBehavior::Resizable,
+                    TableResizeBehavior::Resizable,
+                    TableResizeBehavior::Resizable,
+                    TableResizeBehavior::Resizable,
+                ],
+            )
+        });
         let mut row_height = Self::row_height(cx);
 
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, _window, cx| {
@@ -1323,6 +1339,12 @@ impl GitGraph {
         self.search_state.editor.update(cx, |editor, _cx| {
             editor.set_text_style_refinement(Default::default());
         });
+
+        if query.as_str().is_empty() {
+            self.search_state.state = QueryState::Empty;
+            cx.notify();
+            return;
+        }
 
         let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
 
@@ -2166,6 +2188,8 @@ impl GitGraph {
                         builder.move_to(point(line_x, from_y));
 
                         let segments = &line.segments[start_segment_idx..];
+                        let desired_curve_height = row_height / 3.0;
+                        let desired_curve_width = LANE_WIDTH / 3.0;
 
                         for (segment_idx, segment) in segments.iter().enumerate() {
                             let is_last = segment_idx + 1 == segments.len();
@@ -2219,66 +2243,69 @@ impl GitGraph {
                                             if is_last {
                                                 to_column -= column_shift;
                                             }
-                                            builder.move_to(point(current_column, current_row));
 
-                                            if (to_column - current_column).abs() > LANE_WIDTH {
-                                                // Multi-lane checkout: straight down, small
-                                                // curve turn, then straight horizontal.
-                                                if (to_row - current_row).abs() > row_height {
-                                                    let vertical_end =
-                                                        point(current_column, to_row - row_height);
-                                                    builder.line_to(vertical_end);
-                                                    builder.move_to(vertical_end);
-                                                }
-
-                                                let lane_shift = if going_right {
-                                                    LANE_WIDTH
-                                                } else {
-                                                    -LANE_WIDTH
-                                                };
-                                                let curve_end =
-                                                    point(current_column + lane_shift, to_row);
-                                                let curve_control = point(current_column, to_row);
-                                                builder.curve_to(curve_end, curve_control);
-                                                builder.move_to(curve_end);
-
-                                                builder.line_to(point(to_column, to_row));
+                                            let available_curve_width =
+                                                (to_column - current_column).abs();
+                                            let available_curve_height =
+                                                (to_row - current_row).abs();
+                                            let curve_width =
+                                                desired_curve_width.min(available_curve_width);
+                                            let curve_height =
+                                                desired_curve_height.min(available_curve_height);
+                                            let signed_curve_width = if going_right {
+                                                curve_width
                                             } else {
-                                                if (to_row - current_row).abs() > row_height {
-                                                    let start_curve =
-                                                        point(current_column, to_row - row_height);
-                                                    builder.line_to(start_curve);
-                                                    builder.move_to(start_curve);
-                                                }
-                                                let control = point(current_column, to_row);
-                                                builder.curve_to(point(to_column, to_row), control);
-                                            }
+                                                -curve_width
+                                            };
+                                            let curve_start =
+                                                point(current_column, to_row - curve_height);
+                                            let curve_end =
+                                                point(current_column + signed_curve_width, to_row);
+                                            let curve_control = point(current_column, to_row);
+
+                                            builder.move_to(point(current_column, current_row));
+                                            builder.line_to(curve_start);
+                                            builder.move_to(curve_start);
+                                            builder.curve_to(curve_end, curve_control);
+                                            builder.move_to(curve_end);
+                                            builder.line_to(point(to_column, to_row));
                                         }
                                         CurveKind::Merge => {
                                             if is_last {
                                                 to_row -= COMMIT_CIRCLE_RADIUS;
                                             }
-                                            builder.move_to(point(
+
+                                            let merge_start = point(
                                                 current_column + column_shift,
                                                 current_row - COMMIT_CIRCLE_RADIUS,
-                                            ));
+                                            );
+                                            let available_curve_width =
+                                                (to_column - merge_start.x).abs();
+                                            let available_curve_height =
+                                                (to_row - merge_start.y).abs();
+                                            let curve_width =
+                                                desired_curve_width.min(available_curve_width);
+                                            let curve_height =
+                                                desired_curve_height.min(available_curve_height);
+                                            let signed_curve_width = if going_right {
+                                                curve_width
+                                            } else {
+                                                -curve_width
+                                            };
+                                            let curve_start = point(
+                                                to_column - signed_curve_width,
+                                                merge_start.y,
+                                            );
+                                            let curve_end =
+                                                point(to_column, merge_start.y + curve_height);
+                                            let curve_control = point(to_column, merge_start.y);
 
-                                            if (to_column - current_column).abs() > LANE_WIDTH {
-                                                let column_shift = if going_right {
-                                                    LANE_WIDTH
-                                                } else {
-                                                    -LANE_WIDTH
-                                                };
-                                                let start_curve = point(
-                                                    current_column + column_shift,
-                                                    current_row - COMMIT_CIRCLE_RADIUS,
-                                                );
-                                                builder.line_to(start_curve);
-                                                builder.move_to(start_curve);
-                                            }
-
-                                            let control = point(to_column, current_row);
-                                            builder.curve_to(point(to_column, to_row), control);
+                                            builder.move_to(merge_start);
+                                            builder.line_to(curve_start);
+                                            builder.move_to(curve_start);
+                                            builder.curve_to(curve_end, curve_control);
+                                            builder.move_to(curve_end);
+                                            builder.line_to(point(to_column, to_row));
                                         }
                                     }
                                     current_row = to_row;
@@ -2453,11 +2480,6 @@ impl Render for GitGraph {
             self.search_state.state = QueryState::Empty;
             self.search(query, cx);
         }
-        let description_width_fraction = 0.72;
-        let date_width_fraction = 0.12;
-        let author_width_fraction = 0.10;
-        let commit_width_fraction = 0.06;
-
         let (commit_count, is_loading) = match self.graph_data.max_commit_count {
             AllCommitCount::Loaded(count) => (count, true),
             AllCommitCount::NotLoaded => {
@@ -2517,7 +2539,10 @@ impl Render for GitGraph {
                         .flex_col()
                         .child(
                             div()
-                                .p_2()
+                                .flex()
+                                .items_center()
+                                .px_1()
+                                .py_0p5()
                                 .border_b_1()
                                 .whitespace_nowrap()
                                 .border_color(cx.theme().colors().border)
@@ -2559,25 +2584,9 @@ impl Render for GitGraph {
                                 Label::new("Author").color(Color::Muted).into_any_element(),
                                 Label::new("Commit").color(Color::Muted).into_any_element(),
                             ])
-                            .column_widths(
-                                [
-                                    DefiniteLength::Fraction(description_width_fraction),
-                                    DefiniteLength::Fraction(date_width_fraction),
-                                    DefiniteLength::Fraction(author_width_fraction),
-                                    DefiniteLength::Fraction(commit_width_fraction),
-                                ]
-                                .to_vec(),
-                            )
-                            .resizable_columns(
-                                vec![
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                    TableResizeBehavior::Resizable,
-                                ],
-                                &self.table_column_widths,
-                                cx,
-                            )
+                            .width_config(ColumnWidthConfig::redistributable(
+                                self.table_column_widths.clone(),
+                            ))
                             .map_row(move |(index, row), window, cx| {
                                 let is_selected = selected_entry_idx == Some(index);
                                 let is_hovered = hovered_entry_idx == Some(index);

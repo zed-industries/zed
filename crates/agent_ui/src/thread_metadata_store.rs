@@ -55,7 +55,7 @@ fn migrate_thread_metadata(cx: &mut App) {
                 .read(cx)
                 .entries()
                 .filter_map(|entry| {
-                    if existing_entries.contains(&entry.id.0) || entry.folder_paths.is_empty() {
+                    if existing_entries.contains(&entry.id.0) {
                         return None;
                     }
 
@@ -81,6 +81,9 @@ fn migrate_thread_metadata(cx: &mut App) {
         if is_first_migration {
             let mut per_project: HashMap<PathList, Vec<&mut ThreadMetadata>> = HashMap::default();
             for entry in &mut to_migrate {
+                if entry.folder_paths.is_empty() {
+                    continue;
+                }
                 per_project
                     .entry(entry.folder_paths.clone())
                     .or_default()
@@ -316,6 +319,25 @@ impl ThreadMetadataStore {
             .log_err();
     }
 
+    pub fn update_working_directories(
+        &mut self,
+        session_id: &acp::SessionId,
+        work_dirs: PathList,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AgentV2FeatureFlag>() {
+            return;
+        }
+
+        if let Some(thread) = self.threads.get(session_id) {
+            self.save_internal(ThreadMetadata {
+                folder_paths: work_dirs,
+                ..thread.clone()
+            });
+            cx.notify();
+        }
+    }
+
     pub fn archive(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
         self.update_archived(session_id, true, cx);
     }
@@ -495,7 +517,13 @@ impl ThreadMetadataStore {
                     PathList::new(&paths)
                 };
 
-                let archived = existing_thread.map(|t| t.archived).unwrap_or(false);
+                // Threads without a folder path (e.g. started in an empty
+                // window) are archived by default so they don't get lost,
+                // because they won't show up in the sidebar. Users can reload
+                // them from the archive.
+                let archived = existing_thread
+                    .map(|t| t.archived)
+                    .unwrap_or(folder_paths.is_empty());
 
                 let metadata = ThreadMetadata {
                     session_id,
@@ -994,7 +1022,7 @@ mod tests {
             store.read(cx).entries().cloned().collect::<Vec<_>>()
         });
 
-        assert_eq!(list.len(), 3);
+        assert_eq!(list.len(), 4);
         assert!(
             list.iter()
                 .all(|metadata| metadata.agent_id.as_ref() == agent::ZED_AGENT_ID.as_ref())
@@ -1013,17 +1041,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(migrated_session_ids.contains(&"a-session-1"));
         assert!(migrated_session_ids.contains(&"b-session-0"));
-        assert!(!migrated_session_ids.contains(&"projectless"));
+        assert!(migrated_session_ids.contains(&"projectless"));
 
         let migrated_entries = list
             .iter()
             .filter(|metadata| metadata.session_id.0.as_ref() != "a-session-0")
             .collect::<Vec<_>>();
-        assert!(
-            migrated_entries
-                .iter()
-                .all(|metadata| !metadata.folder_paths.is_empty())
-        );
         assert!(migrated_entries.iter().all(|metadata| metadata.archived));
     }
 
@@ -1267,6 +1290,84 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(metadata_ids, vec![session_id]);
+    }
+
+    #[gpui::test]
+    async fn test_threads_without_project_association_are_archived_by_default(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project_without_worktree = Project::test(fs.clone(), None::<&Path>, cx).await;
+        let project_with_worktree = Project::test(fs, [Path::new("/project-a")], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+
+        let thread_without_worktree = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project_without_worktree.clone(),
+                    PathList::default(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_without_worktree =
+            cx.read(|cx| thread_without_worktree.read(cx).session_id().clone());
+
+        cx.update(|cx| {
+            thread_without_worktree.update(cx, |thread, cx| {
+                thread.set_title("No Project Thread".into(), cx).detach();
+            });
+        });
+        cx.run_until_parked();
+
+        let thread_with_worktree = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project_with_worktree.clone(),
+                    PathList::default(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_with_worktree =
+            cx.read(|cx| thread_with_worktree.read(cx).session_id().clone());
+
+        cx.update(|cx| {
+            thread_with_worktree.update(cx, |thread, cx| {
+                thread.set_title("Project Thread".into(), cx).detach();
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let without_worktree = store
+                .entry(&session_without_worktree)
+                .expect("missing metadata for thread without project association");
+            assert!(without_worktree.folder_paths.is_empty());
+            assert!(
+                without_worktree.archived,
+                "expected thread without project association to be archived"
+            );
+
+            let with_worktree = store
+                .entry(&session_with_worktree)
+                .expect("missing metadata for thread with project association");
+            assert_eq!(
+                with_worktree.folder_paths,
+                PathList::new(&[Path::new("/project-a")])
+            );
+            assert!(
+                !with_worktree.archived,
+                "expected thread with project association to remain unarchived"
+            );
+        });
     }
 
     #[gpui::test]

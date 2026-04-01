@@ -2340,7 +2340,7 @@ impl ConversationView {
                     .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
             };
         #[cfg(feature = "audio")]
-        if settings.play_sound_when_agent_done && !_visible {
+        if settings.play_sound_when_agent_done.should_play(_visible) {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }

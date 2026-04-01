@@ -359,7 +359,8 @@ fn trigger_release(
     let extension_registry = RepositoryTarget::new("zed-industries", &["extensions"]);
     let (generate_token, generated_token) =
         generate_token(&app_id.to_string(), &app_secret.to_string())
-            .for_repository(extension_registry);
+            .for_repository(extension_registry)
+            .into();
     let (get_extension_id, extension_id) = get_extension_id();
     let (release_action, pull_request_number) = release_action(extension_id, tag, &generated_token);
 

@@ -5152,9 +5152,12 @@ impl ThreadView {
     }
 
     pub(crate) fn auto_expand_streaming_thought(&mut self, cx: &mut Context<Self>) {
-        // Only auto-expand thinking blocks in Automatic mode.
-        // AlwaysExpanded shows them open by default; AlwaysCollapsed keeps them closed.
-        if AgentSettings::get_global(cx).thinking_display != ThinkingBlockDisplay::Automatic {
+        let thinking_display = AgentSettings::get_global(cx).thinking_display;
+
+        if !matches!(
+            thinking_display,
+            ThinkingBlockDisplay::Auto | ThinkingBlockDisplay::Preview
+        ) {
             return;
         }
 
@@ -5183,6 +5186,13 @@ impl ThreadView {
                 cx.notify();
             }
         } else if self.auto_expanded_thinking_block.is_some() {
+            if thinking_display == ThinkingBlockDisplay::Auto {
+                if let Some(key) = self.auto_expanded_thinking_block {
+                    if !self.user_toggled_thinking_blocks.contains(&key) {
+                        self.expanded_thinking_blocks.remove(&key);
+                    }
+                }
+            }
             self.auto_expanded_thinking_block = None;
             cx.notify();
         }
@@ -5196,7 +5206,19 @@ impl ThreadView {
         let thinking_display = AgentSettings::get_global(cx).thinking_display;
 
         match thinking_display {
-            ThinkingBlockDisplay::Automatic => {
+            ThinkingBlockDisplay::Auto => {
+                let is_open = self.expanded_thinking_blocks.contains(&key)
+                    || self.user_toggled_thinking_blocks.contains(&key);
+
+                if is_open {
+                    self.expanded_thinking_blocks.remove(&key);
+                    self.user_toggled_thinking_blocks.remove(&key);
+                } else {
+                    self.expanded_thinking_blocks.insert(key);
+                    self.user_toggled_thinking_blocks.insert(key);
+                }
+            }
+            ThinkingBlockDisplay::Preview => {
                 let is_user_expanded = self.user_toggled_thinking_blocks.contains(&key);
                 let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
 
@@ -5249,7 +5271,11 @@ impl ThreadView {
         let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
 
         let (is_open, is_constrained) = match thinking_display {
-            ThinkingBlockDisplay::Automatic => {
+            ThinkingBlockDisplay::Auto => {
+                let is_open = is_user_toggled || is_in_expanded_set;
+                (is_open, false)
+            }
+            ThinkingBlockDisplay::Preview => {
                 let is_open = is_user_toggled || is_in_expanded_set;
                 let is_constrained = is_in_expanded_set && !is_user_toggled;
                 (is_open, is_constrained)
@@ -7103,17 +7129,10 @@ impl ThreadView {
                 };
 
                 active_editor.update_in(cx, |editor, window, cx| {
-                    let singleton = editor
-                        .buffer()
-                        .read(cx)
-                        .read(cx)
-                        .as_singleton()
-                        .map(|(a, b, _)| (a, b));
-                    if let Some((excerpt_id, buffer_id)) = singleton
-                        && let Some(agent_buffer) = agent_location.buffer.upgrade()
-                        && agent_buffer.read(cx).remote_id() == buffer_id
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    if snapshot.as_singleton().is_some()
+                        && let Some(anchor) = snapshot.anchor_in_excerpt(agent_location.position)
                     {
-                        let anchor = editor::Anchor::in_buffer(excerpt_id, agent_location.position);
                         editor.change_selections(Default::default(), window, cx, |selections| {
                             selections.select_anchor_ranges([anchor..anchor]);
                         })
