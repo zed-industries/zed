@@ -1304,29 +1304,19 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        use settings::{NewThreadLocation, Settings};
-        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
-            NewThreadLocation::LocalProject => "current_worktree",
-            NewThreadLocation::NewWorktree => "new_worktree",
-        };
         telemetry::event!(
             "New Thread Clicked",
             source = "agent_panel",
-            thread_location = thread_location
+            thread_location = thread_location_str(cx)
         );
         self.do_new_thread(window, cx);
     }
 
     pub fn new_thread_from_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        use settings::{NewThreadLocation, Settings};
-        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
-            NewThreadLocation::LocalProject => "current_worktree",
-            NewThreadLocation::NewWorktree => "new_worktree",
-        };
         telemetry::event!(
             "New Thread Clicked",
             source = "sidebar",
-            thread_location = thread_location
+            thread_location = thread_location_str(cx)
         );
         self.do_new_thread(window, cx);
     }
@@ -3335,6 +3325,14 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
     AgentSettings::get_global(cx).dock.into()
 }
 
+fn thread_location_str(cx: &App) -> &'static str {
+    use settings::{NewThreadLocation, Settings};
+    match AgentSettings::get_global(cx).new_thread_location {
+        NewThreadLocation::LocalProject => "current_worktree",
+        NewThreadLocation::NewWorktree => "new_worktree",
+    }
+}
+
 pub enum AgentPanelEvent {
     ActiveViewChanged,
     ThreadFocused,
@@ -3365,7 +3363,7 @@ impl Panel for AgentPanel {
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         let side = match position {
             DockPosition::Left => "left",
-            _ => "right",
+            DockPosition::Right | DockPosition::Bottom => "right",
         };
         telemetry::event!("Agent Panel Side Changed", side = side);
         settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
@@ -3796,15 +3794,10 @@ impl AgentPanel {
             let agent_server_store = agent_server_store;
 
             Rc::new(move |window, cx| {
-                use settings::{NewThreadLocation, Settings};
-                let thread_location = match AgentSettings::get_global(cx).new_thread_location {
-                    NewThreadLocation::LocalProject => "current_worktree",
-                    NewThreadLocation::NewWorktree => "new_worktree",
-                };
                 telemetry::event!(
                     "New Thread Clicked",
                     source = "agent_panel",
-                    thread_location = thread_location
+                    thread_location = thread_location_str(cx)
                 );
 
                 let active_thread = active_thread.clone();

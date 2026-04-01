@@ -8782,7 +8782,7 @@ pub async fn restore_multiworkspace(
     if sidebar_open {
         window_handle
             .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.open_sidebar(cx);
+                multi_workspace.restore_open_sidebar(cx);
             })
             .ok();
     }
