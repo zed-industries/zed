@@ -22,7 +22,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("mistral");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Mistral");
@@ -512,6 +512,13 @@ pub fn into_mistral(
             model: model.id().to_string(),
             messages,
             stream,
+            stream_options: if stream {
+                Some(mistral::StreamOptions {
+                    stream_tool_calls: Some(true),
+                })
+            } else {
+                None
+            },
             max_tokens: max_output_tokens,
             temperature: request.temperature,
             response_format: None,
@@ -620,12 +627,16 @@ impl MistralEventMapper {
             for tool_call in tool_calls {
                 let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
 
-                if let Some(tool_id) = tool_call.id.clone() {
+                if let Some(tool_id) = tool_call.id.clone()
+                    && !tool_id.is_empty()
+                {
                     entry.id = tool_id;
                 }
 
                 if let Some(function) = tool_call.function.as_ref() {
-                    if let Some(name) = function.name.clone() {
+                    if let Some(name) = function.name.clone()
+                        && !name.is_empty()
+                    {
                         entry.name = name;
                     }
 
@@ -636,7 +647,7 @@ impl MistralEventMapper {
 
                 if !entry.id.is_empty() && !entry.name.is_empty() {
                     if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                        &partial_json_fixer::fix_json(&entry.arguments),
+                        &fix_streamed_json(&entry.arguments),
                     ) {
                         events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {

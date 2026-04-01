@@ -9,6 +9,89 @@ use crate::ExtendingVec;
 
 use crate::DockPosition;
 
+/// Where new threads should start by default.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum NewThreadLocation {
+    /// Start threads in the current project.
+    #[default]
+    LocalProject,
+    /// Start threads in a new worktree.
+    NewWorktree,
+}
+
+/// Where to position the sidebar.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarDockPosition {
+    /// Always show the sidebar on the left side.
+    #[default]
+    Left,
+    /// Always show the sidebar on the right side.
+    Right,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SidebarSide {
+    #[default]
+    Left,
+    Right,
+}
+
+/// How thinking blocks should be displayed by default in the agent panel.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingBlockDisplay {
+    /// Thinking blocks auto-expand with a height constraint during streaming,
+    /// then remain in their constrained state when complete. Users can click
+    /// to fully expand or collapse.
+    #[default]
+    Automatic,
+    /// Thinking blocks are always fully expanded by default (no height constraint).
+    AlwaysExpanded,
+    /// Thinking blocks are always collapsed by default.
+    AlwaysCollapsed,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -24,6 +107,14 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Whether the agent panel should use flexible (proportional) sizing.
+    ///
+    /// Default: true
+    pub flexible: Option<bool>,
+    /// Where to position the sidebar.
+    ///
+    /// Default: left
+    pub sidebar_side: Option<SidebarDockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -55,10 +146,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: write
     pub default_profile: Option<Arc<str>>,
-    /// Which view type to show by default in the agent panel.
+    /// Where new threads should start by default.
     ///
-    /// Default: "thread"
-    pub default_view: Option<DefaultAgentView>,
+    /// Default: "local_project"
+    pub new_thread_location: Option<NewThreadLocation>,
     /// The available agent profiles.
     pub profiles: Option<IndexMap<Arc<str>, AgentProfileContent>>,
     /// Where to show a popup notification when the agent is waiting for user input.
@@ -94,6 +185,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// How thinking blocks should be displayed by default in the agent panel.
+    ///
+    /// Default: automatic
+    pub thinking_display: Option<ThinkingBlockDisplay>,
     /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     ///
@@ -129,6 +224,14 @@ impl AgentSettingsContent {
         self.dock = Some(dock);
     }
 
+    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
+        self.sidebar_side = Some(position);
+    }
+
+    pub fn set_flexible_size(&mut self, flexible: bool) {
+        self.flexible = Some(flexible);
+    }
+
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
         self.default_model = Some(language_model)
     }
@@ -144,6 +247,10 @@ impl AgentSettingsContent {
 
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
+    }
+
+    pub fn set_new_thread_location(&mut self, value: NewThreadLocation) {
+        self.new_thread_location = Some(value);
     }
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
@@ -214,14 +321,6 @@ pub struct AgentProfileContent {
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
-}
-
-#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-#[serde(rename_all = "snake_case")]
-pub enum DefaultAgentView {
-    #[default]
-    Thread,
-    TextThread,
 }
 
 #[derive(

@@ -3,12 +3,8 @@ mod flags;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::LazyLock;
-use std::time::Duration;
-use std::{future::Future, pin::Pin, task::Poll};
 
-use futures::channel::oneshot;
-use futures::{FutureExt, select_biased};
-use gpui::{App, Context, Global, Subscription, Task, Window};
+use gpui::{App, Context, Global, Subscription, Window};
 
 pub use flags::*;
 
@@ -122,11 +118,6 @@ pub struct OnFlagsReady {
 }
 
 pub trait FeatureFlagAppExt {
-    fn wait_for_flag<T: FeatureFlag>(&mut self) -> WaitForFlag;
-
-    /// Waits for the specified feature flag to resolve, up to the given timeout.
-    fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool>;
-
     fn update_flags(&mut self, staff: bool, flags: Vec<String>);
     fn set_staff(&mut self, staff: bool);
     fn has_flag<T: FeatureFlag>(&self) -> bool;
@@ -190,56 +181,6 @@ impl FeatureFlagAppExt for App {
         self.observe_global::<FeatureFlags>(move |cx| {
             let feature_flags = cx.global::<FeatureFlags>();
             callback(feature_flags.has_flag::<T>(), cx);
-        })
-    }
-
-    fn wait_for_flag<T: FeatureFlag>(&mut self) -> WaitForFlag {
-        let (tx, rx) = oneshot::channel::<bool>();
-        let mut tx = Some(tx);
-        let subscription: Option<Subscription>;
-
-        match self.try_global::<FeatureFlags>() {
-            Some(feature_flags) => {
-                subscription = None;
-                tx.take().unwrap().send(feature_flags.has_flag::<T>()).ok();
-            }
-            None => {
-                subscription = Some(self.observe_global::<FeatureFlags>(move |cx| {
-                    let feature_flags = cx.global::<FeatureFlags>();
-                    if let Some(tx) = tx.take() {
-                        tx.send(feature_flags.has_flag::<T>()).ok();
-                    }
-                }));
-            }
-        }
-
-        WaitForFlag(rx, subscription)
-    }
-
-    fn wait_for_flag_or_timeout<T: FeatureFlag>(&mut self, timeout: Duration) -> Task<bool> {
-        let wait_for_flag = self.wait_for_flag::<T>();
-
-        self.spawn(async move |cx| {
-            let mut wait_for_flag = wait_for_flag.fuse();
-            let mut timeout = FutureExt::fuse(cx.background_executor().timer(timeout));
-
-            select_biased! {
-                is_enabled = wait_for_flag => is_enabled,
-                _ = timeout => false,
-            }
-        })
-    }
-}
-
-pub struct WaitForFlag(oneshot::Receiver<bool>, Option<Subscription>);
-
-impl Future for WaitForFlag {
-    type Output = bool;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> Poll<Self::Output> {
-        self.0.poll_unpin(cx).map(|result| {
-            self.1.take();
-            result.unwrap_or(false)
         })
     }
 }

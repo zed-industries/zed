@@ -370,6 +370,10 @@ impl SettingsStore {
         setting_value.set_global_value(value);
     }
 
+    pub fn merged_settings(&self) -> &SettingsContent {
+        &self.merged_settings
+    }
+
     /// Get the value of a setting.
     ///
     /// Panics if the given setting type has not been registered, or if there is no
@@ -542,9 +546,9 @@ impl SettingsStore {
         update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
     ) {
         _ = self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            Ok(cx.read_global(|store: &SettingsStore, cx| {
+            cx.read_global(|store: &SettingsStore, cx| {
                 store.new_text_for_update(old_text, |content| update(content, cx))
-            }))
+            })
         });
     }
 
@@ -554,9 +558,9 @@ impl SettingsStore {
         vscode_settings: VsCodeSettings,
     ) -> oneshot::Receiver<Result<()>> {
         self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            Ok(cx.read_global(|store: &SettingsStore, _cx| {
+            cx.read_global(|store: &SettingsStore, _cx| {
                 store.get_vscode_edits(old_text, &vscode_settings)
-            }))
+            })
         })
     }
 
@@ -747,16 +751,16 @@ impl SettingsStore {
         &self,
         old_text: String,
         update: impl FnOnce(&mut SettingsContent),
-    ) -> String {
-        let edits = self.edits_for_update(&old_text, update);
+    ) -> Result<String> {
+        let edits = self.edits_for_update(&old_text, update)?;
         let mut new_text = old_text;
         for (range, replacement) in edits.into_iter() {
             new_text.replace_range(range, &replacement);
         }
-        new_text
+        Ok(new_text)
     }
 
-    pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> String {
+    pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> Result<String> {
         self.new_text_for_update(old_text, |content| {
             content.merge_from(&vscode.settings_content())
         })
@@ -768,10 +772,17 @@ impl SettingsStore {
         &self,
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
-    ) -> Vec<(Range<usize>, String)> {
-        let old_content = UserSettingsContent::parse_json_with_comments(text)
-            .log_err()
-            .unwrap_or_default();
+    ) -> Result<Vec<(Range<usize>, String)>> {
+        let old_content = if text.trim().is_empty() {
+            UserSettingsContent::default()
+        } else {
+            let (old_content, parse_status) = UserSettingsContent::parse_json(text);
+            if let ParseStatus::Failed { error } = &parse_status {
+                log::error!("Failed to parse settings for update: {error}");
+            }
+            old_content
+                .context("Settings file could not be parsed. Fix syntax errors before updating.")?
+        };
         let mut new_content = old_content.clone();
         update(&mut new_content.content);
 
@@ -790,7 +801,18 @@ impl SettingsStore {
             &new_value,
             &mut edits,
         );
-        edits
+        Ok(edits)
+    }
+
+    /// Mutates the default settings in place and recomputes all setting values.
+    pub fn update_default_settings(
+        &mut self,
+        cx: &mut App,
+        update: impl FnOnce(&mut SettingsContent),
+    ) {
+        let default_settings = Rc::make_mut(&mut self.default_settings);
+        update(default_settings);
+        self.recompute_values(None, cx);
     }
 
     /// Sets the default settings via a JSON string.
@@ -1688,7 +1710,7 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old_json, cx).ok();
-        let edits = store.edits_for_update(&old_json, update);
+        let edits = store.edits_for_update(&old_json, update).unwrap();
         let mut new_json = old_json;
         for (range, replacement) in edits.into_iter() {
             new_json.replace_range(range, &replacement);
@@ -1877,6 +1899,39 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_edits_for_update_preserves_unknown_keys(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<AutoUpdateSetting>();
+
+        let old_json = r#"{
+            "some_unknown_key": "should_be_preserved",
+            "auto_update": false
+        }"#
+        .unindent();
+
+        check_settings_update(
+            &mut store,
+            old_json,
+            |settings| settings.auto_update = Some(true),
+            r#"{
+            "some_unknown_key": "should_be_preserved",
+            "auto_update": true
+        }"#
+            .unindent(),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_edits_for_update_returns_error_on_invalid_json(cx: &mut App) {
+        let store = SettingsStore::new(cx, &test_settings());
+
+        let invalid_json = r#"{ this is not valid json at all !!!"#;
+        let result = store.edits_for_update(invalid_json, |_| {});
+        assert!(result.is_err());
+    }
+
+    #[gpui::test]
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
@@ -1996,10 +2051,12 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old, cx).ok();
-        let new = store.get_vscode_edits(
-            old,
-            &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
-        );
+        let new = store
+            .get_vscode_edits(
+                old,
+                &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
+            )
+            .unwrap();
         pretty_assertions::assert_eq!(new, expected);
     }
 
@@ -2007,14 +2064,16 @@ mod tests {
     fn test_update_git_settings(cx: &mut App) {
         let store = SettingsStore::new(cx, &test_settings());
 
-        let actual = store.new_text_for_update("{}".to_string(), |current| {
-            current
-                .git
-                .get_or_insert_default()
-                .inline_blame
-                .get_or_insert_default()
-                .enabled = Some(true);
-        });
+        let actual = store
+            .new_text_for_update("{}".to_string(), |current| {
+                current
+                    .git
+                    .get_or_insert_default()
+                    .inline_blame
+                    .get_or_insert_default()
+                    .enabled = Some(true);
+            })
+            .unwrap();
         pretty_assertions::assert_str_eq!(
             actual,
             r#"{

@@ -1,5 +1,9 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+use anyhow::Context;
 use collections::{BTreeMap, HashMap};
 use gpui::Rgba;
 use schemars::JsonSchema;
@@ -10,7 +14,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, SlashCommandSettings, fallible_options,
+    RootUserSettings, SaturatingBool, fallible_options,
 };
 
 #[with_fallible_options]
@@ -73,9 +77,6 @@ pub struct ProjectSettingsContent {
 
     /// Configuration for how direnv configuration should be loaded
     pub load_direnv: Option<DirenvSettings>,
-
-    /// Settings for slash commands.
-    pub slash_commands: Option<SlashCommandSettings>,
 
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
@@ -231,6 +232,26 @@ pub struct LspNotificationSettingsContent {
 #[serde(transparent)]
 pub struct SemanticTokenRules {
     pub rules: Vec<SemanticTokenRule>,
+}
+
+impl SemanticTokenRules {
+    pub const FILE_NAME: &'static str = "semantic_token_rules.json";
+
+    pub fn load(file_path: &Path) -> anyhow::Result<Self> {
+        let rules_content = std::fs::read(file_path).with_context(|| {
+            anyhow::anyhow!(
+                "Could not read semantic token rules from {}",
+                file_path.display()
+            )
+        })?;
+
+        serde_json_lenient::from_slice::<SemanticTokenRules>(&rules_content).with_context(|| {
+            anyhow::anyhow!(
+                "Failed to parse semantic token rules from {}",
+                file_path.display()
+            )
+        })
+    }
 }
 
 impl crate::merge_from::MergeFrom for SemanticTokenRules {

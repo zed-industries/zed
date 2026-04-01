@@ -9,9 +9,11 @@ use gpui::{
 use prompt_store::PromptId;
 use rope::Point;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
+
+use crate::Agent;
 
 #[derive(IntoElement)]
 pub struct MentionCrease {
@@ -176,7 +178,6 @@ fn open_mention_uri(
         MentionUri::Thread { id, name } => {
             open_thread(workspace, id, name, window, cx);
         }
-        MentionUri::TextThread { .. } => {}
         MentionUri::Rule { id, .. } => {
             open_rule(workspace, id, window, cx);
         }
@@ -187,7 +188,8 @@ fn open_mention_uri(
         | MentionUri::Selection { abs_path: None, .. }
         | MentionUri::Diagnostics { .. }
         | MentionUri::TerminalSelection { .. }
-        | MentionUri::GitDiff { .. } => {}
+        | MentionUri::GitDiff { .. }
+        | MentionUri::MergeConflict { .. } => {}
     });
 }
 
@@ -269,21 +271,19 @@ fn open_thread(
     cx: &mut Context<Workspace>,
 ) {
     use crate::AgentPanel;
-    use acp_thread::AgentSessionInfo;
 
     let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
         return;
     };
 
+    // Right now we only support loading threads in the native agent
     panel.update(cx, |panel, cx| {
         panel.load_agent_thread(
-            AgentSessionInfo {
-                session_id: id,
-                cwd: None,
-                title: Some(name.into()),
-                updated_at: None,
-                meta: None,
-            },
+            Agent::NativeAgent,
+            id,
+            None,
+            Some(name.into()),
+            true,
             window,
             cx,
         )

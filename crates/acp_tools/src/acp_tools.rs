@@ -14,9 +14,9 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
-use project::Project;
+use project::{AgentId, Project};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{CopyButton, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt as _;
 use workspace::{
@@ -48,7 +48,7 @@ pub struct AcpConnectionRegistry {
 }
 
 struct ActiveConnection {
-    server_name: SharedString,
+    agent_id: AgentId,
     connection: Weak<acp::ClientSideConnection>,
 }
 
@@ -65,12 +65,12 @@ impl AcpConnectionRegistry {
 
     pub fn set_active_connection(
         &self,
-        server_name: impl Into<SharedString>,
+        agent_id: AgentId,
         connection: &Rc<acp::ClientSideConnection>,
         cx: &mut Context<Self>,
     ) {
         self.active_connection.replace(Some(ActiveConnection {
-            server_name: server_name.into(),
+            agent_id,
             connection: Rc::downgrade(connection),
         }));
         cx.notify();
@@ -87,7 +87,7 @@ struct AcpTools {
 }
 
 struct WatchedConnection {
-    server_name: SharedString,
+    agent_id: AgentId,
     messages: Vec<WatchedConnectionMessage>,
     list_state: ListState,
     connection: Weak<acp::ClientSideConnection>,
@@ -144,7 +144,7 @@ impl AcpTools {
             });
 
             self.watched_connection = Some(WatchedConnection {
-                server_name: active_connection.server_name.clone(),
+                agent_id: active_connection.agent_id.clone(),
                 messages: vec![],
                 list_state: ListState::new(0, ListAlignment::Bottom, px(2048.)),
                 connection: active_connection.connection.clone(),
@@ -291,7 +291,6 @@ impl AcpTools {
         v_flex()
             .id(index)
             .group("message")
-            .cursor_pointer()
             .font_buffer(cx)
             .w_full()
             .py_3()
@@ -303,27 +302,29 @@ impl AcpTools {
             .border_color(colors.border)
             .border_b_1()
             .hover(|this| this.bg(colors.element_background.opacity(0.5)))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if this.expanded.contains(&index) {
-                    this.expanded.remove(&index);
-                } else {
-                    this.expanded.insert(index);
-                    let Some(connection) = &mut this.watched_connection else {
-                        return;
-                    };
-                    let Some(message) = connection.messages.get_mut(index) else {
-                        return;
-                    };
-                    message.expanded(this.project.read(cx).languages().clone(), cx);
-                    connection.list_state.scroll_to_reveal_item(index);
-                }
-                cx.notify()
-            }))
             .child(
                 h_flex()
+                    .id(("acp-log-message-header", index))
                     .w_full()
                     .gap_2()
                     .flex_shrink_0()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.expanded.contains(&index) {
+                            this.expanded.remove(&index);
+                        } else {
+                            this.expanded.insert(index);
+                            let Some(connection) = &mut this.watched_connection else {
+                                return;
+                            };
+                            let Some(message) = connection.messages.get_mut(index) else {
+                                return;
+                            };
+                            message.expanded(this.project.read(cx).languages().clone(), cx);
+                            connection.list_state.scroll_to_reveal_item(index);
+                        }
+                        cx.notify()
+                    }))
                     .child(match message.direction {
                         acp::StreamMessageDirection::Incoming => Icon::new(IconName::ArrowDown)
                             .color(Color::Error)
@@ -483,7 +484,7 @@ impl Item for AcpTools {
             "ACP: {}",
             self.watched_connection
                 .as_ref()
-                .map_or("Disconnected", |connection| &connection.server_name)
+                .map_or("Disconnected", |connection| connection.agent_id.0.as_ref())
         )
         .into()
     }

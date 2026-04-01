@@ -57,7 +57,8 @@ impl FoldPlaceholder {
     pub fn fold_element(fold_id: FoldId, cx: &App) -> Stateful<gpui::Div> {
         use gpui::{InteractiveElement as _, StatefulInteractiveElement as _, Styled as _};
         use settings::Settings as _;
-        use theme::{ActiveTheme as _, ThemeSettings};
+        use theme::ActiveTheme as _;
+        use theme_settings::ThemeSettings;
         let settings = ThemeSettings::get_global(cx);
         gpui::div()
             .id(fold_id)

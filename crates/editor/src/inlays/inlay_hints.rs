@@ -7,11 +7,11 @@ use std::{
 use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
-use gpui::{App, Entity, Task};
+use gpui::{App, Entity, Pixels, Task};
 use itertools::Itertools;
 use language::{
     BufferRow,
-    language_settings::{InlayHintKind, InlayHintSettings, language_settings},
+    language_settings::{InlayHintKind, InlayHintSettings},
 };
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
@@ -38,9 +38,7 @@ pub fn inlay_hint_settings(
     snapshot: &MultiBufferSnapshot,
     cx: &mut Context<Editor>,
 ) -> InlayHintSettings {
-    let file = snapshot.file_at(location);
-    let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints
+    snapshot.language_settings_at(location, cx).inlay_hints
 }
 
 #[derive(Debug)]
@@ -292,7 +290,7 @@ impl Editor {
         reason: InlayHintRefreshReason,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || self.inlay_hints.is_none() {
+        if !self.lsp_data_enabled() || self.inlay_hints.is_none() {
             return;
         }
         let Some(semantics_provider) = self.semantics_provider() else {
@@ -569,6 +567,7 @@ impl Editor {
         &mut self,
         snapshot: &EditorSnapshot,
         point_for_position: PointForPosition,
+        mouse_position: Option<gpui::Point<Pixels>>,
         secondary_held: bool,
         shift_held: bool,
         window: &mut Window,
@@ -748,7 +747,7 @@ impl Editor {
             self.hide_hovered_link(cx)
         }
         if !hover_updated {
-            hover_popover::hover_at(self, None, window, cx);
+            hover_popover::hover_at(self, None, mouse_position, window, cx);
         }
     }
 
@@ -4799,7 +4798,7 @@ let c = 3;"#
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             crate::init(cx);
         });

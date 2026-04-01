@@ -15,10 +15,9 @@ use gpui::{
     UniformListScrollHandle, Window, ease_in_out, prelude::FluentBuilder as _, px, quad, relative,
     size,
 };
-use settings::SettingsStore;
+use gpui_util::ResultExt;
 use smallvec::SmallVec;
 use theme::ActiveTheme as _;
-use util::ResultExt;
 
 use std::ops::Range;
 
@@ -34,7 +33,6 @@ pub mod scrollbars {
     use gpui::{App, Global};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
-    use settings::Settings;
 
     /// When to show the scrollbar in the editor.
     ///
@@ -54,28 +52,7 @@ pub mod scrollbars {
         Never,
     }
 
-    impl From<settings::ShowScrollbar> for ShowScrollbar {
-        fn from(value: settings::ShowScrollbar) -> Self {
-            match value {
-                settings::ShowScrollbar::Auto => ShowScrollbar::Auto,
-                settings::ShowScrollbar::System => ShowScrollbar::System,
-                settings::ShowScrollbar::Always => ShowScrollbar::Always,
-                settings::ShowScrollbar::Never => ShowScrollbar::Never,
-            }
-        }
-    }
-
-    pub trait GlobalSetting {
-        fn get_value(cx: &App) -> &Self;
-    }
-
-    impl<T: Settings> GlobalSetting for T {
-        fn get_value(cx: &App) -> &T {
-            T::get_global(cx)
-        }
-    }
-
-    pub trait ScrollbarVisibility: GlobalSetting + 'static {
+    pub trait ScrollbarVisibility: 'static {
         fn visibility(&self, cx: &App) -> ShowScrollbar;
     }
 
@@ -103,11 +80,9 @@ where
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
 
-    let state = window.use_keyed_state(element_id, cx, |window, cx| {
+    let state = window.use_keyed_state(element_id, cx, |_, cx| {
         let parent_id = cx.entity_id();
-        ScrollbarStateWrapper(
-            cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, window, cx)),
-        )
+        ScrollbarStateWrapper(cx.new(|cx| ScrollbarState::new_from_config(config, parent_id, cx)))
     });
 
     state.update(cx, |state, cx| {
@@ -399,8 +374,8 @@ impl Scrollbars {
         Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
     }
 
-    pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
-        Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::get_value(cx).visibility(cx))
+    pub fn for_settings<S: ScrollbarVisibility + Default>() -> Scrollbars {
+        Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::default().visibility(cx))
     }
 }
 
@@ -589,6 +564,16 @@ enum ParentHoverEvent {
     Outside,
 }
 
+pub fn on_new_scrollbars<T: gpui::Global>(cx: &mut App) {
+    cx.observe_new::<ScrollbarState>(|_, window, cx| {
+        if let Some(window) = window {
+            cx.observe_global_in::<T>(window, ScrollbarState::settings_changed)
+                .detach();
+        }
+    })
+    .detach();
+}
+
 /// This is used to ensure notifies within the state do not notify the parent
 /// unintentionally.
 struct ScrollbarStateWrapper<T: ScrollableHandle>(Entity<ScrollbarState<T>>);
@@ -611,15 +596,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
 }
 
 impl<T: ScrollableHandle> ScrollbarState<T> {
-    fn new_from_config(
-        config: Scrollbars<T>,
-        parent_id: EntityId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        cx.observe_global_in::<SettingsStore>(window, Self::settings_changed)
-            .detach();
-
+    fn new_from_config(config: Scrollbars<T>, parent_id: EntityId, cx: &mut Context<Self>) -> Self {
         let (manually_added, scroll_handle) = match config.scrollable_handle {
             Handle::Tracked(handle) => (true, handle),
             Handle::Untracked(func) => (false, func()),
@@ -1041,7 +1018,18 @@ impl ScrollbarLayout {
 
 impl PartialEq for ScrollbarLayout {
     fn eq(&self, other: &Self) -> bool {
-        self.axis == other.axis && self.thumb_bounds == other.thumb_bounds
+        if self.axis != other.axis {
+            return false;
+        }
+
+        let axis = self.axis;
+        let thumb_offset =
+            self.thumb_bounds.origin.along(axis) - self.track_bounds.origin.along(axis);
+        let other_thumb_offset =
+            other.thumb_bounds.origin.along(axis) - other.track_bounds.origin.along(axis);
+
+        thumb_offset == other_thumb_offset
+            && self.thumb_bounds.size.along(axis) == other.thumb_bounds.size.along(axis)
     }
 }
 

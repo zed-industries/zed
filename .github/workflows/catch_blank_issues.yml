@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - id: get-app-token
-        uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1 # v2.1.4
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         with:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
@@ -42,8 +42,10 @@ jobs:
             }
 
       - if: steps.check-staff.outputs.result == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
-          echo "::notice::Skipping issue #${{ github.event.issue.number }} - actor is staff member"
+          echo "::notice::Skipping issue #$ISSUE_NUMBER - actor is staff member"
 
       - if: steps.check-staff.outputs.result == 'false'
         id: add-label
