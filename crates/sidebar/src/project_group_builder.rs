@@ -259,7 +259,8 @@ mod tests {
                 sha: "abc".into(),
                 is_main: false,
             },
-        );
+        )
+        .await;
         fs
     }
 

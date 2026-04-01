@@ -404,7 +404,8 @@ async fn test_linked_worktrees_sync(
             sha: "aaa111".into(),
             is_main: false,
         },
-    );
+    )
+    .await;
     fs.add_linked_worktree_for_repo(
         Path::new(path!("/project/.git")),
         true,
@@ -414,7 +415,8 @@ async fn test_linked_worktrees_sync(
             sha: "bbb222".into(),
             is_main: false,
         },
-    );
+    )
+    .await;
     fs.add_linked_worktree_for_repo(
         Path::new(path!("/project/.git")),
         true,
@@ -424,7 +426,8 @@ async fn test_linked_worktrees_sync(
             sha: "ccc333".into(),
             is_main: false,
         },
-    );
+    )
+    .await;
 
     let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
 
@@ -484,16 +487,19 @@ async fn test_linked_worktrees_sync(
     );
 
     // Now mutate: add a third linked worktree on the host side.
-    client_a.fs().add_linked_worktree_for_repo(
-        Path::new(path!("/project/.git")),
-        true,
-        GitWorktree {
-            path: PathBuf::from(path!("/project/hotfix-branch")),
-            ref_name: Some("refs/heads/hotfix-branch".into()),
-            sha: "ddd444".into(),
-            is_main: false,
-        },
-    );
+    client_a
+        .fs()
+        .add_linked_worktree_for_repo(
+            Path::new(path!("/project/.git")),
+            true,
+            GitWorktree {
+                path: PathBuf::from(path!("/project/hotfix-branch")),
+                ref_name: Some("refs/heads/hotfix-branch".into()),
+                sha: "ddd444".into(),
+                is_main: false,
+            },
+        )
+        .await;
 
     // Wait for the host to re-scan and propagate the update.
     executor.run_until_parked();
@@ -526,11 +532,14 @@ async fn test_linked_worktrees_sync(
     );
 
     // Now mutate: remove one linked worktree from the host side.
-    client_a.fs().remove_worktree_for_repo(
-        Path::new(path!("/project/.git")),
-        true,
-        "refs/heads/bugfix-branch",
-    );
+    client_a
+        .fs()
+        .remove_worktree_for_repo(
+            Path::new(path!("/project/.git")),
+            true,
+            "refs/heads/bugfix-branch",
+        )
+        .await;
 
     executor.run_until_parked();
 
