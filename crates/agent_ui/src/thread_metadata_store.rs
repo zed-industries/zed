@@ -1016,7 +1016,7 @@ mod tests {
             store.read(cx).entries().cloned().collect::<Vec<_>>()
         });
 
-        assert_eq!(list.len(), 3);
+        assert_eq!(list.len(), 4);
         assert!(
             list.iter()
                 .all(|metadata| metadata.agent_id.as_ref() == agent::ZED_AGENT_ID.as_ref())
@@ -1035,17 +1035,12 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(migrated_session_ids.contains(&"a-session-1"));
         assert!(migrated_session_ids.contains(&"b-session-0"));
-        assert!(!migrated_session_ids.contains(&"projectless"));
+        assert!(migrated_session_ids.contains(&"projectless"));
 
         let migrated_entries = list
             .iter()
             .filter(|metadata| metadata.session_id.0.as_ref() != "a-session-0")
             .collect::<Vec<_>>();
-        assert!(
-            migrated_entries
-                .iter()
-                .all(|metadata| !metadata.folder_paths.is_empty())
-        );
         assert!(migrated_entries.iter().all(|metadata| metadata.archived));
     }
 

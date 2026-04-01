@@ -864,7 +864,11 @@ struct ProjectPickerDelegate {
 }
 
 impl ProjectPickerDelegate {
-    fn update_working_and_unarchive(&mut self, paths: PathList, cx: &mut Context<Picker<Self>>) {
+    fn update_working_directories_and_unarchive(
+        &mut self,
+        paths: PathList,
+        cx: &mut Context<Picker<Self>>,
+    ) {
         self.thread.folder_paths = paths.clone();
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
             store.update_working_directories(&self.thread.session_id, paths, cx);
@@ -1100,7 +1104,7 @@ impl PickerDelegate for ProjectPickerDelegate {
             return;
         };
 
-        self.update_working_and_unarchive(paths.clone(), cx);
+        self.update_working_directories_and_unarchive(paths.clone(), cx);
         cx.emit(DismissEvent);
     }
 
@@ -1247,7 +1251,9 @@ impl PickerDelegate for ProjectPickerDelegate {
                                 let work_dirs = PathList::new(&paths);
 
                                 this.update(cx, |picker, cx| {
-                                    picker.delegate.update_working_and_unarchive(work_dirs, cx);
+                                    picker
+                                        .delegate
+                                        .update_working_directories_and_unarchive(work_dirs, cx);
                                     cx.emit(DismissEvent);
                                 })
                                 .log_err();
@@ -1274,7 +1280,9 @@ impl PickerDelegate for ProjectPickerDelegate {
                                 return;
                             };
                             let paths = paths.clone();
-                            picker.delegate.update_working_and_unarchive(paths, cx);
+                            picker
+                                .delegate
+                                .update_working_directories_and_unarchive(paths, cx);
                             cx.emit(DismissEvent);
                         })),
                 )
