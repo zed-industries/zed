@@ -1133,7 +1133,7 @@ impl WorkspaceDb {
     }
 
     /// Returns the workspace with the given ID, loading all associated data.
-    pub(crate) fn workspace_for_id(
+    pub fn workspace_for_id(
         &self,
         workspace_id: WorkspaceId,
     ) -> Option<SerializedWorkspace> {

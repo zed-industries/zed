@@ -6687,6 +6687,28 @@ impl Workspace {
             .map_err(|err| anyhow!("failed to send serializable item over channel: {err}"))
     }
 
+    /// Restore a workspace's full state (pane layout, open items, dock state)
+    /// from the database. Used by the iPad thin client to restore state on
+    /// reconnect. Returns a task that completes when restoration is done.
+    pub fn restore_from_database(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(workspace_id) = self.database_id() else {
+            return Task::ready(Ok(()));
+        };
+        let db = WorkspaceDb::global(cx);
+        let Some(serialized_workspace) = db.workspace_for_id(workspace_id) else {
+            return Task::ready(Ok(()));
+        };
+        let task = Self::load_workspace(serialized_workspace, Vec::new(), window, cx);
+        cx.foreground_executor().spawn(async move {
+            task.await?;
+            Ok(())
+        })
+    }
+
     pub(crate) fn load_workspace(
         serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,

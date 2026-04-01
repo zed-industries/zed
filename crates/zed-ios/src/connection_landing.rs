@@ -1491,13 +1491,9 @@ impl ConnectionLanding {
             let resolved_root = cx.update(|cx| {
                 worktree.read(cx).abs_path().to_path_buf()
             });
-            if let Some((id, docks)) = db.remote_workspace_state(&[&resolved_root], remote_connection_id) {
-                (id, Some(docks))
-            } else {
-                (db.next_id().await?, None)
-            }
+            db.remote_workspace_id_for_roots(&[&resolved_root], remote_connection_id)
+                .unwrap_or(db.next_id().await?)
         };
-        let (workspace_id, serialized_docks) = workspace_id;
 
         let workspace_entity = landing_window.update(cx, |_, window, cx| {
             let workspace = cx.new(|cx| {
@@ -1515,13 +1511,22 @@ impl ConnectionLanding {
             workspace.update(cx, |ws, cx| {
                 ws.set_status_bar_prefix(switcher.into(), cx);
                 ws.set_status_bar_suffix(suffix.into(), cx);
-                if let Some(docks) = serialized_docks {
-                    ws.set_dock_structure(docks, window, cx);
-                }
             });
 
             workspace
         })?;
+
+        // Restore previously open files, pane layout, and dock state from the
+        // workspace database. This replaces the default single-pane center group
+        // with the saved pane hierarchy and deserializes editor items.
+        let restore_result = landing_window.update(cx, |_, window, cx| {
+            workspace_entity.update(cx, |workspace, cx| {
+                workspace.restore_from_database(window, cx)
+            })
+        })?;
+        if let Err(error) = restore_result.await {
+            log::error!("[zed-ios] failed to restore workspace state: {error:#}");
+        }
 
         // Open the resolved project path if it points to a file.
         if !project_path.path.is_empty() {
