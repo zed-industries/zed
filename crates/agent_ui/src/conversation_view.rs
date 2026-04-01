@@ -4865,6 +4865,63 @@ pub(crate) mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_stale_stop_does_not_disable_follow_tail_during_regenerate(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Original message to edit", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        let user_message_editor = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .map(|active| &active.read(cx).entry_view_state)
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .entry(0)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+
+        cx.focus(&user_message_editor);
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited message content", window, cx);
+        });
+
+        user_message_editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(Chat), cx);
+        });
+
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            let active = view.active_thread().unwrap();
+            let active = active.read(cx);
+
+            assert_eq!(active.thread.read(cx).status(), ThreadStatus::Generating);
+            assert!(
+                active.list_state.is_following_tail(),
+                "stale stop events from the cancelled turn must not disable follow-tail for the new turn"
+            );
+        });
+    }
+
     struct GeneratingThreadSetup {
         conversation_view: Entity<ConversationView>,
         thread: Entity<AcpThread>,
