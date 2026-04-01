@@ -316,9 +316,3 @@ pub(crate) mod m_2026_03_23 {
 
     pub(crate) use keymap::KEYMAP_PATTERNS;
 }
-
-pub(crate) mod m_2026_03_31 {
-    mod settings;
-
-    pub(crate) use settings::remove_text_thread_settings;
-}
