@@ -1304,19 +1304,11 @@ impl SettingsStore {
             merged_local_settings.merge_from(local_settings);
 
             // Apply the active profile's project settings on top, if defined
-            // in this project's .zed/settings.json. The active profile can come
-            // from the global ActiveSettingsProfileName (set by the profile selector
-            // or workspace restore) or from the project's own active_profile field.
-            let active_profile_name = local_settings
-                .project
-                .active_profile
-                .as_deref()
-                .or_else(|| {
-                    cx.try_global::<ActiveSettingsProfileName>()
-                        .map(|p| p.0.as_str())
-                });
-            if let Some(profile_name) = active_profile_name {
-                if let Some(profile_settings) = local_settings.project.profiles.get(profile_name) {
+            // in this project's .zed/settings.json.
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
+                if let Some(profile_settings) =
+                    local_settings.project.profiles.get(&active_profile.0)
+                {
                     merged_local_settings.project.merge_from(profile_settings);
                 }
             }
