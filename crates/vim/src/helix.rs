@@ -2174,6 +2174,15 @@ mod test {
         cx.simulate_keystrokes("n");
         cx.simulate_keystrokes("n");
         // Should not panic when wrapping past last match.
+        cx.assert_state(
+            indoc! {"
+                search «termˇ»
+                stuff
+                search «termˇ»
+                other stuff
+            "},
+            Mode::HelixSelect,
+        );
     }
 
     #[gpui::test]
