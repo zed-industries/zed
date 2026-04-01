@@ -399,18 +399,7 @@ async fn test_linked_worktrees_sync(
         Path::new(path!("/project/.git")),
         true,
         GitWorktree {
-            path: PathBuf::from(path!("/project")),
-            ref_name: Some("refs/heads/main".into()),
-            sha: "aaa111".into(),
-            is_main: false,
-        },
-    )
-    .await;
-    fs.add_linked_worktree_for_repo(
-        Path::new(path!("/project/.git")),
-        true,
-        GitWorktree {
-            path: PathBuf::from(path!("/project/feature-branch")),
+            path: PathBuf::from(path!("/worktrees/feature-branch")),
             ref_name: Some("refs/heads/feature-branch".into()),
             sha: "bbb222".into(),
             is_main: false,
@@ -421,7 +410,7 @@ async fn test_linked_worktrees_sync(
         Path::new(path!("/project/.git")),
         true,
         GitWorktree {
-            path: PathBuf::from(path!("/project/bugfix-branch")),
+            path: PathBuf::from(path!("/worktrees/bugfix-branch")),
             ref_name: Some("refs/heads/bugfix-branch".into()),
             sha: "ccc333".into(),
             is_main: false,
@@ -448,22 +437,22 @@ async fn test_linked_worktrees_sync(
     );
     assert_eq!(
         host_linked[0].path,
-        PathBuf::from(path!("/project/feature-branch"))
+        PathBuf::from(path!("/worktrees/bugfix-branch"))
     );
     assert_eq!(
         host_linked[0].ref_name,
-        Some("refs/heads/feature-branch".into())
+        Some("refs/heads/bugfix-branch".into())
     );
-    assert_eq!(host_linked[0].sha.as_ref(), "bbb222");
+    assert_eq!(host_linked[0].sha.as_ref(), "ccc333");
     assert_eq!(
         host_linked[1].path,
-        PathBuf::from(path!("/project/bugfix-branch"))
+        PathBuf::from(path!("/worktrees/feature-branch"))
     );
     assert_eq!(
         host_linked[1].ref_name,
-        Some("refs/heads/bugfix-branch".into())
+        Some("refs/heads/feature-branch".into())
     );
-    assert_eq!(host_linked[1].sha.as_ref(), "ccc333");
+    assert_eq!(host_linked[1].sha.as_ref(), "bbb222");
 
     // Share the project and have client B join.
     let project_id = active_call_a
@@ -493,7 +482,7 @@ async fn test_linked_worktrees_sync(
             Path::new(path!("/project/.git")),
             true,
             GitWorktree {
-                path: PathBuf::from(path!("/project/hotfix-branch")),
+                path: PathBuf::from(path!("/worktrees/hotfix-branch")),
                 ref_name: Some("refs/heads/hotfix-branch".into()),
                 sha: "ddd444".into(),
                 is_main: false,
@@ -517,7 +506,7 @@ async fn test_linked_worktrees_sync(
     );
     assert_eq!(
         host_linked_updated[2].path,
-        PathBuf::from(path!("/project/hotfix-branch"))
+        PathBuf::from(path!("/worktrees/hotfix-branch"))
     );
 
     // Verify the guest also received the update.

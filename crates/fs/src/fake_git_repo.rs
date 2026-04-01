@@ -408,18 +408,17 @@ impl GitRepository for FakeGitRepository {
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let fs = self.fs.clone();
-        let dot_git_path = self.dot_git_path.clone();
         let common_dir_path = self.common_dir_path.clone();
         let executor = self.executor.clone();
 
         async move {
             executor.simulate_random_delay().await;
 
-            let (main_worktree, refs) = fs.with_git_state(&dot_git_path, false, |state| {
-                let work_dir = dot_git_path
+            let (main_worktree, refs) = fs.with_git_state(&common_dir_path, false, |state| {
+                let work_dir = common_dir_path
                     .parent()
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| dot_git_path.clone());
+                    .unwrap_or_else(|| common_dir_path.clone());
                 let head_sha = state
                     .refs
                     .get("HEAD")
@@ -552,7 +551,7 @@ impl GitRepository for FakeGitRepository {
     fn remove_worktree(&self, path: PathBuf, _force: bool) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
         let executor = self.executor.clone();
-        let dot_git_path = self.dot_git_path.clone();
+        let common_dir_path = self.common_dir_path.clone();
         async move {
             executor.simulate_random_delay().await;
 
@@ -588,8 +587,9 @@ impl GitRepository for FakeGitRepository {
             )
             .await?;
 
-            // Emit a git event so the scanner notices the change.
-            fs.with_git_state(&dot_git_path, true, |_| {})?;
+            // Emit a git event on the main .git directory so the scanner
+            // notices the change.
+            fs.with_git_state(&common_dir_path, true, |_| {})?;
 
             Ok(())
         }
@@ -599,7 +599,7 @@ impl GitRepository for FakeGitRepository {
     fn rename_worktree(&self, old_path: PathBuf, new_path: PathBuf) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
         let executor = self.executor.clone();
-        let dot_git_path = self.dot_git_path.clone();
+        let common_dir_path = self.common_dir_path.clone();
         async move {
             executor.simulate_random_delay().await;
 
@@ -643,8 +643,9 @@ impl GitRepository for FakeGitRepository {
                 false,
             )?;
 
-            // Emit a git event so the scanner notices the change.
-            fs.with_git_state(&dot_git_path, true, |_| {})?;
+            // Emit a git event on the main .git directory so the scanner
+            // notices the change.
+            fs.with_git_state(&common_dir_path, true, |_| {})?;
 
             Ok(())
         }
