@@ -294,7 +294,7 @@ impl CloudLanguageModelProvider {
         user_store: Entity<UserStore>,
     ) -> Arc<dyn LanguageModel> {
         Arc::new(CloudLanguageModel {
-            id: LanguageModelId(SharedString::from(model.id.0.clone())),
+            id: LanguageModelId::from(model.id.0.to_string()),
             model,
             llm_api_token,
             user_store,

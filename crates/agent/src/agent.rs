@@ -147,7 +147,7 @@ impl LanguageModels {
             }
             if !provider_models.is_empty() {
                 language_model_list.insert(
-                    acp_thread::AgentModelGroupName(provider.name().0.clone()),
+                    acp_thread::AgentModelGroupName(provider.name().0.to_string().into()),
                     provider_models,
                 );
             }
@@ -172,7 +172,7 @@ impl LanguageModels {
     ) -> acp_thread::AgentModelInfo {
         acp_thread::AgentModelInfo {
             id: Self::model_id(model),
-            name: model.name().0,
+            name: model.name().0.to_string().into(),
             description: None,
             icon: Some(match provider.icon() {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),

@@ -18,7 +18,7 @@ use gpui::{
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
 use language::Buffer;
-use language_model::LanguageModelImage;
+use language_model::{LanguageModelImage, LanguageModelImageExt};
 use multi_buffer::MultiBufferRow;
 use postage::stream::Stream as _;
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -362,7 +362,7 @@ impl MentionSet {
                     .await;
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
-                        data: image.source,
+                        data: image.source.to_string().into(),
                         format: LanguageModelImage::FORMAT,
                     }))
                 } else {
@@ -796,7 +796,7 @@ pub(crate) async fn insert_images_as_context(
                 drop(tx);
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
-                        data: image.source,
+                        data: image.source.to_string().into(),
                         format: LanguageModelImage::FORMAT,
                     }))
                 } else {

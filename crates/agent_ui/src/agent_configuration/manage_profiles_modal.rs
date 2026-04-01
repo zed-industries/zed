@@ -237,7 +237,7 @@ impl ManageProfilesModal {
                             .and_then(|selection| {
                                 let registry = LanguageModelRegistry::read_global(cx);
                                 let provider_id = language_model::LanguageModelProviderId(
-                                    gpui::SharedString::from(selection.provider.0.clone()),
+                                    selection.provider.0.to_string().into(),
                                 );
                                 let provider = registry.provider(&provider_id)?;
                                 let model = provider

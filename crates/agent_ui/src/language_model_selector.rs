@@ -344,7 +344,7 @@ impl GroupedModels {
                 continue;
             }
             entries.push(LanguageModelPickerEntry::Separator(
-                models[0].model.provider_name().0,
+                models[0].model.provider_name().0.to_string().into(),
             ));
             for info in models {
                 entries.push(LanguageModelPickerEntry::Model(info.clone()));
@@ -582,7 +582,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 };
 
                 Some(
-                    ModelSelectorListItem::new(ix, model_info.model.name().0)
+                    ModelSelectorListItem::new(ix, model_info.model.name().0.to_string())
                         .map(|this| match &model_info.icon {
                             IconOrSvg::Icon(icon_name) => this.icon(*icon_name),
                             IconOrSvg::Svg(icon_path) => this.icon_path(icon_path.clone()),

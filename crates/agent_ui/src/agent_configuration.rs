@@ -203,7 +203,7 @@ impl AgentConfiguration {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let provider_id = provider.id().0;
-        let provider_name = provider.name().0;
+        let provider_name: gpui::SharedString = provider.name().0.to_string().into();
         let provider_id_string = SharedString::from(format!("provider-disclosure-{provider_id}"));
 
         let configuration_view = self

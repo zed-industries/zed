@@ -631,6 +631,7 @@ dependencies = [
  "chrono",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
  "schemars",
  "serde",
  "serde_json",
@@ -9321,12 +9322,10 @@ dependencies = [
 name = "language_model"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "base64 0.22.1",
  "cloud_api_client",
  "cloud_api_types",
- "cloud_llm_client",
  "collections",
  "credentials_provider",
  "env_var",
@@ -9335,16 +9334,32 @@ dependencies = [
  "http_client",
  "icons",
  "image",
+ "language_model_core",
  "log",
- "open_ai",
- "open_router",
  "parking_lot",
- "schemars",
  "serde",
  "serde_json",
  "smol",
  "thiserror 2.0.17",
  "util",
+]
+
+[[package]]
+name = "language_model_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cloud_llm_client",
+ "derive_more",
+ "futures 0.3.31",
+ "gpui_util",
+ "http_client",
+ "partial-json-fixer",
+ "schemars",
+ "serde",
+ "serde_json",
+ "smol",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
@@ -11494,6 +11509,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
  "log",
  "rand 0.9.2",
  "schemars",
@@ -11533,6 +11549,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
  "schemars",
  "serde",
  "serde_json",

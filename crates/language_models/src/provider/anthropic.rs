@@ -807,7 +807,7 @@ pub fn into_anthropic(
             None
         },
         stop_sequences: Vec::new(),
-        speed: request.speed.map(From::from),
+        speed: request.speed.map(Into::into),
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,

@@ -5,7 +5,7 @@ use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use indoc::formatdoc;
 use language::Point;
-use language_model::{LanguageModelImage, LanguageModelToolResultContent};
+use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

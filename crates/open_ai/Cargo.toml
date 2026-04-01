@@ -19,6 +19,7 @@ schemars = ["dep:schemars"]
 anyhow.workspace = true
 futures.workspace = true
 http_client.workspace = true
+language_model_core.workspace = true
 rand.workspace = true
 schemars = { workspace = true, optional = true }
 log.workspace = true

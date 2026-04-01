@@ -717,3 +717,26 @@ pub fn embed<'a>(
         Ok(response)
     }
 }
+
+// -- Conversions to `language_model_core` types --
+
+impl From<RequestError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: RequestError) -> Self {
+        match error {
+            RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                let retry_after = headers
+                    .get(http_client::http::header::RETRY_AFTER)
+                    .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
+                    .map(std::time::Duration::from_secs);
+
+                Self::from_http_status(provider.into(), status_code, body, retry_after)
+            }
+            RequestError::Other(e) => Self::Other(e),
+        }
+    }
+}
