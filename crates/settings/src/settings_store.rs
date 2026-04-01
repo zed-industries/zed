@@ -438,11 +438,21 @@ impl SettingsStore {
         &self.default_settings
     }
 
-    /// Get the configured settings profile names.
+    /// Get the configured settings profile names from user settings and project settings.
     pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
-        self.user_settings
+        let mut profiles: Vec<&str> = self
+            .user_settings
             .iter()
             .flat_map(|settings| settings.profiles.keys().map(|k| k.as_str()))
+            .collect();
+        for local_settings in self.local_settings.values() {
+            for key in local_settings.project.profiles.keys() {
+                if !profiles.contains(&key.as_str()) {
+                    profiles.push(key.as_str());
+                }
+            }
+        }
+        profiles.into_iter()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1292,6 +1302,24 @@ impl SettingsStore {
                 self.merged_settings.as_ref().clone()
             };
             merged_local_settings.merge_from(local_settings);
+
+            // Apply the active profile's project settings on top, if defined
+            // in this project's .zed/settings.json. The active profile can come
+            // from the global ActiveSettingsProfileName (set by the profile selector
+            // or workspace restore) or from the project's own active_profile field.
+            let active_profile_name = local_settings
+                .project
+                .active_profile
+                .as_deref()
+                .or_else(|| {
+                    cx.try_global::<ActiveSettingsProfileName>()
+                        .map(|p| p.0.as_str())
+                });
+            if let Some(profile_name) = active_profile_name {
+                if let Some(profile_settings) = local_settings.project.profiles.get(profile_name) {
+                    merged_local_settings.project.merge_from(profile_settings);
+                }
+            }
 
             project_settings_stack.push(merged_local_settings);
 

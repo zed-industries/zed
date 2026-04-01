@@ -12,6 +12,8 @@ use settings_json::parse_json_with_comments;
 use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
+use collections::IndexMap;
+
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
     RootUserSettings, SaturatingBool, fallible_options,
@@ -85,6 +87,32 @@ pub struct ProjectSettingsContent {
     ///
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
+
+    /// The settings profile to activate for this project. Must match
+    /// a profile name defined in `profiles` below or in user settings.
+    /// When set, the profile's overrides are applied automatically.
+    pub active_profile: Option<String>,
+
+    /// Named settings profiles that can be activated per-workspace.
+    /// Each profile contains project settings overrides that are merged
+    /// on top of the base settings when activated.
+    ///
+    /// Example:
+    /// ```json
+    /// {
+    ///   "profiles": {
+    ///     "iOS": {
+    ///       "lsp": {
+    ///         "rust-analyzer": {
+    ///           "initialization_options": { ... }
+    ///         }
+    ///       }
+    ///     }
+    ///   }
+    /// }
+    /// ```
+    #[serde(default)]
+    pub profiles: IndexMap<String, ProjectSettingsContent>,
 }
 
 #[with_fallible_options]

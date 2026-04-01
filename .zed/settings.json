@@ -70,4 +70,42 @@
     "**/.settings",
   ],
   "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**/*.rs", "**/*.lock"],
+  "profiles": {
+    "iOS": {
+      "lsp": {
+        "rust-analyzer": {
+          "initialization_options": {
+            "cargo": {
+              "target": "aarch64-apple-ios",
+              "noDefaultFeatures": true,
+              "buildScripts": {
+                "overrideCommand": [
+                  "cargo",
+                  "check",
+                  "--message-format=json",
+                  "--target",
+                  "aarch64-apple-ios",
+                  "--no-default-features",
+                  "-p",
+                  "zed-ios"
+                ]
+              }
+            },
+            "check": {
+              "overrideCommand": [
+                "cargo",
+                "check",
+                "--message-format=json",
+                "--target",
+                "aarch64-apple-ios",
+                "--no-default-features",
+                "-p",
+                "zed-ios"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
 }
