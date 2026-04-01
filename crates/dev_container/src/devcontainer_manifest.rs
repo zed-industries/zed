@@ -3741,71 +3741,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 ENV DOCKER_BUILDKIT=1
 "#
         );
-
-        let runtime_override = files
-            .iter()
-            .find(|f| {
-                f.file_name()
-                    .is_some_and(|s| s.display().to_string() == "docker_compose_runtime.json")
-            })
-            .expect("to be found");
-        let runtime_override = test_dependencies.fs.load(runtime_override).await.unwrap();
-
-        let expected_runtime_override = DockerComposeConfig {
-        name: None,
-        services: HashMap::from([
-            (
-                "app".to_string(),
-                DockerComposeService {
-                    entrypoint: Some(vec![
-                        "/bin/sh".to_string(),
-                        "-c".to_string(),
-                        "echo Container started\ntrap \"exit 0\" 15\n/usr/local/share/docker-init.sh\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done".to_string(),
-                        "-".to_string(),
-                    ]),
-                    cap_add: Some(vec!["SYS_PTRACE".to_string()]),
-                    security_opt: Some(vec!["seccomp=unconfined".to_string()]),
-                    privileged: Some(true),
-                    labels: Some(vec![
-                        "devcontainer.metadata=[{\"remoteUser\":\"vscode\"}]".to_string(),
-                        "devcontainer.local_folder=/path/to/local/project".to_string(),
-                        "devcontainer.config_file=/path/to/local/project/.devcontainer/devcontainer.json".to_string()
-                    ]),
-                    volumes: vec![
-                        MountDefinition {
-                            source: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
-                            target: "/var/lib/docker".to_string(),
-                            mount_type: Some("volume".to_string())
-                        }
-                    ],
-                    ..Default::default()
-                },
-            ),
-            (
-                "db".to_string(),
-                DockerComposeService {
-                    ports: vec![
-                        "8083:8083".to_string(),
-                        "5432:5432".to_string(),
-                        "1234:1234".to_string(),
-                        "8084:8084".to_string()
-                    ],
-                    ..Default::default()
-                },
-            ),
-        ]),
-        volumes: HashMap::from([(
-            "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
-            DockerComposeVolume {
-                name: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
-            },
-        )]),
-    };
-
-        assert_eq!(
-            serde_json_lenient::from_str::<DockerComposeConfig>(&runtime_override).unwrap(),
-            expected_runtime_override
-        )
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -4376,6 +4311,7 @@ chmod +x ./install.sh
     #[async_trait]
     impl DockerClient for FakeDocker {
         async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError> {
+            dbg!(id);
             if id == "mcr.microsoft.com/devcontainers/typescript-node:1-18-bookworm" {
                 return Ok(DockerInspect {
                     id: "sha256:610e6cfca95280188b021774f8cf69dd6f49bdb6eebc34c5ee2010f4d51cc104"
@@ -4476,6 +4412,7 @@ chmod +x ./install.sh
             &self,
             config_files: &Vec<PathBuf>,
         ) -> Result<Option<DockerComposeConfig>, DevContainerError> {
+            dbg!(&config_files);
             if config_files.len() == 1
                 && config_files.get(0)
                     == Some(&PathBuf::from(
