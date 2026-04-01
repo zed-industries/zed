@@ -157,7 +157,6 @@ impl Search {
     /// or full search results.
     pub fn into_handle(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {
         let mut open_buffers = HashSet::default();
-        let mut unnamed_buffers = Vec::new();
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
         let buffers = self.buffer_store.read(cx);
         for handle in buffers.buffers() {
@@ -166,9 +165,6 @@ impl Search {
                 continue;
             } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
-            } else {
-                self.limit = self.limit.saturating_sub(1);
-                unnamed_buffers.push(handle)
             };
         }
         let open_buffers = Arc::new(open_buffers);
@@ -178,9 +174,6 @@ impl Search {
         let matching_buffers = grab_buffer_snapshot_rx.clone();
         let trigger_search = Box::new(move |cx: &mut App| {
             cx.spawn(async move |cx| {
-                for buffer in unnamed_buffers {
-                    _ = grab_buffer_snapshot_tx.send(buffer).await;
-                }
 
                 let (find_all_matches_tx, find_all_matches_rx) =
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
