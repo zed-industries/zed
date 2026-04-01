@@ -160,7 +160,7 @@ impl RenderOnce for ModelSelectorListItem {
             .end_slot(div().pr_2().when(self.is_selected, |this| {
                 this.child(Icon::new(IconName::Check).color(Color::Accent))
             }))
-            .end_hover_slot(div().pr_1p5().when_some(self.on_toggle_favorite, {
+            .end_slot_on_hover(div().pr_1p5().when_some(self.on_toggle_favorite, {
                 |this, handle_click| {
                     let (icon, color, tooltip) = if is_favorite {
                         (IconName::StarFilled, Color::Accent, "Unfavorite Model")

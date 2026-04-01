@@ -59,8 +59,6 @@
   "file_scan_exclusions": [
     "crates/agent/src/edit_agent/evals/fixtures",
     "crates/agent/src/tools/evals/fixtures",
-    "crates/eval/worktrees/",
-    "crates/eval/repos/",
     "**/.git",
     "**/.svn",
     "**/.hg",

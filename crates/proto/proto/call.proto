@@ -370,8 +370,9 @@ message View {
   oneof variant {
     Editor editor = 3;
     ChannelView channel_view = 4;
-    ContextEditor context_editor = 5;
   }
+
+  reserved 5;
 
   message Editor {
     bool singleton = 1;
@@ -388,11 +389,6 @@ message View {
 
   message ChannelView {
     uint64 channel_id = 1;
-    Editor editor = 2;
-  }
-
-  message ContextEditor {
-    string context_id = 1;
     Editor editor = 2;
   }
 }

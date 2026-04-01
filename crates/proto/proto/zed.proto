@@ -223,15 +223,6 @@ message Envelope {
     LinkedEditingRange linked_editing_range = 209;
     LinkedEditingRangeResponse linked_editing_range_response = 210;
 
-    AdvertiseContexts advertise_contexts = 211;
-    OpenContext open_context = 212;
-    OpenContextResponse open_context_response = 213;
-    CreateContext create_context = 232;
-    CreateContextResponse create_context_response = 233;
-    UpdateContext update_context = 214;
-    SynchronizeContexts synchronize_contexts = 215;
-    SynchronizeContextsResponse synchronize_contexts_response = 216;
-
     GetSignatureHelp get_signature_help = 217;
     GetSignatureHelpResponse get_signature_help_response = 218;
 
@@ -502,6 +493,7 @@ message Envelope {
   reserved 332 to 333;
   reserved 394 to 396;
   reserved 429 to 430;
+  reserved 211 to 216, 232 to 233;
 }
 
 message Hello {

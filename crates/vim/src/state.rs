@@ -1022,6 +1022,7 @@ impl Clone for ReplayableAction {
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
+    pub cmd_f_search: bool,
 
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,

@@ -23,7 +23,7 @@ use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
     ErrorCode, ErrorExt,
-    proto::{self, ChannelVisibility, PeerId},
+    proto::{self, ChannelVisibility, PeerId, reorder_channel::Direction},
 };
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -259,7 +259,6 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
-    favorite_channels: Vec<ChannelId>,
     filter_active_channels: bool,
     workspace: WeakEntity<Workspace>,
 }
@@ -267,8 +266,6 @@ pub struct CollabPanel {
 #[derive(Serialize, Deserialize)]
 struct SerializedCollabPanel {
     collapsed_channels: Option<Vec<u64>>,
-    #[serde(default)]
-    favorite_channels: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
@@ -309,6 +306,7 @@ enum ListEntry {
         channel: Arc<Channel>,
         depth: usize,
         has_children: bool,
+        is_favorite: bool,
         // `None` when the channel is a parent of a matched channel.
         string_match: Option<StringMatch>,
     },
@@ -394,7 +392,6 @@ impl CollabPanel {
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
-                favorite_channels: Vec::default(),
                 filter_active_channels: false,
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
@@ -472,15 +469,28 @@ impl CollabPanel {
                         .iter()
                         .map(|cid| ChannelId(*cid))
                         .collect();
-                    panel.favorite_channels = serialized_panel
-                        .favorite_channels
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|cid| ChannelId(*cid))
-                        .collect();
                     cx.notify();
                 });
             }
+
+            let favorites: Vec<ChannelId> = KeyValueStore::global(cx)
+                .read_kvp("favorite_channels")
+                .ok()
+                .flatten()
+                .and_then(|json| serde_json::from_str::<Vec<u64>>(&json).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(ChannelId)
+                .collect();
+
+            if !favorites.is_empty() {
+                panel.update(cx, |panel, cx| {
+                    panel.channel_store.update(cx, |store, cx| {
+                        store.set_favorite_channel_ids(favorites, cx);
+                    });
+                });
+            }
+
             panel
         })
     }
@@ -508,21 +518,12 @@ impl CollabPanel {
             Some(self.collapsed_channels.iter().map(|id| id.0).collect())
         };
 
-        let favorite_channels = if self.favorite_channels.is_empty() {
-            None
-        } else {
-            Some(self.favorite_channels.iter().map(|id| id.0).collect())
-        };
-
         let kvp = KeyValueStore::global(cx);
         self.pending_serialization = cx.background_spawn(
             async move {
                 kvp.write_kvp(
                     serialization_key,
-                    serde_json::to_string(&SerializedCollabPanel {
-                        collapsed_channels,
-                        favorite_channels,
-                    })?,
+                    serde_json::to_string(&SerializedCollabPanel { collapsed_channels })?,
                 )
                 .await?;
                 anyhow::Ok(())
@@ -684,21 +685,12 @@ impl CollabPanel {
 
         let mut request_entries = Vec::new();
 
-        if self.channel_store.read(cx).channel_count() > 0 {
-            let previous_len = self.favorite_channels.len();
-            self.favorite_channels
-                .retain(|id| self.channel_store.read(cx).channel_for_id(*id).is_some());
-            if self.favorite_channels.len() != previous_len {
-                self.serialize(cx);
-            }
-        }
-
         let channel_store = self.channel_store.read(cx);
         let user_store = self.user_store.read(cx);
 
-        if !self.favorite_channels.is_empty() {
-            let favorite_channels: Vec<_> = self
-                .favorite_channels
+        let favorite_ids = channel_store.favorite_channel_ids();
+        if !favorite_ids.is_empty() {
+            let favorite_channels: Vec<_> = favorite_ids
                 .iter()
                 .filter_map(|id| channel_store.channel_for_id(*id))
                 .collect();
@@ -736,6 +728,7 @@ impl CollabPanel {
                         channel: (*channel).clone(),
                         depth: 0,
                         has_children: false,
+                        is_favorite: true,
                         string_match: matches_by_candidate.get(&ix).cloned().cloned(),
                     });
                 }
@@ -836,6 +829,7 @@ impl CollabPanel {
                             channel: channel.clone(),
                             depth,
                             has_children: false,
+                            is_favorite: false,
                             string_match: matches_by_id.get(&channel.id).map(|mat| (*mat).clone()),
                         });
                         self.entries
@@ -852,6 +846,7 @@ impl CollabPanel {
                             channel: channel.clone(),
                             depth,
                             has_children,
+                            is_favorite: false,
                             string_match: matches_by_id.get(&channel.id).map(|mat| (*mat).clone()),
                         });
                     }
@@ -1003,12 +998,21 @@ impl CollabPanel {
 
         if select_same_item {
             if let Some(prev_selected_entry) = prev_selected_entry {
-                self.selection.take();
+                let prev_selection = self.selection.take();
                 for (ix, entry) in self.entries.iter().enumerate() {
                     if *entry == prev_selected_entry {
                         self.selection = Some(ix);
                         break;
                     }
+                }
+                if self.selection.is_none() {
+                    self.selection = prev_selection.and_then(|prev_ix| {
+                        if self.entries.is_empty() {
+                            None
+                        } else {
+                            Some(prev_ix.min(self.entries.len() - 1))
+                        }
+                    });
                 }
             }
         } else {
@@ -1442,7 +1446,7 @@ impl CollabPanel {
                 )
                 .separator()
                 .entry(
-                    if self.is_channel_favorited(channel_id) {
+                    if self.is_channel_favorited(channel_id, cx) {
                         "Remove from Favorites"
                     } else {
                         "Add to Favorites"
@@ -1663,7 +1667,7 @@ impl CollabPanel {
         self.update_entries(false, cx);
     }
 
-    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.map_or(0, |ix| ix + 1);
         if ix < self.entries.len() {
             self.selection = Some(ix);
@@ -1675,7 +1679,7 @@ impl CollabPanel {
         cx.notify();
     }
 
-    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
         let ix = self.selection.take().unwrap_or(0);
         if ix > 0 {
             self.selection = Some(ix - 1);
@@ -1931,22 +1935,36 @@ impl CollabPanel {
         self.collapsed_channels.binary_search(&channel_id).is_ok()
     }
 
-    fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
-        match self.favorite_channels.binary_search(&channel_id) {
-            Ok(ix) => {
-                self.favorite_channels.remove(ix);
-            }
-            Err(ix) => {
-                self.favorite_channels.insert(ix, channel_id);
-            }
-        };
-        self.serialize(cx);
-        self.update_entries(true, cx);
-        cx.notify();
+    pub fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+        self.channel_store.update(cx, |store, cx| {
+            store.toggle_favorite_channel(channel_id, cx);
+        });
+        self.persist_favorites(cx);
     }
 
-    fn is_channel_favorited(&self, channel_id: ChannelId) -> bool {
-        self.favorite_channels.binary_search(&channel_id).is_ok()
+    fn is_channel_favorited(&self, channel_id: ChannelId, cx: &App) -> bool {
+        self.channel_store.read(cx).is_channel_favorited(channel_id)
+    }
+
+    fn persist_favorites(&mut self, cx: &mut Context<Self>) {
+        let favorite_ids: Vec<u64> = self
+            .channel_store
+            .read(cx)
+            .favorite_channel_ids()
+            .iter()
+            .map(|id| id.0)
+            .collect();
+        let kvp_store = KeyValueStore::global(cx);
+        self.pending_serialization = cx.background_spawn(
+            async move {
+                let json = serde_json::to_string(&favorite_ids)?;
+                kvp_store
+                    .write_kvp("favorite_channels".to_string(), json)
+                    .await?;
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
     }
 
     fn leave_call(window: &mut Window, cx: &mut App) {
@@ -2065,7 +2083,7 @@ impl CollabPanel {
         }
     }
 
-    fn toggle_selected_channel_favorite(
+    pub fn toggle_selected_channel_favorite(
         &mut self,
         _: &ToggleSelectedChannelFavorite,
         _window: &mut Window,
@@ -2156,31 +2174,77 @@ impl CollabPanel {
             })
     }
 
-    fn move_channel_up(&mut self, _: &MoveChannelUp, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(channel) = self.selected_channel() {
-            self.channel_store.update(cx, |store, cx| {
-                store
-                    .reorder_channel(channel.id, proto::reorder_channel::Direction::Up, cx)
-                    .detach_and_prompt_err("Failed to move channel up", window, cx, |_, _, _| None)
-            });
-        }
+    pub fn move_channel_up(
+        &mut self,
+        _: &MoveChannelUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.reorder_selected_channel(Direction::Up, window, cx);
     }
 
-    fn move_channel_down(
+    pub fn move_channel_down(
         &mut self,
         _: &MoveChannelDown,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(channel) = self.selected_channel() {
+        self.reorder_selected_channel(Direction::Down, window, cx);
+    }
+
+    fn reorder_selected_channel(
+        &mut self,
+        direction: Direction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(channel) = self.selected_channel().cloned() {
+            if self.selected_entry_is_favorite() {
+                self.reorder_favorite(channel.id, direction, cx);
+                return;
+            }
+
             self.channel_store.update(cx, |store, cx| {
                 store
-                    .reorder_channel(channel.id, proto::reorder_channel::Direction::Down, cx)
-                    .detach_and_prompt_err("Failed to move channel down", window, cx, |_, _, _| {
-                        None
-                    })
+                    .reorder_channel(channel.id, direction, cx)
+                    .detach_and_prompt_err(
+                        match direction {
+                            Direction::Up => "Failed to move channel up",
+                            Direction::Down => "Failed to move channel down",
+                        },
+                        window,
+                        cx,
+                        |_, _, _| None,
+                    )
             });
         }
+    }
+
+    pub fn reorder_favorite(
+        &mut self,
+        channel_id: ChannelId,
+        direction: Direction,
+        cx: &mut Context<Self>,
+    ) {
+        self.channel_store.update(cx, |store, cx| {
+            let favorite_ids = store.favorite_channel_ids();
+            let Some(channel_index) = favorite_ids.iter().position(|id| *id == channel_id) else {
+                return;
+            };
+            let target_channel_index = match direction {
+                Direction::Up => channel_index.checked_sub(1),
+                Direction::Down => {
+                    let next = channel_index + 1;
+                    (next < favorite_ids.len()).then_some(next)
+                }
+            };
+            if let Some(target_channel_index) = target_channel_index {
+                let mut new_ids = favorite_ids.to_vec();
+                new_ids.swap(channel_index, target_channel_index);
+                store.set_favorite_channel_ids(new_ids, cx);
+            }
+        });
+        self.persist_favorites(cx);
     }
 
     fn open_channel_notes(
@@ -2248,6 +2312,20 @@ impl CollabPanel {
             .and_then(|entry| match entry {
                 ListEntry::Channel { channel, .. } => Some(channel),
                 _ => None,
+            })
+    }
+
+    fn selected_entry_is_favorite(&self) -> bool {
+        self.selection
+            .and_then(|ix| self.entries.get(ix))
+            .is_some_and(|entry| {
+                matches!(
+                    entry,
+                    ListEntry::Channel {
+                        is_favorite: true,
+                        ..
+                    }
+                )
             })
     }
 
@@ -2548,6 +2626,7 @@ impl CollabPanel {
                 depth,
                 has_children,
                 string_match,
+                ..
             } => self
                 .render_channel(
                     channel,
@@ -3058,17 +3137,16 @@ impl CollabPanel {
             .unwrap_or(px(240.));
         let root_id = channel.root_id();
 
-        let is_favorited = self.is_channel_favorited(channel_id);
+        let is_favorited = self.is_channel_favorited(channel_id, cx);
         let (favorite_icon, favorite_color, favorite_tooltip) = if is_favorited {
             (IconName::StarFilled, Color::Accent, "Remove from Favorites")
         } else {
-            (IconName::Star, Color::Muted, "Add to Favorites")
+            (IconName::Star, Color::Default, "Add to Favorites")
         };
 
         h_flex()
-            .id(channel_id.0 as usize)
+            .id(ix)
             .group("")
-            .h_6()
             .w_full()
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, _, cx| {
@@ -3096,9 +3174,8 @@ impl CollabPanel {
                 }),
             )
             .child(
-                ListItem::new(channel_id.0 as usize)
+                ListItem::new(ix)
                     // Add one level of depth for the disclosure arrow.
-                    .height(px(26.))
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
                     .toggle_state(is_selected || is_active)
@@ -3178,14 +3255,13 @@ impl CollabPanel {
             )
             .child(
                 h_flex()
+                    .visible_on_hover("")
                     .absolute()
                     .right_0()
-                    .visible_on_hover("")
-                    .h_full()
-                    .pl_1()
-                    .pr_1p5()
-                    .gap_0p5()
-                    .bg(cx.theme().colors().background.opacity(0.5))
+                    .px_1()
+                    .gap_px()
+                    .bg(cx.theme().colors().background)
+                    .rounded_l_md()
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
@@ -3207,9 +3283,6 @@ impl CollabPanel {
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_notes", IconName::Reader)
                             .icon_size(IconSize::Small)
-                            .when(!has_notes_notification, |this| {
-                                this.icon_color(Color::Muted)
-                            })
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.open_channel_notes(channel_id, window, cx)
                             }))
@@ -3441,13 +3514,17 @@ impl PartialEq for ListEntry {
                 }
             }
             ListEntry::Channel {
-                channel: channel_1, ..
+                channel: channel_1,
+                is_favorite: is_favorite_1,
+                ..
             } => {
                 if let ListEntry::Channel {
-                    channel: channel_2, ..
+                    channel: channel_2,
+                    is_favorite: is_favorite_2,
+                    ..
                 } = other
                 {
-                    return channel_1.id == channel_2.id;
+                    return channel_1.id == channel_2.id && is_favorite_1 == is_favorite_2;
                 }
             }
             ListEntry::ChannelNotes { channel_id } => {
@@ -3551,5 +3628,93 @@ impl Render for JoinChannelTooltip {
                         .child(render_participant_name_and_handle(participant))
                 }))
         })
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl CollabPanel {
+    pub fn entries_as_strings(&self) -> Vec<String> {
+        let mut string_entries = Vec::new();
+        for (index, entry) in self.entries.iter().enumerate() {
+            let selected_marker = if self.selection == Some(index) {
+                "  <== selected"
+            } else {
+                ""
+            };
+            match entry {
+                ListEntry::Header(section) => {
+                    let name = match section {
+                        Section::ActiveCall => "Active Call",
+                        Section::FavoriteChannels => "Favorites",
+                        Section::Channels => "Channels",
+                        Section::ChannelInvites => "Channel Invites",
+                        Section::ContactRequests => "Contact Requests",
+                        Section::Contacts => "Contacts",
+                        Section::Online => "Online",
+                        Section::Offline => "Offline",
+                    };
+                    string_entries.push(format!("[{name}]"));
+                }
+                ListEntry::Channel {
+                    channel,
+                    depth,
+                    has_children,
+                    ..
+                } => {
+                    let indent = "  ".repeat(*depth + 1);
+                    let icon = if *has_children {
+                        "v "
+                    } else if channel.visibility == proto::ChannelVisibility::Public {
+                        "🛜 "
+                    } else {
+                        "#️⃣ "
+                    };
+                    string_entries.push(format!("{indent}{icon}{}{selected_marker}", channel.name));
+                }
+                ListEntry::ChannelNotes { .. } => {
+                    string_entries.push(format!("  (notes){selected_marker}"));
+                }
+                ListEntry::ChannelEditor { depth } => {
+                    let indent = "  ".repeat(*depth + 1);
+                    string_entries.push(format!("{indent}[editor]{selected_marker}"));
+                }
+                ListEntry::ChannelInvite(channel) => {
+                    string_entries.push(format!("  (invite) #{}{selected_marker}", channel.name));
+                }
+                ListEntry::CallParticipant { user, .. } => {
+                    string_entries.push(format!("  {}{selected_marker}", user.github_login));
+                }
+                ListEntry::ParticipantProject {
+                    worktree_root_names,
+                    ..
+                } => {
+                    string_entries.push(format!(
+                        "    {}{selected_marker}",
+                        worktree_root_names.join(", ")
+                    ));
+                }
+                ListEntry::ParticipantScreen { .. } => {
+                    string_entries.push(format!("    (screen){selected_marker}"));
+                }
+                ListEntry::IncomingRequest(user) => {
+                    string_entries.push(format!(
+                        "  (incoming) {}{selected_marker}",
+                        user.github_login
+                    ));
+                }
+                ListEntry::OutgoingRequest(user) => {
+                    string_entries.push(format!(
+                        "  (outgoing) {}{selected_marker}",
+                        user.github_login
+                    ));
+                }
+                ListEntry::Contact { contact, .. } => {
+                    string_entries
+                        .push(format!("  {}{selected_marker}", contact.user.github_login));
+                }
+                ListEntry::ContactPlaceholder => {}
+            }
+        }
+        string_entries
     }
 }

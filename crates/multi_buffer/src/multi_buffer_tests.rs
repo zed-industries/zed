@@ -3513,8 +3513,8 @@ fn test_history(cx: &mut App) {
         buf
     });
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
-    multibuffer.update(cx, |this, _| {
-        this.set_group_interval(group_interval);
+    multibuffer.update(cx, |this, cx| {
+        this.set_group_interval(group_interval, cx);
     });
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.set_excerpts_for_path(
