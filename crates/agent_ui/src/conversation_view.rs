@@ -1295,10 +1295,17 @@ impl ConversationView {
             }
             AcpThreadEvent::Stopped(stop_reason) => {
                 if let Some(active) = self.thread_view(&thread_id) {
+                    let is_generating =
+                        matches!(thread.read(cx).status(), ThreadStatus::Generating);
                     active.update(cx, |active, cx| {
-                        active.thread_retry_status.take();
-                        active.clear_auto_expand_tracking();
-                        active.list_state.set_follow_tail(false);
+                        if !is_generating {
+                            active.thread_retry_status.take();
+                            active.clear_auto_expand_tracking();
+                            if active.list_state.is_following_tail() {
+                                active.list_state.scroll_to_end();
+                                active.list_state.set_follow_tail(false);
+                            }
+                        }
                         active.sync_generating_indicator(cx);
                     });
                 }
@@ -1367,9 +1374,16 @@ impl ConversationView {
             }
             AcpThreadEvent::Error => {
                 if let Some(active) = self.thread_view(&thread_id) {
+                    let is_generating =
+                        matches!(thread.read(cx).status(), ThreadStatus::Generating);
                     active.update(cx, |active, cx| {
-                        active.thread_retry_status.take();
-                        active.list_state.set_follow_tail(false);
+                        if !is_generating {
+                            active.thread_retry_status.take();
+                            if active.list_state.is_following_tail() {
+                                active.list_state.scroll_to_end();
+                                active.list_state.set_follow_tail(false);
+                            }
+                        }
                         active.sync_generating_indicator(cx);
                     });
                 }
