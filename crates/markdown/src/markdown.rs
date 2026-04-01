@@ -832,7 +832,7 @@ impl MarkdownElement {
             markdown,
             style,
             code_block_renderer: CodeBlockRenderer::Default {
-                copy_button_visibility: CopyButtonVisibility::AlwaysVisible,
+                copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
                 border: false,
             },
             on_url_click: None,
