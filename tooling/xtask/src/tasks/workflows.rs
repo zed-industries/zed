@@ -13,6 +13,7 @@ mod cherry_pick;
 mod compare_perf;
 mod danger;
 mod deploy_collab;
+mod extension_auto_bump;
 mod extension_bump;
 mod extension_tests;
 mod extension_workflow_rollout;
@@ -199,12 +200,12 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(danger::danger),
         WorkflowFile::zed(deploy_collab::deploy_collab),
         WorkflowFile::zed(extension_bump::extension_bump),
+        WorkflowFile::zed(extension_auto_bump::extension_auto_bump),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
         WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),
-        WorkflowFile::zed(run_agent_evals::run_agent_evals),
         WorkflowFile::zed(run_agent_evals::run_cron_unit_evals),
         WorkflowFile::zed(run_agent_evals::run_unit_evals),
         WorkflowFile::zed(run_bundling::run_bundling),

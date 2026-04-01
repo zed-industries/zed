@@ -2,16 +2,17 @@ use crate::{
     ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
     EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
+    editor_settings::EditorSettingsScrollbarProxy,
     hover_links::{InlayHighlight, RangeInEditor},
     movement::TextLayoutDetails,
     scroll::ScrollAmount,
 };
 use anyhow::Context as _;
 use gpui::{
-    AnyElement, App, AsyncApp, AsyncWindowContext, Bounds, Context, Entity, Focusable as _,
-    FontWeight, Hsla, InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels,
-    ScrollHandle, Size, StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task,
-    TextStyleRefinement, WeakEntity, Window, canvas, div, px,
+    AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
+    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
+    Window, canvas, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -26,7 +27,7 @@ use std::{
 };
 use std::{ops::Range, sync::Arc, time::Duration};
 use std::{path::PathBuf, rc::Rc};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
@@ -73,18 +74,13 @@ pub fn hover_at(
             }
 
             // If we are moving closer, or if no timer is running at all, start/restart the 300ms timer.
-            let delay = 300u64;
-            let task = cx.spawn(move |this: WeakEntity<Editor>, cx: &mut AsyncApp| {
-                let mut cx = cx.clone();
-                async move {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(delay))
-                        .await;
-                    this.update(&mut cx, |editor, cx| {
-                        hide_hover(editor, cx);
-                    })
-                    .ok();
-                }
+            let delay = Duration::from_millis(300u64);
+            let task = cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(delay).await;
+                this.update(cx, |editor, cx| {
+                    hide_hover(editor, cx);
+                })
+                .ok();
             });
             editor.hover_state.hiding_delay_task = Some(task);
         }
@@ -1053,7 +1049,7 @@ impl InfoPopover {
                         ),
                 )
                 .custom_scrollbars(
-                    Scrollbars::for_settings::<EditorSettings>()
+                    Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
                         .tracked_scroll_handle(&self.scroll_handle),
                     window,
                     cx,
@@ -1181,7 +1177,7 @@ impl DiagnosticPopover {
                         CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
                     }))
                     .custom_scrollbars(
-                        Scrollbars::for_settings::<EditorSettings>()
+                        Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
                             .tracked_scroll_handle(&self.scroll_handle),
                         window,
                         cx,

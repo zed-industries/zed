@@ -1,7 +1,6 @@
 use ai_onboarding::YoungAccountBanner;
 use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, Utc};
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::{OrganizationId, Plan};
 use cloud_llm_client::{
@@ -157,7 +156,7 @@ impl State {
                         .user_store
                         .read(cx)
                         .current_organization()
-                        .map(|o| o.id.clone());
+                        .map(|organization| organization.id.clone());
                     cx.spawn(async move |this, cx| {
                         let response =
                             Self::fetch_models(client, llm_api_token, organization_id).await?;
@@ -632,7 +631,7 @@ impl LanguageModel for CloudLanguageModel {
 
     fn supports_split_token_display(&self) -> bool {
         use cloud_llm_client::LanguageModelProvider::*;
-        matches!(self.model.provider, OpenAi)
+        matches!(self.model.provider, OpenAi | XAi)
     }
 
     fn telemetry_id(&self) -> String {
@@ -642,11 +641,11 @@ impl LanguageModel for CloudLanguageModel {
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic
-            | cloud_llm_client::LanguageModelProvider::OpenAi
-            | cloud_llm_client::LanguageModelProvider::XAi => {
+            | cloud_llm_client::LanguageModelProvider::OpenAi => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            cloud_llm_client::LanguageModelProvider::Google => {
+            cloud_llm_client::LanguageModelProvider::Google
+            | cloud_llm_client::LanguageModelProvider::XAi => {
                 LanguageModelToolSchemaFormat::JsonSchemaSubset
             }
         }
@@ -705,7 +704,7 @@ impl LanguageModel for CloudLanguageModel {
                     .user_store
                     .read(cx)
                     .current_organization()
-                    .map(|o| o.id.clone());
+                    .map(|organization| organization.id.clone());
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
@@ -770,14 +769,13 @@ impl LanguageModel for CloudLanguageModel {
     > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
-        let intent = request.intent;
         let app_version = Some(cx.update(|cx| AppVersion::global(cx)));
         let user_store = self.user_store.clone();
         let organization_id = cx.update(|cx| {
             user_store
                 .read(cx)
                 .current_organization()
-                .map(|o| o.id.clone())
+                .map(|organization| organization.id.clone())
         });
         let thinking_allowed = request.thinking_allowed;
         let enable_thinking = thinking_allowed && self.model.supports_thinking;
@@ -823,7 +821,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             provider: cloud_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -882,7 +879,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             provider: cloud_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -924,7 +920,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             provider: cloud_llm_client::LanguageModelProvider::XAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -959,7 +954,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             provider: cloud_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),
                             provider_request: serde_json::to_value(&request)
@@ -1091,7 +1085,6 @@ fn response_lines<T: DeserializeOwned>(
 struct ZedAiConfiguration {
     is_connected: bool,
     plan: Option<Plan>,
-    subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     eligible_for_trial: bool,
     account_too_young: bool,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
@@ -1099,33 +1092,37 @@ struct ZedAiConfiguration {
 
 impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let is_pro = self.plan.is_some_and(|plan| plan == Plan::ZedPro);
-        let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(Plan::ZedPro), Some(_)) => {
-                "You have access to Zed's hosted models through your Pro subscription."
-            }
-            (Some(Plan::ZedProTrial), Some(_)) => {
-                "You have access to Zed's hosted models through your Pro trial."
-            }
-            (Some(Plan::ZedFree), Some(_)) => {
+        let (subscription_text, has_paid_plan) = match self.plan {
+            Some(Plan::ZedPro) => (
+                "You have access to Zed's hosted models through your Pro subscription.",
+                true,
+            ),
+            Some(Plan::ZedProTrial) => (
+                "You have access to Zed's hosted models through your Pro trial.",
+                false,
+            ),
+            Some(Plan::ZedStudent) => (
+                "You have access to Zed's hosted models through your Student subscription.",
+                true,
+            ),
+            Some(Plan::ZedBusiness) => (
+                "You have access to Zed's hosted models through your Organization.",
+                true,
+            ),
+            Some(Plan::ZedFree) | None => (
                 if self.eligible_for_trial {
                     "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
                 } else {
                     "Subscribe for access to Zed's hosted models."
-                }
-            }
-            _ => {
-                if self.eligible_for_trial {
-                    "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
-                } else {
-                    "Subscribe for access to Zed's hosted models."
-                }
-            }
+                },
+                false,
+            ),
         };
 
-        let manage_subscription_buttons = if is_pro {
+        let manage_subscription_buttons = if has_paid_plan {
             Button::new("manage_settings", "Manage Subscription")
                 .full_width()
+                .label_size(LabelSize::Small)
                 .style(ButtonStyle::Tinted(TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
                 .into_any_element()
@@ -1149,10 +1146,7 @@ impl RenderOnce for ZedAiConfiguration {
                 .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
                 .child(
                     Button::new("sign_in", "Sign In to use Zed AI")
-                        .icon_color(Color::Muted)
-                        .icon(IconName::Github)
-                        .icon_size(IconSize::Small)
-                        .icon_position(IconPosition::Start)
+                        .start_icon(Icon::new(IconName::Github).size(IconSize::Small).color(Color::Muted))
                         .full_width()
                         .on_click({
                             let callback = self.sign_in_callback.clone();
@@ -1209,7 +1203,6 @@ impl Render for ConfigurationView {
         ZedAiConfiguration {
             is_connected: !state.is_signed_out(cx),
             plan: user_store.plan(),
-            subscription_period: user_store.subscription_period(),
             eligible_for_trial: user_store.trial_started_at().is_none(),
             account_too_young: user_store.account_too_young(),
             sign_in_callback: self.sign_in_callback.clone(),
@@ -1240,9 +1233,6 @@ impl Component for ZedAiConfiguration {
             ZedAiConfiguration {
                 is_connected,
                 plan,
-                subscription_period: plan
-                    .is_some()
-                    .then(|| (Utc::now(), Utc::now() + chrono::Duration::days(7))),
                 eligible_for_trial,
                 account_too_young,
                 sign_in_callback: Arc::new(|_, _| {}),

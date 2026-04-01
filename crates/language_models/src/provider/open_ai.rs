@@ -9,14 +9,13 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelImage, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolChoice, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason,
-    TokenUsage, env_var,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use menu;
 use open_ai::responses::{
-    ResponseFunctionCallItem, ResponseFunctionCallOutputItem, ResponseInputContent,
-    ResponseInputItem, ResponseMessageItem,
+    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
+    ResponseInputContent, ResponseInputItem, ResponseMessageItem,
 };
 use open_ai::{
     ImageUrl, Model, OPEN_AI_API_URL, ReasoningEffort, ResponseStreamEvent,
@@ -34,7 +33,7 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
@@ -506,12 +505,16 @@ pub fn into_open_ai(
         model: model_id.into(),
         messages,
         stream,
+        stream_options: if stream {
+            Some(open_ai::StreamOptions::default())
+        } else {
+            None
+        },
         stop: request.stop,
         temperature: request.temperature.or(Some(1.0)),
         max_completion_tokens: max_output_tokens,
         parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
-            // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
-            Some(false)
+            Some(supports_parallel_tool_calls)
         } else {
             None
         },
@@ -642,7 +645,18 @@ fn append_message_to_response_items(
                 input_items.push(ResponseInputItem::FunctionCallOutput(
                     ResponseFunctionCallOutputItem {
                         call_id: tool_result.tool_use_id.to_string(),
-                        output: tool_result_output(&tool_result),
+                        output: match tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                ResponseFunctionCallOutputContent::Text(text.to_string())
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                ResponseFunctionCallOutputContent::List(vec![
+                                    ResponseInputContent::Image {
+                                        image_url: image.to_base64_url(),
+                                    },
+                                ])
+                            }
+                        },
                     },
                 ));
             }
@@ -708,21 +722,6 @@ fn flush_response_parts(
 
     input_items.push(item);
     parts.clear();
-}
-
-fn tool_result_output(result: &LanguageModelToolResult) -> String {
-    if let Some(output) = &result.output {
-        match output {
-            serde_json::Value::String(text) => text.clone(),
-            serde_json::Value::Null => String::new(),
-            _ => output.to_string(),
-        }
-    } else {
-        match &result.content {
-            LanguageModelToolResultContent::Text(text) => text.to_string(),
-            LanguageModelToolResultContent::Image(image) => image.to_base64_url(),
-        }
-    }
 }
 
 fn add_message_content_part(
@@ -836,7 +835,7 @@ impl OpenAiEventMapper {
 
                     if !entry.id.is_empty() && !entry.name.is_empty() {
                         if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                            &partial_json_fixer::fix_json(&entry.arguments),
+                            &fix_streamed_json(&entry.arguments),
                         ) {
                             events.push(Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
@@ -991,7 +990,7 @@ impl OpenAiResponseEventMapper {
                 if let Some(entry) = self.function_calls_by_item.get_mut(&item_id) {
                     entry.arguments.push_str(&delta);
                     if let Ok(input) = serde_json::from_str::<serde_json::Value>(
-                        &partial_json_fixer::fix_json(&entry.arguments),
+                        &fix_streamed_json(&entry.arguments),
                     ) {
                         return vec![Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
@@ -1415,9 +1414,11 @@ impl Render for ConfigurationView {
             )
             .child(
                 Button::new("docs", "Learn More")
-                    .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                    .end_icon(
+                        Icon::new(IconName::ArrowUpRight)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
                     .on_click(move |_, _window, cx| {
                         cx.open_url("https://zed.dev/docs/ai/llm-providers#openai-api-compatible")
                     }),
@@ -1439,7 +1440,9 @@ impl Render for ConfigurationView {
 mod tests {
     use futures::{StreamExt, executor::block_on};
     use gpui::TestAppContext;
-    use language_model::{LanguageModelRequestMessage, LanguageModelRequestTool};
+    use language_model::{
+        LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
+    };
     use open_ai::responses::{
         ReasoningSummaryPart, ResponseFunctionToolCall, ResponseOutputItem, ResponseOutputMessage,
         ResponseReasoningItem, ResponseStatusDetails, ResponseSummary, ResponseUsage,
@@ -1685,7 +1688,7 @@ mod tests {
                 {
                     "type": "function_call_output",
                     "call_id": "call-42",
-                    "output": "{\"forecast\":\"Sunny\"}"
+                    "output": "Sunny"
                 }
             ],
             "stream": true,

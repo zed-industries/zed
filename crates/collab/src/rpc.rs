@@ -410,9 +410,6 @@ impl Server {
             .add_message_handler(update_followers)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
-            .add_request_handler(forward_mutating_project_request::<proto::OpenContext>)
-            .add_request_handler(forward_mutating_project_request::<proto::CreateContext>)
-            .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Stash>)
@@ -442,8 +439,6 @@ impl Server {
             .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
-            .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
-            .add_message_handler(update_context)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
             .add_request_handler(share_agent_thread)
@@ -2369,48 +2364,6 @@ async fn update_buffer(
     }
 
     response.send(proto::Ack {})?;
-    Ok(())
-}
-
-async fn update_context(message: proto::UpdateContext, session: MessageContext) -> Result<()> {
-    let project_id = ProjectId::from_proto(message.project_id);
-
-    let operation = message.operation.as_ref().context("invalid operation")?;
-    let capability = match operation.variant.as_ref() {
-        Some(proto::context_operation::Variant::BufferOperation(buffer_op)) => {
-            if let Some(buffer_op) = buffer_op.operation.as_ref() {
-                match buffer_op.variant {
-                    None | Some(proto::operation::Variant::UpdateSelections(_)) => {
-                        Capability::ReadOnly
-                    }
-                    _ => Capability::ReadWrite,
-                }
-            } else {
-                Capability::ReadWrite
-            }
-        }
-        Some(_) => Capability::ReadWrite,
-        None => Capability::ReadOnly,
-    };
-
-    let guard = session
-        .db()
-        .await
-        .connections_for_buffer_update(project_id, session.connection_id, capability)
-        .await?;
-
-    let (host, guests) = &*guard;
-
-    broadcast(
-        Some(session.connection_id),
-        guests.iter().chain([host]).copied(),
-        |connection_id| {
-            session
-                .peer
-                .forward_send(session.connection_id, connection_id, message.clone())
-        },
-    );
-
     Ok(())
 }
 

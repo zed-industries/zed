@@ -7,10 +7,8 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{
-    Appearance, IconThemeName, IconThemeSelection, SystemAppearance, ThemeMeta, ThemeRegistry,
-    ThemeSettings,
-};
+use theme::{Appearance, SystemAppearance, ThemeMeta, ThemeRegistry};
+use theme_settings::{IconThemeName, IconThemeSelection, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, ui::HighlightedLabel};
@@ -176,7 +174,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         let appearance = Appearance::from(window.appearance());
 
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            theme::set_icon_theme(settings, theme_name, appearance);
+            theme_settings::set_icon_theme(settings, theme_name, appearance);
         });
 
         self.selector
@@ -311,10 +309,11 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("docs", "View Icon Theme Docs")
-                        .icon(IconName::ArrowUpRight)
-                        .icon_position(IconPosition::End)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
+                        .end_icon(
+                            Icon::new(IconName::ArrowUpRight)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .on_click(|_event, _window, cx| {
                             cx.open_url("https://zed.dev/docs/icon-themes");
                         }),

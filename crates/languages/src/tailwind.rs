@@ -197,11 +197,8 @@ impl LspAdapter for TailwindLspAdapter {
                 "typescriptreact".to_string(),
             ),
             (LanguageName::new_static("Svelte"), "svelte".to_string()),
-            (
-                LanguageName::new_static("Elixir"),
-                "phoenix-heex".to_string(),
-            ),
-            (LanguageName::new_static("HEEX"), "phoenix-heex".to_string()),
+            (LanguageName::new_static("Elixir"), "elixir".to_string()),
+            (LanguageName::new_static("HEEx"), "heex".to_string()),
             (LanguageName::new_static("ERB"), "erb".to_string()),
             (LanguageName::new_static("HTML+ERB"), "erb".to_string()),
             (LanguageName::new_static("PHP"), "php".to_string()),

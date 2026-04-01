@@ -19,10 +19,8 @@ struct FimRequestOutput {
     request_id: String,
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
     snapshot: BufferSnapshot,
-    response_received_at: Instant,
     inputs: ZetaPromptInput,
     buffer: Entity<Buffer>,
-    buffer_snapshotted_at: Instant,
 }
 
 pub fn request_prediction(
@@ -47,7 +45,7 @@ pub fn request_prediction(
 
     let http_client = cx.http_client();
     let cursor_point = position.to_point(&snapshot);
-    let buffer_snapshotted_at = Instant::now();
+    let request_start = cx.background_executor().now();
 
     let Some(settings) = (match provider {
         settings::EditPredictionProvider::Ollama => settings.ollama.clone(),
@@ -119,7 +117,7 @@ pub fn request_prediction(
 
         log::debug!(
             "fim: completion received ({:.2}s)",
-            (response_received_at - buffer_snapshotted_at).as_secs_f64()
+            (response_received_at - request_start).as_secs_f64()
         );
 
         let completion: Arc<str> = clean_fim_completion(&response_text).into();
@@ -135,10 +133,8 @@ pub fn request_prediction(
             request_id,
             edits,
             snapshot,
-            response_received_at,
             inputs,
             buffer,
-            buffer_snapshotted_at,
         })
     });
 
@@ -151,10 +147,9 @@ pub fn request_prediction(
                 &output.snapshot,
                 output.edits.into(),
                 None,
-                output.buffer_snapshotted_at,
-                output.response_received_at,
                 output.inputs,
                 None,
+                cx.background_executor().now() - request_start,
                 cx,
             )
             .await,

@@ -129,7 +129,9 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         }
     }
 
-    fn discard(&mut self, _reason: EditPredictionDiscardReason, _: &mut Context<Self>) {}
+    fn discard(&mut self, _reason: EditPredictionDiscardReason, _: &mut Context<Self>) {
+        self.completion.take();
+    }
 
     fn suggest(
         &mut self,
@@ -410,8 +412,14 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.c   \ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c   \ntwo\nthree\n");
 
-            // When undoing the previously active suggestion is shown again.
+            // When undoing the previously active suggestion isn't shown again.
             editor.undo(&Default::default(), window, cx);
+            assert!(!editor.has_active_edit_prediction());
+            assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
+            assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
+        });
+        executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
+        cx.editor(|editor, _, cx| {
             assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
@@ -1112,7 +1120,7 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
             });
