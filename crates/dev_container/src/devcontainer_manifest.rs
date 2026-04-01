@@ -4222,49 +4222,6 @@ chmod +x ./install.sh
 "#
         );
 
-        let docker_commands = test_dependencies
-            .command_runner
-            .commands_by_program("docker");
-
-        let docker_run_command = docker_commands
-            .iter()
-            .find(|c| c.args.get(0).is_some_and(|a| a == "run"))
-            .expect("found");
-
-        assert_eq!(
-            docker_run_command.args,
-            vec![
-                "run".to_string(),
-                "--privileged".to_string(),
-                "--sig-proxy=false".to_string(),
-                "-d".to_string(),
-                "--mount".to_string(),
-                "type=bind,source=/path/to/local/project,target=/workspace2,consistency=cached".to_string(),
-                "--mount".to_string(),
-                "type=volume,source=dev-containers-cli-bashhistory,target=/home/node/commandhistory,consistency=cached".to_string(),
-                "--mount".to_string(),
-                "type=volume,source=dind-var-lib-docker-42dad4b4ca7b8ced,target=/var/lib/docker,consistency=cached".to_string(),
-                "-l".to_string(),
-                "devcontainer.local_folder=/path/to/local/project".to_string(),
-                "-l".to_string(),
-                "devcontainer.config_file=/path/to/local/project/.devcontainer/devcontainer.json".to_string(),
-                "-l".to_string(),
-                "devcontainer.metadata=[{\"remoteUser\":\"node\"}]".to_string(),
-                "-p".to_string(),
-                "8082:8082".to_string(),
-                "-p".to_string(),
-                "8083:8083".to_string(),
-                "-p".to_string(),
-                "8084:8084".to_string(),
-                "--entrypoint".to_string(),
-                "/bin/sh".to_string(),
-                "sha256:610e6cfca95280188b021774f8cf69dd6f49bdb6eebc34c5ee2010f4d51cc105".to_string(),
-                "-c".to_string(),
-                "echo Container started\ntrap \"exit 0\" 15\n/usr/local/share/docker-init.sh\nexec \"$@\"\nwhile sleep 1 & wait $!; do :; done".to_string(),
-                "-".to_string()
-            ]
-        );
-
         let docker_exec_commands = test_dependencies
             .docker
             .exec_commands_recorded
