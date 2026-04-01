@@ -692,7 +692,7 @@ mod ios {
                 .detach();
 
                 APP_STATE.with(|cell| *cell.borrow_mut() = Some(app_state));
-                log::info!("[zed-ios] Zed initialized successfully");
+                log::info!("[zed_ios] Zed initialized successfully");
 
                 // Register Zed's menu structure with the iPadOS menu bar.
                 cx.set_menus(ios_app_menus());
@@ -705,7 +705,7 @@ mod ios {
                             match cx.build_action(&name, None) {
                                 Ok(action) => cx.dispatch_action(action.as_ref()),
                                 Err(err) => log::warn!(
-                                    "[zed-ios] Unknown menu action `{}`: {err:?}",
+                                    "[zed_ios] Unknown menu action `{}`: {err:?}",
                                     name
                                 ),
                             }
@@ -719,7 +719,7 @@ mod ios {
                 // Initialize connection tracking and show the landing screen.
                 crate::connection_landing::init_active_connections(cx);
                 if let Err(err) = crate::connection_landing::ConnectionLanding::open(cx) {
-                    log::error!("[zed-ios] Failed to open connection landing: {err:?}");
+                    log::error!("[zed_ios] Failed to open connection landing: {err:?}");
                 }
             });
         })
@@ -946,11 +946,11 @@ mod ios {
         // The first workspace window is opened by init_zed after async Session
         // creation completes. Subsequent calls from SceneDelegate (e.g. Stage
         // Manager multi-window) would open additional workspaces here.
-        log::info!("[zed-ios] ios_open_window called");
+        log::info!("[zed_ios] ios_open_window called");
     }
 
     pub fn ios_will_resign_active() {
-        log::info!("[zed-ios] app will resign active — persisting sessions");
+        log::info!("[zed_ios] app will resign active — persisting sessions");
         ASYNC_APP.with(|cell| {
             if let Some(ref async_cx) = *cell.borrow() {
                 async_cx.update(|cx| {

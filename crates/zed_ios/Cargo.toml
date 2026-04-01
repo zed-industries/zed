@@ -1,5 +1,5 @@
 [package]
-name = "zed-ios"
+name = "zed_ios"
 version = "0.1.0"
 edition.workspace = true
 publish = false

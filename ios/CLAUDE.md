@@ -2,7 +2,7 @@
 
 This directory contains the Xcode project and Swift source for the Zed iPad app.
 The Swift layer is intentionally thin — it bootstraps UIKit, creates scenes, and
-calls into Rust via C FFI. All substantive logic lives in `crates/zed-ios/` and
+calls into Rust via C FFI. All substantive logic lives in `crates/zed_ios/` and
 `crates/gpui_ios/`.
 
 ## Bundle ID
@@ -17,9 +17,9 @@ the Swift app in Xcode which links against it.
 ```bash
 # 1. Build the Rust static library
 # Device:
-cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-features
+cargo build -p zed_ios --target aarch64-apple-ios --release --no-default-features
 # Simulator:
-cargo build -p zed-ios --target aarch64-apple-ios-sim --release --no-default-features
+cargo build -p zed_ios --target aarch64-apple-ios-sim --release --no-default-features
 
 # 2. Build the Swift app (Xcode picks up the .a from target/)
 # Device: build+run from Xcode with a connected device and valid signing

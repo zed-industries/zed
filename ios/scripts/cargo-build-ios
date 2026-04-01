@@ -1,6 +1,6 @@
 #!/bin/bash
 # Cargo build script invoked as an Xcode build phase.
-# Builds the zed-ios static library and copies libzed_ios.a to BUILT_PRODUCTS_DIR.
+# Builds the zed_ios static library and copies libzed_ios.a to BUILT_PRODUCTS_DIR.
 #
 # This script runs on EVERY Xcode build (alwaysOutOfDate = 1 in the project
 # file) because Xcode cannot track Rust source dependencies. Cargo's own
@@ -33,7 +33,7 @@ else
     CARGO_PROFILE_DIR="debug"
 fi
 
-echo "Building zed-ios for $RUST_TARGET ($CONFIGURATION)..."
+echo "Building zed_ios for $RUST_TARGET ($CONFIGURATION)..."
 
 # All Apple Silicon chips (A11+) support FP16 NEON. Enable it so that crates
 # using half-precision inline assembly (gemm-f16, pulled in via candle/audio)
@@ -42,7 +42,7 @@ export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+fp16"
 
 cd "$REPO_ROOT"
 cargo build \
-    -p zed-ios \
+    -p zed_ios \
     --target "$RUST_TARGET" \
     $CARGO_FLAGS \
     --no-default-features

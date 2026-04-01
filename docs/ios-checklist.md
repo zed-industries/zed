@@ -94,7 +94,7 @@ These items work with the standard `zed --headless` binary.
 - [ ] iOS log/cache/temp directory routing
 
 ### 3.3 — Debug Panel
-- [ ] Add `debugger_ui`, `debugger_tools`, `dap_adapters` to zed-ios
+- [ ] Add `debugger_ui`, `debugger_tools`, `dap_adapters` to zed_ios
 - [ ] Init debugger_ui, debugger_tools, dap_adapters
 - [ ] Verify RemoteDapStore works over SSH connection
 - [ ] cfg-gate local dap transport if needed for iOS compilation
@@ -110,7 +110,7 @@ These items work with the standard `zed --headless` binary.
 - [ ] Handle `title_bar` exclusion on iPad
 
 ### 3.6 — Edit Prediction
-- [ ] Add edit_prediction crates to zed-ios
+- [ ] Add edit_prediction crates to zed_ios
 - [ ] Extract or duplicate provider registry (currently in desktop `zed` crate)
 - [ ] Verify Zed/Codestral/OpenAI providers work on iPad
 - [ ] Handle Copilot fallback (skip or map to Zed provider)
@@ -138,7 +138,7 @@ These items work with the standard `zed --headless` binary.
 - [ ] Mark extensions with subprocess capabilities as "not supported on iPad"
 
 ### 3.9 — Agent Panel (Zed Agent + External Agents)
-- [ ] Add agent crates to zed-ios (agent, agent_ui, agent_settings, language_model, etc.)
+- [ ] Add agent crates to zed_ios (agent, agent_ui, agent_settings, language_model, etc.)
 - [ ] Initialize agent panel in `init_zed()`
 - [ ] Zed agent: verify LLM calls work directly from iPad (HTTPS to providers)
 - [ ] Zed agent: verify tool invocations proxy through Project → remote host

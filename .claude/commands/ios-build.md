@@ -7,7 +7,7 @@ Build the Zed iOS target. Run these steps in order, stopping on the first failur
 
 2. Build the Rust static library for simulator:
    ```
-   cargo build -p zed-ios --target aarch64-apple-ios-sim --release --no-default-features
+   cargo build -p zed_ios --target aarch64-apple-ios-sim --release --no-default-features
    ```
    Note: do not pass `--features ios` — the crate has no such feature; iOS-specific code is gated by `cfg(target_os = "ios")` automatically when targeting `aarch64-apple-ios-sim`.
 

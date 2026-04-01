@@ -195,11 +195,11 @@ fn persist_active_sessions(cx: &App) {
                     .write_kvp(ACTIVE_SESSIONS_KVP_KEY.to_string(), json)
                     .await
                 {
-                    log::error!("[zed-ios] failed to persist active sessions: {error:#}");
+                    log::error!("[zed_ios] failed to persist active sessions: {error:#}");
                 }
             }
             Err(error) => {
-                log::error!("[zed-ios] failed to serialize active sessions: {error:#}");
+                log::error!("[zed_ios] failed to serialize active sessions: {error:#}");
             }
         }
     })
@@ -548,7 +548,7 @@ fn open_saved_path(
     let app_state = match crate::ios::app_state() {
         Some(state) => state,
         None => {
-            log::error!("[zed-ios] app_state not available for opening saved path");
+            log::error!("[zed_ios] app_state not available for opening saved path");
             return;
         }
     };
@@ -572,7 +572,7 @@ fn open_saved_path(
         )
         .await;
         if let Err(error) = result {
-            log::error!("[zed-ios] failed to open saved path: {error:#}");
+            log::error!("[zed_ios] failed to open saved path: {error:#}");
         }
     })
     .detach();
@@ -602,15 +602,15 @@ fn saved_hosts_path() -> PathBuf {
 
 fn load_saved_host_entries() -> Vec<SavedHostEntry> {
     let path = saved_hosts_path();
-    log::info!("[zed-ios] loading saved hosts from: {}", path.display());
+    log::info!("[zed_ios] loading saved hosts from: {}", path.display());
     match std::fs::read_to_string(&path) {
         Ok(contents) => {
             let entries: Vec<SavedHostEntry> = serde_json::from_str(&contents).unwrap_or_default();
-            log::info!("[zed-ios] loaded {} saved hosts", entries.len());
+            log::info!("[zed_ios] loaded {} saved hosts", entries.len());
             entries
         }
         Err(error) => {
-            log::info!("[zed-ios] no saved hosts file: {error}");
+            log::info!("[zed_ios] no saved hosts file: {error}");
             Vec::new()
         }
     }
@@ -619,14 +619,14 @@ fn load_saved_host_entries() -> Vec<SavedHostEntry> {
 fn save_host_entries(entries: &[SavedHostEntry]) {
     let path = saved_hosts_path();
     log::info!(
-        "[zed-ios] saving {} hosts to: {}",
+        "[zed_ios] saving {} hosts to: {}",
         entries.len(),
         path.display()
     );
     if let Some(parent) = path.parent() {
         if let Err(error) = std::fs::create_dir_all(parent) {
             log::error!(
-                "[zed-ios] failed to create config dir {}: {error}",
+                "[zed_ios] failed to create config dir {}: {error}",
                 parent.display()
             );
             return;
@@ -635,13 +635,13 @@ fn save_host_entries(entries: &[SavedHostEntry]) {
     match serde_json::to_string_pretty(entries) {
         Ok(json) => {
             if let Err(error) = std::fs::write(&path, &json) {
-                log::error!("[zed-ios] failed to write hosts file: {error}");
+                log::error!("[zed_ios] failed to write hosts file: {error}");
             } else {
-                log::info!("[zed-ios] saved hosts successfully");
+                log::info!("[zed_ios] saved hosts successfully");
             }
         }
         Err(error) => {
-            log::error!("[zed-ios] failed to serialize saved hosts: {error}");
+            log::error!("[zed_ios] failed to serialize saved hosts: {error}");
         }
     }
 }
@@ -910,7 +910,7 @@ impl ConnectionLanding {
 
             cx.spawn(async move |this, cx| {
                 log::info!(
-                    "[zed-ios] auto-connect: connecting to {}@{}:{}",
+                    "[zed_ios] auto-connect: connecting to {}@{}:{}",
                     username,
                     host,
                     port
@@ -922,7 +922,7 @@ impl ConnectionLanding {
                     match result {
                         Ok(()) => {
                             log::info!(
-                                "[zed-ios] auto-connect: connected to {}@{}",
+                                "[zed_ios] auto-connect: connected to {}@{}",
                                 username,
                                 host
                             );
@@ -938,7 +938,7 @@ impl ConnectionLanding {
                         Err(error) => {
                             let error_message = format!("{error:#}");
                             log::error!(
-                                "[zed-ios] auto-connect: failed {}@{}: {error_message}",
+                                "[zed_ios] auto-connect: failed {}@{}: {error_message}",
                                 username,
                                 host
                             );
@@ -1266,7 +1266,7 @@ impl ConnectionLanding {
             let app_state = match crate::ios::app_state() {
                 Some(state) => state,
                 None => {
-                    log::error!("[zed-ios] app_state not available for SSH connection");
+                    log::error!("[zed_ios] app_state not available for SSH connection");
                     if let Some(host) = self.saved_hosts.get_mut(index) {
                         host.status = ConnectionStatus::Error("App not initialized".into());
                         cx.notify();
@@ -1304,7 +1304,7 @@ impl ConnectionLanding {
 
                     if let Err(error) = result {
                         let error_message = format!("{error:#}");
-                        log::error!("[zed-ios] workspace creation failed: {error_message}");
+                        log::error!("[zed_ios] workspace creation failed: {error_message}");
                         let error_shared = SharedString::from(error_message.clone());
                         cx.update(|cx| {
                             active_connections_mut(cx).set_project_error(
@@ -1351,7 +1351,7 @@ impl ConnectionLanding {
         let app_state = match crate::ios::app_state() {
             Some(state) => state,
             None => {
-                log::error!("[zed-ios] app_state not available for SSH connection");
+                log::error!("[zed_ios] app_state not available for SSH connection");
                 if let Some(host) = self.saved_hosts.get_mut(index) {
                     host.status = ConnectionStatus::Error("App not initialized".into());
                     cx.notify();
@@ -1379,7 +1379,7 @@ impl ConnectionLanding {
 
             if let Err(error) = result {
                 let error_message = format!("{error:#}");
-                log::error!("[zed-ios] SSH connection failed: {error_message}");
+                log::error!("[zed_ios] SSH connection failed: {error_message}");
 
                 let error_shared = SharedString::from(error_message.clone());
                 cx.update(|cx| {
@@ -1427,7 +1427,7 @@ impl ConnectionLanding {
         let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
         std::mem::forget(cancel_tx);
 
-        log::info!("[zed-ios] creating remote client session for path: {path}");
+        log::info!("[zed_ios] creating remote client session for path: {path}");
         let session = match cx
             .update(|cx| {
                 remote::RemoteClient::new(
@@ -1444,7 +1444,7 @@ impl ConnectionLanding {
             None => anyhow::bail!("SSH connection was cancelled"),
         };
 
-        log::info!("[zed-ios] creating remote project");
+        log::info!("[zed_ios] creating remote project");
         let project = cx.update(|cx| {
             project::Project::remote(
                 session,
@@ -1458,7 +1458,7 @@ impl ConnectionLanding {
             )
         });
 
-        log::info!("[zed-ios] resolving project path: {path}");
+        log::info!("[zed_ios] resolving project path: {path}");
         let (worktree, project_path) = cx
             .update(|cx| {
                 workspace::Workspace::project_path_for_path(
@@ -1525,20 +1525,20 @@ impl ConnectionLanding {
             })
         })?;
         if let Err(error) = restore_result.await {
-            log::error!("[zed-ios] failed to restore workspace state: {error:#}");
+            log::error!("[zed_ios] failed to restore workspace state: {error:#}");
         }
 
         // Open the resolved project path if it points to a file.
         if !project_path.path.is_empty() {
-            log::info!("[zed-ios] opening project path: {:?}", project_path);
+            log::info!("[zed_ios] opening project path: {:?}", project_path);
             let open_result = landing_window.update(cx, |_, window, cx| {
                 workspace_entity.update(cx, |workspace, cx| {
                     workspace.open_path(project_path, None, true, window, cx)
                 })
             })?;
             match open_result.await {
-                Ok(_) => log::info!("[zed-ios] opened file successfully"),
-                Err(error) => log::error!("[zed-ios] failed to open file: {error:#}"),
+                Ok(_) => log::info!("[zed_ios] opened file successfully"),
+                Err(error) => log::error!("[zed_ios] failed to open file: {error:#}"),
             }
         }
 
@@ -1557,7 +1557,7 @@ impl ConnectionLanding {
             let landing_window = landing_window;
             move |project_entity, event: &project::Event, cx| {
                 if matches!(event, project::Event::Closed) {
-                    log::info!("[zed-ios] project closed, cleaning up");
+                    log::info!("[zed_ios] project closed, cleaning up");
                     let project_id = project_entity.entity_id();
                     let landing_window = landing_window;
                     cx.defer(move |cx| {
@@ -1643,7 +1643,7 @@ impl ConnectionLanding {
             persist_active_sessions(cx);
         })?;
 
-        log::info!("[zed-ios] added workspace to existing host connection");
+        log::info!("[zed_ios] added workspace to existing host connection");
         Ok(())
     }
 
@@ -1705,7 +1705,7 @@ impl ConnectionLanding {
             persist_active_sessions(cx);
         })?;
 
-        log::info!("[zed-ios] remote project opened successfully");
+        log::info!("[zed_ios] remote project opened successfully");
         Ok(())
     }
 
@@ -1780,7 +1780,7 @@ impl ConnectionLanding {
                         tx.send(encrypted).ok();
                     }
                     Err(error) => {
-                        log::error!("[zed-ios] failed to encrypt password: {error}");
+                        log::error!("[zed_ios] failed to encrypt password: {error}");
                     }
                 }
             }
@@ -2668,18 +2668,18 @@ impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
         tx: futures::channel::oneshot::Sender<askpass::EncryptedPassword>,
         cx: &mut AsyncApp,
     ) {
-        log::info!("[zed-ios] Password prompt requested: {prompt}");
+        log::info!("[zed_ios] Password prompt requested: {prompt}");
         let result = self.window.update(cx, |_, window, cx| {
             if let Some(Some(landing)) = window.root::<ConnectionLanding>() {
                 landing.update(cx, |landing, cx| {
                     landing.show_password_prompt(prompt, tx, window, cx);
                 });
             } else {
-                log::error!("[zed-ios] cannot show password prompt: landing screen not active");
+                log::error!("[zed_ios] cannot show password prompt: landing screen not active");
             }
         });
         if let Err(error) = result {
-            log::error!("[zed-ios] failed to show password prompt: {error:#}");
+            log::error!("[zed_ios] failed to show password prompt: {error:#}");
         }
     }
 
@@ -2707,7 +2707,7 @@ impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
 
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncApp) {
         if let Some(status) = status {
-            log::info!("[zed-ios] SSH status: {status}");
+            log::info!("[zed_ios] SSH status: {status}");
         }
         if !self.show_status_in_ui {
             return;
@@ -2726,7 +2726,7 @@ impl remote::RemoteClientDelegate for IosRemoteClientDelegate {
             }
         });
         if let Err(error) = result {
-            log::error!("[zed-ios] failed to update SSH status: {error:#}");
+            log::error!("[zed_ios] failed to update SSH status: {error:#}");
         }
     }
 }

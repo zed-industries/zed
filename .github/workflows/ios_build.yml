@@ -35,12 +35,12 @@ jobs:
       with:
         key: ios-device
 
-    - name: Build zed-ios (device)
+    - name: Build zed_ios (device)
       env:
         RUSTFLAGS: '-C target-feature=+fp16'
       run: |
         cargo build \
-          -p zed-ios \
+          -p zed_ios \
           --target aarch64-apple-ios \
           --no-default-features
 

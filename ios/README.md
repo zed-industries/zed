@@ -11,7 +11,7 @@ The app is structured as a minimal Swift host that bootstraps UIKit and
 delegates immediately into Rust:
 
 ```
-Swift (UIKit lifecycle)  →  C FFI  →  Rust (crates/zed-ios, crates/gpui)
+Swift (UIKit lifecycle)  →  C FFI  →  Rust (crates/zed_ios, crates/gpui)
 ```
 
 `AppDelegate` and `SceneDelegate` handle the iOS scene lifecycle and call three

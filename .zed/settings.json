@@ -87,7 +87,7 @@
                   "aarch64-apple-ios",
                   "--no-default-features",
                   "-p",
-                  "zed-ios"
+                  "zed_ios"
                 ]
               }
             },
@@ -100,7 +100,7 @@
                 "aarch64-apple-ios",
                 "--no-default-features",
                 "-p",
-                "zed-ios"
+                "zed_ios"
               ]
             }
           }

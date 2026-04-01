@@ -1,6 +1,6 @@
 ---
 paths:
-  - "crates/zed-ios/**/*.rs"
+  - "crates/zed_ios/**/*.rs"
   - "crates/gpui/src/platform/ios/**/*.rs"
 ---
 

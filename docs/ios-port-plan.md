@@ -28,7 +28,7 @@ crates/
       linux/             # Reference implementation (Wayland/X11 + wgpu)
       windows/           # Reference implementation (Win32 + DirectWrite)
       ios/               # NEW — create this module (see Phase 1)
-  zed-ios/               # NEW — iOS entry point crate (staticlib)
+  zed_ios/               # NEW — iOS entry point crate (staticlib)
   remote/                # Existing remote dev protocol — reuse as-is
   remote_server/         # Host-side server — not built for iOS target
   workspace/             # Workspace/Pane/Panel UI — reuse as-is
@@ -230,7 +230,7 @@ and launches on device/simulator showing a black screen without crashing.
 
 **Tasks:**
 
-1. Create `crates/zed-ios/` with `crate-type = ["staticlib"]` and a single
+1. Create `crates/zed_ios/` with `crate-type = ["staticlib"]` and a single
    `pub extern "C" fn zed_ios_main()` entry point.
 
 2. Audit all `build.rs` scripts across the workspace for macOS-isms (hardcoded `xcrun
@@ -265,7 +265,7 @@ and launches on device/simulator showing a black screen without crashing.
      `UIApplicationSupportsMultipleScenes = YES`
    - Build phase that runs `cargo build --target aarch64-apple-ios --release` and
      links the resulting `.a`
-   - `ZedApp-Bridging-Header.h` importing the C header generated from zed-ios
+   - `ZedApp-Bridging-Header.h` importing the C header generated from zed_ios
    - **Bundle required monospace fonts** (Fira Code, JetBrains Mono, etc.) and
      register via `UIAppFonts` in Info.plist — iOS does not have
      `/Library/Fonts/` and has far fewer built-in monospace fonts than macOS
@@ -532,7 +532,7 @@ The debug panel (`debugger_ui`) supports remote debugging out of the box via `Da
 remote connection to the headless server. The headless server manages debug adapter
 processes (CodeLLDB, debugpy, etc.) — the iPad never spawns debugger subprocesses.
 
-**Crates to add to zed-ios:**
+**Crates to add to zed_ios:**
 - `debugger_ui` — panel UI, session views, breakpoint visualization
 - `debugger_tools` — debug logging (`dap_log`)
 - `dap_adapters` — built-in adapter definitions (the iPad doesn't run them, but needs
@@ -650,7 +650,7 @@ LSP server.
 | OpenAI-compatible | HTTPS | Works |
 | Copilot | Node.js LSP subprocess | **Blocked** — requires local process |
 
-**Crates to add to zed-ios:**
+**Crates to add to zed_ios:**
 - `edit_prediction` — core engine, Zed/Codestral/OpenAI delegates
 - `edit_prediction_types` — trait definitions
 - `edit_prediction_context` — context analysis for predictions
@@ -674,7 +674,7 @@ edit_prediction::init(cx);
 - The `edit_prediction_registry` module (in `crates/zed/src/zed/`) assigns providers to
   editors based on settings. This logic lives in the desktop `zed` crate, not a library
   crate. Need to either extract it to a shared crate or duplicate the non-Copilot
-  registration logic in `zed-ios`.
+  registration logic in `zed_ios`.
 - Settings: users who have `"edit_predictions": { "provider": "copilot" }` will get no
   completions on iPad. Consider a settings overlay that maps `copilot` → `zed` on iOS,
   or show a notification suggesting they switch providers.
@@ -986,7 +986,7 @@ Potential uses:
 **Implementation for v1 local notifications:**
 
 ```rust
-// In crates/zed-ios/src/local_notifications.rs
+// In crates/zed_ios/src/local_notifications.rs
 // Wrap UNUserNotificationCenter via objc2-user-notifications
 
 fn schedule_disconnect_notification() {
@@ -1093,7 +1093,7 @@ Settings profiles (`profiles` key in `settings.json`) currently only work in use
 Zed-wide limitation, not iOS-specific, but it directly impacts the iPad development workflow.
 
 **The problem:** When working on Zed for iPad, rust-analyzer needs different configuration
-(target `aarch64-apple-ios`, `--no-default-features`, `-p zed-ios`) than when working on
+(target `aarch64-apple-ios`, `--no-default-features`, `-p zed_ios`) than when working on
 desktop Zed. Today, developers must configure an "iOS" profile in their personal user
 settings. This can't be shared via `.zed/settings.json` in the repo.
 
@@ -1143,7 +1143,7 @@ is the correct precedence.
                 "overrideCommand": [
                   "cargo", "check", "--message-format=json",
                   "--target", "aarch64-apple-ios",
-                  "--no-default-features", "-p", "zed-ios"
+                  "--no-default-features", "-p", "zed_ios"
                 ]
               }
             },
@@ -1151,7 +1151,7 @@ is the correct precedence.
               "overrideCommand": [
                 "cargo", "check", "--message-format=json",
                 "--target", "aarch64-apple-ios",
-                "--no-default-features", "-p", "zed-ios"
+                "--no-default-features", "-p", "zed_ios"
               ]
             }
           }
@@ -1167,7 +1167,7 @@ from the command palette without any per-user setup.
 
 #### 4.6 — SSH Key Management (Keychain)
 
-New file: `crates/zed-ios/src/keychain.rs`
+New file: `crates/zed_ios/src/keychain.rs`
 
 - `store_ssh_key(label: &str, pem_bytes: &[u8]) -> Result<()>` — calls `SecItemAdd`
   with `kSecClassKey` (or `kSecClassGenericPassword` for simpler storage),
@@ -1183,7 +1183,7 @@ SSH key import UI flow (Swift side):
 
 #### 4.7 — Network Resilience
 
-New file: `crates/zed-ios/src/network_monitor.rs`
+New file: `crates/zed_ios/src/network_monitor.rs`
 
 - Wraps `NWPathMonitor` (Network.framework) via `objc2` crate bindings
 - Emits `NetworkEvent::Available` / `NetworkEvent::Lost` into GPUI's event system
@@ -1294,11 +1294,11 @@ rustup target add aarch64-apple-ios
 rustup target add aarch64-apple-ios-sim
 
 # Build the iOS static lib (device)
-cargo build -p zed-ios --target aarch64-apple-ios --release \
+cargo build -p zed_ios --target aarch64-apple-ios --release \
     --no-default-features --features ios
 
 # Build the iOS static lib (simulator, Apple Silicon Mac)
-cargo build -p zed-ios --target aarch64-apple-ios-sim --release \
+cargo build -p zed_ios --target aarch64-apple-ios-sim --release \
     --no-default-features --features ios
 
 # Build and run on simulator via Xcode
@@ -1332,7 +1332,7 @@ Our architecture:
 ```
 Pure Rust core (GPUI, editor, remote, workspace)
     ↓
-FFI wrapper crate (crates/zed-ios/, crate-type = ["staticlib"])
+FFI wrapper crate (crates/zed_ios/, crate-type = ["staticlib"])
     #[no_mangle] pub extern "C" fn zed_ios_main()
     #[no_mangle] pub extern "C" fn zed_ios_open_window()
     ...
@@ -1427,7 +1427,7 @@ Swift host app (AppDelegate, SceneDelegate)
   `std::process::Command` — may need cfg gates even though iPad only uses `RemoteDapStore`.
 - **Edit prediction: how to handle the provider registry?** The `edit_prediction_registry`
   module lives in `crates/zed/src/zed/` (the desktop binary crate). Extract to a shared
-  library crate, or duplicate the non-Copilot logic in `zed-ios`?
+  library crate, or duplicate the non-Copilot logic in `zed_ios`?
 - **Edit prediction: what happens for Copilot users?** Silently fall back to Zed provider?
   Show a notification? Respect the setting and show no predictions?
 

@@ -47,7 +47,7 @@ static IOS_MENUS: Mutex<Vec<IosTopMenu>> = Mutex::new(Vec::new());
 
 thread_local! {
     /// Callback that dispatches a GPUI action by its type name string.
-    /// Set from `zed-ios` init so it captures an `AsyncApp` without requiring `Send`.
+    /// Set from `zed_ios` init so it captures an `AsyncApp` without requiring `Send`.
     static MENU_ACTION_DISPATCHER: RefCell<Option<Box<dyn Fn(&str)>>> = RefCell::new(None);
 }
 
@@ -558,7 +558,7 @@ impl Platform for IosPlatform {
     }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
-        // SSH keys go to the iOS Keychain via SecItemAdd in crates/zed-ios.
+        // SSH keys go to the iOS Keychain via SecItemAdd in crates/zed_ios.
         Task::ready(Err(anyhow::anyhow!(
             "write_credentials: use zed_ios::keychain for SSH key storage"
         )))

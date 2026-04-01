@@ -11,7 +11,7 @@ paths:
 - Swift handles: UIScene lifecycle, UIKeyCommand registration, UIDocumentPicker, Keychain UI
 
 ## FFI bridge pattern
-- Rust exports `#[no_mangle] pub extern "C" fn` symbols from `crates/zed-ios/`
+- Rust exports `#[no_mangle] pub extern "C" fn` symbols from `crates/zed_ios/`
 - Swift imports via `ZedApp-Bridging-Header.h` (auto-generated C header)
 - Pass strings as `*const c_char`, booleans as `Bool`, callbacks as function pointers
 - Never pass Rust-owned memory to Swift without a corresponding free function

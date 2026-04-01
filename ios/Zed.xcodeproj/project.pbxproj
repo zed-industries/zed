@@ -85,7 +85,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = AA0000000000000000000045 /* Build configuration list for PBXNativeTarget "Zed" */;
 			buildPhases = (
-				AA0000000000000000000033 /* Cargo — Build zed-ios staticlib */,
+				AA0000000000000000000033 /* Cargo — Build zed_ios staticlib */,
 				AA0000000000000000000030 /* Sources */,
 				AA0000000000000000000031 /* Resources */,
 				AA0000000000000000000032 /* Frameworks */,
@@ -145,7 +145,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		AA0000000000000000000033 /* Cargo — Build zed-ios staticlib */ = {
+		AA0000000000000000000033 /* Cargo — Build zed_ios staticlib */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -155,7 +155,7 @@
 			);
 			inputPaths = (
 			);
-			name = "Cargo — Build zed-ios staticlib";
+			name = "Cargo — Build zed_ios staticlib";
 			outputFileListPaths = (
 			);
 			outputPaths = (

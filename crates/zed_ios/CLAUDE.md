@@ -1,4 +1,4 @@
-# crates/zed-ios/ — iOS Entry Point Crate
+# crates/zed_ios/ — iOS Entry Point Crate
 
 This crate produces a static library (`.a`) linked by the Swift host app in `ios/`.
 It is the Rust-side entry point for everything iOS-specific that doesn't belong in GPUI.
@@ -27,9 +27,9 @@ It is the Rust-side entry point for everything iOS-specific that doesn't belong 
 
 ```bash
 # Simulator:
-cargo build -p zed-ios --target aarch64-apple-ios-sim --release --no-default-features
+cargo build -p zed_ios --target aarch64-apple-ios-sim --release --no-default-features
 # Device:
-cargo build -p zed-ios --target aarch64-apple-ios --release --no-default-features
+cargo build -p zed_ios --target aarch64-apple-ios --release --no-default-features
 ```
 
 Note: do not pass `--features ios` — there is no such feature flag; iOS-specific code
