@@ -225,6 +225,37 @@ struct SearchState {
     pub selected_index: Option<usize>,
 }
 
+struct CanvasDraggedSplitHandle;
+
+struct CanvasSplitState {
+    width: Option<Pixels>,
+}
+
+impl CanvasSplitState {
+    pub fn new() -> Self {
+        Self { width: None }
+    }
+
+    pub fn width(&self) -> Option<Pixels> {
+        self.width
+    }
+
+    pub fn on_drag_move(
+        &mut self,
+        drag_event: &DragMoveEvent<CanvasDraggedSplitHandle>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        let drag_position = drag_event.event.position;
+        let bounds = drag_event.bounds;
+        self.width = Some(drag_position.x - bounds.left());
+    }
+
+    fn on_double_click(&mut self) {
+        self.width = None
+    }
+}
+
 pub struct SplitState {
     left_ratio: f32,
     visible_left_ratio: f32,
@@ -914,6 +945,7 @@ pub struct GitGraph {
     _commit_diff_task: Option<Task<()>>,
     commit_details_split_state: Entity<SplitState>,
     repo_id: RepositoryId,
+    canvas_split_state: Entity<CanvasSplitState>,
     changed_files_scroll_handle: UniformListScrollHandle,
     pending_select_sha: Option<Oid>,
 }
@@ -1032,6 +1064,7 @@ impl GitGraph {
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
             repo_id,
+            canvas_split_state: cx.new(|_cx| CanvasSplitState::new()),
             changed_files_scroll_handle: UniformListScrollHandle::new(),
             pending_select_sha: None,
         };
@@ -2089,8 +2122,6 @@ impl GitGraph {
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
         let horizontal_scroll_offset = self.horizontal_scroll_offset;
 
-        let max_lanes = self.graph_data.max_lanes.max(6);
-        let graph_width = LANE_WIDTH * max_lanes as f32 + LEFT_PADDING * 2.0;
         let last_visible_row =
             first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
 
@@ -2330,8 +2361,7 @@ impl GitGraph {
                 })
             },
         )
-        .w(graph_width)
-        .h_full()
+        .size_full()
     }
 
     fn row_at_position(&self, position_y: Pixels, cx: &Context<Self>) -> Option<usize> {
@@ -2432,6 +2462,42 @@ impl GitGraph {
         }
     }
 
+    fn render_canvas_resize_handle(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        div()
+            .id("canvas-split-resize-container")
+            .relative()
+            .h_full()
+            .flex_shrink_0()
+            .w(px(1.))
+            .bg(cx.theme().colors().border_variant)
+            .child(
+                div()
+                    .id("canvas-split-resize-handle")
+                    .absolute()
+                    .left(px(-RESIZE_HANDLE_WIDTH / 2.0))
+                    .w(px(RESIZE_HANDLE_WIDTH))
+                    .h_full()
+                    .cursor_col_resize()
+                    .block_mouse_except_scroll()
+                    .on_click(cx.listener(|this, event: &ClickEvent, _window, cx| {
+                        if event.click_count() >= 2 {
+                            this.canvas_split_state.update(cx, |state, _| {
+                                state.on_double_click();
+                            });
+                        }
+                        cx.stop_propagation();
+                    }))
+                    .on_drag(CanvasDraggedSplitHandle, |_, _, _, cx| {
+                        cx.new(|_| gpui::Empty)
+                    }),
+            )
+            .into_any_element()
+    }
+
     fn render_commit_view_resize_handle(
         &self,
         _window: &mut Window,
@@ -2528,7 +2594,13 @@ impl Render for GitGraph {
                 .flex_row()
                 .child(
                     div()
-                        .w(self.graph_content_width())
+                        .flex_basis(DefiniteLength::Absolute(
+                            self.canvas_split_state
+                                .read(cx)
+                                .width()
+                                .unwrap_or(self.graph_content_width())
+                                .into(),
+                        ))
                         .h_full()
                         .flex()
                         .flex_col()
@@ -2545,19 +2617,29 @@ impl Render for GitGraph {
                         )
                         .child(
                             div()
-                                .id("graph-canvas")
-                                .flex_1()
-                                .overflow_hidden()
-                                .child(self.render_graph(window, cx))
-                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
-                                .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
-                                .on_click(cx.listener(Self::handle_graph_click))
-                                .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
-                                    if !is_hovered && this.hovered_entry_idx.is_some() {
-                                        this.hovered_entry_idx = None;
-                                        cx.notify();
-                                    }
-                                })),
+                                .size_full()
+                                .flex()
+                                .flex_row()
+                                .child(
+                                    div()
+                                        .id("graph-canvas")
+                                        .flex_1()
+                                        .flex_row()
+                                        .overflow_hidden()
+                                        .child(self.render_graph(window, cx))
+                                        .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
+                                        .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
+                                        .on_click(cx.listener(Self::handle_graph_click))
+                                        .on_hover(cx.listener(
+                                            |this, &is_hovered: &bool, _, cx| {
+                                                if !is_hovered && this.hovered_entry_idx.is_some() {
+                                                    this.hovered_entry_idx = None;
+                                                    cx.notify();
+                                                }
+                                            },
+                                        )),
+                                )
+                                .child(self.render_canvas_resize_handle(window, cx)),
                         ),
                 )
                 .child({
@@ -2644,6 +2726,13 @@ impl Render for GitGraph {
                         state.commit_ratio();
                     });
                 }))
+                .on_drag_move::<CanvasDraggedSplitHandle>(cx.listener(
+                    |this, event, window, cx| {
+                        this.canvas_split_state.update(cx, |state, cx| {
+                            state.on_drag_move(event, window, cx);
+                        });
+                    },
+                ))
                 .when(self.selected_entry_idx.is_some(), |this| {
                     this.child(self.render_commit_view_resize_handle(window, cx))
                         .child(self.render_commit_detail_panel(window, cx))
