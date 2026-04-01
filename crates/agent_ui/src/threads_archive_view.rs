@@ -838,45 +838,12 @@ impl Render for ProjectPickerModal {
             .key_context("ProjectPickerModal")
             .elevation_3(cx)
             .w(rems(34.))
-            .on_action(cx.listener(Self::open_local_folder))
-            .child(self.picker.clone())
-    }
-}
-
-impl ProjectPickerModal {
-    fn open_local_folder(
-        &mut self,
-        _: &workspace::Open,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: None,
-        });
-        let picker = self.picker.downgrade();
-        cx.spawn_in(window, async move |_this, cx| {
-            let Ok(Ok(Some(paths))) = paths_receiver.await else {
-                return;
-            };
-            if paths.is_empty() {
-                return;
-            }
-
-            let work_dirs = PathList::new(&paths);
-
-            picker
-                .update_in(cx, |picker, window, cx| {
-                    picker
-                        .delegate
-                        .update_working_directories_and_unarchive(work_dirs, window, cx);
-                    cx.emit(DismissEvent);
+            .on_action(cx.listener(|this, _: &workspace::Open, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    picker.delegate.open_local_folder(window, cx)
                 })
-                .log_err();
-        })
-        .detach();
+            }))
+            .child(self.picker.clone())
     }
 }
 
