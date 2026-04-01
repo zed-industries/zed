@@ -34,6 +34,7 @@ use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::rc::Rc;
+use telemetry;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, HighlightedLabel, KeyBinding,
@@ -3521,6 +3522,11 @@ impl Sidebar {
                     .full_width()
                     .key_binding(KeyBinding::for_action(&workspace::Open::default(), cx))
                     .on_click(|_, window, cx| {
+                        let side = match AgentSettings::get_global(cx).sidebar_side() {
+                            SidebarSide::Left => "left",
+                            SidebarSide::Right => "right",
+                        };
+                        telemetry::event!("Sidebar Open Project Clicked", side = side);
                         window.dispatch_action(
                             Open {
                                 create_new_window: false,

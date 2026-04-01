@@ -16092,6 +16092,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "telemetry",
  "theme",
  "theme_settings",
  "ui",

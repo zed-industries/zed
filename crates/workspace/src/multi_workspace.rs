@@ -468,6 +468,11 @@ impl MultiWorkspace {
     }
 
     pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
+        let side = match self.sidebar_side(cx) {
+            SidebarSide::Left => "left",
+            SidebarSide::Right => "right",
+        };
+        telemetry::event!("Sidebar Toggled", action = "open", side = side);
         self.sidebar_open = true;
         if let ActiveWorkspace::Transient(workspace) = &self.active_workspace {
             let workspace = workspace.clone();
@@ -485,6 +490,11 @@ impl MultiWorkspace {
     }
 
     pub fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let side = match self.sidebar_side(cx) {
+            SidebarSide::Left => "left",
+            SidebarSide::Right => "right",
+        };
+        telemetry::event!("Sidebar Toggled", action = "close", side = side);
         self.sidebar_open = false;
         for workspace in self.workspaces.iter() {
             workspace.update(cx, |workspace, _cx| {
@@ -850,7 +860,11 @@ impl MultiWorkspace {
     /// persistent list regardless of sidebar state — it's used for system-
     /// initiated additions like deserialization and worktree discovery.
     pub fn add(&mut self, workspace: Entity<Workspace>, window: &Window, cx: &mut Context<Self>) {
+        let is_new = !self.workspaces.iter().any(|w| *w == workspace);
         self.insert_workspace(workspace, window, cx);
+        if is_new {
+            telemetry::event!("Workspace Added", workspace_count = self.workspaces.len());
+        }
     }
 
     /// Ensures the workspace is in the multiworkspace and makes it the active one.
