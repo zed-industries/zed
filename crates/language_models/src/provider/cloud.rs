@@ -694,14 +694,16 @@ impl LanguageModel for CloudLanguageModel {
                     Ok(model) => model,
                     Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
                 };
-                count_open_ai_tokens(request, model, cx)
+                cx.background_spawn(async move { count_open_ai_tokens(request, model) })
+                    .boxed()
             }
             cloud_llm_client::LanguageModelProvider::XAi => {
                 let model = match x_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,
                     Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
                 };
-                count_xai_tokens(request, model, cx)
+                cx.background_spawn(async move { count_xai_tokens(request, model) })
+                    .boxed()
             }
             cloud_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();

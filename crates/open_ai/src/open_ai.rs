@@ -1,4 +1,5 @@
 pub mod batches;
+pub mod completion;
 pub mod responses;
 
 use anyhow::{Context as _, Result, anyhow};

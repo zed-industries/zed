@@ -32,7 +32,7 @@ use ui::prelude::*;
 use util::debug_panic;
 
 use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
-use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
 const PROVIDER_NAME: LanguageModelProviderName =
