@@ -1420,10 +1420,6 @@ pub enum InvalidSettingsError {
         path: PathBuf,
         message: String,
     },
-    Worktrees {
-        path: PathBuf,
-        message: String,
-    },
 }
 
 impl std::fmt::Display for InvalidSettingsError {
@@ -1435,10 +1431,7 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::DefaultSettings { message }
             | InvalidSettingsError::Tasks { message, .. }
             | InvalidSettingsError::Editorconfig { message, .. }
-            | InvalidSettingsError::Debug { message, .. }
-            | InvalidSettingsError::Worktrees { message, .. } => {
-                write!(f, "{message}")
-            }
+            | InvalidSettingsError::Debug { message, .. } => write!(f, "{message}"),
         }
     }
 }

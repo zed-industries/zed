@@ -166,9 +166,9 @@ impl Workspace {
         }
     }
 
-    pub fn run_git_worktree_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn run_create_worktree_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let project = self.project().clone();
-        let hooks = HashSet::from_iter([TaskHook::CreateGitWorktree]);
+        let hooks = HashSet::from_iter([TaskHook::CreateWorktree]);
 
         let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<TaskTemplate>)> = {
             let project = project.read(cx);

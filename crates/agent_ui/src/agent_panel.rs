@@ -2710,7 +2710,7 @@ impl AgentPanel {
             multi_workspace.activate(new_workspace.clone(), window, cx);
 
             new_workspace.update(cx, |workspace, cx| {
-                workspace.run_git_worktree_tasks(window, cx);
+                workspace.run_create_worktree_tasks(window, cx);
             })
         })?;
 

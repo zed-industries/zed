@@ -93,8 +93,8 @@ pub enum DebugArgsRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskHook {
-    // todo! is there a better name for this
-    CreateGitWorktree,
+    #[serde(alias = "create_git_worktree")]
+    CreateWorktree,
 }
 
 /// What to do with the terminal pane and tab, after the command was started.

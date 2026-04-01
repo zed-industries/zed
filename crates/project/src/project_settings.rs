@@ -744,7 +744,6 @@ pub enum SettingsObserverEvent {
     LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalDebugScenariosUpdated(Result<PathBuf, InvalidSettingsError>),
-    LocalWorktreeScriptsUpdated(Result<PathBuf, InvalidSettingsError>),
 }
 
 impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}

@@ -1,3 +1,0 @@
-{
-  "setup": ["clippy", { "label": "build", "command": "cargo build" }],
-}

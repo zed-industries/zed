@@ -452,10 +452,6 @@ pub fn task_file_name() -> &'static str {
     "tasks.json"
 }
 
-pub fn worktrees_file_name() -> &'static str {
-    "worktrees.json"
-}
-
 /// Returns the relative path to a `debug.json` file within a project.
 /// .zed/debug.json
 pub fn local_debug_file_relative_path() -> &'static RelPath {
