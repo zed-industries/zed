@@ -1442,7 +1442,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                 )
             }
             ProjectPickerEntry::RecentProject(hit) => {
-                let popover_style = matches!(self.style, ProjectPickerStyle::Popover);
                 let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
                 let paths_to_add = paths.paths().to_vec();
