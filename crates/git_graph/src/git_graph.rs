@@ -2188,6 +2188,8 @@ impl GitGraph {
                         builder.move_to(point(line_x, from_y));
 
                         let segments = &line.segments[start_segment_idx..];
+                        let desired_curve_height = row_height / 3.0;
+                        let desired_curve_width = LANE_WIDTH / 3.0;
 
                         for (segment_idx, segment) in segments.iter().enumerate() {
                             let is_last = segment_idx + 1 == segments.len();
@@ -2241,66 +2243,69 @@ impl GitGraph {
                                             if is_last {
                                                 to_column -= column_shift;
                                             }
-                                            builder.move_to(point(current_column, current_row));
 
-                                            if (to_column - current_column).abs() > LANE_WIDTH {
-                                                // Multi-lane checkout: straight down, small
-                                                // curve turn, then straight horizontal.
-                                                if (to_row - current_row).abs() > row_height {
-                                                    let vertical_end =
-                                                        point(current_column, to_row - row_height);
-                                                    builder.line_to(vertical_end);
-                                                    builder.move_to(vertical_end);
-                                                }
-
-                                                let lane_shift = if going_right {
-                                                    LANE_WIDTH
-                                                } else {
-                                                    -LANE_WIDTH
-                                                };
-                                                let curve_end =
-                                                    point(current_column + lane_shift, to_row);
-                                                let curve_control = point(current_column, to_row);
-                                                builder.curve_to(curve_end, curve_control);
-                                                builder.move_to(curve_end);
-
-                                                builder.line_to(point(to_column, to_row));
+                                            let available_curve_width =
+                                                (to_column - current_column).abs();
+                                            let available_curve_height =
+                                                (to_row - current_row).abs();
+                                            let curve_width =
+                                                desired_curve_width.min(available_curve_width);
+                                            let curve_height =
+                                                desired_curve_height.min(available_curve_height);
+                                            let signed_curve_width = if going_right {
+                                                curve_width
                                             } else {
-                                                if (to_row - current_row).abs() > row_height {
-                                                    let start_curve =
-                                                        point(current_column, to_row - row_height);
-                                                    builder.line_to(start_curve);
-                                                    builder.move_to(start_curve);
-                                                }
-                                                let control = point(current_column, to_row);
-                                                builder.curve_to(point(to_column, to_row), control);
-                                            }
+                                                -curve_width
+                                            };
+                                            let curve_start =
+                                                point(current_column, to_row - curve_height);
+                                            let curve_end =
+                                                point(current_column + signed_curve_width, to_row);
+                                            let curve_control = point(current_column, to_row);
+
+                                            builder.move_to(point(current_column, current_row));
+                                            builder.line_to(curve_start);
+                                            builder.move_to(curve_start);
+                                            builder.curve_to(curve_end, curve_control);
+                                            builder.move_to(curve_end);
+                                            builder.line_to(point(to_column, to_row));
                                         }
                                         CurveKind::Merge => {
                                             if is_last {
                                                 to_row -= COMMIT_CIRCLE_RADIUS;
                                             }
-                                            builder.move_to(point(
+
+                                            let merge_start = point(
                                                 current_column + column_shift,
                                                 current_row - COMMIT_CIRCLE_RADIUS,
-                                            ));
+                                            );
+                                            let available_curve_width =
+                                                (to_column - merge_start.x).abs();
+                                            let available_curve_height =
+                                                (to_row - merge_start.y).abs();
+                                            let curve_width =
+                                                desired_curve_width.min(available_curve_width);
+                                            let curve_height =
+                                                desired_curve_height.min(available_curve_height);
+                                            let signed_curve_width = if going_right {
+                                                curve_width
+                                            } else {
+                                                -curve_width
+                                            };
+                                            let curve_start = point(
+                                                to_column - signed_curve_width,
+                                                merge_start.y,
+                                            );
+                                            let curve_end =
+                                                point(to_column, merge_start.y + curve_height);
+                                            let curve_control = point(to_column, merge_start.y);
 
-                                            if (to_column - current_column).abs() > LANE_WIDTH {
-                                                let column_shift = if going_right {
-                                                    LANE_WIDTH
-                                                } else {
-                                                    -LANE_WIDTH
-                                                };
-                                                let start_curve = point(
-                                                    current_column + column_shift,
-                                                    current_row - COMMIT_CIRCLE_RADIUS,
-                                                );
-                                                builder.line_to(start_curve);
-                                                builder.move_to(start_curve);
-                                            }
-
-                                            let control = point(to_column, current_row);
-                                            builder.curve_to(point(to_column, to_row), control);
+                                            builder.move_to(merge_start);
+                                            builder.line_to(curve_start);
+                                            builder.move_to(curve_start);
+                                            builder.curve_to(curve_end, curve_control);
+                                            builder.move_to(curve_end);
+                                            builder.line_to(point(to_column, to_row));
                                         }
                                     }
                                     current_row = to_row;
