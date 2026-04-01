@@ -5,7 +5,6 @@ use agent_ui::{
     test_support::{active_session_id, open_thread_with_connection, send_message},
     thread_metadata_store::ThreadMetadata,
 };
-use assistant_text_thread::TextThreadStore;
 use chrono::DateTime;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::FakeFs;
@@ -321,6 +320,41 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     assert_eq!(width1, px(420.0));
     assert!(collapsed1.contains(&path_list));
     assert_eq!(expanded1.get(&path_list), Some(&2));
+}
+
+#[gpui::test]
+async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppContext) {
+    // A regression test to ensure that restoring a serialized archive view does not panic.
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.update(|_window, cx| {
+        AgentRegistryStore::init_test_global(cx, vec![]);
+    });
+
+    let serialized = serde_json::to_string(&SerializedSidebar {
+        width: Some(400.0),
+        collapsed_groups: Vec::new(),
+        expanded_groups: Vec::new(),
+        active_view: SerializedSidebarView::Archive,
+    })
+    .expect("serialization should succeed");
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        if let Some(sidebar) = multi_workspace.sidebar() {
+            sidebar.restore_serialized_state(&serialized, window, cx);
+        }
+    });
+    cx.run_until_parked();
+
+    // After the deferred `show_archive` runs, the view should be Archive.
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            matches!(sidebar.view, SidebarView::Archive(_)),
+            "expected sidebar view to be Archive after restore, got ThreadList"
+        );
+    });
 }
 
 #[test]
@@ -1185,12 +1219,10 @@ async fn init_test_project_with_agent_panel(
 
 fn add_agent_panel(
     workspace: &Entity<Workspace>,
-    project: &Entity<project::Project>,
     cx: &mut gpui::VisualTestContext,
 ) -> Entity<AgentPanel> {
     workspace.update_in(cx, |workspace, window, cx| {
-        let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-        let panel = cx.new(|cx| AgentPanel::test_new(workspace, text_thread_store, window, cx));
+        let panel = cx.new(|cx| AgentPanel::test_new(workspace, window, cx));
         workspace.add_panel(panel.clone(), window, cx);
         panel
     })
@@ -1198,12 +1230,11 @@ fn add_agent_panel(
 
 fn setup_sidebar_with_agent_panel(
     multi_workspace: &Entity<MultiWorkspace>,
-    project: &Entity<project::Project>,
     cx: &mut gpui::VisualTestContext,
 ) -> (Entity<Sidebar>, Entity<AgentPanel>) {
     let sidebar = setup_sidebar(multi_workspace, cx);
     let workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
-    let panel = add_agent_panel(&workspace, project, cx);
+    let panel = add_agent_panel(&workspace, cx);
     (sidebar, panel)
 }
 
@@ -1212,7 +1243,7 @@ async fn test_parallel_threads_shown_with_live_status(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
@@ -1258,7 +1289,7 @@ async fn test_background_thread_completion_triggers_notification(cx: &mut TestAp
     let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
-    let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
+    let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
 
@@ -1924,7 +1955,7 @@ async fn test_thread_title_update_propagates_to_sidebar(cx: &mut TestAppContext)
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
@@ -1972,7 +2003,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
-    let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, &project_a, cx);
+    let (sidebar, panel_a) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
 
@@ -1995,7 +2026,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(project_b.clone(), window, cx)
     });
-    let panel_b = add_agent_panel(&workspace_b, &project_b, cx);
+    let panel_b = add_agent_panel(&workspace_b, cx);
     cx.run_until_parked();
 
     let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspaces()[0].clone());
@@ -2199,7 +2230,7 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     let fs = cx.update(|cx| <dyn fs::Fs>::global(cx));
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list_a = PathList::new(&[std::path::PathBuf::from("/project-a")]);
 
@@ -2290,7 +2321,7 @@ async fn test_cmd_n_shows_new_thread_entry(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
@@ -2341,7 +2372,7 @@ async fn test_draft_with_server_session_shows_as_draft(cx: &mut TestAppContext) 
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
@@ -2432,6 +2463,7 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -2455,7 +2487,7 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
 
-    let worktree_panel = add_agent_panel(&worktree_workspace, &worktree_project, cx);
+    let worktree_panel = add_agent_panel(&worktree_workspace, cx);
 
     // Switch to the worktree workspace.
     multi_workspace.update_in(cx, |mw, window, cx| {
@@ -2546,6 +2578,7 @@ async fn test_search_matches_worktree_name(cx: &mut TestAppContext) {
                 path: std::path::PathBuf::from("/wt/rosewood"),
                 ref_name: Some("refs/heads/rosewood".into()),
                 sha: "abc".into(),
+                is_main: false,
             });
         })
         .unwrap();
@@ -2607,6 +2640,7 @@ async fn test_git_worktree_added_live_updates_sidebar(cx: &mut TestAppContext) {
                 path: std::path::PathBuf::from("/wt/rosewood"),
                 ref_name: Some("refs/heads/rosewood".into()),
                 sha: "abc".into(),
+                is_main: false,
             });
         })
         .unwrap();
@@ -2708,11 +2742,13 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
         state.worktrees.push(git::repository::Worktree {
             path: std::path::PathBuf::from("/wt-feature-b"),
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "bbb".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -2790,11 +2826,13 @@ async fn test_threadless_workspace_shows_new_thread_with_worktree_chip(cx: &mut 
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
         state.worktrees.push(git::repository::Worktree {
             path: std::path::PathBuf::from("/wt-feature-b"),
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "bbb".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -2910,6 +2948,7 @@ async fn test_multi_worktree_thread_shows_multiple_chips(cx: &mut TestAppContext
                     path: std::path::PathBuf::from(format!("/worktrees/{repo}/{branch}/{repo}")),
                     ref_name: Some(format!("refs/heads/{branch}").into()),
                     sha: "aaa".into(),
+                    is_main: false,
                 });
             }
         })
@@ -3012,6 +3051,7 @@ async fn test_same_named_worktree_chips_are_deduplicated(cx: &mut TestAppContext
                 path: std::path::PathBuf::from(format!("/worktrees/{repo}/olivetti/{repo}")),
                 ref_name: Some("refs/heads/olivetti".into()),
                 sha: "aaa".into(),
+                is_main: false,
             });
         })
         .unwrap();
@@ -3102,6 +3142,7 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3128,7 +3169,7 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
 
     // Add an agent panel to the worktree workspace so we can run a
     // thread inside it.
-    let worktree_panel = add_agent_panel(&worktree_workspace, &worktree_project, cx);
+    let worktree_panel = add_agent_panel(&worktree_workspace, cx);
 
     // Switch back to the main workspace before setting up the sidebar.
     multi_workspace.update_in(cx, |mw, window, cx| {
@@ -3217,6 +3258,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3240,7 +3282,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
 
-    let worktree_panel = add_agent_panel(&worktree_workspace, &worktree_project, cx);
+    let worktree_panel = add_agent_panel(&worktree_workspace, cx);
 
     multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces()[0].clone();
@@ -3323,6 +3365,7 @@ async fn test_clicking_worktree_thread_opens_workspace_when_none_exists(cx: &mut
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3428,6 +3471,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3578,6 +3622,7 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -3998,7 +4043,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
     let cx_b = &mut gpui::VisualTestContext::from_window(multi_workspace_b.into(), cx);
     let sidebar_b = setup_sidebar(&multi_workspace_b_entity, cx_b);
     let workspace_b = multi_workspace_b_entity.read_with(cx_b, |mw, _| mw.workspace().clone());
-    let _panel_b = add_agent_panel(&workspace_b, &project_b, cx_b);
+    let _panel_b = add_agent_panel(&workspace_b, cx_b);
 
     let session_id = acp::SessionId::new(Arc::from("archived-cross-window-with-sidebar"));
 
@@ -4172,6 +4217,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -4204,8 +4250,8 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     let sidebar = setup_sidebar(&multi_workspace, cx);
 
     let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspaces()[0].clone());
-    let main_panel = add_agent_panel(&main_workspace, &main_project, cx);
-    let _worktree_panel = add_agent_panel(&worktree_workspace, &worktree_project, cx);
+    let main_panel = add_agent_panel(&main_workspace, cx);
+    let _worktree_panel = add_agent_panel(&worktree_workspace, cx);
 
     // Open Thread 2 in the main panel and keep it running.
     let connection = StubAgentConnection::new();
@@ -4343,6 +4389,7 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
+            is_main: false,
         });
     })
     .unwrap();
@@ -4395,7 +4442,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
 
@@ -5070,7 +5117,7 @@ mod property_test {
                 let workspace = multi_workspace.update_in(cx, |mw, window, cx| {
                     mw.test_add_workspace(project.clone(), window, cx)
                 });
-                add_agent_panel(&workspace, &project, cx);
+                add_agent_panel(&workspace, cx);
                 let new_index = state.workspace_paths.len();
                 state.workspace_paths.push(path);
                 state.main_repo_indices.push(new_index);
@@ -5087,7 +5134,7 @@ mod property_test {
                 let workspace = multi_workspace.update_in(cx, |mw, window, cx| {
                     mw.test_add_workspace(project.clone(), window, cx)
                 });
-                add_agent_panel(&workspace, &project, cx);
+                add_agent_panel(&workspace, cx);
                 state.workspace_paths.push(worktree.path);
             }
             Operation::RemoveWorkspace { index } => {
@@ -5149,6 +5196,7 @@ mod property_test {
                             path: worktree_pathbuf,
                             ref_name: Some(format!("refs/heads/{}", worktree_name).into()),
                             sha: "aaa".into(),
+                            is_main: false,
                         });
                     })
                     .unwrap();
@@ -5375,7 +5423,7 @@ mod property_test {
 
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, &project, cx);
+        let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
         let mut state = TestState::new(fs, "/my-project".to_string());
         let mut executed: Vec<String> = Vec::new();

@@ -211,7 +211,6 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         );
         agent_ui::init(
             app_state.fs.clone(),
-            app_state.client.clone(),
             prompt_builder,
             app_state.languages.clone(),
             true,
@@ -2134,16 +2133,10 @@ fn run_agent_thread_view_test(
         })
         .context("Failed to get workspace handle")?;
 
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
     cx.background_executor.allow_parking();
     let panel = cx
         .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
+        .block_test(AgentPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load AgentPanel")?;
     cx.background_executor.forbid_parking();
 
@@ -3296,52 +3289,40 @@ edition = "2021"
         })
         .context("Failed to get workspace handle for agent panel")?;
 
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
-
     // Register an observer so that workspaces created by the worktree creation
     // flow get AgentPanel and ProjectPanel loaded automatically. Without this,
     // `workspace.panel::<AgentPanel>(cx)` returns None in the new workspace and
     // the creation flow's `focus_panel::<AgentPanel>` call is a no-op.
-    let _workspace_observer = cx.update({
-        let prompt_builder = prompt_builder.clone();
-        |cx| {
-            cx.observe_new(move |workspace: &mut Workspace, window, cx| {
-                let Some(window) = window else { return };
-                let prompt_builder = prompt_builder.clone();
-                let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
-                    let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
-                    let agent_panel =
-                        AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
-                    if let Ok(panel) = project_panel.await {
-                        workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
-                            })
-                            .log_err();
-                    }
-                    if let Ok(panel) = agent_panel.await {
-                        workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
-                            })
-                            .log_err();
-                    }
-                    anyhow::Ok(())
-                });
-                workspace.set_panels_task(panels_task);
-            })
-        }
+    let _workspace_observer = cx.update(|cx| {
+        cx.observe_new(move |workspace: &mut Workspace, window, cx| {
+            let Some(window) = window else { return };
+            let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
+                let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+                let agent_panel = AgentPanel::load(workspace_handle.clone(), cx.clone());
+                if let Ok(panel) = project_panel.await {
+                    workspace_handle
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.add_panel(panel, window, cx);
+                        })
+                        .log_err();
+                }
+                if let Ok(panel) = agent_panel.await {
+                    workspace_handle
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.add_panel(panel, window, cx);
+                        })
+                        .log_err();
+                }
+                anyhow::Ok(())
+            });
+            workspace.set_panels_task(panels_task);
+        })
     });
 
     cx.background_executor.allow_parking();
     let panel = cx
         .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
+        .block_test(AgentPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load AgentPanel")?;
     cx.background_executor.forbid_parking();
 

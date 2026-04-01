@@ -1281,13 +1281,14 @@ impl Sidebar {
     ) -> AnyElement {
         let id_prefix = if is_sticky { "sticky-" } else { "" };
         let id = SharedString::from(format!("{id_prefix}project-header-{ix}"));
+        let disclosure_id = SharedString::from(format!("disclosure-{ix}"));
         let group_name = SharedString::from(format!("{id_prefix}header-group-{ix}"));
 
         let is_collapsed = self.collapsed_groups.contains(path_list);
-        let disclosure_icon = if is_collapsed {
-            IconName::ChevronRight
+        let (disclosure_icon, disclosure_tooltip) = if is_collapsed {
+            (IconName::ChevronRight, "Expand Project")
         } else {
-            IconName::ChevronDown
+            (IconName::ChevronDown, "Collapse Project")
         };
 
         let has_new_thread_entry = self
@@ -1325,8 +1326,8 @@ impl Sidebar {
             .group(&group_name)
             .h(Tab::content_height(cx))
             .w_full()
-            .pl_1p5()
-            .pr_1()
+            .pl(px(5.))
+            .pr_1p5()
             .border_1()
             .map(|this| {
                 if is_selected {
@@ -1339,16 +1340,21 @@ impl Sidebar {
             .hover(|s| s.bg(hover_color))
             .child(
                 h_flex()
+                    .when(!is_active, |this| this.cursor_pointer())
                     .relative()
                     .min_w_0()
                     .w_full()
-                    .gap_1p5()
+                    .gap(px(5.))
                     .child(
-                        h_flex().size_4().flex_none().justify_center().child(
-                            Icon::new(disclosure_icon)
-                                .size(IconSize::Small)
-                                .color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.5))),
-                        ),
+                        IconButton::new(disclosure_id, disclosure_icon)
+                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Custom(cx.theme().colors().icon_muted.opacity(0.5)))
+                            .tooltip(Tooltip::text(disclosure_tooltip))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.selection = None;
+                                this.toggle_collapse(&path_list_for_toggle, window, cx);
+                            })),
                     )
                     .child(label)
                     .when_some(
@@ -1425,39 +1431,6 @@ impl Sidebar {
                             })),
                         )
                     })
-                    .when(!is_active, |this| {
-                        this.child(
-                            IconButton::new(
-                                SharedString::from(format!(
-                                    "{id_prefix}project-header-open-workspace-{ix}",
-                                )),
-                                IconName::Focus,
-                            )
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Activate Workspace"))
-                            .on_click(cx.listener({
-                                move |this, _, window, cx| {
-                                    this.active_entry =
-                                        Some(ActiveEntry::Draft(workspace_for_open.clone()));
-                                    if let Some(multi_workspace) = this.multi_workspace.upgrade() {
-                                        multi_workspace.update(cx, |multi_workspace, cx| {
-                                            multi_workspace.activate(
-                                                workspace_for_open.clone(),
-                                                window,
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                    if AgentPanel::is_visible(&workspace_for_open, cx) {
-                                        workspace_for_open.update(cx, |workspace, cx| {
-                                            workspace.focus_panel::<AgentPanel>(window, cx);
-                                        });
-                                    }
-                                }
-                            })),
-                        )
-                    })
                     .when(show_new_thread_button, |this| {
                         this.child(
                             IconButton::new(
@@ -1483,10 +1456,29 @@ impl Sidebar {
                         )
                     })
             })
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.selection = None;
-                this.toggle_collapse(&path_list_for_toggle, window, cx);
-            }))
+            .when(!is_active, |this| {
+                this.tooltip(Tooltip::text("Activate Workspace"))
+                    .on_click(cx.listener({
+                        move |this, _, window, cx| {
+                            this.active_entry =
+                                Some(ActiveEntry::Draft(workspace_for_open.clone()));
+                            if let Some(multi_workspace) = this.multi_workspace.upgrade() {
+                                multi_workspace.update(cx, |multi_workspace, cx| {
+                                    multi_workspace.activate(
+                                        workspace_for_open.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                            if AgentPanel::is_visible(&workspace_for_open, cx) {
+                                workspace_for_open.update(cx, |workspace, cx| {
+                                    workspace.focus_panel::<AgentPanel>(window, cx);
+                                });
+                            }
+                        }
+                    }))
+            })
             .into_any_element()
     }
 
@@ -2779,6 +2771,11 @@ impl Sidebar {
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
+        let color = cx.theme().colors();
+        let sidebar_bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.32));
+
         let timestamp = format_history_entry_timestamp(
             self.thread_last_message_sent_or_queued
                 .get(&thread.metadata.session_id)
@@ -2788,6 +2785,7 @@ impl Sidebar {
         );
 
         ThreadItem::new(id, title)
+            .base_bg(sidebar_bg)
             .icon(thread.icon)
             .status(thread.status)
             .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
@@ -3311,10 +3309,24 @@ impl Sidebar {
     }
 
     fn render_sidebar_bottom_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let on_right = self.side(cx) == SidebarSide::Right;
         let is_archive = matches!(self.view, SidebarView::Archive(..));
+        let show_import_button = is_archive && !self.should_render_acp_import_onboarding(cx);
+        let on_right = self.side(cx) == SidebarSide::Right;
+
         let action_buttons = h_flex()
             .gap_1()
+            .when(on_right, |this| this.flex_row_reverse())
+            .when(show_import_button, |this| {
+                this.child(
+                    IconButton::new("thread-import", IconName::ThreadImport)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Import ACP Threads"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.show_archive(window, cx);
+                            this.show_thread_import_modal(window, cx);
+                        })),
+                )
+            })
             .child(
                 IconButton::new("archive", IconName::Archive)
                     .icon_size(IconSize::Small)
@@ -3327,21 +3339,16 @@ impl Sidebar {
                     })),
             )
             .child(self.render_recent_projects_button(cx));
-        let border_color = cx.theme().colors().border;
-        let toggle_button = self.render_sidebar_toggle_button(cx);
 
-        let bar = h_flex()
+        h_flex()
             .p_1()
             .gap_1()
+            .when(on_right, |this| this.flex_row_reverse())
             .justify_between()
             .border_t_1()
-            .border_color(border_color);
-
-        if on_right {
-            bar.child(action_buttons).child(toggle_button)
-        } else {
-            bar.child(toggle_button).child(action_buttons)
-        }
+            .border_color(cx.theme().colors().border)
+            .child(self.render_sidebar_toggle_button(cx))
+            .child(action_buttons)
     }
 
     fn active_workspace(&self, cx: &App) -> Option<Entity<Workspace>> {
@@ -3411,7 +3418,7 @@ impl Sidebar {
         v_flex()
             .min_w_0()
             .w_full()
-            .p_1p5()
+            .p_2()
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .bg(linear_gradient(
@@ -3439,8 +3446,8 @@ impl Sidebar {
                     .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
                     .label_size(LabelSize::Small)
                     .start_icon(
-                        Icon::new(IconName::ArrowDown)
-                            .size(IconSize::XSmall)
+                        Icon::new(IconName::ThreadImport)
+                            .size(IconSize::Small)
                             .color(Color::Muted),
                     )
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -3469,9 +3476,6 @@ impl Sidebar {
         let Some(agent_panel) = active_workspace.read(cx).panel::<AgentPanel>(cx) else {
             return;
         };
-        let Some(agent_registry_store) = AgentRegistryStore::try_global(cx) else {
-            return;
-        };
 
         let agent_server_store = active_workspace
             .read(cx)
@@ -3484,11 +3488,9 @@ impl Sidebar {
 
         let archive_view = cx.new(|cx| {
             ThreadsArchiveView::new(
+                active_workspace.downgrade(),
                 agent_connection_store.clone(),
                 agent_server_store.clone(),
-                agent_registry_store.downgrade(),
-                active_workspace.downgrade(),
-                self.multi_workspace.clone(),
                 window,
                 cx,
             )
@@ -3603,7 +3605,9 @@ impl WorkspaceSidebar for Sidebar {
                 .map(|(s, count)| (PathList::deserialize(&s), count))
                 .collect();
             if serialized.active_view == SerializedSidebarView::Archive {
-                self.show_archive(window, cx);
+                cx.defer_in(window, |this, window, cx| {
+                    this.show_archive(window, cx);
+                });
             }
         }
         cx.notify();

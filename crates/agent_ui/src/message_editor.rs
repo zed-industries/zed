@@ -1299,58 +1299,6 @@ impl MessageEditor {
         }
     }
 
-    pub fn insert_terminal_crease(
-        &mut self,
-        text: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let line_count = text.lines().count() as u32;
-        let mention_uri = MentionUri::TerminalSelection { line_count };
-        let mention_text = mention_uri.as_link().to_string();
-
-        let (text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
-            let buffer = editor.buffer().read(cx);
-            let snapshot = buffer.snapshot(cx);
-            let (anchor, buffer_snapshot) = snapshot
-                .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
-                .unwrap();
-            let text_anchor = anchor.bias_left(buffer_snapshot);
-
-            editor.insert(&mention_text, window, cx);
-            editor.insert(" ", window, cx);
-
-            (text_anchor, mention_text.len())
-        });
-
-        let Some((crease_id, tx)) = insert_crease_for_mention(
-            text_anchor,
-            content_len,
-            mention_uri.name().into(),
-            mention_uri.icon_path(cx),
-            mention_uri.tooltip_text(),
-            Some(mention_uri.clone()),
-            Some(self.workspace.clone()),
-            None,
-            self.editor.clone(),
-            window,
-            cx,
-        ) else {
-            return;
-        };
-        drop(tx);
-
-        let mention_task = Task::ready(Ok(Mention::Text {
-            content: text,
-            tracked_buffers: vec![],
-        }))
-        .shared();
-
-        self.mention_set.update(cx, |mention_set, _| {
-            mention_set.insert_mention(crease_id, mention_uri, mention_task);
-        });
-    }
-
     pub fn insert_branch_diff_crease(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;

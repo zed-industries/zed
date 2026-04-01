@@ -615,6 +615,28 @@ impl WgpuRenderer {
         path_sample_count: u32,
         dual_source_blending: bool,
     ) -> WgpuPipelines {
+        // Diagnostic guard: verify the device actually has
+        // DUAL_SOURCE_BLENDING. We have a crash report (ZED-5G1) where a
+        // feature mismatch caused a wgpu-hal abort, but we haven't
+        // identified the code path that produces the mismatch. This
+        // guard prevents the crash and logs more evidence.
+        // Remove this check once:
+        // a) We find and fix the root cause, or
+        // b) There are no reports of this warning appearing for some time.
+        let device_has_feature = device
+            .features()
+            .contains(wgpu::Features::DUAL_SOURCE_BLENDING);
+        if dual_source_blending && !device_has_feature {
+            log::error!(
+                "BUG: dual_source_blending flag is true but device does not \
+                 have DUAL_SOURCE_BLENDING enabled (device features: {:?}). \
+                 Falling back to mono text rendering. Please report this at \
+                 https://github.com/zed-industries/zed/issues",
+                device.features(),
+            );
+        }
+        let dual_source_blending = dual_source_blending && device_has_feature;
+
         let base_shader_source = include_str!("shaders.wgsl");
         let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("gpui_shaders"),

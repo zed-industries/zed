@@ -13,7 +13,7 @@ use gpui::{
     StyleRefinement, Subscription, Task, TextStyleRefinement, Window, actions, list, prelude::*,
 };
 use language::LanguageRegistry;
-use markdown::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use project::{AgentId, Project};
 use settings::Settings;
 use theme_settings::ThemeSettings;
@@ -384,8 +384,11 @@ impl AcpTools {
                             )
                             .code_block_renderer(
                                 CodeBlockRenderer::Default {
-                                    copy_button: false,
-                                    copy_button_on_hover: expanded,
+                                    copy_button_visibility: if expanded {
+                                        CopyButtonVisibility::VisibleOnHover
+                                    } else {
+                                        CopyButtonVisibility::Hidden
+                                    },
                                     border: false,
                                 },
                             ),
