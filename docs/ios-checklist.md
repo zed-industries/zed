@@ -63,7 +63,7 @@ full architectural details.
 - [x] Sidebar toggle hidden on iOS (sidebar crate not initialized)
 - [x] Bottom dock resize (flex value not passed — shared bug, fixed)
 - [x] Workspace database: persist/restore dock state (panel sizes, visibility)
-- [ ] Workspace database: restore open files (deserialize pane items on relaunch)
+- [x] Workspace database: restore open files (deserialize pane items on relaunch)
 
 ---
 
