@@ -1000,7 +1000,7 @@ impl WorkspaceDb {
         self.workspace_for_roots_internal(worktree_roots, None)
     }
 
-    pub fn remote_workspace_for_roots<P: AsRef<Path>>(
+    pub(crate) fn remote_workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
         remote_project_id: RemoteConnectionId,
@@ -1140,7 +1140,7 @@ impl WorkspaceDb {
     }
 
     /// Returns the workspace with the given ID, loading all associated data.
-    pub fn workspace_for_id(
+    pub(crate) fn workspace_for_id(
         &self,
         workspace_id: WorkspaceId,
     ) -> Option<SerializedWorkspace> {

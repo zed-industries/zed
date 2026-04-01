@@ -1400,7 +1400,7 @@ unsafe fn cursor_style_to_pointer_style(style: gpui::CursorStyle) -> *mut Object
         | gpui::CursorStyle::ResizeLeft
         | gpui::CursorStyle::ResizeRight
         | gpui::CursorStyle::ResizeColumn => {
-            let path = resize_arrow_path(true);
+            let path = unsafe { resize_arrow_path(true) };
             let shape: *mut Object = msg_send![class!(UIPointerShape), shapeWithPath: path];
             msg_send![class!(UIPointerStyle), styleWithShape: shape constrainedAxes: AXIS_VERTICAL]
         }
@@ -1408,7 +1408,7 @@ unsafe fn cursor_style_to_pointer_style(style: gpui::CursorStyle) -> *mut Object
         | gpui::CursorStyle::ResizeUp
         | gpui::CursorStyle::ResizeDown
         | gpui::CursorStyle::ResizeRow => {
-            let path = resize_arrow_path(false);
+            let path = unsafe { resize_arrow_path(false) };
             let shape: *mut Object = msg_send![class!(UIPointerShape), shapeWithPath: path];
             msg_send![class!(UIPointerStyle), styleWithShape: shape constrainedAxes: AXIS_HORIZONTAL]
         }
@@ -1439,7 +1439,7 @@ unsafe fn resize_arrow_path(horizontal: bool) -> *mut Object {
         if let Some(cached) = *cell.borrow() {
             return cached;
         }
-        let path = build_resize_arrow_path(horizontal);
+        let path = unsafe { build_resize_arrow_path(horizontal) };
         *cell.borrow_mut() = Some(path);
         path
     })

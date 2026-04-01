@@ -320,6 +320,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
+        #[cfg(not(target_os = "ios"))]
         let is_via_remote = !force_local && self.remote_client.is_some();
 
         let mut settings_location = None;
@@ -332,25 +333,30 @@ impl Project {
             });
         }
         let settings = TerminalSettings::get(settings_location, cx).clone();
+        #[cfg(not(target_os = "ios"))]
         let detect_venv = settings.detect_venv.as_option().is_some();
+        #[cfg(not(target_os = "ios"))]
         let local_path = if is_via_remote { None } else { path.clone() };
 
-        let project_path_contexts = self
-            .active_entry()
-            .and_then(|entry_id| self.path_for_entry(entry_id, cx))
-            .into_iter()
-            .chain(
-                self.visible_worktrees(cx)
-                    .map(|wt| wt.read(cx).id())
-                    .map(|worktree_id| ProjectPath {
-                        worktree_id,
-                        path: RelPath::empty().into(),
-                    }),
-            );
-        let toolchains = project_path_contexts
-            .filter(|_| detect_venv)
-            .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
-            .collect::<Vec<_>>();
+        #[cfg(not(target_os = "ios"))]
+        let toolchains = {
+            let project_path_contexts = self
+                .active_entry()
+                .and_then(|entry_id| self.path_for_entry(entry_id, cx))
+                .into_iter()
+                .chain(
+                    self.visible_worktrees(cx)
+                        .map(|wt| wt.read(cx).id())
+                        .map(|worktree_id| ProjectPath {
+                            worktree_id,
+                            path: RelPath::empty().into(),
+                        }),
+                );
+            project_path_contexts
+                .filter(|_| detect_venv)
+                .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
+                .collect::<Vec<_>>()
+        };
         let remote_client = if force_local {
             None
         } else {
@@ -370,12 +376,15 @@ impl Project {
         let env_task =
             self.resolve_directory_environment(&shell, path.clone(), remote_client.clone(), cx);
 
+        #[cfg(not(target_os = "ios"))]
         let lang_registry = self.languages.clone();
         cx.spawn(async move |project, cx| {
+            #[cfg(not(target_os = "ios"))]
             let shell_kind = ShellKind::new(&shell, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
 
+            #[cfg(not(target_os = "ios"))]
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {

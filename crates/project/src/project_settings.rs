@@ -909,7 +909,6 @@ impl SettingsObserver {
             if let Some(upstream_client) = upstream_client {
                 let mut user_settings = None;
                 let mut last_profile: Option<String> = None;
-                let upstream_client_for_profile = upstream_client.clone();
                 user_settings_watcher = Some(cx.observe_global::<SettingsStore>(move |_, cx| {
                     if let Some(new_settings) = cx.global::<SettingsStore>().raw_user_settings() {
                         let active_profile = cx
