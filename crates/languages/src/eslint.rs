@@ -322,7 +322,10 @@ impl LspAdapter for EsLintLspAdapter {
     }
 }
 
-fn ancestor_directories(worktree_root: &Path, requested_file: Option<&Path>) -> Vec<PathBuf> {
+fn ancestor_directories<'a>(
+    worktree_root: &'a Path,
+    requested_file: Option<&'a Path>,
+) -> impl Iterator<Item = &'a Path> + 'a {
     let start = requested_file
         .filter(|file| file.starts_with(worktree_root))
         .and_then(Path::parent)
@@ -330,9 +333,7 @@ fn ancestor_directories(worktree_root: &Path, requested_file: Option<&Path>) -> 
 
     start
         .ancestors()
-        .take_while(|dir| dir.starts_with(worktree_root))
-        .map(Path::to_path_buf)
-        .collect()
+        .take_while(move |dir| dir.starts_with(worktree_root))
 }
 
 fn flat_config_file_names(version: Option<&Version>) -> &'static [&'static str] {
@@ -787,15 +788,16 @@ mod tests {
                 "/workspace/packages/web/src/index.js",
             ));
 
-            let directories = ancestor_directories(&worktree_root, Some(&requested_file));
+            let directories: Vec<&Path> =
+                ancestor_directories(&worktree_root, Some(&requested_file)).collect();
 
             assert_eq!(
                 directories,
                 vec![
-                    PathBuf::from(unix_path_to_platform("/workspace/packages/web/src")),
-                    PathBuf::from(unix_path_to_platform("/workspace/packages/web")),
-                    PathBuf::from(unix_path_to_platform("/workspace/packages")),
-                    PathBuf::from(unix_path_to_platform("/workspace")),
+                    Path::new(&unix_path_to_platform("/workspace/packages/web/src")),
+                    Path::new(&unix_path_to_platform("/workspace/packages/web")),
+                    Path::new(&unix_path_to_platform("/workspace/packages")),
+                    Path::new(&unix_path_to_platform("/workspace")),
                 ]
             );
         }
