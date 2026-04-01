@@ -30,7 +30,7 @@ use remote::RemoteConnectionOptions;
 use ui::utils::platform_title_bar_height;
 
 use serde::{Deserialize, Serialize};
-use settings::Settings as _;
+use settings::{NewThreadLocation, Settings as _};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::rc::Rc;
@@ -3170,6 +3170,16 @@ impl Sidebar {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
+
+        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
+            NewThreadLocation::LocalProject => "current_worktree",
+            NewThreadLocation::NewWorktree => "new_worktree",
+        };
+        telemetry::event!(
+            "New Thread Clicked",
+            source = "sidebar",
+            thread_location = thread_location
+        );
 
         self.active_entry = Some(ActiveEntry::Draft(workspace.clone()));
 

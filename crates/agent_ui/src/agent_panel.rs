@@ -3768,7 +3768,16 @@ impl AgentPanel {
             let agent_server_store = agent_server_store;
 
             Rc::new(move |window, cx| {
-                telemetry::event!("New Thread Clicked");
+                use settings::{NewThreadLocation, Settings};
+                let thread_location = match AgentSettings::get_global(cx).new_thread_location {
+                    NewThreadLocation::LocalProject => "current_worktree",
+                    NewThreadLocation::NewWorktree => "new_worktree",
+                };
+                telemetry::event!(
+                    "New Thread Clicked",
+                    source = "agent_panel",
+                    thread_location = thread_location
+                );
 
                 let active_thread = active_thread.clone();
                 Some(ContextMenu::build(window, cx, |menu, _window, cx| {
