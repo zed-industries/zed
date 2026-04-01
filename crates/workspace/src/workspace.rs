@@ -7574,15 +7574,10 @@ impl Workspace {
 
     fn resize_bottom_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
         let size = new_size.min(self.bounds.bottom() - RESIZE_HANDLE_SIZE - self.bounds.top());
+        // The bottom dock always uses absolute sizing (render_dock ignores flex
+        // for vertical axis), so force-set the size directly.
         self.bottom_dock.update(cx, |bottom_dock, cx| {
-            if WorkspaceSettings::get_global(cx)
-                .resize_all_panels_in_dock
-                .contains(&DockPosition::Bottom)
-            {
-                bottom_dock.resize_all_panels(Some(size), None, window, cx);
-            } else {
-                bottom_dock.resize_active_panel(Some(size), None, window, cx);
-            }
+            bottom_dock.resize_active_panel_absolute(size, window, cx);
         });
     }
 

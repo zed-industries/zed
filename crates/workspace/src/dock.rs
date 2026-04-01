@@ -942,6 +942,35 @@ impl Dock {
         }
     }
 
+    /// Set the active panel's absolute size, bypassing the flex check.
+    /// Used for the bottom dock where render_dock always uses absolute sizing.
+    pub fn resize_active_panel_absolute(
+        &mut self,
+        size: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(index) = self.active_panel_index
+            && let Some(entry) = self.panel_entries.get_mut(index)
+        {
+            let size = size.max(RESIZE_HANDLE_SIZE).round();
+            entry.size_state.size = Some(size);
+
+            let panel_key = entry.panel.panel_key();
+            let size_state = entry.size_state;
+            let workspace = self.workspace.clone();
+            entry.panel.size_state_changed(window, cx);
+            cx.defer(move |cx| {
+                if let Some(workspace) = workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.persist_panel_size_state(panel_key, size_state, cx);
+                    });
+                }
+            });
+            cx.notify();
+        }
+    }
+
     pub fn resize_all_panels(
         &mut self,
         size: Option<Pixels>,
