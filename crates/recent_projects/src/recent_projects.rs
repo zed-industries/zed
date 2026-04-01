@@ -2068,9 +2068,16 @@ mod tests {
             )
             .await;
 
+        // Open a file path (not a directory) so that the worktree root is a
+        // file. This means `active_project_directory` returns `None`, which
+        // causes `DevContainerContext::from_workspace` to return `None`,
+        // preventing `open_dev_container` from spawning real I/O (docker
+        // commands, shell environment loading) that is incompatible with the
+        // test scheduler. The modal is still created and the re-entrancy
+        // guard that this test validates is still exercised.
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(path!("/project"))],
+                &[PathBuf::from(path!("/project/src/main.rs"))],
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,

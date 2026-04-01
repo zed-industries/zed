@@ -1289,7 +1289,9 @@ impl EditorElement {
             cx.notify();
         }
 
-        if let Some((bounds, buffer_id, blame_entry)) = &position_map.inline_blame_bounds {
+        if text_hovered
+            && let Some((bounds, buffer_id, blame_entry)) = &position_map.inline_blame_bounds
+        {
             let mouse_over_inline_blame = bounds.contains(&event.position);
             let mouse_over_popover = editor
                 .inline_blame_popover
@@ -6731,7 +6733,13 @@ impl EditorElement {
                             SelectionEffects::scroll(Autoscroll::top_relative(line_index)),
                             window,
                             cx,
-                            |selections| selections.select_ranges([anchor..anchor]),
+                            |selections| {
+                                selections.clear_disjoint();
+                                selections.set_pending_anchor_range(
+                                    anchor..anchor,
+                                    crate::SelectMode::Character,
+                                );
+                            },
                         );
                         cx.stop_propagation();
                     });

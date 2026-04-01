@@ -4729,6 +4729,9 @@ dependencies = [
 name = "dev_container"
 version = "0.1.0"
 dependencies = [
+ "async-tar",
+ "async-trait",
+ "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -4736,16 +4739,17 @@ dependencies = [
  "http_client",
  "log",
  "menu",
- "node_runtime",
  "paths",
  "picker",
  "project",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
- "smol",
+ "shlex",
  "ui",
  "util",
+ "walkdir",
  "workspace",
  "worktree",
 ]
@@ -9330,7 +9334,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "settings",
  "smol",
  "thiserror 2.0.17",
  "util",
@@ -21889,7 +21892,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.231.0"
+version = "0.232.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

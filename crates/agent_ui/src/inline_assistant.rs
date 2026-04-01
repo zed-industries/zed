@@ -1,5 +1,6 @@
-use language_model::AnthropicEventData;
-use language_model::report_anthropic_event;
+use language_models::provider::anthropic::telemetry::{
+    AnthropicCompletionType, AnthropicEventData, AnthropicEventType, report_anthropic_event,
+};
 use std::cmp;
 use std::mem;
 use std::ops::Range;
@@ -469,8 +470,8 @@ impl InlineAssistant {
                 report_anthropic_event(
                     &model.model,
                     AnthropicEventData {
-                        completion_type: language_model::AnthropicCompletionType::Editor,
-                        event: language_model::AnthropicEventType::Invoked,
+                        completion_type: AnthropicCompletionType::Editor,
+                        event: AnthropicEventType::Invoked,
                         language_name: buffer.language().map(|language| language.name().to_proto()),
                         message_id: None,
                     },
@@ -1106,13 +1107,13 @@ impl InlineAssistant {
                     (
                         "rejected",
                         "Assistant Response Rejected",
-                        language_model::AnthropicEventType::Reject,
+                        AnthropicEventType::Reject,
                     )
                 } else {
                     (
                         "accepted",
                         "Assistant Response Accepted",
-                        language_model::AnthropicEventType::Accept,
+                        AnthropicEventType::Accept,
                     )
                 };
 
@@ -1129,8 +1130,8 @@ impl InlineAssistant {
 
                 report_anthropic_event(
                     &model.model,
-                    language_model::AnthropicEventData {
-                        completion_type: language_model::AnthropicCompletionType::Editor,
+                    AnthropicEventData {
+                        completion_type: AnthropicCompletionType::Editor,
                         event: anthropic_event_type,
                         language_name,
                         message_id,

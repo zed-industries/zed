@@ -66,7 +66,10 @@ use project::project_settings::ProjectSettings;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
+use settings::TerminalDockPosition;
 use settings::{Settings, update_settings_file};
+use terminal::terminal_settings::TerminalSettings;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
     Button, Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, DocumentationSide,
@@ -423,6 +426,48 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(
                     |workspace: &mut Workspace, _: &AddSelectionToThread, window, cx| {
+                        let active_editor = workspace
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<Editor>(cx));
+                        let has_editor_selection = active_editor.is_some_and(|editor| {
+                            editor.update(cx, |editor, cx| {
+                                editor.has_non_empty_selection(&editor.display_snapshot(cx))
+                            })
+                        });
+
+                        let has_terminal_selection = workspace
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<TerminalView>(cx))
+                            .is_some_and(|terminal_view| {
+                                terminal_view
+                                    .read(cx)
+                                    .terminal()
+                                    .read(cx)
+                                    .last_content
+                                    .selection_text
+                                    .as_ref()
+                                    .is_some_and(|text| !text.is_empty())
+                            });
+
+                        let has_terminal_panel_selection =
+                            workspace.panel::<TerminalPanel>(cx).is_some_and(|panel| {
+                                let position = match TerminalSettings::get_global(cx).dock {
+                                    TerminalDockPosition::Left => DockPosition::Left,
+                                    TerminalDockPosition::Bottom => DockPosition::Bottom,
+                                    TerminalDockPosition::Right => DockPosition::Right,
+                                };
+                                let dock_is_open =
+                                    workspace.dock_at_position(position).read(cx).is_open();
+                                dock_is_open && !panel.read(cx).terminal_selections(cx).is_empty()
+                            });
+
+                        if !has_editor_selection
+                            && !has_terminal_selection
+                            && !has_terminal_panel_selection
+                        {
+                            return;
+                        }
+
                         let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
                             return;
                         };

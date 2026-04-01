@@ -65,7 +65,8 @@ macro_rules! settings_overrides {
         }
     }
 }
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::Hash;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
@@ -1023,6 +1024,8 @@ pub struct DevContainerConnection {
     pub remote_user: String,
     pub container_id: String,
     pub use_podman: bool,
+    pub extension_ids: Vec<String>,
+    pub remote_env: BTreeMap<String, String>,
 }
 
 #[with_fallible_options]
