@@ -4012,6 +4012,7 @@ impl MultiBufferSnapshot {
         loop {
             cursor.prev_excerpt();
             let excerpt = cursor.excerpt()?;
+            let buffer = excerpt.buffer_snapshot(self);
 
             let Some(diff) = self.diff_state(excerpt.buffer_id) else {
                 continue;

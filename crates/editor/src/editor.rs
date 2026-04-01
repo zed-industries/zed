@@ -24292,6 +24292,7 @@ impl Editor {
                     )
                     .detach();
                 }
+                self.register_visible_buffers(cx);
                 self.update_lsp_data(Some(buffer_id), window, cx);
                 self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 self.refresh_runnables(None, window, cx);
