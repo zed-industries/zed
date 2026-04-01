@@ -997,12 +997,30 @@ impl WorkspaceDb {
         self.workspace_for_roots_internal(worktree_roots, None)
     }
 
-    pub(crate) fn remote_workspace_for_roots<P: AsRef<Path>>(
+    pub fn remote_workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
         remote_project_id: RemoteConnectionId,
     ) -> Option<SerializedWorkspace> {
         self.workspace_for_roots_internal(worktree_roots, Some(remote_project_id))
+    }
+
+    pub fn remote_workspace_id_for_roots<P: AsRef<Path>>(
+        &self,
+        worktree_roots: &[P],
+        remote_project_id: RemoteConnectionId,
+    ) -> Option<WorkspaceId> {
+        self.workspace_for_roots_internal(worktree_roots, Some(remote_project_id))
+            .map(|ws| ws.id)
+    }
+
+    pub fn remote_workspace_state<P: AsRef<Path>>(
+        &self,
+        worktree_roots: &[P],
+        remote_project_id: RemoteConnectionId,
+    ) -> Option<(WorkspaceId, DockStructure)> {
+        self.workspace_for_roots_internal(worktree_roots, Some(remote_project_id))
+            .map(|ws| (ws.id, ws.docks))
     }
 
     pub(crate) fn workspace_for_roots_internal<P: AsRef<Path>>(
@@ -1483,7 +1501,7 @@ impl WorkspaceDb {
         .await;
     }
 
-    pub(crate) async fn get_or_create_remote_connection(
+    pub async fn get_or_create_remote_connection(
         &self,
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {

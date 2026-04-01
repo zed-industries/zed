@@ -61,8 +61,9 @@ full architectural details.
 - [x] Workspace switcher: all saved paths, open unconnected inline
 - [x] UIPointerInteraction: custom resize cursors (double-chevron CGPath)
 - [x] Sidebar toggle hidden on iOS (sidebar crate not initialized)
-- [ ] Bottom dock resize (flex value not passed — shared bug, needs investigation)
-- [ ] Workspace database: persist/restore panel state across navigation
+- [x] Bottom dock resize (flex value not passed — shared bug, fixed)
+- [x] Workspace database: persist/restore dock state (panel sizes, visibility)
+- [ ] Workspace database: restore open files (deserialize pane items on relaunch)
 
 ---
 

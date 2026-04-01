@@ -1459,7 +1459,7 @@ impl ConnectionLanding {
         });
 
         log::info!("[zed-ios] resolving project path: {path}");
-        let (_worktree, project_path) = cx
+        let (worktree, project_path) = cx
             .update(|cx| {
                 workspace::Workspace::project_path_for_path(
                     project.clone(),
@@ -1471,9 +1471,43 @@ impl ConnectionLanding {
             .await
             .map_err(|error| anyhow::anyhow!("Could not open '{path}': {error:#}"))?;
 
+        // Look up or create a stable workspace ID for this SSH + path combination
+        // so panel state, dock layout, etc. persist across sessions.
+        let workspace_id = {
+            let connection_options = remote::RemoteConnectionOptions::Ssh(
+                remote::SshConnectionOptions {
+                    host: host.to_string().into(),
+                    username: Some(username.to_string()),
+                    port: Some(port),
+                    ..Default::default()
+                },
+            );
+            let db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+            let remote_connection_id = db
+                .get_or_create_remote_connection(connection_options)
+                .await?;
+            // Use the resolved worktree root path for lookup — the database stores
+            // absolute paths (e.g. /Users/dcow/Developer/zed), not ~/Developer/zed.
+            let resolved_root = cx.update(|cx| {
+                worktree.read(cx).abs_path().to_path_buf()
+            });
+            if let Some((id, docks)) = db.remote_workspace_state(&[&resolved_root], remote_connection_id) {
+                (id, Some(docks))
+            } else {
+                (db.next_id().await?, None)
+            }
+        };
+        let (workspace_id, serialized_docks) = workspace_id;
+
         let workspace_entity = landing_window.update(cx, |_, window, cx| {
             let workspace = cx.new(|cx| {
-                workspace::Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                workspace::Workspace::new(
+                    Some(workspace_id),
+                    project.clone(),
+                    app_state.clone(),
+                    window,
+                    cx,
+                )
             });
 
             let switcher = cx.new(|_cx| WorkspaceSwitcher::new(path, host, username, port));
@@ -1481,6 +1515,9 @@ impl ConnectionLanding {
             workspace.update(cx, |ws, cx| {
                 ws.set_status_bar_prefix(switcher.into(), cx);
                 ws.set_status_bar_suffix(suffix.into(), cx);
+                if let Some(docks) = serialized_docks {
+                    ws.set_dock_structure(docks, window, cx);
+                }
             });
 
             workspace

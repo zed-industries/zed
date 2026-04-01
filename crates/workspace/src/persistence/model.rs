@@ -27,7 +27,7 @@ use uuid::Uuid;
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
 )]
-pub(crate) struct RemoteConnectionId(pub u64);
+pub struct RemoteConnectionId(pub u64);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub(crate) enum RemoteConnectionKind {
