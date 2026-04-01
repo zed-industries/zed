@@ -4184,7 +4184,7 @@ ENV VARIABLE_VALUE=value
             .find(|f| {
                 f.file_name()
                     .is_some_and(|s| s.display().to_string() == "devcontainer-features-install.sh")
-                    && f.to_str().is_some_and(|s| s.contains("/go_"))
+                    && f.to_str().is_some_and(|s| s.contains("go_"))
             })
             .expect("to be found");
         let golang_install_wrapper = test_dependencies
