@@ -1,13 +1,15 @@
 use futures::channel::oneshot;
 use gpui::{
     App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, IntoElement,
-    Render, Task, Window,
+    Render, Task, Window, actions,
 };
 use menu;
 use std::sync::Arc;
 use ui::{Button, ButtonStyle, Label, LabelSize, TintColor, prelude::*};
 
 use crate::modal_layer::ModalView;
+
+actions!(confirmation_dialog, [ConfirmDontSave]);
 
 pub struct ConfirmationDialog {
     message: Arc<str>,
@@ -111,16 +113,14 @@ impl Render for ConfirmationDialog {
             .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| {
                 this.cancel(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &ConfirmDontSave, window, cx| {
+                this.select_button(1, window, cx);
+                this.confirm_selection(window, cx);
+            }))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 match event.keystroke.key.as_str() {
                     "Enter" => {
-                        // Save (first button)
                         this.select_button(0, window, cx);
-                        this.confirm_selection(window, cx);
-                    }
-                    "h" if this.show_key_h_for_dont_save => {
-                        // Don't Save (second button)
-                        this.select_button(1, window, cx);
                         this.confirm_selection(window, cx);
                     }
                     "Escape" => {
