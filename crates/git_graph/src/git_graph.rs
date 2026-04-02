@@ -3878,9 +3878,11 @@ mod tests {
         });
         cx.run_until_parked();
 
-        git_graph.update_in(&mut *cx, |this, window, cx| {
-            this.render(window, cx);
-        });
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
         cx.run_until_parked();
 
         let commit_count_after_switch_back =
