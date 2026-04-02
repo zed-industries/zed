@@ -1292,7 +1292,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_empty_thread_metadata_deleted_when_thread_released(cx: &mut TestAppContext) {
+    async fn test_empty_thread_events_do_not_create_metadata(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1322,11 +1322,16 @@ mod tests {
                 .entry_ids()
                 .collect::<Vec<_>>()
         });
-        assert_eq!(metadata_ids, vec![session_id]);
+        assert!(
+            metadata_ids.is_empty(),
+            "expected empty draft thread title updates to be ignored"
+        );
 
-        drop(thread);
-        cx.update(|_| {});
-        cx.run_until_parked();
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "Hello".into(), cx);
+            });
+        });
         cx.run_until_parked();
 
         let metadata_ids = cx.update(|cx| {
@@ -1335,10 +1340,7 @@ mod tests {
                 .entry_ids()
                 .collect::<Vec<_>>()
         });
-        assert!(
-            metadata_ids.is_empty(),
-            "expected empty draft thread metadata to be deleted on release"
-        );
+        assert_eq!(metadata_ids, vec![session_id]);
     }
 
     #[gpui::test]

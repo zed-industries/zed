@@ -4707,6 +4707,38 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_empty_draft_thread_not_retained_when_navigating_away(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let connection_a = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_a, &mut cx);
+        let session_id_a = active_session_id(&panel, &cx);
+
+        panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            assert!(
+                thread.read(cx).entries().is_empty(),
+                "newly opened draft thread should have no entries"
+            );
+            assert!(panel.background_threads.is_empty());
+        });
+
+        let connection_b = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_b, &mut cx);
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.background_threads.is_empty(),
+                "empty draft thread should not be retained in background_threads"
+            );
+            assert!(
+                !panel.background_threads.contains_key(&session_id_a),
+                "empty draft thread should not be keyed in background_threads"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_running_thread_retained_when_navigating_away(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
 
