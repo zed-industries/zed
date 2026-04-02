@@ -1240,15 +1240,15 @@ impl ConversationView {
                 if let Some(active) = self.thread_view(&thread_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
-                    entry_view_state.update(cx, |view_state, cx| {
-                        view_state.sync_entry(index, thread, window, cx);
-                        list_state.splice_focusable(
-                            index..index,
-                            [view_state
-                                .entry(index)
-                                .and_then(|entry| entry.focus_handle(cx))],
-                        );
-                    });
+                    notify_entry_changed(
+                        &entry_view_state,
+                        &list_state,
+                        index..index,
+                        index,
+                        thread,
+                        window,
+                        cx,
+                    );
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
                     });
@@ -1257,9 +1257,16 @@ impl ConversationView {
             AcpThreadEvent::EntryUpdated(index) => {
                 if let Some(active) = self.thread_view(&thread_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
-                    entry_view_state.update(cx, |view_state, cx| {
-                        view_state.sync_entry(*index, thread, window, cx)
-                    });
+                    let list_state = active.read(cx).list_state.clone();
+                    notify_entry_changed(
+                        &entry_view_state,
+                        &list_state,
+                        *index..*index + 1,
+                        *index,
+                        thread,
+                        window,
+                        cx,
+                    );
                     active.update(cx, |active, cx| {
                         active.auto_expand_streaming_thought(cx);
                     });
@@ -2596,6 +2603,32 @@ impl ConversationView {
             store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
         }
     }
+}
+
+/// Syncs an entry's view state with the latest thread data and splices
+/// the list item so the list knows to re-measure it on the next paint.
+///
+/// Used by both `NewEntry` (splice range `index..index` to insert) and
+/// `EntryUpdated` (splice range `index..index+1` to replace), which is
+/// why the caller provides the splice range.
+fn notify_entry_changed(
+    entry_view_state: &Entity<EntryViewState>,
+    list_state: &ListState,
+    splice_range: std::ops::Range<usize>,
+    index: usize,
+    thread: &Entity<AcpThread>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    entry_view_state.update(cx, |view_state, cx| {
+        view_state.sync_entry(index, thread, window, cx);
+        list_state.splice_focusable(
+            splice_range,
+            [view_state
+                .entry(index)
+                .and_then(|entry| entry.focus_handle(cx))],
+        );
+    });
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
