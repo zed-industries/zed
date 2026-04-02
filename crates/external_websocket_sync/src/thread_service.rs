@@ -55,9 +55,10 @@ static EXTERNAL_ORIGINATED_ENTRIES: parking_lot::Mutex<Option<Arc<RwLock<HashMap
 static PERSISTENT_SUBSCRIPTIONS: parking_lot::Mutex<Option<Arc<RwLock<HashSet<String>>>>> =
     parking_lot::Mutex::new(None);
 
-/// Set of thread IDs currently being loaded (async load in progress).
-/// Prevents double-load when workspace restore and open_thread race.
-static THREADS_LOADING: parking_lot::Mutex<Option<Arc<RwLock<HashSet<String>>>>> =
+/// Guards against concurrent thread loading. Only one thread load can be
+/// in progress at a time (the UI only shows one thread anyway). Prevents
+/// double-load when workspace restore and open_thread race.
+static THREAD_LOAD_IN_PROGRESS: parking_lot::Mutex<Option<String>> =
     parking_lot::Mutex::new(None);
 
 /// Streaming throttle state per message entry.
@@ -118,10 +119,6 @@ pub fn init_thread_registry() {
         *persistent_subs = Some(Arc::new(RwLock::new(HashSet::new())));
     }
 
-    let mut loading = THREADS_LOADING.lock();
-    if loading.is_none() {
-        *loading = Some(Arc::new(RwLock::new(HashSet::new())));
-    }
 }
 
 /// Mark an entry as originated from external system (won't be echoed back)
@@ -1299,21 +1296,19 @@ fn open_existing_thread_sync(
         return Ok(());
     }
 
-    // Check if this thread is already being loaded (async load in progress from
+    // Check if any thread is already being loaded (async load in progress from
     // workspace restore or a concurrent open_thread). Without this guard, two
     // async loads race: both pass the registry check above, both spawn load tasks,
     // and the second overwrites the first's entity in the registry — orphaning
     // the first entity's event subscriptions.
     {
-        init_thread_registry();
-        let loading = THREADS_LOADING.lock();
-        if let Some(set) = loading.as_ref() {
-            if !set.write().insert(request.acp_thread_id.clone()) {
-                eprintln!("⏳ [THREAD_SERVICE] Thread {} already being loaded, skipping duplicate load", request.acp_thread_id);
-                log::info!("⏳ [THREAD_SERVICE] Thread {} already being loaded, skipping duplicate load", request.acp_thread_id);
-                return Ok(());
-            }
+        let mut loading = THREAD_LOAD_IN_PROGRESS.lock();
+        if loading.is_some() {
+            eprintln!("⏳ [THREAD_SERVICE] Thread load already in progress ({:?}), skipping load of {}", loading, request.acp_thread_id);
+            log::info!("⏳ [THREAD_SERVICE] Thread load already in progress ({:?}), skipping load of {}", loading, request.acp_thread_id);
+            return Ok(());
         }
+        *loading = Some(request.acp_thread_id.clone());
     }
 
     // Thread not in registry - need to load from agent
@@ -1365,19 +1360,15 @@ fn open_existing_thread_sync(
     // Spawn async task to load the thread from agent
     let request_clone = request.clone();
     let project_clone = project.clone();
-    let loading_thread_id = request.acp_thread_id.clone();
     cx.spawn(async move |cx| {
-        // Drop guard: clear the THREADS_LOADING entry on exit (success or error)
-        struct ClearLoadingGuard(String);
+        // Drop guard: clear THREAD_LOAD_IN_PROGRESS on exit (success or error)
+        struct ClearLoadingGuard;
         impl Drop for ClearLoadingGuard {
             fn drop(&mut self) {
-                let loading = THREADS_LOADING.lock();
-                if let Some(set) = loading.as_ref() {
-                    set.write().remove(&self.0);
-                }
+                *THREAD_LOAD_IN_PROGRESS.lock() = None;
             }
         }
-        let _loading_guard = ClearLoadingGuard(loading_thread_id);
+        let _loading_guard = ClearLoadingGuard;
 
         let connection = match connection_task.await {
             Ok(result) => result,
@@ -1440,7 +1431,7 @@ fn open_existing_thread_sync(
         }
 
         // Send agent_ready event to Helix (signals that agent is ready to receive prompts)
-        // (THREADS_LOADING is cleared by the ClearLoadingGuard drop guard)
+        // (THREAD_LOAD_IN_PROGRESS is cleared by the ClearLoadingGuard drop guard)
         let agent_name_for_ready = request_clone.agent_name.clone().unwrap_or_else(|| "zed-agent".to_string());
         crate::send_agent_ready(agent_name_for_ready, Some(acp_thread_id.clone()));
 
