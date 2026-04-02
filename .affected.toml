@@ -1,0 +1,4 @@
+ignore = ["*.md", "docs/**", ".github/**", "LICENSE*", "*.txt", "*.yml", "*.yaml", "script/**", "typos.toml"]
+
+[test]
+cargo = "cargo nextest run -p {package}"

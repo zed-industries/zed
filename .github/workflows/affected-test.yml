@@ -1,0 +1,86 @@
+# Experimental: Run tests only for crates affected by a PR.
+# This replaces ~80 lines of hand-rolled bash in run_tests.yml with a single
+# `affected ci` invocation that reads the Cargo dependency graph.
+#
+# Tool: https://github.com/Rani367/affected
+
+name: Affected Tests (experimental)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  detect:
+    name: Detect affected crates
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.affected.outputs.matrix }}
+      has_affected: ${{ steps.affected.outputs.has_affected }}
+      count: ${{ steps.affected.outputs.count }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: Rani367/setup-affected@750ce2e1ff1be73b511666ea7ddc9a76b4dd80f2 # v1
+
+      - name: Detect affected crates
+        id: affected
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: affected ci --merge-base "origin/${BASE_REF:-main}"
+
+      - name: Summary
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          AFFECTED_COUNT: ${{ steps.affected.outputs.count }}
+        run: |
+          {
+            echo "### Affected Crates (${AFFECTED_COUNT})"
+            echo ""
+            affected list --merge-base "origin/${BASE_REF:-main}" --explain
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: "test / ${{ matrix.package }}"
+    needs: detect
+    if: needs.detect.outputs.has_affected == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          cache-on-failure: true
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@d858f8113943481093e02986a7586a4819a3bfd6 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: "Test ${{ matrix.package }}"
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: cargo nextest run -p "$PACKAGE"
