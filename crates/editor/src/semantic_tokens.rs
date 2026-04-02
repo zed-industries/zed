@@ -1910,9 +1910,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_semantic_token_broad_rule_disables_specific_token(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal as _;
-        use settings::{GlobalLspSettingsContent, SemanticTokenRule};
-
         init_test(cx, |_| {});
         update_test_language_settings(cx, &|s| {
             s.languages.0.insert(
@@ -1955,6 +1952,15 @@ mod tests {
                     )))
                 },
             );
+
+        cx.set_state("ˇ/// d\n");
+        full_request.next().await;
+        cx.run_until_parked();
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx).len(),
+            1,
+            "Documentation comment should be highlighted"
+        );
 
         // Apply a BROAD empty rule for "comment" (no modifiers)
         cx.update(|_, cx| {
@@ -2036,6 +2042,15 @@ mod tests {
                 },
             );
 
+        cx.set_state("ˇ/// d\n// n\n");
+        full_request.next().await;
+        cx.run_until_parked();
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx).len(),
+            2,
+            "Both documentation and normal comments should be highlighted initially"
+        );
+
         // Apply a SPECIFIC empty rule for documentation only
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -2058,9 +2073,8 @@ mod tests {
         full_request.next().await;
         cx.run_until_parked();
 
-        let highlights = extract_semantic_highlights(&cx.editor, &cx);
         assert_eq!(
-            highlights.len(),
+            extract_semantic_highlights(&cx.editor, &cx).len(),
             1,
             "Normal comment should still be highlighted (matched by default rule)"
         );
