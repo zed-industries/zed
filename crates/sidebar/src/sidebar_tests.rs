@@ -4736,15 +4736,17 @@ async fn test_linked_worktree_workspace_shows_main_worktree_threads(cx: &mut Tes
     )
     .await;
 
-    fs.with_git_state(std::path::Path::new("/project/.git"), false, |state| {
-        state.worktrees.push(git::repository::Worktree {
+    fs.add_linked_worktree_for_repo(
+        std::path::Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
             path: std::path::PathBuf::from("/wt-feature-a"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
-        });
-    })
-    .unwrap();
+        },
+    )
+    .await;
 
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
