@@ -659,6 +659,7 @@ impl ExternalWebSocketSync {
                 tool_name: String::new(),
                 tool_status: String::new(),
                 content: String::new(), // TODO: get actual content
+                request_id: String::new(),
                 timestamp: chrono::Utc::now().timestamp(),
             };
             if let Err(e) = websocket_sync.send_event(event) {

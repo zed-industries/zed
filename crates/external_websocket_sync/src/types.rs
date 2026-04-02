@@ -193,6 +193,10 @@ pub enum SyncEvent {
         message_id: String,
         role: String,
         content: String,
+        /// request_id from the chat_message that triggered this response.
+        /// Used by Helix to route streaming tokens to the correct interaction.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        request_id: String,
         /// "text" for assistant prose, "tool_call" for tool invocations
         #[serde(default)]
         entry_type: String,
@@ -272,13 +276,14 @@ impl SyncEvent {
                     "title": title,
                 })
             ),
-            SyncEvent::MessageAdded { acp_thread_id, message_id, role, content, entry_type, tool_name, tool_status, timestamp } => (
+            SyncEvent::MessageAdded { acp_thread_id, message_id, role, content, request_id, entry_type, tool_name, tool_status, timestamp } => (
                 "message_added".to_string(),
                 serde_json::json!({
                     "acp_thread_id": acp_thread_id,
                     "message_id": message_id,
                     "role": role,
                     "content": content,
+                    "request_id": request_id,
                     "timestamp": timestamp,
                     "entry_type": entry_type,
                     "tool_name": tool_name,
