@@ -1238,6 +1238,7 @@ impl CollabPanel {
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
 
         ListItem::new("channel-notes")
+            .height(px(24.))
             .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_channel_notes(channel_id, window, cx);
