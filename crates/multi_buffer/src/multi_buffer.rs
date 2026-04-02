@@ -5295,6 +5295,19 @@ impl MultiBufferSnapshot {
         &self,
         text_anchor: Range<text::Anchor>,
     ) -> Option<Range<Anchor>> {
+        if self.is_singleton() {
+            let excerpt = self.excerpts.first()?;
+            let buffer_snapshot = excerpt.buffer_snapshot(self);
+            if excerpt.range.contains(&text_anchor.start, &buffer_snapshot)
+                && excerpt.range.contains(&text_anchor.end, &buffer_snapshot)
+            {
+                return Some(Anchor::range_in_buffer(excerpt.path_key_index, text_anchor));
+            }
+        }
+
+        // for each search match
+
+        let mut buffer_snapshot = None;
         for excerpt in {
             let this = &self;
             let buffer_id = text_anchor.start.buffer_id;
@@ -5316,7 +5329,8 @@ impl MultiBufferSnapshot {
             .into_iter()
             .flatten()
         } {
-            let buffer_snapshot = excerpt.buffer_snapshot(self);
+            let buffer_snapshot =
+                buffer_snapshot.get_or_insert_with(|| excerpt.buffer_snapshot(self));
             if excerpt.range.contains(&text_anchor.start, &buffer_snapshot)
                 && excerpt.range.contains(&text_anchor.end, &buffer_snapshot)
             {
