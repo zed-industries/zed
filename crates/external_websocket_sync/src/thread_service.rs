@@ -82,6 +82,7 @@ struct PendingMessage {
     message_id: String,
     role: String,
     content: String,
+    request_id: String,
     entry_type: String,
     tool_name: String,
     tool_status: String,
@@ -172,6 +173,7 @@ fn throttled_send_message_added(
     entry_idx: usize,
     role: &str,
     content: String,
+    request_id: &str,
     entry_type: &str,
     tool_name: &str,
     tool_status: &str,
@@ -217,6 +219,7 @@ fn throttled_send_message_added(
                 message_id: entry_idx.to_string(),
                 role: role.to_string(),
                 content,
+                request_id: request_id.to_string(),
                 entry_type: entry_type.to_string(),
                 tool_name: tool_name.to_string(),
                 tool_status: tool_status.to_string(),
@@ -228,6 +231,7 @@ fn throttled_send_message_added(
                 message_id: entry_idx.to_string(),
                 role: role.to_string(),
                 content,
+                request_id: request_id.to_string(),
                 entry_type: entry_type.to_string(),
                 tool_name: tool_name.to_string(),
                 tool_status: tool_status.to_string(),
@@ -243,6 +247,7 @@ fn throttled_send_message_added(
             message_id: pending.message_id,
             role: pending.role,
             content: pending.content,
+            request_id: pending.request_id,
             entry_type: pending.entry_type,
             tool_name: pending.tool_name,
             tool_status: pending.tool_status,
@@ -257,6 +262,7 @@ fn throttled_send_message_added(
             message_id: msg.message_id,
             role: msg.role,
             content: msg.content,
+            request_id: msg.request_id,
             entry_type: msg.entry_type,
             tool_name: msg.tool_name,
             tool_status: msg.tool_status,
@@ -298,6 +304,7 @@ pub fn flush_streaming_throttle(acp_thread_id: &str) {
             message_id: pending.message_id,
             role: pending.role,
             content: pending.content,
+            request_id: pending.request_id,
             entry_type: pending.entry_type,
             tool_name: pending.tool_name,
             tool_status: pending.tool_status,
@@ -456,11 +463,14 @@ fn ensure_thread_subscription(
                         }
                         _ => (String::new(), String::new()),
                     };
+                    let rid = crate::get_thread_request_id(&thread_id_for_sub)
+                        .unwrap_or_default();
                     let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
                         acp_thread_id: thread_id_for_sub.clone(),
                         message_id: latest_idx.to_string(),
                         role: role.to_string(),
                         content,
+                        request_id: rid,
                         entry_type: entry_type.to_string(),
                         tool_name,
                         tool_status,
@@ -482,11 +492,14 @@ fn ensure_thread_subscription(
                         }
                         _ => return,
                     };
+                    let rid = crate::get_thread_request_id(&thread_id_for_sub)
+                        .unwrap_or_default();
                     throttled_send_message_added(
                         &thread_id_for_sub,
                         *entry_idx,
                         "assistant",
                         content,
+                        &rid,
                         entry_type,
                         &tool_name,
                         &tool_status,
@@ -504,6 +517,8 @@ fn ensure_thread_subscription(
                 // content is safe: the Go accumulator uses overwrite semantics for known message_ids.
                 let thread = thread_entity.read(cx);
                 let entries = thread.entries();
+                let rid = crate::get_thread_request_id(&thread_id_for_sub)
+                    .unwrap_or_default();
                 for (idx, entry) in entries.iter().enumerate() {
                     match entry {
                         acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
@@ -514,6 +529,7 @@ fn ensure_thread_subscription(
                                     message_id: idx.to_string(),
                                     role: "assistant".to_string(),
                                     content,
+                                    request_id: rid.clone(),
                                     entry_type: "text".to_string(),
                                     tool_name: String::new(),
                                     tool_status: String::new(),
@@ -531,6 +547,7 @@ fn ensure_thread_subscription(
                                     message_id: idx.to_string(),
                                     role: "assistant".to_string(),
                                     content,
+                                    request_id: rid.clone(),
                                     entry_type: "tool_call".to_string(),
                                     tool_name: name,
                                     tool_status: status,
