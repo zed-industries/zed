@@ -423,15 +423,20 @@ pub fn render_redistributable_columns_resize_handles(
                             move |&was_hovered, _, cx| is_highlighted.write(cx, was_hovered)
                         })
                         .cursor_col_resize()
-                        .on_click(move |event, window, cx| {
-                            if event.click_count() >= 2 {
-                                columns_state.update(cx, |columns, _| {
-                                    columns
-                                        .reset_column_to_initial_width(current_column_ix, window);
-                                });
-                            }
+                        .on_click({
+                            let columns_state = columns_state.clone();
+                            move |event, window, cx| {
+                                if event.click_count() >= 2 {
+                                    columns_state.update(cx, |columns, _| {
+                                        columns.reset_column_to_initial_width(
+                                            current_column_ix,
+                                            window,
+                                        );
+                                    });
+                                }
 
-                            cx.stop_propagation();
+                                cx.stop_propagation();
+                            }
                         })
                         .on_drag(DraggedColumn(current_column_ix), {
                             let is_highlighted = is_highlighted.clone();
@@ -442,6 +447,9 @@ pub fn render_redistributable_columns_resize_handles(
                         })
                         .on_drop::<DraggedColumn>(move |_, _, cx| {
                             is_highlighted.write(cx, false);
+                            columns_state.update(cx, |state, _| {
+                                state.commit_preview();
+                            });
                         });
                 }
 
