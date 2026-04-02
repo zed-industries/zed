@@ -447,14 +447,9 @@ impl ThreadMetadataStore {
                 let weak_store = weak_store.clone();
                 move |thread, cx| {
                     weak_store
-                        .update(cx, |store, cx| {
+                        .update(cx, |store, _cx| {
                             let session_id = thread.session_id().clone();
                             store.session_subscriptions.remove(&session_id);
-                            if thread.entries().is_empty() {
-                                // Empty threads can be unloaded without ever being
-                                // durably persisted by the underlying agent.
-                                store.delete(session_id, cx);
-                            }
                         })
                         .ok();
                 }
@@ -545,6 +540,10 @@ impl ThreadMetadataStore {
             | AcpThreadEvent::Refusal
             | AcpThreadEvent::WorkingDirectoriesUpdated => {
                 let thread_ref = thread.read(cx);
+                if thread_ref.entries().is_empty() {
+                    return;
+                }
+
                 let existing_thread = self.threads.get(thread_ref.session_id());
                 let session_id = thread_ref.session_id().clone();
                 let title = thread_ref

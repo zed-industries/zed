@@ -1734,6 +1734,10 @@ impl AgentPanel {
             return;
         };
 
+        if thread_view.read(cx).thread.read(cx).entries().is_empty() {
+            return;
+        }
+
         self.background_threads
             .insert(thread_view.read(cx).id.clone(), conversation_view);
         self.cleanup_background_threads(cx);
