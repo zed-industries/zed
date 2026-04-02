@@ -1306,13 +1306,15 @@ impl Watcher for RealWatcher {
 pub struct FakeFs {
     this: std::sync::Weak<Self>,
     // Use an unfair lock to ensure tests are deterministic.
-    state: Arc<Mutex<FakeFsState>>,
+    pub state: Arc<Mutex<FakeFsState>>, // TODO(yara) undo pub
     executor: gpui::BackgroundExecutor,
 }
 
+// TODO(yara) undo pub
 #[cfg(feature = "test-support")]
-struct FakeFsState {
-    root: FakeFsEntry,
+pub struct FakeFsState {
+    // TODO(yara) undo pub
+    pub root: FakeFsEntry,
     next_inode: u64,
     next_mtime: SystemTime,
     git_event_tx: smol::channel::Sender<PathBuf>,
@@ -1327,9 +1329,10 @@ struct FakeFsState {
     trash: Vec<(TrashedEntry, FakeFsEntry)>,
 }
 
+// TODO(yara) undo pub
 #[cfg(feature = "test-support")]
 #[derive(Clone, Debug)]
-enum FakeFsEntry {
+pub enum FakeFsEntry {
     File {
         inode: u64,
         mtime: MTime,
@@ -3026,6 +3029,7 @@ impl Fs for FakeFs {
         match result {
             Ok(_) => {
                 state.trash.retain(|(entry, _)| *entry != trashed_entry);
+                state.emit_event([(path.clone(), Some(PathEventKind::Created))]);
                 Ok(path)
             }
             Err(_) => {

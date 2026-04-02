@@ -1745,6 +1745,7 @@ impl LocalWorktree {
         };
 
         let path_buf = fs.restore(trash_entry).await?;
+        dbg!("done restoring");
         let path = path_buf
             .strip_prefix(worktree_abs_path)
             .context("Could not strip prefix")?;
@@ -2596,15 +2597,14 @@ impl Snapshot {
     }
 
     pub fn entry_for_path(&self, path: &RelPath) -> Option<&Entry> {
-        self.traverse_from_path(true, true, true, path)
-            .entry()
-            .and_then(|entry| {
-                if entry.path.as_ref() == path {
-                    Some(entry)
-                } else {
-                    None
-                }
-            })
+        let entry = self.traverse_from_path(true, true, true, path).entry();
+        entry.and_then(|entry| {
+            if entry.path.as_ref() == path {
+                Some(entry)
+            } else {
+                None
+            }
+        })
     }
 
     /// Resolves a path to an executable using the following heuristics:
