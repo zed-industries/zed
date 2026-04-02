@@ -224,7 +224,7 @@ hr {
 }
 
 .content {
-  padding: 48px 32px 0 32px;
+  padding: 32px 32px 0 32px;
   display: flex;
   justify-content: space-between;
   gap: 36px;
