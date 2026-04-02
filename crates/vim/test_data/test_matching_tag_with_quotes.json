@@ -1,0 +1,7 @@
+{"Exec":{"command":"set filetype=html"}}
+{"Put":{"state":"<div class='teˇst' id='main'>\n</div>\n"}}
+{"Key":"%"}
+{"Get":{"state":"<div class='test' id='main'>\n<ˇ/div>\n","mode":"Normal"}}
+{"Put":{"state":"<div class='teˇst' id='main'>\n</div>\n"}}
+{"Key":"%"}
+{"Get":{"state":"<div class='test' id='main'>\n<ˇ/div>\n","mode":"Normal"}}

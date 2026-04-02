@@ -3,11 +3,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{App, AppContext, AsyncApp, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use itertools::Itertools as _;
 use language::{
-    ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate, LspInstaller, Toolchain,
+    Buffer, ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore,
+    LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -55,6 +55,9 @@ const TYPESCRIPT_JASMINE_PACKAGE_PATH_VARIABLE: VariableName =
 
 const TYPESCRIPT_BUN_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUN_PACKAGE_PATH"));
+
+const TYPESCRIPT_BUN_TEST_NAME_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUN_TEST_NAME"));
 
 const TYPESCRIPT_NODE_PACKAGE_PATH_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_NODE_PACKAGE_PATH"));
@@ -237,7 +240,7 @@ impl PackageJsonData {
                 args: vec![
                     "test".to_owned(),
                     "--test-name-pattern".to_owned(),
-                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    format!("\"{}\"", TYPESCRIPT_BUN_TEST_NAME_VARIABLE.template_value()),
                     VariableName::File.template_value(),
                 ],
                 tags: vec![
@@ -422,10 +425,11 @@ async fn detect_package_manager(
 impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+        let file = buffer.and_then(|buffer| buffer.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
         let Some(worktree_root) = file.worktree.read(cx).root_dir() else {
@@ -486,6 +490,10 @@ impl ContextProvider for TypeScriptContextProvider {
             );
             vars.insert(
                 TYPESCRIPT_VITEST_TEST_NAME_VARIABLE,
+                replace_test_name_parameters(symbol),
+            );
+            vars.insert(
+                TYPESCRIPT_BUN_TEST_NAME_VARIABLE,
                 replace_test_name_parameters(symbol),
             );
         }
@@ -797,6 +805,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let tsdk_path = self.tsdk_path(adapter).await;
         Ok(Some(json!({
@@ -828,7 +837,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         let override_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
-        })?;
+        });
         if let Some(options) = override_options {
             return Ok(options);
         }
@@ -1046,6 +1055,7 @@ mod tests {
             .unindent();
 
             let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+            cx.run_until_parked();
             let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
             assert_eq!(
                 outline

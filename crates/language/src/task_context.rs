@@ -1,11 +1,11 @@
 use std::{ops::Range, path::PathBuf, sync::Arc};
 
-use crate::{File, LanguageToolchainStore, Location, Runnable};
+use crate::{Buffer, LanguageToolchainStore, Location, Runnable};
 
 use anyhow::Result;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{App, Task};
+use gpui::{App, Entity, Task};
 use lsp::LanguageServerName;
 use task::{TaskTemplates, TaskVariables};
 use text::BufferId;
@@ -37,7 +37,7 @@ pub trait ContextProvider: Send + Sync {
     }
 
     /// Provides all tasks, associated with the current language.
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         Task::ready(None)
     }
 

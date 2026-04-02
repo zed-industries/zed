@@ -36,6 +36,7 @@ pub fn remote_server_dir_relative() -> &'static RelPath {
     *CACHED
 }
 
+// Remove this once 223 goes stable
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
 pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
     static CACHED: LazyLock<&'static RelPath> =
@@ -68,15 +69,10 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
         panic!("set_custom_data_dir called after data_dir or config_dir was initialized");
     }
     CUSTOM_DATA_DIR.get_or_init(|| {
-        let mut path = PathBuf::from(dir);
-        if path.is_relative() && path.exists() {
-            let abs_path = path
-                .canonicalize()
-                .expect("failed to canonicalize custom data directory's path to an absolute path");
-            path = util::paths::SanitizedPath::new(&abs_path).into()
-        }
+        let path = PathBuf::from(dir);
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
-        path
+        path.canonicalize()
+            .expect("failed to canonicalize custom data directory's path to an absolute path")
     })
 }
 
@@ -122,6 +118,29 @@ pub fn data_dir() -> &'static PathBuf {
                 .join("Zed")
         } else {
             config_dir().clone() // Fallback
+        }
+    })
+}
+
+pub fn state_dir() -> &'static PathBuf {
+    static STATE_DIR: OnceLock<PathBuf> = OnceLock::new();
+    STATE_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            return home_dir().join(".local").join("state").join("Zed");
+        }
+
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            return if let Ok(flatpak_xdg_state) = std::env::var("FLATPAK_XDG_STATE_HOME") {
+                flatpak_xdg_state.into()
+            } else {
+                dirs::state_dir().expect("failed to determine XDG_STATE_HOME directory")
+            }
+            .join("zed");
+        } else {
+            // Windows
+            return dirs::data_local_dir()
+                .expect("failed to determine LocalAppData directory")
+                .join("Zed");
         }
     })
 }
@@ -293,20 +312,6 @@ pub fn snippets_dir() -> &'static PathBuf {
 
 /// Returns the path to the contexts directory.
 ///
-/// This is where the saved contexts from the Assistant are stored.
-pub fn text_threads_dir() -> &'static PathBuf {
-    static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    CONTEXTS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("conversations")
-        } else {
-            data_dir().join("conversations")
-        }
-    })
-}
-
-/// Returns the path to the contexts directory.
-///
 /// This is where the prompts for use with the Assistant are stored.
 pub fn prompts_dir() -> &'static PathBuf {
     static PROMPTS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -388,12 +393,6 @@ pub fn external_agents_dir() -> &'static PathBuf {
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
     COPILOT_DIR.get_or_init(|| data_dir().join("copilot"))
-}
-
-/// Returns the path to the Supermaven directory.
-pub fn supermaven_dir() -> &'static PathBuf {
-    static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPERMAVEN_DIR.get_or_init(|| data_dir().join("supermaven"))
 }
 
 /// Returns the path to the default Prettier directory.
@@ -502,8 +501,10 @@ fn vscode_user_data_paths() -> Vec<PathBuf> {
     // https://github.com/microsoft/vscode/blob/23e7148cdb6d8a27f0109ff77e5b1e019f8da051/src/vs/platform/environment/node/userDataPath.ts#L45
     const VSCODE_PRODUCT_NAMES: &[&str] = &[
         "Code",
+        "Code - Insiders",
         "Code - OSS",
         "VSCodium",
+        "VSCodium - Insiders",
         "Code Dev",
         "Code - OSS Dev",
         "code-oss-dev",

@@ -8,14 +8,17 @@ use std::{
 
 use anyhow::Result;
 use client::{Client, UserStore};
-use editor::{Editor, PathKey};
+use editor::{
+    Editor, PathKey,
+    display_map::{BlockPlacement, BlockProperties, BlockStyle},
+};
 use futures::StreamExt as _;
 use gpui::{
     Animation, AnimationExt, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement as _, IntoElement as _, ParentElement as _, SharedString,
     Styled as _, Task, TextAlign, Window, actions, div, pulsating_between,
 };
-use multi_buffer::MultiBuffer;
+use multi_buffer::{Anchor, MultiBuffer};
 use project::Project;
 use text::Point;
 use ui::{
@@ -153,11 +156,9 @@ impl EditPredictionContextView {
         run.finished_at = Some(info.timestamp);
         run.metadata = info.metadata;
 
-        let related_files = self
-            .store
-            .read(cx)
-            .context_for_project_with_buffers(&self.project, cx)
-            .map_or(Vec::new(), |files| files.collect());
+        let related_files = self.store.update(cx, |store, cx| {
+            store.context_for_project_with_buffers(&self.project, cx)
+        });
 
         let editor = run.editor.clone();
         let multibuffer = run.editor.read(cx).buffer().clone();
@@ -167,8 +168,14 @@ impl EditPredictionContextView {
         }
 
         cx.spawn_in(window, async move |this, cx| {
-            let mut paths = Vec::new();
+            let mut paths: Vec<(PathKey, _, Vec<_>, Vec<usize>, usize)> = Vec::new();
             for (related_file, buffer) in related_files {
+                let orders = related_file
+                    .excerpts
+                    .iter()
+                    .map(|excerpt| excerpt.order)
+                    .collect::<Vec<_>>();
+                let min_order = orders.iter().copied().min().unwrap_or(usize::MAX);
                 let point_ranges = related_file
                     .excerpts
                     .iter()
@@ -177,20 +184,57 @@ impl EditPredictionContextView {
                     })
                     .collect::<Vec<_>>();
                 cx.update(|_, cx| {
-                    let path = PathKey::for_buffer(&buffer, cx);
-                    paths.push((path, buffer, point_ranges));
+                    let path = if let Some(file) = buffer.read(cx).file() {
+                        PathKey::with_sort_prefix(min_order as u64, file.path().clone())
+                    } else {
+                        PathKey::for_buffer(&buffer, cx)
+                    };
+                    paths.push((path, buffer, point_ranges, orders, min_order));
                 })?;
             }
+
+            paths.sort_by_key(|(_, _, _, _, min_order)| *min_order);
+
+            let mut excerpt_anchors_with_orders: Vec<(Anchor, usize)> = Vec::new();
 
             multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.clear(cx);
 
-                for (path, buffer, ranges) in paths {
-                    multibuffer.set_excerpts_for_path(path, buffer, ranges, 0, cx);
+                for (path, buffer, ranges, orders, _) in paths {
+                    multibuffer.set_excerpts_for_path(path, buffer.clone(), ranges.clone(), 0, cx);
+                    let snapshot = multibuffer.snapshot(cx);
+                    let buffer_snapshot = buffer.read(cx).snapshot();
+                    for (range, order) in ranges.into_iter().zip(orders) {
+                        let text_anchor = buffer_snapshot.anchor_range_inside(range);
+                        if let Some(start) = snapshot.anchor_in_buffer(text_anchor.start) {
+                            excerpt_anchors_with_orders.push((start, order));
+                        }
+                    }
                 }
-            })?;
+            });
 
             editor.update_in(cx, |editor, window, cx| {
+                let blocks = excerpt_anchors_with_orders
+                    .into_iter()
+                    .map(|(anchor, order)| {
+                        let label = SharedString::from(format!("order: {order}"));
+                        BlockProperties {
+                            placement: BlockPlacement::Above(anchor),
+                            height: Some(1),
+                            style: BlockStyle::Sticky,
+                            render: Arc::new(move |cx| {
+                                div()
+                                    .pl(cx.anchor_x)
+                                    .text_ui_xs(cx)
+                                    .text_color(cx.editor_style.status.info)
+                                    .child(label.clone())
+                                    .into_any_element()
+                            }),
+                            priority: 0,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                editor.insert_blocks(blocks, None, cx);
                 editor.move_to_beginning(&Default::default(), window, cx);
             })?;
 
@@ -243,11 +287,14 @@ impl EditPredictionContextView {
             .gap_2()
             .child(v_flex().h_full().flex_1().child({
                 let t0 = run.started_at;
-                let mut table = ui::Table::<2>::new().width(ui::px(300.)).no_ui_font();
+                let mut table = ui::Table::new(2).width(ui::px(300.)).no_ui_font();
                 for (key, value) in &run.metadata {
-                    table = table.row([key.into_any_element(), value.clone().into_any_element()])
+                    table = table.row(vec![
+                        key.into_any_element(),
+                        value.clone().into_any_element(),
+                    ])
                 }
-                table = table.row([
+                table = table.row(vec![
                     "Total Time".into_any_element(),
                     format!("{} ms", (run.finished_at.unwrap_or(t0) - t0).as_millis())
                         .into_any_element(),

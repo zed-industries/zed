@@ -1,17 +1,8 @@
 use gpui::{
     AnyView, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable as _, ManagedView,
-    MouseButton, Pixels, Point, Subscription,
+    MouseButton, Subscription,
 };
 use ui::prelude::*;
-
-#[derive(Debug, Clone, Copy, Default)]
-pub enum ModalPlacement {
-    #[default]
-    Centered,
-    Anchored {
-        position: Point<Pixels>,
-    },
-}
 
 #[derive(Debug)]
 pub enum DismissDecision {
@@ -35,6 +26,15 @@ pub trait ModalView: ManagedView {
     fn render_bare(&self) -> bool {
         false
     }
+
+    /// Returns whether this [`ModalView`] is the command palette.
+    ///
+    /// This breaks the encapsulation of the [`ModalView`] trait a little bit, but there doesn't seem to be an
+    /// immediate, more elegant way to have the workspace know about the command palette (due to dependency arrow
+    /// directions).
+    fn is_command_palette(&self) -> bool {
+        false
+    }
 }
 
 trait ModalViewHandle {
@@ -42,6 +42,7 @@ trait ModalViewHandle {
     fn view(&self) -> AnyView;
     fn fade_out_background(&self, cx: &mut App) -> bool;
     fn render_bare(&self, cx: &mut App) -> bool;
+    fn is_command_palette(&self, cx: &App) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Entity<V> {
@@ -60,6 +61,10 @@ impl<V: ModalView> ModalViewHandle for Entity<V> {
     fn render_bare(&self, cx: &mut App) -> bool {
         self.read(cx).render_bare()
     }
+
+    fn is_command_palette(&self, cx: &App) -> bool {
+        self.read(cx).is_command_palette()
+    }
 }
 
 pub struct ActiveModal {
@@ -67,7 +72,6 @@ pub struct ActiveModal {
     _subscriptions: [Subscription; 2],
     previous_focus_handle: Option<FocusHandle>,
     focus_handle: FocusHandle,
-    placement: ModalPlacement,
 }
 
 pub struct ModalLayer {
@@ -93,43 +97,34 @@ impl ModalLayer {
         }
     }
 
+    /// Toggles a modal of type `V`. If a modal of the same type is currently active,
+    /// it will be hidden. If a different modal is active, it will be replaced with the new one.
+    /// If no modal is active, the new modal will be shown.
+    ///
+    /// If closing the current modal fails (e.g., due to `on_before_dismiss` returning
+    /// `DismissDecision::Dismiss(false)` or `DismissDecision::Pending`), the new modal
+    /// will not be shown.
     pub fn toggle_modal<V, B>(&mut self, window: &mut Window, cx: &mut Context<Self>, build_view: B)
     where
         V: ModalView,
         B: FnOnce(&mut Window, &mut Context<V>) -> V,
     {
-        self.toggle_modal_with_placement(window, cx, ModalPlacement::Centered, build_view);
-    }
-
-    pub fn toggle_modal_with_placement<V, B>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        placement: ModalPlacement,
-        build_view: B,
-    ) where
-        V: ModalView,
-        B: FnOnce(&mut Window, &mut Context<V>) -> V,
-    {
         if let Some(active_modal) = &self.active_modal {
-            let is_close = active_modal.modal.view().downcast::<V>().is_ok();
+            let should_close = active_modal.modal.view().downcast::<V>().is_ok();
             let did_close = self.hide_modal(window, cx);
-            if is_close || !did_close {
+            if should_close || !did_close {
                 return;
             }
         }
         let new_modal = cx.new(|cx| build_view(window, cx));
-        self.show_modal(new_modal, placement, window, cx);
+        self.show_modal(new_modal, window, cx);
         cx.emit(ModalOpenedEvent);
     }
 
-    fn show_modal<V>(
-        &mut self,
-        new_modal: Entity<V>,
-        placement: ModalPlacement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) where
+    /// Shows a modal and sets up subscriptions for dismiss events and focus tracking.
+    /// The modal is automatically focused after being shown.
+    fn show_modal<V>(&mut self, new_modal: Entity<V>, window: &mut Window, cx: &mut Context<Self>)
+    where
         V: ModalView,
     {
         let focus_handle = cx.focus_handle();
@@ -151,7 +146,6 @@ impl ModalLayer {
             ],
             previous_focus_handle: window.focused(cx),
             focus_handle,
-            placement,
         });
         cx.defer_in(window, move |_, window, cx| {
             window.focus(&new_modal.focus_handle(cx), cx);
@@ -159,6 +153,13 @@ impl ModalLayer {
         cx.notify();
     }
 
+    /// Attempts to hide the currently active modal.
+    ///
+    /// The modal's `on_before_dismiss` method is called to determine if dismissal should proceed.
+    /// If dismissal is allowed, the modal is removed and focus is restored to the previously
+    /// focused element.
+    ///
+    /// Returns `true` if the modal was successfully hidden, `false` otherwise.
     pub fn hide_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let Some(active_modal) = self.active_modal.as_mut() else {
             self.dismiss_on_focus_lost = false;
@@ -166,9 +167,9 @@ impl ModalLayer {
         };
 
         match active_modal.modal.on_before_dismiss(window, cx) {
-            DismissDecision::Dismiss(dismiss) => {
-                self.dismiss_on_focus_lost = !dismiss;
-                if !dismiss {
+            DismissDecision::Dismiss(should_dismiss) => {
+                if !should_dismiss {
+                    self.dismiss_on_focus_lost = !should_dismiss;
                     return false;
                 }
             }
@@ -186,9 +187,11 @@ impl ModalLayer {
             }
             cx.notify();
         }
+        self.dismiss_on_focus_lost = false;
         true
     }
 
+    /// Returns the currently active modal if it is of type `V`.
     pub fn active_modal<V>(&self) -> Option<Entity<V>>
     where
         V: 'static,
@@ -199,6 +202,13 @@ impl ModalLayer {
 
     pub fn has_active_modal(&self) -> bool {
         self.active_modal.is_some()
+    }
+
+    /// Returns whether the active modal is the command palette.
+    pub fn is_active_modal_command_palette(&self, cx: &App) -> bool {
+        self.active_modal
+            .as_ref()
+            .map_or(false, |modal| modal.modal.is_command_palette(cx))
     }
 }
 
@@ -211,30 +221,6 @@ impl Render for ModalLayer {
         if active_modal.modal.render_bare(cx) {
             return active_modal.modal.view().into_any_element();
         }
-
-        let content = h_flex()
-            .occlude()
-            .child(active_modal.modal.view())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                cx.stop_propagation();
-            });
-
-        let positioned = match active_modal.placement {
-            ModalPlacement::Centered => v_flex()
-                .h(px(0.0))
-                .top_20()
-                .items_center()
-                .track_focus(&active_modal.focus_handle)
-                .child(content)
-                .into_any_element(),
-            ModalPlacement::Anchored { position } => div()
-                .absolute()
-                .left(position.x)
-                .top(position.y - px(20.))
-                .track_focus(&active_modal.focus_handle)
-                .child(content)
-                .into_any_element(),
-        };
 
         div()
             .absolute()
@@ -252,7 +238,21 @@ impl Render for ModalLayer {
                     this.hide_modal(window, cx);
                 }),
             )
-            .child(positioned)
+            .child(
+                v_flex()
+                    .h(px(0.0))
+                    .top_20()
+                    .items_center()
+                    .track_focus(&active_modal.focus_handle)
+                    .child(
+                        h_flex()
+                            .occlude()
+                            .child(active_modal.modal.view())
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            }),
+                    ),
+            )
             .into_any_element()
     }
 }

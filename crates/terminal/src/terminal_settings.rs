@@ -9,11 +9,12 @@ use serde::{Deserialize, Serialize};
 pub use settings::AlternateScroll;
 
 use settings::{
-    PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition,
-    TerminalLineHeight, VenvSettings, WorkingDirectory, merge_from::MergeFrom,
+    IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink,
+    TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
+    merge_from::MergeFrom,
 };
 use task::Shell;
-use theme::FontFamilyName;
+use theme_settings::FontFamilyName;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
@@ -39,6 +40,7 @@ pub struct TerminalSettings {
     pub keep_selection_on_copy: bool,
     pub button: bool,
     pub dock: TerminalDockPosition,
+    pub flexible: bool,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub detect_venv: VenvSettings,
@@ -49,6 +51,7 @@ pub struct TerminalSettings {
     pub minimum_contrast: f32,
     pub path_hyperlink_regexes: Vec<String>,
     pub path_hyperlink_timeout_ms: u64,
+    pub show_count_badge: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -70,7 +73,7 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
         } => Shell::WithArguments {
             program,
             args,
-            title_override: title_override.map(Into::into),
+            title_override,
         },
     }
 }
@@ -84,7 +87,7 @@ impl settings::Settings for TerminalSettings {
         TerminalSettings {
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
-            font_size: user_content.font_size.map(px),
+            font_size: user_content.font_size.map(|s| s.into_gpui()),
             font_family: user_content.font_family,
             font_fallbacks: user_content.font_fallbacks.map(|fallbacks| {
                 FontFallbacks::from_fonts(
@@ -94,8 +97,8 @@ impl settings::Settings for TerminalSettings {
                         .collect(),
                 )
             }),
-            font_features: user_content.font_features,
-            font_weight: user_content.font_weight,
+            font_features: user_content.font_features.map(|f| f.into_gpui()),
+            font_weight: user_content.font_weight.map(|w| w.into_gpui()),
             line_height: user_content.line_height.unwrap(),
             env: project_content.env.unwrap(),
             cursor_shape: user_content.cursor_shape.unwrap().into(),
@@ -108,6 +111,7 @@ impl settings::Settings for TerminalSettings {
             dock: user_content.dock.unwrap(),
             default_width: px(user_content.default_width.unwrap()),
             default_height: px(user_content.default_height.unwrap()),
+            flexible: user_content.flexible.unwrap(),
             detect_venv: project_content.detect_venv.unwrap(),
             scroll_multiplier: user_content.scroll_multiplier.unwrap(),
             max_scroll_history_lines: user_content.max_scroll_history_lines,
@@ -128,6 +132,7 @@ impl settings::Settings for TerminalSettings {
                 })
                 .collect(),
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
+            show_count_badge: user_content.show_count_badge.unwrap(),
         }
     }
 }

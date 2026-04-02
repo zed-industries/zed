@@ -1,5 +1,6 @@
-use language_model::AnthropicEventData;
-use language_model::report_anthropic_event;
+use language_models::provider::anthropic::telemetry::{
+    AnthropicCompletionType, AnthropicEventData, AnthropicEventType, report_anthropic_event,
+};
 use std::cmp;
 use std::mem;
 use std::ops::Range;
@@ -7,6 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::ThreadHistory;
 use crate::context::load_context;
 use crate::mention_set::MentionSet;
 use crate::{
@@ -15,7 +17,7 @@ use crate::{
     inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent},
     terminal_inline_assistant::TerminalInlineAssistant,
 };
-use agent::HistoryStore;
+use agent::ThreadStore;
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
@@ -25,8 +27,8 @@ use editor::RowExt;
 use editor::SelectionEffects;
 use editor::scroll::ScrollOffset;
 use editor::{
-    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
-    MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
+    Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, HighlightKey, MultiBuffer,
+    MultiBufferSnapshot, ToOffset as _, ToPoint,
     actions::SelectAll,
     display_map::{
         BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, EditorMargins,
@@ -131,9 +133,9 @@ impl InlineAssistant {
             })
             .detach();
 
-        let workspace = workspace.downgrade();
+        let workspace_weak = workspace.downgrade();
         cx.observe_global::<SettingsStore>(move |cx| {
-            let Some(workspace) = workspace.upgrade() else {
+            let Some(workspace) = workspace_weak.upgrade() else {
                 return;
             };
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
@@ -143,6 +145,19 @@ impl InlineAssistant {
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
+        })
+        .detach();
+
+        cx.observe(workspace, |workspace, cx| {
+            let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                return;
+            };
+            let enabled = AgentSettings::get_global(cx).enabled(cx);
+            if terminal_panel.read(cx).assistant_enabled() != enabled {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.set_assistant_enabled(enabled, cx)
+                });
+            }
         })
         .detach();
     }
@@ -243,16 +258,12 @@ impl InlineAssistant {
             return;
         }
 
-        let Some(inline_assist_target) = Self::resolve_inline_assist_target(
-            workspace,
-            workspace.panel::<AgentPanel>(cx),
-            window,
-            cx,
-        ) else {
+        let Some(inline_assist_target) = Self::resolve_inline_assist_target(workspace, window, cx)
+        else {
             return;
         };
 
-        let configuration_error = || {
+        let configuration_error = |cx| {
             let model_registry = LanguageModelRegistry::read_global(cx);
             model_registry.configuration_error(model_registry.inline_assistant_model(), cx)
         };
@@ -264,6 +275,11 @@ impl InlineAssistant {
 
         let prompt_store = agent_panel.prompt_store().as_ref().cloned();
         let thread_store = agent_panel.thread_store().clone();
+        let history = agent_panel
+            .connection_store()
+            .read(cx)
+            .entry(&crate::Agent::NativeAgent)
+            .and_then(|s| s.read(cx).history().cloned());
 
         let handle_assist =
             |window: &mut Window, cx: &mut Context<Workspace>| match inline_assist_target {
@@ -275,6 +291,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
+                            history.as_ref().map(|h| h.downgrade()),
                             action.prompt.clone(),
                             window,
                             cx,
@@ -289,6 +306,7 @@ impl InlineAssistant {
                             workspace.project().downgrade(),
                             thread_store,
                             prompt_store,
+                            history.as_ref().map(|h| h.downgrade()),
                             action.prompt.clone(),
                             window,
                             cx,
@@ -297,15 +315,15 @@ impl InlineAssistant {
                 }
             };
 
-        if let Some(error) = configuration_error() {
+        if let Some(error) = configuration_error(cx) {
             if let ConfigurationError::ProviderNotAuthenticated(provider) = error {
                 cx.spawn(async move |_, cx| {
-                    cx.update(|cx| provider.authenticate(cx))?.await?;
+                    cx.update(|cx| provider.authenticate(cx)).await?;
                     anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
 
-                if configuration_error().is_none() {
+                if configuration_error(cx).is_none() {
                     handle_assist(window, cx);
                 }
             } else {
@@ -425,15 +443,17 @@ impl InlineAssistant {
         let newest_selection = newest_selection.unwrap();
 
         let mut codegen_ranges = Vec::new();
-        for (buffer, buffer_range, excerpt_id) in
-            snapshot.ranges_to_buffer_ranges(selections.iter().map(|selection| {
-                snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end)
-            }))
+        for (buffer, buffer_range, _) in selections
+            .iter()
+            .flat_map(|selection| snapshot.range_to_buffer_ranges(selection.start..selection.end))
         {
-            let anchor_range = Anchor::range_in_buffer(
-                excerpt_id,
-                buffer.anchor_before(buffer_range.start)..buffer.anchor_after(buffer_range.end),
-            );
+            let (Some(start), Some(end)) = (
+                snapshot.anchor_in_buffer(buffer.anchor_before(buffer_range.start)),
+                snapshot.anchor_in_buffer(buffer.anchor_after(buffer_range.end)),
+            ) else {
+                continue;
+            };
+            let anchor_range = start..end;
 
             codegen_ranges.push(anchor_range);
 
@@ -450,8 +470,8 @@ impl InlineAssistant {
                 report_anthropic_event(
                     &model.model,
                     AnthropicEventData {
-                        completion_type: language_model::AnthropicCompletionType::Editor,
-                        event: language_model::AnthropicEventType::Invoked,
+                        completion_type: AnthropicCompletionType::Editor,
+                        event: AnthropicEventType::Invoked,
                         language_name: buffer.language().map(|language| language.name().to_proto()),
                         message_id: None,
                     },
@@ -468,8 +488,9 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         codegen_ranges: &[Range<Anchor>],
@@ -516,6 +537,7 @@ impl InlineAssistant {
                     self.fs.clone(),
                     thread_store.clone(),
                     prompt_store.clone(),
+                    history.clone(),
                     project.clone(),
                     workspace.clone(),
                     window,
@@ -605,8 +627,9 @@ impl InlineAssistant {
         editor: &Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: Option<WeakEntity<ThreadHistory>>,
         initial_prompt: Option<String>,
         window: &mut Window,
         cx: &mut App,
@@ -625,6 +648,7 @@ impl InlineAssistant {
             project,
             thread_store,
             prompt_store,
+            history,
             initial_prompt,
             window,
             &codegen_ranges,
@@ -648,8 +672,9 @@ impl InlineAssistant {
         initial_transaction_id: Option<TransactionId>,
         focus: bool,
         workspace: Entity<Workspace>,
-        thread_store: Entity<HistoryStore>,
+        thread_store: Entity<ThreadStore>,
         prompt_store: Option<Entity<PromptStore>>,
+        history: Option<WeakEntity<ThreadHistory>>,
         window: &mut Window,
         cx: &mut App,
     ) -> InlineAssistId {
@@ -669,6 +694,7 @@ impl InlineAssistant {
                 project,
                 thread_store,
                 prompt_store,
+                history,
                 Some(initial_prompt),
                 window,
                 &[range],
@@ -958,8 +984,7 @@ impl InlineAssistant {
         match event {
             EditorEvent::Edited { transaction_id } => {
                 let buffer = editor.read(cx).buffer().read(cx);
-                let edited_ranges =
-                    buffer.edited_ranges_for_transaction::<MultiBufferOffset>(*transaction_id, cx);
+                let edited_ranges = buffer.edited_ranges_for_transaction(*transaction_id, cx);
                 let snapshot = buffer.snapshot(cx);
 
                 for assist_id in editor_assists.assist_ids.clone() {
@@ -1064,7 +1089,8 @@ impl InlineAssistant {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
                     let snapshot = multibuffer.snapshot(cx);
-                    let ranges = snapshot.range_to_buffer_ranges(assist.range.clone());
+                    let ranges =
+                        snapshot.range_to_buffer_ranges(assist.range.start..assist.range.end);
                     ranges
                         .first()
                         .and_then(|(buffer, _, _)| buffer.language())
@@ -1081,13 +1107,13 @@ impl InlineAssistant {
                     (
                         "rejected",
                         "Assistant Response Rejected",
-                        language_model::AnthropicEventType::Reject,
+                        AnthropicEventType::Reject,
                     )
                 } else {
                     (
                         "accepted",
                         "Assistant Response Accepted",
-                        language_model::AnthropicEventType::Accept,
+                        AnthropicEventType::Accept,
                     )
                 };
 
@@ -1104,8 +1130,8 @@ impl InlineAssistant {
 
                 report_anthropic_event(
                     &model.model,
-                    language_model::AnthropicEventData {
-                        completion_type: language_model::AnthropicCompletionType::Editor,
+                    AnthropicEventData {
+                        completion_type: AnthropicCompletionType::Editor,
                         event: anthropic_event_type,
                         language_name,
                         message_id,
@@ -1421,9 +1447,10 @@ impl InlineAssistant {
             }
 
             if foreground_ranges.is_empty() {
-                editor.clear_highlights::<InlineAssist>(cx);
+                editor.clear_highlights(HighlightKey::InlineAssist, cx);
             } else {
-                editor.highlight_text::<InlineAssist>(
+                editor.highlight_text(
+                    HighlightKey::InlineAssist,
                     foreground_ranges,
                     HighlightStyle {
                         fade_out: Some(0.6),
@@ -1470,11 +1497,11 @@ impl InlineAssistant {
 
             let mut new_blocks = Vec::new();
             for (new_row, old_row_range) in deleted_row_ranges {
-                let (_, buffer_start) = old_snapshot
-                    .point_to_buffer_offset(Point::new(*old_row_range.start(), 0))
+                let (_, start) = old_snapshot
+                    .point_to_buffer_point(Point::new(*old_row_range.start(), 0))
                     .unwrap();
-                let (_, buffer_end) = old_snapshot
-                    .point_to_buffer_offset(Point::new(
+                let (_, end) = old_snapshot
+                    .point_to_buffer_point(Point::new(
                         *old_row_range.end(),
                         old_snapshot.line_len(MultiBufferRow(*old_row_range.end())),
                     ))
@@ -1484,10 +1511,11 @@ impl InlineAssistant {
                     let multi_buffer =
                         cx.new(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
                     multi_buffer.update(cx, |multi_buffer, cx| {
-                        multi_buffer.push_excerpts(
+                        multi_buffer.set_excerpts_for_buffer(
                             old_buffer.clone(),
-                            // todo(lw): buffer_start and buffer_end might come from different snapshots!
-                            Some(ExcerptRange::new(buffer_start..buffer_end)),
+                            // todo(lw): start and end might come from different snapshots!
+                            [start..end],
+                            0,
                             cx,
                         );
                     });
@@ -1503,7 +1531,7 @@ impl InlineAssistant {
                     editor.set_read_only(true);
                     editor.set_show_edit_predictions(Some(false), window, cx);
                     editor.highlight_rows::<DeletedLines>(
-                        Anchor::min()..Anchor::max(),
+                        Anchor::Min..Anchor::Max,
                         cx.theme().status().deleted_background,
                         Default::default(),
                         cx,
@@ -1540,7 +1568,6 @@ impl InlineAssistant {
 
     fn resolve_inline_assist_target(
         workspace: &mut Workspace,
-        agent_panel: Option<Entity<AgentPanel>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InlineAssistTarget> {
@@ -1558,20 +1585,7 @@ impl InlineAssistant {
             return Some(InlineAssistTarget::Terminal(terminal_view));
         }
 
-        let text_thread_editor = agent_panel
-            .and_then(|panel| panel.read(cx).active_text_thread_editor())
-            .and_then(|editor| {
-                let editor = &editor.read(cx).editor().clone();
-                if editor.read(cx).is_focused(window) {
-                    Some(editor.clone())
-                } else {
-                    None
-                }
-            });
-
-        if let Some(text_thread_editor) = text_thread_editor {
-            Some(InlineAssistTarget::Editor(text_thread_editor))
-        } else if let Some(workspace_editor) = workspace
+        if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))
         {
@@ -1633,7 +1647,7 @@ impl EditorInlineAssists {
                         let editor = editor.upgrade().context("editor was dropped")?;
                         cx.update_global(|assistant: &mut InlineAssistant, cx| {
                             assistant.update_editor_highlights(&editor, cx);
-                        })?;
+                        });
                     }
                     Ok(())
                 }
@@ -1925,9 +1939,8 @@ impl CodeActionProvider for AssistantCodeActionProvider {
 
     fn apply_code_action(
         &self,
-        buffer: Entity<Buffer>,
+        _buffer: Entity<Buffer>,
         action: CodeAction,
-        excerpt_id: ExcerptId,
         _push_to_history: bool,
         window: &mut Window,
         cx: &mut App,
@@ -1937,48 +1950,30 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let prompt_store = PromptStore::global(cx);
         window.spawn(cx, async move |cx| {
             let workspace = workspace.upgrade().context("workspace was released")?;
-            let thread_store = cx.update(|_window, cx| {
-                anyhow::Ok(
-                    workspace
-                        .read(cx)
-                        .panel::<AgentPanel>(cx)
-                        .context("missing agent panel")?
-                        .read(cx)
-                        .thread_store()
-                        .clone(),
-                )
+            let (thread_store, history) = cx.update(|_window, cx| {
+                let panel = workspace
+                    .read(cx)
+                    .panel::<AgentPanel>(cx)
+                    .context("missing agent panel")?
+                    .read(cx);
+
+                let history = panel
+                    .connection_store()
+                    .read(cx)
+                    .entry(&crate::Agent::NativeAgent)
+                    .and_then(|e| e.read(cx).history())
+                    .map(|h| h.downgrade());
+
+                anyhow::Ok((panel.thread_store().clone(), history))
             })??;
             let editor = editor.upgrade().context("editor was released")?;
             let range = editor
                 .update(cx, |editor, cx| {
                     editor.buffer().update(cx, |multibuffer, cx| {
-                        let buffer = buffer.read(cx);
                         let multibuffer_snapshot = multibuffer.read(cx);
-
-                        let old_context_range =
-                            multibuffer_snapshot.context_range_for_excerpt(excerpt_id)?;
-                        let mut new_context_range = old_context_range.clone();
-                        if action
-                            .range
-                            .start
-                            .cmp(&old_context_range.start, buffer)
-                            .is_lt()
-                        {
-                            new_context_range.start = action.range.start;
-                        }
-                        if action.range.end.cmp(&old_context_range.end, buffer).is_gt() {
-                            new_context_range.end = action.range.end;
-                        }
-                        drop(multibuffer_snapshot);
-
-                        if new_context_range != old_context_range {
-                            multibuffer.resize_excerpt(excerpt_id, new_context_range, cx);
-                        }
-
-                        let multibuffer_snapshot = multibuffer.read(cx);
-                        multibuffer_snapshot.anchor_range_in_excerpt(excerpt_id, action.range)
+                        multibuffer_snapshot.buffer_anchor_range_to_anchor_range(action.range)
                     })
-                })?
+                })
                 .context("invalid range")?;
 
             let prompt_store = prompt_store.await.ok();
@@ -1992,6 +1987,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                     workspace,
                     thread_store,
                     prompt_store,
+                    history,
                     window,
                     cx,
                 );
@@ -2025,30 +2021,28 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
     }
 }
 
-#[cfg(any(test, feature = "unit-eval"))]
-#[cfg_attr(not(test), allow(dead_code))]
-pub mod test {
-
-    use std::sync::Arc;
-
-    use agent::HistoryStore;
-    use assistant_text_thread::TextThreadStore;
+#[cfg(all(test, feature = "unit-eval"))]
+pub mod evals {
+    use crate::InlineAssistant;
+    use agent::ThreadStore;
     use client::{Client, UserStore};
     use editor::{Editor, MultiBuffer, MultiBufferOffset};
+    use eval_utils::{EvalOutput, NoProcessor};
     use fs::FakeFs;
     use futures::channel::mpsc;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::Buffer;
+    use language_model::{LanguageModelRegistry, SelectedModel};
     use project::Project;
     use prompt_store::PromptBuilder;
     use smol::stream::StreamExt as _;
+    use std::str::FromStr;
+    use std::sync::Arc;
     use util::test::marked_text_ranges;
     use workspace::Workspace;
 
-    use crate::InlineAssistant;
-
     #[derive(Debug)]
-    pub enum InlineAssistantOutput {
+    enum InlineAssistantOutput {
         Success {
             completion: Option<String>,
             description: Option<String>,
@@ -2066,7 +2060,7 @@ pub mod test {
         },
     }
 
-    pub fn run_inline_assistant_test<SetupF, TestF>(
+    fn run_inline_assistant_test<SetupF, TestF>(
         base_buffer: String,
         prompt: String,
         setup: SetupF,
@@ -2097,15 +2091,15 @@ pub mod test {
             client::init(&client, cx);
             workspace::init(app_state.clone(), cx);
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            language_model::init(client.clone(), cx);
+            language_model::init(user_store.clone(), client.clone(), cx);
             language_models::init(user_store, client.clone(), cx);
 
             cx.set_global(inline_assistant);
         });
 
-        let project = cx
-            .executor()
-            .block_test(async { Project::test(fs.clone(), [], cx).await });
+        let foreground_executor = cx.foreground_executor().clone();
+        let project =
+            foreground_executor.block_test(async { Project::test(fs.clone(), [], cx).await });
 
         // Create workspace with window
         let (workspace, cx) = cx.add_window_view(|window, cx| {
@@ -2131,8 +2125,7 @@ pub mod test {
                 })
             });
 
-            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
-            let history_store = cx.new(|cx| HistoryStore::new(text_thread_store, cx));
+            let thread_store = cx.new(|cx| ThreadStore::new(cx));
 
             // Add editor to workspace
             workspace.update(cx, |workspace, cx| {
@@ -2146,8 +2139,9 @@ pub mod test {
                         &editor,
                         workspace.downgrade(),
                         project.downgrade(),
-                        history_store, // thread_store
-                        None,          // prompt_store
+                        thread_store,
+                        None,
+                        None,
                         Some(prompt),
                         window,
                         cx,
@@ -2164,8 +2158,7 @@ pub mod test {
 
         test(cx);
 
-        let assist_id = cx
-            .executor()
+        let assist_id = foreground_executor
             .block_test(async { completion_rx.next().await })
             .unwrap()
             .unwrap();
@@ -2198,19 +2191,6 @@ pub mod test {
             }
         }
     }
-}
-
-#[cfg(any(test, feature = "unit-eval"))]
-#[cfg_attr(not(test), allow(dead_code))]
-pub mod evals {
-    use std::str::FromStr;
-
-    use eval_utils::{EvalOutput, NoProcessor};
-    use gpui::TestAppContext;
-    use language_model::{LanguageModelRegistry, SelectedModel};
-    use rand::{SeedableRng as _, rngs::StdRng};
-
-    use crate::inline_assistant::test::{InlineAssistantOutput, run_inline_assistant_test};
 
     #[test]
     #[cfg_attr(not(feature = "unit-eval"), ignore)]
@@ -2310,7 +2290,7 @@ pub mod evals {
         let prompt = prompt.into();
 
         eval_utils::eval(iterations, expected_pass_ratio, NoProcessor, move || {
-            let dispatcher = gpui::TestDispatcher::new(StdRng::from_os_rng());
+            let dispatcher = gpui::TestDispatcher::new(rand::random());
             let mut cx = TestAppContext::build(dispatcher, None);
             cx.skip_drawing();
 

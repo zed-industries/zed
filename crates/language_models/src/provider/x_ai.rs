@@ -1,6 +1,6 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::BTreeMap;
-use futures::{FutureExt, StreamExt, future, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, Window};
 use http_client::HttpClient;
 use language_model::{
@@ -207,12 +207,10 @@ impl XAiLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = XAiLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
             let provider = PROVIDER_NAME;
@@ -259,6 +257,10 @@ impl LanguageModel for XAiLanguageModel {
         self.model.supports_images()
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
         match choice {
             LanguageModelToolChoice::Auto
@@ -267,8 +269,7 @@ impl LanguageModel for XAiLanguageModel {
         }
     }
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        let model_id = self.model.id().trim().to_lowercase();
-        if model_id.eq(x_ai::Model::Grok4.id()) || model_id.eq(x_ai::Model::GrokCodeFast1.id()) {
+        if self.model.requires_json_schema_subset() {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema
@@ -285,6 +286,10 @@ impl LanguageModel for XAiLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
+    }
+
+    fn supports_split_token_display(&self) -> bool {
+        true
     }
 
     fn count_tokens(
@@ -382,10 +387,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
@@ -417,7 +419,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -430,7 +432,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -473,7 +475,7 @@ impl Render for ConfigurationView {
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(format!(
-                        "You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
+                        "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
                     ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),

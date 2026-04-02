@@ -6,22 +6,26 @@ use semver::Version;
 use std::sync::{Arc, OnceLock};
 use wasmtime::component::{Linker, Resource};
 
-use super::latest;
+use super::{latest, since_v0_6_0};
 
 pub const MIN_VERSION: Version = Version::new(0, 5, 0);
 
 wasmtime::component::bindgen!({
-    async: true,
-    trappable_imports: true,
+    imports: {
+        default: async | trappable,
+    },
+    exports: {
+        default: async,
+    },
     path: "../extension_api/wit/since_v0.5.0",
     with: {
         "worktree": ExtensionWorktree,
         "project": ExtensionProject,
         "key-value-store": ExtensionKeyValueStore,
         "zed:extension/common": latest::zed::extension::common,
-        "zed:extension/github": latest::zed::extension::github,
+        "zed:extension/github": since_v0_6_0::zed::extension::github,
         "zed:extension/http-client": latest::zed::extension::http_client,
-        "zed:extension/lsp": latest::zed::extension::lsp,
+        "zed:extension/lsp": since_v0_6_0::zed::extension::lsp,
         "zed:extension/nodejs": latest::zed::extension::nodejs,
         "zed:extension/platform": latest::zed::extension::platform,
         "zed:extension/process": latest::zed::extension::process,
@@ -41,7 +45,11 @@ pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
+    LINKER.get_or_init(|| {
+        super::new_linker(executor, |linker| {
+            Extension::add_to_linker::<_, WasmState>(linker, |s| s)
+        })
+    })
 }
 
 impl From<CodeLabel> for latest::CodeLabel {

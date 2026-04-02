@@ -17,7 +17,11 @@ pub static RUN_DIR: LazyLock<PathBuf> = LazyLock::new(|| {
         .join(chrono::Local::now().format("%d-%m-%y-%H_%M_%S").to_string())
 });
 pub static LATEST_EXAMPLE_RUN_DIR: LazyLock<PathBuf> = LazyLock::new(|| DATA_DIR.join("latest"));
+pub static LATEST_FAILED_EXAMPLES_DIR: LazyLock<PathBuf> =
+    LazyLock::new(|| DATA_DIR.join("latest_failed"));
 pub static LLM_CACHE_DB: LazyLock<PathBuf> = LazyLock::new(|| CACHE_DIR.join("llm_cache.sqlite"));
+pub static SYNTHESIZE_STATE_FILE: LazyLock<PathBuf> =
+    LazyLock::new(|| DATA_DIR.join("synthesize_state.json"));
 pub static FAILED_EXAMPLES_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| ensure_dir(&RUN_DIR.join("failed")));
 

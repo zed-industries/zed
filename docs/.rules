@@ -156,3 +156,14 @@ Zed doesn't index your project like IntelliJ does. You open a folder and start w
 ```
 While some users might miss indexing, Zed's approach is actually better because it's faster.
 ```
+
+## Pull request hygiene
+
+- Include a `Release Notes:` section as the final section in the PR body.
+- For docs-only PRs, use exactly:
+
+```
+Release Notes:
+
+- N/A
+```

@@ -1,7 +1,9 @@
 use crate::{
-    NewFile, Open, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
+    NewFile, Open, OpenMode, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceId,
     item::{Item, ItemEvent},
+    persistence::WorkspaceDb,
 };
+use chrono::{DateTime, Utc};
 use git::Clone as GitClone;
 use gpui::WeakEntity;
 use gpui::{
@@ -9,8 +11,10 @@ use gpui::{
     ParentElement, Render, Styled, Task, Window, actions,
 };
 use menu::{SelectNext, SelectPrevious};
+use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use zed_actions::{Extensions, OpenOnboarding, OpenSettings, agent, command_palette};
@@ -88,7 +92,7 @@ impl SectionButton {
 
 impl RenderOnce for SectionButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let id = format!("onb-button-{}", self.label);
+        let id = format!("onb-button-{}-{}", self.label, self.tab_index);
         let action_ref: &dyn Action = &*self.action;
 
         ButtonLike::new(id)
@@ -114,7 +118,23 @@ impl RenderOnce for SectionButton {
                             .size(rems_from_px(12.)),
                     ),
             )
-            .on_click(move |_, window, cx| window.dispatch_action(self.action.boxed_clone(), cx))
+            .on_click(move |_, window, cx| {
+                self.focus_handle.dispatch_action(&*self.action, window, cx)
+            })
+    }
+}
+
+enum SectionVisibility {
+    Always,
+    Conditional(fn(&App) -> bool),
+}
+
+impl SectionVisibility {
+    fn is_visible(&self, cx: &App) -> bool {
+        match self {
+            SectionVisibility::Always => true,
+            SectionVisibility::Conditional(f) => f(cx),
+        }
     }
 }
 
@@ -122,17 +142,25 @@ struct SectionEntry {
     icon: IconName,
     title: &'static str,
     action: &'static dyn Action,
+    visibility_guard: SectionVisibility,
 }
 
 impl SectionEntry {
-    fn render(&self, button_index: usize, focus: &FocusHandle, _cx: &App) -> impl IntoElement {
-        SectionButton::new(
-            self.title,
-            self.icon,
-            self.action,
-            button_index,
-            focus.clone(),
-        )
+    fn render(
+        &self,
+        button_index: usize,
+        focus: &FocusHandle,
+        cx: &App,
+    ) -> Option<impl IntoElement> {
+        self.visibility_guard.is_visible(cx).then(|| {
+            SectionButton::new(
+                self.title,
+                self.icon,
+                self.action,
+                button_index,
+                focus.clone(),
+            )
+        })
     }
 }
 
@@ -144,21 +172,25 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Plus,
                 title: "New File",
                 action: &NewFile,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::FolderOpen,
                 title: "Open Project",
-                action: &Open,
+                action: &Open::DEFAULT,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
                 title: "Clone Repository",
                 action: &GitClone,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::ListCollapse,
                 title: "Open Command Palette",
                 action: &command_palette::Toggle,
+                visibility_guard: SectionVisibility::Always,
             },
         ],
     },
@@ -169,11 +201,15 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Settings,
                 title: "Open Settings",
                 action: &OpenSettings,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::ZedAssistant,
                 title: "View AI Settings",
                 action: &agent::OpenSettings,
+                visibility_guard: SectionVisibility::Conditional(|cx| {
+                    !DisableAiSettings::get_global(cx).disable_ai
+                }),
             },
             SectionEntry {
                 icon: IconName::Blocks,
@@ -182,6 +218,7 @@ const CONTENT: (Section<4>, Section<3>) = (
                     category_filter: None,
                     id: None,
                 },
+                visibility_guard: SectionVisibility::Always,
             },
         ],
     },
@@ -201,7 +238,7 @@ impl<const COLS: usize> Section<COLS> {
                 self.entries
                     .iter()
                     .enumerate()
-                    .map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
+                    .filter_map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
             )
     }
 }
@@ -210,7 +247,14 @@ pub struct WelcomePage {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     fallback_to_recent_projects: bool,
-    recent_workspaces: Option<Vec<(WorkspaceId, SerializedWorkspaceLocation, PathList)>>,
+    recent_workspaces: Option<
+        Vec<(
+            WorkspaceId,
+            SerializedWorkspaceLocation,
+            PathList,
+            DateTime<Utc>,
+        )>,
+    >,
 }
 
 impl WelcomePage {
@@ -225,9 +269,14 @@ impl WelcomePage {
             .detach();
 
         if fallback_to_recent_projects {
+            let fs = workspace
+                .upgrade()
+                .map(|ws| ws.read(cx).app_state().fs.clone());
+            let db = WorkspaceDb::global(cx);
             cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
-                let workspaces = WORKSPACE_DB
-                    .recent_workspaces_on_disk()
+                let Some(fs) = fs else { return };
+                let workspaces = db
+                    .recent_workspaces_on_disk(fs.as_ref())
                     .await
                     .log_err()
                     .unwrap_or_default();
@@ -266,22 +315,21 @@ impl WelcomePage {
         cx: &mut Context<Self>,
     ) {
         if let Some(recent_workspaces) = &self.recent_workspaces {
-            if let Some((_workspace_id, location, paths)) = recent_workspaces.get(action.index) {
-                let paths = paths.clone();
-                let location = location.clone();
+            if let Some((_workspace_id, location, paths, _timestamp)) =
+                recent_workspaces.get(action.index)
+            {
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
-                let workspace = self.workspace.clone();
 
                 if is_local {
+                    let paths = paths.clone();
                     let paths = paths.paths().to_vec();
-                    cx.spawn_in(window, async move |_, cx| {
-                        let _ = workspace.update_in(cx, |workspace, window, cx| {
+                    self.workspace
+                        .update(cx, |workspace, cx| {
                             workspace
-                                .open_workspace_for_paths(true, paths, window, cx)
-                                .detach();
-                        });
-                    })
-                    .detach();
+                                .open_workspace_for_paths(OpenMode::Replace, paths, window, cx)
+                                .detach_and_log_err(cx);
+                        })
+                        .log_err();
                 } else {
                     use zed_actions::OpenRecent;
                     window.dispatch_action(OpenRecent::default().boxed_clone(), cx);
@@ -302,7 +350,8 @@ impl WelcomePage {
 
     fn render_recent_project(
         &self,
-        index: usize,
+        project_index: usize,
+        tab_index: usize,
         location: &SerializedWorkspaceLocation,
         paths: &PathList,
     ) -> impl IntoElement {
@@ -323,8 +372,10 @@ impl WelcomePage {
         SectionButton::new(
             title,
             icon,
-            &OpenRecentProject { index },
-            10,
+            &OpenRecentProject {
+                index: project_index,
+            },
+            tab_index,
             self.focus_handle.clone(),
         )
     }
@@ -343,7 +394,9 @@ impl Render for WelcomePage {
             .flatten()
             .take(5)
             .enumerate()
-            .map(|(index, (_, loc, paths))| self.render_recent_project(index, loc, paths))
+            .map(|(index, (_, loc, paths, _))| {
+                self.render_recent_project(index, first_section_entries + index, loc, paths)
+            })
             .collect::<Vec<_>>();
 
         let second_section = if self.fallback_to_recent_projects && !recent_projects.is_empty() {
@@ -376,11 +429,11 @@ impl Render for WelcomePage {
                     .relative()
                     .size_full()
                     .px_12()
-                    .py_40()
                     .max_w(px(1100.))
                     .child(
                         v_flex()
-                            .size_full()
+                            .flex_1()
+                            .justify_center()
                             .max_w_128()
                             .mx_auto()
                             .gap_6()
@@ -447,7 +500,7 @@ impl Item for WelcomePage {
         false
     }
 
-    fn to_item_events(event: &Self::Event, mut f: impl FnMut(crate::item::ItemEvent)) {
+    fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(crate::item::ItemEvent)) {
         f(*event)
     }
 }
@@ -467,7 +520,7 @@ impl crate::SerializableItem for WelcomePage {
             alive_items,
             workspace_id,
             "welcome_pages",
-            &persistence::WELCOME_PAGES,
+            &persistence::WelcomePagesDb::global(cx),
             cx,
         )
     }
@@ -480,7 +533,7 @@ impl crate::SerializableItem for WelcomePage {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        if persistence::WELCOME_PAGES
+        if persistence::WelcomePagesDb::global(cx)
             .get_welcome_page(item_id, workspace_id)
             .ok()
             .is_some_and(|is_open| is_open)
@@ -502,11 +555,10 @@ impl crate::SerializableItem for WelcomePage {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        Some(cx.background_spawn(async move {
-            persistence::WELCOME_PAGES
-                .save_welcome_page(item_id, workspace_id, true)
-                .await
-        }))
+        let db = persistence::WelcomePagesDb::global(cx);
+        Some(cx.background_spawn(
+            async move { db.save_welcome_page(item_id, workspace_id, true).await },
+        ))
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -540,7 +592,7 @@ mod persistence {
         )]);
     }
 
-    db::static_connection!(WELCOME_PAGES, WelcomePagesDb, [WorkspaceDb]);
+    db::static_connection!(WelcomePagesDb, [WorkspaceDb]);
 
     impl WelcomePagesDb {
         query! {

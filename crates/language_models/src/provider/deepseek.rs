@@ -3,7 +3,7 @@ use collections::{BTreeMap, HashMap};
 use deepseek::DEEPSEEK_API_URL;
 
 use futures::Stream;
-use futures::{FutureExt, StreamExt, future, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
@@ -16,12 +16,13 @@ use language_model::{
 pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 
 use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
+
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("deepseek");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("DeepSeek");
@@ -203,12 +204,10 @@ impl DeepSeekLanguageModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<deepseek::StreamResponse>>>> {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = DeepSeekLanguageModelProvider::api_url(cx);
             (state.api_key_state.key(&api_url), api_url)
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped"))).boxed();
-        };
+        });
 
         let future = self.request_limiter.stream(async move {
             let Some(api_key) = api_key else {
@@ -244,6 +243,10 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
         true
     }
 
@@ -328,15 +331,25 @@ pub fn into_deepseek(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) => messages.push(match message.role {
-                    Role::User => deepseek::RequestMessage::User { content: text },
-                    Role::Assistant => deepseek::RequestMessage::Assistant {
-                        content: Some(text),
-                        tool_calls: Vec::new(),
-                        reasoning_content: current_reasoning.take(),
-                    },
-                    Role::System => deepseek::RequestMessage::System { content: text },
-                }),
+                MessageContent::Text(text) => {
+                    let should_add = if message.role == Role::User {
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+
+                    if should_add {
+                        messages.push(match message.role {
+                            Role::User => deepseek::RequestMessage::User { content: text },
+                            Role::Assistant => deepseek::RequestMessage::Assistant {
+                                content: Some(text),
+                                tool_calls: Vec::new(),
+                                reasoning_content: current_reasoning.take(),
+                            },
+                            Role::System => deepseek::RequestMessage::System { content: text },
+                        });
+                    }
+                }
                 MessageContent::Thinking { text, .. } => {
                     // Accumulate reasoning content for next assistant message
                     current_reasoning.get_or_insert_default().push_str(&text);
@@ -442,7 +455,9 @@ impl DeepSeekEventMapper {
         };
 
         let mut events = Vec::new();
-        if let Some(content) = choice.delta.content.clone() {
+        if let Some(content) = choice.delta.content.clone()
+            && !content.is_empty()
+        {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
 
@@ -470,6 +485,23 @@ impl DeepSeekEventMapper {
                         entry.arguments.push_str(&arguments);
                     }
                 }
+
+                if !entry.id.is_empty() && !entry.name.is_empty() {
+                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                        &fix_streamed_json(&entry.arguments),
+                    ) {
+                        events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: entry.id.clone().into(),
+                                name: entry.name.as_str().into(),
+                                is_input_complete: false,
+                                input,
+                                raw_input: entry.arguments.clone(),
+                                thought_signature: None,
+                            },
+                        )));
+                    }
+                }
             }
         }
 
@@ -488,7 +520,7 @@ impl DeepSeekEventMapper {
             }
             Some("tool_calls") => {
                 events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match serde_json::Value::from_str(&tool_call.arguments) {
+                    match parse_tool_arguments(&tool_call.arguments) {
                         Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
                             LanguageModelToolUse {
                                 id: tool_call.id.clone().into(),
@@ -540,10 +572,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     let _ = task.await;
                 }
 
@@ -571,7 +600,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn(async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -584,7 +613,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn(async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -635,7 +664,7 @@ impl Render for ConfigurationView {
                 .child(self.api_key_editor.clone())
                 .child(
                     Label::new(format!(
-                        "Or set the {API_KEY_ENV_VAR_NAME} environment variable."
+                        "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
                     ))
                     .size(LabelSize::Small)
                     .color(Color::Muted),
