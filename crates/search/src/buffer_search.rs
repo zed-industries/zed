@@ -114,81 +114,23 @@ impl Render for BufferSearchBar {
                 .map(|splittable_editor| {
                     let editor_ref = splittable_editor.read(cx);
                     let diff_view_style = editor_ref.diff_view_style();
-                    let is_split = editor_ref.is_split();
+
+                    let is_split_setting = diff_view_style == DiffViewStyle::Split;
+                    let is_really_split = editor_ref.is_split();
                     let min_columns =
                         EditorSettings::get_global(cx).minimum_split_diff_width as u32;
 
-                    let mut split_button = IconButton::new("diff-split", IconName::DiffSplit)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(Tooltip::element(move |_, cx| {
-                            let message = if min_columns == 0 {
-                                SharedString::from("Split")
-                            } else {
-                                format!("Split when wider than {} columns", min_columns).into()
-                            };
-
-                            v_flex()
-                                .child(message)
-                                .child(
-                                    h_flex()
-                                        .gap_0p5()
-                                        .text_ui_sm(cx)
-                                        .text_color(Color::Muted.color(cx))
-                                        .children(render_modifiers(
-                                            &gpui::Modifiers::secondary_key(),
-                                            PlatformStyle::platform(),
-                                            None,
-                                            Some(TextSize::Small.rems(cx).into()),
-                                            false,
-                                        ))
-                                        .child("click to change min width"),
-                                )
-                                .into_any()
-                        }))
-                        .on_click({
-                            let splittable_editor = splittable_editor.downgrade();
-                            move |_, window, cx| {
-                                if window.modifiers().secondary() {
-                                    window.dispatch_action(
-                                        OpenSettingsAt {
-                                            path: "minimum_split_diff_width".to_string(),
-                                        }
-                                        .boxed_clone(),
-                                        cx,
-                                    );
-                                } else {
-                                    update_settings_file(
-                                        <dyn Fs>::global(cx),
-                                        cx,
-                                        |settings, _| {
-                                            settings.editor.diff_view_style =
-                                                Some(DiffViewStyle::Split);
-                                        },
-                                    );
-                                    if diff_view_style == DiffViewStyle::Unified {
-                                        splittable_editor
-                                            .update(cx, |editor, cx| {
-                                                editor.toggle_split(&ToggleSplitDiff, window, cx);
-                                            })
-                                            .ok();
-                                    }
-                                }
-                            }
-                        });
-
-                    if diff_view_style == DiffViewStyle::Split {
-                        if !is_split {
-                            split_button = split_button.icon_color(Color::Disabled)
-                        } else {
-                            split_button = split_button.toggle_state(true)
-                        }
-                    }
+                    let split_icon = if is_split_setting && !is_really_split {
+                        IconName::DiffSplitAuto
+                    } else {
+                        IconName::DiffSplit
+                    };
 
                     h_flex()
                         .gap_1()
                         .child(
                             IconButton::new("diff-unified", IconName::DiffUnified)
-                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::Small)
                                 .toggle_state(diff_view_style == DiffViewStyle::Unified)
                                 .tooltip(Tooltip::text("Unified"))
                                 .on_click({
@@ -216,7 +158,71 @@ impl Render for BufferSearchBar {
                                     }
                                 }),
                         )
-                        .child(split_button)
+                        .child(
+                            IconButton::new("diff-split", split_icon)
+                                .toggle_state(diff_view_style == DiffViewStyle::Split)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::element(move |_, cx| {
+                                    let message = if is_split_setting && !is_really_split {
+                                        format!("Split when wider than {} columns", min_columns)
+                                            .into()
+                                    } else {
+                                        SharedString::from("Split")
+                                    };
+
+                                    v_flex()
+                                        .child(message)
+                                        .child(
+                                            h_flex()
+                                                .gap_0p5()
+                                                .text_ui_sm(cx)
+                                                .text_color(Color::Muted.color(cx))
+                                                .children(render_modifiers(
+                                                    &gpui::Modifiers::secondary_key(),
+                                                    PlatformStyle::platform(),
+                                                    None,
+                                                    Some(TextSize::Small.rems(cx).into()),
+                                                    false,
+                                                ))
+                                                .child("click to change min width"),
+                                        )
+                                        .into_any()
+                                }))
+                                .on_click({
+                                    let splittable_editor = splittable_editor.downgrade();
+                                    move |_, window, cx| {
+                                        if window.modifiers().secondary() {
+                                            window.dispatch_action(
+                                                OpenSettingsAt {
+                                                    path: "minimum_split_diff_width".to_string(),
+                                                }
+                                                .boxed_clone(),
+                                                cx,
+                                            );
+                                        } else {
+                                            update_settings_file(
+                                                <dyn Fs>::global(cx),
+                                                cx,
+                                                |settings, _| {
+                                                    settings.editor.diff_view_style =
+                                                        Some(DiffViewStyle::Split);
+                                                },
+                                            );
+                                            if diff_view_style == DiffViewStyle::Unified {
+                                                splittable_editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.toggle_split(
+                                                            &ToggleSplitDiff,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        }
+                                    }
+                                }),
+                        )
                 })
         } else {
             None
@@ -240,7 +246,7 @@ impl Render for BufferSearchBar {
 
             let collapse_expand_icon_button = |id| {
                 IconButton::new(id, icon)
-                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
                             tooltip_label,
