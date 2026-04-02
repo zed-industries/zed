@@ -1465,6 +1465,73 @@ func (d *testDriver) validateStore() bool {
 		}
 	}
 
+	// --- RESPONSE ENTRIES ISOLATION VALIDATION ---
+	// Verify that follow-up interactions don't accumulate response_entries from
+	// previous interactions in the same session. This detects the bug where Zed's
+	// flush_streaming_throttle resends ALL entries in the ACP thread and the
+	// accumulator treats old entries as new, ballooning response_entries.
+	log.Println("\n--------------------------------------------------")
+	log.Println("  RESPONSE ENTRIES ISOLATION VALIDATION")
+	log.Println("--------------------------------------------------")
+
+	// Group interactions by session
+	sessionInteractions := make(map[string][]*types.Interaction)
+	for _, i := range interactions {
+		if i.State == types.InteractionStateComplete && len(i.ResponseEntries) > 0 {
+			sessionInteractions[i.SessionID] = append(sessionInteractions[i.SessionID], i)
+		}
+	}
+
+	isolationChecked := 0
+	for sessionID, ints := range sessionInteractions {
+		if len(ints) < 2 {
+			continue // Need at least 2 interactions to check isolation
+		}
+
+		// Sort by creation time
+		sort.Slice(ints, func(a, b int) bool {
+			return ints[a].Created.Before(ints[b].Created)
+		})
+
+		// Collect message_ids from each interaction
+		type parsedEntry struct {
+			MessageID string `json:"message_id"`
+		}
+
+		// For each follow-up interaction, check it doesn't contain message_ids from earlier ones
+		previousMessageIDs := make(map[string]string) // message_id → interaction_id that owns it
+		for _, inter := range ints {
+			var entries []parsedEntry
+			if err := json.Unmarshal(inter.ResponseEntries, &entries); err != nil {
+				continue
+			}
+
+			// Check for leakage: does this interaction contain message_ids from a previous one?
+			for _, e := range entries {
+				if e.MessageID == "" {
+					continue
+				}
+				if ownerID, leaked := previousMessageIDs[e.MessageID]; leaked {
+					errors = append(errors, fmt.Sprintf(
+						"ISOLATION VIOLATION: Interaction %s (session %s) contains message_id %q which belongs to earlier interaction %s — response_entries leaked across interactions",
+						truncate(inter.ID, 12), truncate(sessionID, 12), e.MessageID, truncate(ownerID, 12)))
+				}
+			}
+
+			// Register this interaction's message_ids
+			for _, e := range entries {
+				if e.MessageID != "" {
+					previousMessageIDs[e.MessageID] = inter.ID
+				}
+			}
+			isolationChecked++
+		}
+	}
+	if isolationChecked > 0 {
+		log.Printf("[store] Response entries isolation: checked %d interactions across %d sessions with follow-ups",
+			isolationChecked, len(sessionInteractions))
+	}
+
 	// --- THREAD TITLE VALIDATION ---
 	log.Println("\n--------------------------------------------------")
 	log.Println("  THREAD TITLE VALIDATION")
