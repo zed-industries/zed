@@ -3,12 +3,12 @@
 [
   (addition)
   (new_file)
-] @diff.plus
+] @string @diff.plus
 
 [
   (deletion)
   (old_file)
-] @diff.minus
+]  @keyword @diff.minus
 
 (commit) @constant
 
