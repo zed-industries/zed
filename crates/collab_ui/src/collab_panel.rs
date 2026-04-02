@@ -1232,6 +1232,7 @@ impl CollabPanel {
     ) -> impl IntoElement {
         let channel_store = self.channel_store.read(cx);
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
+
         ListItem::new("channel-notes")
             .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -1240,17 +1241,25 @@ impl CollabPanel {
             .start_slot(
                 h_flex()
                     .relative()
-                    .gap_1()
+                    .gap_1p5()
                     .child(render_tree_branch(false, true, window, cx))
-                    .child(IconButton::new(0, IconName::File))
-                    .children(has_channel_buffer_changed.then(|| {
-                        div()
-                            .w_1p5()
-                            .absolute()
-                            .right(px(2.))
-                            .top(px(2.))
-                            .child(Indicator::dot().color(Color::Info))
-                    })),
+                    .child(
+                        h_flex()
+                            .child(
+                                Icon::new(IconName::Reader)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .when(has_channel_buffer_changed, |this| {
+                                this.child(
+                                    div()
+                                        .absolute()
+                                        .top_neg_0p5()
+                                        .right_0()
+                                        .child(Indicator::dot().color(Color::Info)),
+                                )
+                            }),
+                    ),
             )
             .child(Label::new("notes"))
             .tooltip(Tooltip::text("Open Channel Notes"))
