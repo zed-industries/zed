@@ -17634,6 +17634,12 @@ impl Editor {
         );
     }
 
+    fn go_to_diagnostic_searches_at_cursor(&self, cx: &mut Context<Self>) -> bool {
+        ProjectSettings::get_global(cx)
+            .diagnostics
+            .go_to_diagnostic_searches_at_cursor
+    }
+
     pub fn go_to_diagnostic(
         &mut self,
         action: &GoToDiagnostic,
@@ -17643,8 +17649,15 @@ impl Editor {
         if !self.diagnostics_enabled() {
             return;
         }
+        let diagnostics_already_active = self.any_active_diagnostics();
+        let begin_at_cursor = self.go_to_diagnostic_searches_at_cursor(cx);
+        let direction = if !diagnostics_already_active && begin_at_cursor {
+            None
+        } else {
+            Some(Direction::Next)
+        };
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
-        self.go_to_diagnostic_impl(Direction::Next, action.severity, window, cx)
+        self.go_to_diagnostic_impl(direction, action.severity, window, cx)
     }
 
     pub fn go_to_prev_diagnostic(
@@ -17657,12 +17670,12 @@ impl Editor {
             return;
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
-        self.go_to_diagnostic_impl(Direction::Prev, action.severity, window, cx)
+        self.go_to_diagnostic_impl(Some(Direction::Prev), action.severity, window, cx)
     }
 
     pub fn go_to_diagnostic_impl(
         &mut self,
-        direction: Direction,
+        direction: Option<Direction>,
         severity: GoToDiagnosticSeverityFilter,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -17703,29 +17716,57 @@ impl Editor {
         );
 
         let mut found: Option<DiagnosticEntryRef<MultiBufferOffset>> = None;
-        if direction == Direction::Prev {
-            'outer: for prev_diagnostics in [before.collect::<Vec<_>>(), after.collect::<Vec<_>>()]
-            {
-                for diagnostic in prev_diagnostics.into_iter().rev() {
-                    if diagnostic.range.start != selection.start
-                        || active_group_id
-                            .is_some_and(|active| diagnostic.diagnostic.group_id < active)
-                    {
-                        found = Some(diagnostic);
-                        break 'outer;
+        match direction {
+            Some(Direction::Prev) => {
+                'outer: for prev_diagnostics in
+                    [before.collect::<Vec<_>>(), after.collect::<Vec<_>>()]
+                {
+                    for diagnostic in prev_diagnostics.into_iter().rev() {
+                        if diagnostic.range.start != selection.start
+                            || active_group_id
+                                .is_some_and(|active| diagnostic.diagnostic.group_id < active)
+                        {
+                            found = Some(diagnostic);
+                            break 'outer;
+                        }
                     }
                 }
             }
-        } else {
-            for diagnostic in after.chain(before) {
-                if diagnostic.range.start != selection.start
-                    || active_group_id.is_some_and(|active| diagnostic.diagnostic.group_id > active)
-                {
-                    found = Some(diagnostic);
-                    break;
+            Some(Direction::Next) => {
+                for diagnostic in after.chain(before) {
+                    if diagnostic.range.start != selection.start
+                        || active_group_id
+                            .is_some_and(|active| diagnostic.diagnostic.group_id > active)
+                    {
+                        found = Some(diagnostic);
+                        break;
+                    }
+                }
+            }
+            None => {
+                log::info!("{selection:?}");
+                // Falls back to Next behavior if on-cursor search fails
+                let mut next: Option<DiagnosticEntryRef<MultiBufferOffset>> = None;
+                for diagnostic in after.chain(before) {
+                    if diagnostic.range.contains(&selection.start)
+                        || diagnostic.range.end == selection.head()
+                    {
+                        found = Some(diagnostic);
+                        break;
+                    } else if next.is_none() && diagnostic.range.start != selection.start
+                        || active_group_id
+                            .is_some_and(|active| diagnostic.diagnostic.group_id > active)
+                    {
+                        next = Some(diagnostic);
+                    }
+                }
+
+                if found.is_none() {
+                    found = next;
                 }
             }
         }
+
         let Some(next_diagnostic) = found else {
             return;
         };
@@ -19669,6 +19710,14 @@ impl Editor {
         match &self.active_diagnostics {
             ActiveDiagnostic::Group(group) => Some(group),
             _ => None,
+        }
+    }
+
+    pub fn any_active_diagnostics(&self) -> bool {
+        match &self.active_diagnostics {
+            ActiveDiagnostic::None => false,
+            ActiveDiagnostic::All => true,
+            ActiveDiagnostic::Group(_) => true,
         }
     }
 

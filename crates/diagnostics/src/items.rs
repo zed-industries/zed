@@ -64,13 +64,20 @@ impl Render for DiagnosticIndicator {
                 .message
                 .split_once('\n')
                 .map_or(&*diagnostic.message, |(first, _)| first);
+            let diagnostics_already_active = self.any_active_diagnostics(cx);
+            let begin_at_cursor = self.go_to_diagnostic_searches_at_cursor(cx);
+            let tooltip = if begin_at_cursor && !diagnostics_already_active {
+                "Expand Diagnostics"
+            } else {
+                "Next Diagnostic"
+            };
             Some(
                 Button::new("diagnostic_message", SharedString::new(message))
                     .label_size(LabelSize::Small)
                     .truncate(true)
-                    .tooltip(|_window, cx| {
+                    .tooltip(move |_window, cx| {
                         Tooltip::for_action(
-                            "Next Diagnostic",
+                            tooltip,
                             &editor::actions::GoToDiagnostic::default(),
                             cx,
                         )
@@ -154,11 +161,32 @@ impl DiagnosticIndicator {
         }
     }
 
+    fn any_active_diagnostics(&self, cx: &mut Context<Self>) -> bool {
+        if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
+            editor.read(cx).any_active_diagnostics()
+        } else {
+            false
+        }
+    }
+
+    fn go_to_diagnostic_searches_at_cursor(&self, cx: &mut Context<Self>) -> bool {
+        ProjectSettings::get_global(cx)
+            .diagnostics
+            .go_to_diagnostic_searches_at_cursor
+    }
+
     fn go_to_next_diagnostic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let diagnostics_already_active = self.any_active_diagnostics(cx);
+        let begin_at_cursor = self.go_to_diagnostic_searches_at_cursor(cx);
+        let direction = if !diagnostics_already_active && begin_at_cursor {
+            None
+        } else {
+            Some(editor::Direction::Next)
+        };
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
             editor.update(cx, |editor, cx| {
                 editor.go_to_diagnostic_impl(
-                    editor::Direction::Next,
+                    direction,
                     GoToDiagnosticSeverityFilter::default(),
                     window,
                     cx,
