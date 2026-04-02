@@ -1231,6 +1231,12 @@ async fn load_thread_from_agent(
     let session_id = acp::SessionId::new(agent_sid);
     let work_dirs = PathList::new(&[cwd.clone()]);
     let project_clone = project.clone();
+    // Clone the connection before passing to load_session, which consumes its Rc<Self>.
+    // We must keep a strong reference alive until load_task completes, because the
+    // spawned tasks inside open_thread/load_thread only hold WeakEntity<NativeAgent>.
+    // Without this, the NativeAgent entity is released and those tasks fail with
+    // "entity released".
+    let _connection_keepalive = connection.clone();
     let load_task = cx.update(|cx| {
         connection.load_session(session_id, project_clone, work_dirs, None, cx)
     });
@@ -1406,6 +1412,12 @@ fn open_existing_thread_sync(
         // This works for both NativeAgent (from local DB) and ACP agents (via session/load protocol)
         let session_id = acp::SessionId::new(request_clone.acp_thread_id.clone());
         let work_dirs = PathList::new(&[cwd.clone()]);
+        // Clone the connection before passing to load_session, which consumes its Rc<Self>.
+        // We must keep a strong reference alive until load_task completes, because the
+        // spawned tasks inside open_thread/load_thread only hold WeakEntity<NativeAgent>.
+        // Without this, the NativeAgent entity is released and those tasks fail with
+        // "entity released".
+        let _connection_keepalive = connection.clone();
         let load_task = cx.update(|cx| {
             connection.load_session(session_id, project_clone, work_dirs, None, cx)
         });
