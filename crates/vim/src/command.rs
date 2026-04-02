@@ -1348,7 +1348,7 @@ impl Position {
         let snapshot = editor.snapshot(window, cx);
         let target = match self {
             Position::Line { row, offset } => {
-                if let Some(anchor) = editor.active_excerpt(cx).and_then(|(_, buffer, _)| {
+                if let Some(anchor) = editor.active_buffer(cx).and_then(|buffer| {
                     editor.buffer().read(cx).buffer_point_to_anchor(
                         &buffer,
                         Point::new(row.saturating_sub(1), 0),
@@ -2336,7 +2336,7 @@ impl Vim {
             match c {
                 '%' => {
                     self.update_editor(cx, |_, editor, cx| {
-                        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+                        if let Some(buffer) = editor.active_buffer(cx)
                             && let Some(file) = buffer.read(cx).file()
                             && let Some(local) = file.as_local()
                         {

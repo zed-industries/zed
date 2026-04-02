@@ -247,7 +247,8 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2026_03_16::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2026_03_16,
         ),
-        MigrationType::Json(migrations::m_2026_03_31::remove_text_thread_settings),
+        MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
+        MigrationType::Json(migrations::m_2026_04_01::restructure_profiles_with_settings_key),
     ];
     run_migrations(text, migrations)
 }
@@ -941,7 +942,8 @@ mod tests {
                     "foo": "bar"
                 },
                 "edit_predictions": {
-                    }
+                    "enabled_in_text_threads": false,
+                }
             }"#,
             ),
         );
@@ -2391,6 +2393,132 @@ mod tests {
                     "profiles": {
                         "dev": {
                             "relative_line_numbers": "disabled"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_make_play_sound_when_agent_done_an_enum() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": true
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "agent": {
+                        "play_sound_when_agent_done": "always"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "agent": {
+                        "play_sound_when_agent_done": "never"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": "when_hidden"
+                }
+            }"#
+            .unindent(),
+            None,
+        );
+
+        // Platform key: settings nested inside "macos" should be migrated
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "agent": {
+                        "play_sound_when_agent_done": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "agent": {
+                            "play_sound_when_agent_done": "always"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "agent": {
+                            "play_sound_when_agent_done": false
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "agent": {
+                                "play_sound_when_agent_done": "never"
+                            }
                         }
                     }
                 }
@@ -4482,106 +4610,75 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_text_thread_settings() {
-        assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_03_31::remove_text_thread_settings,
-            )],
-            r#"{
-    "agent": {
-        "default_model": {
-            "provider": "anthropic",
-            "model": "claude-sonnet"
-        },
-        "default_view": "text_thread"
-    },
-    "edit_predictions": {
-        "mode": "eager",
-        "enabled_in_text_threads": true
-    },
-    "slash_commands": {
-        "cargo_workspace": {
-            "enabled": true
-        }
-    }
-}"#,
+    fn test_restructure_profiles_with_settings_key() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "buffer_font_size": 14,
+                    "profiles": {
+                        "Presenting": {
+                            "buffer_font_size": 20,
+                            "theme": "One Light"
+                        },
+                        "Minimal": {
+                            "vim_mode": true
+                        }
+                    }
+                }
+            "#
+            .unindent(),
             Some(
-                r#"{
-    "agent": {
-        "default_model": {
-            "provider": "anthropic",
-            "model": "claude-sonnet"
-        }
-    },
-    "edit_predictions": {
-        "mode": "eager"
-    }
-}"#,
+                &r#"
+                {
+                    "buffer_font_size": 14,
+                    "profiles": {
+                        "Presenting": {
+                            "settings": {
+                                "buffer_font_size": 20,
+                                "theme": "One Light"
+                            }
+                        },
+                        "Minimal": {
+                            "settings": {
+                                "vim_mode": true
+                            }
+                        }
+                    }
+                }
+            "#
+                .unindent(),
             ),
         );
     }
 
     #[test]
-    fn test_remove_text_thread_settings_only_default_view() {
-        assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_03_31::remove_text_thread_settings,
-            )],
-            r#"{
-    "agent": {
-        "default_model": "claude-sonnet",
-        "default_view": "thread"
-    }
-}"#,
-            Some(
-                r#"{
-    "agent": {
-        "default_model": "claude-sonnet"
-    }
-}"#,
-            ),
+    fn test_restructure_profiles_with_settings_key_already_migrated() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "profiles": {
+                        "Presenting": {
+                            "settings": {
+                                "buffer_font_size": 20
+                            }
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            None,
         );
     }
 
     #[test]
-    fn test_remove_text_thread_settings_only_slash_commands() {
-        assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_03_31::remove_text_thread_settings,
-            )],
-            r#"{
-    "slash_commands": {
-        "cargo_workspace": {
-            "enabled": true
-        }
-    },
-    "vim_mode": true
-}"#,
-            Some(
-                r#"{
-    "vim_mode": true
-}"#,
-            ),
-        );
-    }
-
-    #[test]
-    fn test_remove_text_thread_settings_none_present() {
-        assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_03_31::remove_text_thread_settings,
-            )],
-            r#"{
-    "agent": {
-        "default_model": {
-            "provider": "anthropic",
-            "model": "claude-sonnet"
-        }
-    },
-    "edit_predictions": {
-        "mode": "eager"
-    }
-}"#,
+    fn test_restructure_profiles_with_settings_key_no_profiles() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "buffer_font_size": 14
+                }
+            "#
+            .unindent(),
             None,
         );
     }

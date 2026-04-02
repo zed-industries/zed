@@ -709,19 +709,25 @@ impl Sidebar {
         // Derive active_entry from the active workspace's agent panel.
         // Draft is checked first because a conversation can have a session_id
         // before any messages are sent. However, a thread that's still loading
-        // also appears as a "draft" (no messages yet), so when we already have
-        // an eager Thread write for this workspace we preserve it. A session_id
-        // on a non-draft is a positive Thread signal. The remaining case
-        // (conversation exists, not draft, no session_id) is a genuine
-        // mid-load — keep the previous value.
+        // also appears as a "draft" (no messages yet).
         if let Some(active_ws) = &active_workspace {
             if let Some(panel) = active_ws.read(cx).panel::<AgentPanel>(cx) {
                 if panel.read(cx).active_thread_is_draft(cx)
                     || panel.read(cx).active_conversation_view().is_none()
                 {
+                    let conversation_parent_id = panel
+                        .read(cx)
+                        .active_conversation_view()
+                        .and_then(|cv| cv.read(cx).parent_id(cx));
                     let preserving_thread =
-                        matches!(&self.active_entry, Some(ActiveEntry::Thread { .. }))
-                            && self.active_entry_workspace() == Some(active_ws);
+                        if let Some(ActiveEntry::Thread { session_id, .. }) = &self.active_entry {
+                            self.active_entry_workspace() == Some(active_ws)
+                                && conversation_parent_id
+                                    .as_ref()
+                                    .is_some_and(|id| id == session_id)
+                        } else {
+                            false
+                        };
                     if !preserving_thread {
                         self.active_entry = Some(ActiveEntry::Draft(active_ws.clone()));
                     }
@@ -3533,6 +3539,7 @@ impl Sidebar {
 
         let archive_view = cx.new(|cx| {
             ThreadsArchiveView::new(
+                active_workspace.downgrade(),
                 agent_connection_store.clone(),
                 agent_server_store.clone(),
                 window,

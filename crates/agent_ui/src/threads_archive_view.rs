@@ -1,3 +1,6 @@
+use std::collections::HashSet;
+use std::sync::Arc;
+
 use crate::agent_connection_store::AgentConnectionStore;
 
 use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
@@ -9,18 +12,31 @@ use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::Editor;
 use fs::Fs;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, ListState, Render,
-    SharedString, Subscription, Task, WeakEntity, Window, list, prelude::*, px,
+    AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    ListState, Render, SharedString, Subscription, Task, WeakEntity, Window, list, prelude::*, px,
 };
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
+use picker::{
+    Picker, PickerDelegate,
+    highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
+};
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::ThreadItem;
 use ui::{
-    Divider, KeyBinding, Tooltip, WithScrollbar, prelude::*, utils::platform_title_bar_height,
+    Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, WithScrollbar,
+    prelude::*, utils::platform_title_bar_height,
+};
+use ui_input::ErasedEditor;
+use util::ResultExt;
+use util::paths::PathExt;
+use workspace::{
+    ModalView, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
+    resolve_worktree_workspaces,
 };
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
@@ -110,12 +126,14 @@ pub struct ThreadsArchiveView {
     filter_editor: Entity<Editor>,
     _subscriptions: Vec<gpui::Subscription>,
     _refresh_history_task: Task<()>,
+    workspace: WeakEntity<Workspace>,
     agent_connection_store: WeakEntity<AgentConnectionStore>,
     agent_server_store: WeakEntity<AgentServerStore>,
 }
 
 impl ThreadsArchiveView {
     pub fn new(
+        workspace: WeakEntity<Workspace>,
         agent_connection_store: WeakEntity<AgentConnectionStore>,
         agent_server_store: WeakEntity<AgentServerStore>,
         window: &mut Window,
@@ -176,6 +194,7 @@ impl ThreadsArchiveView {
                 thread_metadata_store_subscription,
             ],
             _refresh_history_task: Task::ready(()),
+            workspace,
             agent_connection_store,
             agent_server_store,
         };
@@ -254,7 +273,14 @@ impl ThreadsArchiveView {
 
         self.list_state.reset(items.len());
         self.items = items;
-        self.hovered_index = None;
+
+        if !preserve {
+            self.hovered_index = None;
+        } else if let Some(ix) = self.hovered_index {
+            if ix >= self.items.len() || !self.is_selectable_item(ix) {
+                self.hovered_index = None;
+            }
+        }
 
         if let Some(scroll_top) = saved_scroll {
             self.list_state.scroll_to(scroll_top);
@@ -288,9 +314,55 @@ impl ThreadsArchiveView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if thread.folder_paths.is_empty() {
+            self.show_project_picker_for_thread(thread, window, cx);
+            return;
+        }
+
         self.selection = None;
         self.reset_filter_editor_text(window, cx);
         cx.emit(ThreadsArchiveViewEvent::Unarchive { thread });
+    }
+
+    fn show_project_picker_for_thread(
+        &mut self,
+        thread: ThreadMetadata,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let archive_view = cx.weak_entity();
+        let fs = workspace.read(cx).app_state().fs.clone();
+        let current_workspace_id = workspace.read(cx).database_id();
+        let sibling_workspace_ids: HashSet<WorkspaceId> = workspace
+            .read(cx)
+            .multi_workspace()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| {
+                mw.read(cx)
+                    .workspaces()
+                    .iter()
+                    .filter_map(|ws| ws.read(cx).database_id())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                ProjectPickerModal::new(
+                    thread,
+                    fs,
+                    archive_view,
+                    current_workspace_id,
+                    sibling_workspace_ids,
+                    window,
+                    cx,
+                )
+            });
+        });
     }
 
     fn is_selectable_item(&self, ix: usize) -> bool {
@@ -380,10 +452,6 @@ impl ThreadsArchiveView {
             return;
         };
 
-        if thread.folder_paths.is_empty() {
-            return;
-        }
-
         self.unarchive_thread(thread.clone(), window, cx);
     }
 
@@ -471,6 +539,7 @@ impl ThreadsArchiveView {
                                 let agent = thread.agent_id.clone();
                                 let session_id = thread.session_id.clone();
                                 cx.listener(move |this, _, _, cx| {
+                                    this.preserve_selection_on_next_update = true;
                                     this.delete_thread(session_id.clone(), agent.clone(), cx);
                                     cx.stop_propagation();
                                 })
@@ -681,5 +750,536 @@ impl Render for ThreadsArchiveView {
             .size_full()
             .child(self.render_header(window, cx))
             .child(content)
+    }
+}
+
+struct ProjectPickerModal {
+    picker: Entity<Picker<ProjectPickerDelegate>>,
+    _subscription: Subscription,
+}
+
+impl ProjectPickerModal {
+    fn new(
+        thread: ThreadMetadata,
+        fs: Arc<dyn Fs>,
+        archive_view: WeakEntity<ThreadsArchiveView>,
+        current_workspace_id: Option<WorkspaceId>,
+        sibling_workspace_ids: HashSet<WorkspaceId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = ProjectPickerDelegate {
+            thread,
+            archive_view,
+            workspaces: Vec::new(),
+            filtered_entries: Vec::new(),
+            selected_index: 0,
+            current_workspace_id,
+            sibling_workspace_ids,
+            focus_handle: cx.focus_handle(),
+        };
+
+        let picker = cx.new(|cx| {
+            Picker::list(delegate, window, cx)
+                .list_measure_all()
+                .modal(false)
+        });
+
+        let picker_focus_handle = picker.focus_handle(cx);
+        picker.update(cx, |picker, _| {
+            picker.delegate.focus_handle = picker_focus_handle;
+        });
+
+        let _subscription =
+            cx.subscribe(&picker, |_this: &mut Self, _, _event: &DismissEvent, cx| {
+                cx.emit(DismissEvent);
+            });
+
+        let db = WorkspaceDb::global(cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let workspaces = db
+                .recent_workspaces_on_disk(fs.as_ref())
+                .await
+                .log_err()
+                .unwrap_or_default();
+            let workspaces = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
+            this.update_in(cx, move |this, window, cx| {
+                this.picker.update(cx, move |picker, cx| {
+                    picker.delegate.workspaces = workspaces;
+                    picker.update_matches(picker.query(cx), window, cx)
+                })
+            })
+            .ok();
+        })
+        .detach();
+
+        picker.focus_handle(cx).focus(window, cx);
+
+        Self {
+            picker,
+            _subscription,
+        }
+    }
+}
+
+impl EventEmitter<DismissEvent> for ProjectPickerModal {}
+
+impl Focusable for ProjectPickerModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl ModalView for ProjectPickerModal {}
+
+impl Render for ProjectPickerModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("ProjectPickerModal")
+            .elevation_3(cx)
+            .w(rems(34.))
+            .on_action(cx.listener(|this, _: &workspace::Open, window, cx| {
+                this.picker.update(cx, |picker, cx| {
+                    picker.delegate.open_local_folder(window, cx)
+                })
+            }))
+            .child(self.picker.clone())
+    }
+}
+
+enum ProjectPickerEntry {
+    Header(SharedString),
+    Workspace(StringMatch),
+}
+
+struct ProjectPickerDelegate {
+    thread: ThreadMetadata,
+    archive_view: WeakEntity<ThreadsArchiveView>,
+    current_workspace_id: Option<WorkspaceId>,
+    sibling_workspace_ids: HashSet<WorkspaceId>,
+    workspaces: Vec<(
+        WorkspaceId,
+        SerializedWorkspaceLocation,
+        PathList,
+        DateTime<Utc>,
+    )>,
+    filtered_entries: Vec<ProjectPickerEntry>,
+    selected_index: usize,
+    focus_handle: FocusHandle,
+}
+
+impl ProjectPickerDelegate {
+    fn update_working_directories_and_unarchive(
+        &mut self,
+        paths: PathList,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.thread.folder_paths = paths.clone();
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.update_working_directories(&self.thread.session_id, paths, cx);
+        });
+
+        self.archive_view
+            .update(cx, |view, cx| {
+                view.selection = None;
+                view.reset_filter_editor_text(window, cx);
+                cx.emit(ThreadsArchiveViewEvent::Unarchive {
+                    thread: self.thread.clone(),
+                });
+            })
+            .log_err();
+    }
+
+    fn is_current_workspace(&self, workspace_id: WorkspaceId) -> bool {
+        self.current_workspace_id == Some(workspace_id)
+    }
+
+    fn is_sibling_workspace(&self, workspace_id: WorkspaceId) -> bool {
+        self.sibling_workspace_ids.contains(&workspace_id)
+            && !self.is_current_workspace(workspace_id)
+    }
+
+    fn selected_match(&self) -> Option<&StringMatch> {
+        match self.filtered_entries.get(self.selected_index)? {
+            ProjectPickerEntry::Workspace(hit) => Some(hit),
+            ProjectPickerEntry::Header(_) => None,
+        }
+    }
+
+    fn open_local_folder(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let paths_receiver = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths_receiver.await else {
+                return;
+            };
+            if paths.is_empty() {
+                return;
+            }
+
+            let work_dirs = PathList::new(&paths);
+
+            this.update_in(cx, |this, window, cx| {
+                this.delegate
+                    .update_working_directories_and_unarchive(work_dirs, window, cx);
+                cx.emit(DismissEvent);
+            })
+            .log_err();
+        })
+        .detach();
+    }
+}
+
+impl EventEmitter<DismissEvent> for ProjectPickerDelegate {}
+
+impl PickerDelegate for ProjectPickerDelegate {
+    type ListItem = AnyElement;
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        format!("Associate the \"{}\" thread with...", self.thread.title).into()
+    }
+
+    fn render_editor(
+        &self,
+        editor: &Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Div {
+        h_flex()
+            .flex_none()
+            .h_9()
+            .px_2p5()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(editor.render(window, cx))
+    }
+
+    fn match_count(&self) -> usize {
+        self.filtered_entries.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        matches!(
+            self.filtered_entries.get(ix),
+            Some(ProjectPickerEntry::Workspace(_))
+        )
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let query = query.trim_start();
+        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let is_empty_query = query.is_empty();
+
+        let sibling_candidates: Vec<_> = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .filter(|(_, (id, _, _, _))| self.is_sibling_workspace(*id))
+            .map(|(id, (_, _, paths, _))| {
+                let combined_string = paths
+                    .ordered_paths()
+                    .map(|path| path.compact().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("");
+                StringMatchCandidate::new(id, &combined_string)
+            })
+            .collect();
+
+        let mut sibling_matches = smol::block_on(fuzzy::match_strings(
+            &sibling_candidates,
+            query,
+            smart_case,
+            true,
+            100,
+            &Default::default(),
+            cx.background_executor().clone(),
+        ));
+
+        sibling_matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.candidate_id.cmp(&b.candidate_id))
+        });
+
+        let recent_candidates: Vec<_> = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .filter(|(_, (id, _, _, _))| {
+                !self.is_current_workspace(*id) && !self.is_sibling_workspace(*id)
+            })
+            .map(|(id, (_, _, paths, _))| {
+                let combined_string = paths
+                    .ordered_paths()
+                    .map(|path| path.compact().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("");
+                StringMatchCandidate::new(id, &combined_string)
+            })
+            .collect();
+
+        let mut recent_matches = smol::block_on(fuzzy::match_strings(
+            &recent_candidates,
+            query,
+            smart_case,
+            true,
+            100,
+            &Default::default(),
+            cx.background_executor().clone(),
+        ));
+
+        recent_matches.sort_unstable_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.candidate_id.cmp(&b.candidate_id))
+        });
+
+        let mut entries = Vec::new();
+
+        let has_siblings_to_show = if is_empty_query {
+            !sibling_candidates.is_empty()
+        } else {
+            !sibling_matches.is_empty()
+        };
+
+        if has_siblings_to_show {
+            entries.push(ProjectPickerEntry::Header("This Window".into()));
+
+            if is_empty_query {
+                for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
+                    if self.is_sibling_workspace(*workspace_id) {
+                        entries.push(ProjectPickerEntry::Workspace(StringMatch {
+                            candidate_id: id,
+                            score: 0.0,
+                            positions: Vec::new(),
+                            string: String::new(),
+                        }));
+                    }
+                }
+            } else {
+                for m in sibling_matches {
+                    entries.push(ProjectPickerEntry::Workspace(m));
+                }
+            }
+        }
+
+        let has_recent_to_show = if is_empty_query {
+            !recent_candidates.is_empty()
+        } else {
+            !recent_matches.is_empty()
+        };
+
+        if has_recent_to_show {
+            entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
+
+            if is_empty_query {
+                for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
+                    if !self.is_current_workspace(*workspace_id)
+                        && !self.is_sibling_workspace(*workspace_id)
+                    {
+                        entries.push(ProjectPickerEntry::Workspace(StringMatch {
+                            candidate_id: id,
+                            score: 0.0,
+                            positions: Vec::new(),
+                            string: String::new(),
+                        }));
+                    }
+                }
+            } else {
+                for m in recent_matches {
+                    entries.push(ProjectPickerEntry::Workspace(m));
+                }
+            }
+        }
+
+        self.filtered_entries = entries;
+
+        self.selected_index = self
+            .filtered_entries
+            .iter()
+            .position(|e| matches!(e, ProjectPickerEntry::Workspace(_)))
+            .unwrap_or(0);
+
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let candidate_id = match self.filtered_entries.get(self.selected_index) {
+            Some(ProjectPickerEntry::Workspace(hit)) => hit.candidate_id,
+            _ => return,
+        };
+        let Some((_workspace_id, _location, paths, _)) = self.workspaces.get(candidate_id) else {
+            return;
+        };
+
+        self.update_working_directories_and_unarchive(paths.clone(), window, cx);
+        cx.emit(DismissEvent);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.workspaces.is_empty() {
+            "No recent projects found"
+        } else {
+            "No matches"
+        };
+        Some(text.into())
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        match self.filtered_entries.get(ix)? {
+            ProjectPickerEntry::Header(title) => Some(
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .when(ix > 0, |this| this.mt_1().child(Divider::horizontal()))
+                    .child(ListSubHeader::new(title.clone()).inset(true))
+                    .into_any_element(),
+            ),
+            ProjectPickerEntry::Workspace(hit) => {
+                let (_, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
+
+                let ordered_paths: Vec<_> = paths
+                    .ordered_paths()
+                    .map(|p| p.compact().to_string_lossy().to_string())
+                    .collect();
+
+                let tooltip_path: SharedString = ordered_paths.join("\n").into();
+
+                let mut path_start_offset = 0;
+                let match_labels: Vec<_> = paths
+                    .ordered_paths()
+                    .map(|p| p.compact())
+                    .map(|path| {
+                        let path_string = path.to_string_lossy();
+                        let path_text = path_string.to_string();
+                        let path_byte_len = path_text.len();
+
+                        let path_positions: Vec<usize> = hit
+                            .positions
+                            .iter()
+                            .copied()
+                            .skip_while(|pos| *pos < path_start_offset)
+                            .take_while(|pos| *pos < path_start_offset + path_byte_len)
+                            .map(|pos| pos - path_start_offset)
+                            .collect();
+
+                        let file_name_match = path.file_name().map(|file_name| {
+                            let file_name_text = file_name.to_string_lossy().into_owned();
+                            let file_name_start = path_byte_len - file_name_text.len();
+                            let highlight_positions: Vec<usize> = path_positions
+                                .iter()
+                                .copied()
+                                .skip_while(|pos| *pos < file_name_start)
+                                .take_while(|pos| *pos < file_name_start + file_name_text.len())
+                                .map(|pos| pos - file_name_start)
+                                .collect();
+                            HighlightedMatch {
+                                text: file_name_text,
+                                highlight_positions,
+                                color: Color::Default,
+                            }
+                        });
+
+                        path_start_offset += path_byte_len;
+                        file_name_match
+                    })
+                    .collect();
+
+                let highlighted_match = HighlightedMatchWithPaths {
+                    prefix: match location {
+                        SerializedWorkspaceLocation::Remote(options) => {
+                            Some(SharedString::from(options.display_name()))
+                        }
+                        _ => None,
+                    },
+                    match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+                    paths: Vec::new(),
+                };
+
+                Some(
+                    ListItem::new(ix)
+                        .toggle_state(selected)
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .child(
+                            h_flex()
+                                .gap_3()
+                                .flex_grow()
+                                .child(highlighted_match.render(window, cx)),
+                        )
+                        .tooltip(Tooltip::text(tooltip_path))
+                        .into_any_element(),
+                )
+            }
+        }
+    }
+
+    fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        let has_selection = self.selected_match().is_some();
+        let focus_handle = self.focus_handle.clone();
+
+        Some(
+            h_flex()
+                .flex_1()
+                .p_1p5()
+                .gap_1()
+                .justify_end()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    Button::new("open_local_folder", "Choose from Local Folders")
+                        .key_binding(KeyBinding::for_action_in(
+                            &workspace::Open::default(),
+                            &focus_handle,
+                            cx,
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.delegate.open_local_folder(window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("select_project", "Select")
+                        .disabled(!has_selection)
+                        .key_binding(KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx))
+                        .on_click(cx.listener(move |picker, _, window, cx| {
+                            picker.delegate.confirm(false, window, cx);
+                        })),
+                )
+                .into_any(),
+        )
     }
 }

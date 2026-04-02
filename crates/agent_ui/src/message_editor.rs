@@ -203,12 +203,10 @@ fn insert_mention_for_project_path(
         MentionInsertPosition::AtCursor => editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx);
             let snapshot = buffer.snapshot(cx);
-            let (_, _, buffer_snapshot) = snapshot.as_singleton()?;
-            let text_anchor = editor
-                .selections
-                .newest_anchor()
-                .start
-                .text_anchor
+            let buffer_snapshot = snapshot.as_singleton()?;
+            let text_anchor = snapshot
+                .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)?
+                .0
                 .bias_left(&buffer_snapshot);
 
             editor.insert(&mention_text, window, cx);
@@ -224,7 +222,7 @@ fn insert_mention_for_project_path(
             editor.update(cx, |editor, cx| {
                 editor.edit(
                     [(
-                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        multi_buffer::Anchor::Max..multi_buffer::Anchor::Max,
                         new_text,
                     )],
                     cx,
@@ -603,7 +601,7 @@ impl MessageEditor {
             COMMAND_HINT_INLAY_ID,
             hint_pos,
             &InlayHint {
-                position: hint_pos.text_anchor,
+                position: snapshot.anchor_to_buffer_anchor(hint_pos)?.0,
                 label: InlayHintLabel::String(hint),
                 kind: Some(InlayHintKind::Parameter),
                 padding_left: false,
@@ -640,12 +638,11 @@ impl MessageEditor {
 
         let start = self.editor.update(cx, |editor, cx| {
             editor.set_text(content, window, cx);
-            editor
-                .buffer()
-                .read(cx)
-                .snapshot(cx)
-                .anchor_before(Point::zero())
-                .text_anchor
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            snapshot
+                .anchor_to_buffer_anchor(snapshot.anchor_before(Point::zero()))
+                .unwrap()
+                .0
         });
 
         let supports_images = self.session_capabilities.read().supports_images();
@@ -999,13 +996,10 @@ impl MessageEditor {
 
         if should_insert_creases && let Some(selections) = editor_clipboard_selections {
             cx.stop_propagation();
-            let insertion_target = self
-                .editor
-                .read(cx)
-                .selections
-                .newest_anchor()
-                .start
-                .text_anchor;
+            let snapshot = self.editor.read(cx).buffer().read(cx).snapshot(cx);
+            let (insertion_target, _) = snapshot
+                .anchor_to_buffer_anchor(self.editor.read(cx).selections.newest_anchor().start)
+                .unwrap();
 
             let project = workspace.read(cx).project().clone();
             for selection in selections {
@@ -1021,21 +1015,19 @@ impl MessageEditor {
                     };
 
                     let mention_text = mention_uri.as_link().to_string();
-                    let (excerpt_id, text_anchor, content_len) =
-                        self.editor.update(cx, |editor, cx| {
-                            let buffer = editor.buffer().read(cx);
-                            let snapshot = buffer.snapshot(cx);
-                            let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
-                            let text_anchor = insertion_target.bias_left(&buffer_snapshot);
+                    let (text_anchor, content_len) = self.editor.update(cx, |editor, cx| {
+                        let buffer = editor.buffer().read(cx);
+                        let snapshot = buffer.snapshot(cx);
+                        let buffer_snapshot = snapshot.as_singleton().unwrap();
+                        let text_anchor = insertion_target.bias_left(&buffer_snapshot);
 
-                            editor.insert(&mention_text, window, cx);
-                            editor.insert(" ", window, cx);
+                        editor.insert(&mention_text, window, cx);
+                        editor.insert(" ", window, cx);
 
-                            (excerpt_id, text_anchor, mention_text.len())
-                        });
+                        (text_anchor, mention_text.len())
+                    });
 
                     let Some((crease_id, tx)) = insert_crease_for_mention(
-                        excerpt_id,
                         text_anchor,
                         content_len,
                         crease_text.into(),
@@ -1145,8 +1137,7 @@ impl MessageEditor {
 
                     for (anchor, content_len, mention_uri) in all_mentions {
                         let Some((crease_id, tx)) = insert_crease_for_mention(
-                            anchor.excerpt_id,
-                            anchor.text_anchor,
+                            snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                             content_len,
                             mention_uri.name().into(),
                             mention_uri.icon_path(cx),
@@ -1339,25 +1330,23 @@ impl MessageEditor {
                     };
                     let mention_text = mention_uri.as_link().to_string();
 
-                    let (excerpt_id, text_anchor, content_len) = editor.update(cx, |editor, cx| {
+                    let (text_anchor, content_len) = editor.update(cx, |editor, cx| {
                         let buffer = editor.buffer().read(cx);
                         let snapshot = buffer.snapshot(cx);
-                        let (excerpt_id, _, buffer_snapshot) = snapshot.as_singleton().unwrap();
-                        let text_anchor = editor
-                            .selections
-                            .newest_anchor()
-                            .start
-                            .text_anchor
+                        let buffer_snapshot = snapshot.as_singleton().unwrap();
+                        let text_anchor = snapshot
+                            .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
+                            .unwrap()
+                            .0
                             .bias_left(&buffer_snapshot);
 
                         editor.insert(&mention_text, window, cx);
                         editor.insert(" ", window, cx);
 
-                        (excerpt_id, text_anchor, mention_text.len())
+                        (text_anchor, mention_text.len())
                     });
 
                     let Some((crease_id, tx)) = insert_crease_for_mention(
-                        excerpt_id,
                         text_anchor,
                         content_len,
                         mention_uri.name().into(),
@@ -1700,8 +1689,7 @@ impl MessageEditor {
             let adjusted_start = insertion_start + range.start;
             let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
             let Some((crease_id, tx)) = insert_crease_for_mention(
-                anchor.excerpt_id,
-                anchor.text_anchor,
+                snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                 range.end - range.start,
                 mention_uri.name().into(),
                 mention_uri.icon_path(cx),
@@ -2077,23 +2065,13 @@ mod tests {
 
         cx.run_until_parked();
 
-        let excerpt_id = editor.update(cx, |editor, cx| {
-            editor
-                .buffer()
-                .read(cx)
-                .excerpt_ids()
-                .into_iter()
-                .next()
-                .unwrap()
-        });
         let completions = editor.update_in(cx, |editor, window, cx| {
             editor.set_text("Hello @file ", window, cx);
             let buffer = editor.buffer().read(cx).as_singleton().unwrap();
             let completion_provider = editor.completion_provider().unwrap();
             completion_provider.completions(
-                excerpt_id,
                 &buffer,
-                text::Anchor::MAX,
+                text::Anchor::max_for_buffer(buffer.read(cx).remote_id()),
                 CompletionContext {
                     trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
                     trigger_character: Some("@".into()),
@@ -2114,7 +2092,7 @@ mod tests {
         editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let range = snapshot
-                .anchor_range_in_excerpt(excerpt_id, completion.replace_range)
+                .buffer_anchor_range_to_anchor_range(completion.replace_range)
                 .unwrap();
             editor.edit([(range, completion.new_text)], cx);
             (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);

@@ -394,29 +394,29 @@ async fn test_linked_worktrees_sync(
         )
         .await;
 
-    client_a
-        .fs()
-        .with_git_state(Path::new(path!("/project/.git")), true, |state| {
-            state.worktrees.push(GitWorktree {
-                path: PathBuf::from(path!("/project")),
-                ref_name: Some("refs/heads/main".into()),
-                sha: "aaa111".into(),
-                is_main: false,
-            });
-            state.worktrees.push(GitWorktree {
-                path: PathBuf::from(path!("/project/feature-branch")),
-                ref_name: Some("refs/heads/feature-branch".into()),
-                sha: "bbb222".into(),
-                is_main: false,
-            });
-            state.worktrees.push(GitWorktree {
-                path: PathBuf::from(path!("/project/bugfix-branch")),
-                ref_name: Some("refs/heads/bugfix-branch".into()),
-                sha: "ccc333".into(),
-                is_main: false,
-            });
-        })
-        .unwrap();
+    let fs = client_a.fs();
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/project/.git")),
+        true,
+        GitWorktree {
+            path: PathBuf::from(path!("/worktrees/feature-branch")),
+            ref_name: Some("refs/heads/feature-branch".into()),
+            sha: "bbb222".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/project/.git")),
+        true,
+        GitWorktree {
+            path: PathBuf::from(path!("/worktrees/bugfix-branch")),
+            ref_name: Some("refs/heads/bugfix-branch".into()),
+            sha: "ccc333".into(),
+            is_main: false,
+        },
+    )
+    .await;
 
     let (project_a, _) = client_a.build_local_project(path!("/project"), cx_a).await;
 
@@ -437,22 +437,22 @@ async fn test_linked_worktrees_sync(
     );
     assert_eq!(
         host_linked[0].path,
-        PathBuf::from(path!("/project/feature-branch"))
+        PathBuf::from(path!("/worktrees/bugfix-branch"))
     );
     assert_eq!(
         host_linked[0].ref_name,
-        Some("refs/heads/feature-branch".into())
+        Some("refs/heads/bugfix-branch".into())
     );
-    assert_eq!(host_linked[0].sha.as_ref(), "bbb222");
+    assert_eq!(host_linked[0].sha.as_ref(), "ccc333");
     assert_eq!(
         host_linked[1].path,
-        PathBuf::from(path!("/project/bugfix-branch"))
+        PathBuf::from(path!("/worktrees/feature-branch"))
     );
     assert_eq!(
         host_linked[1].ref_name,
-        Some("refs/heads/bugfix-branch".into())
+        Some("refs/heads/feature-branch".into())
     );
-    assert_eq!(host_linked[1].sha.as_ref(), "ccc333");
+    assert_eq!(host_linked[1].sha.as_ref(), "bbb222");
 
     // Share the project and have client B join.
     let project_id = active_call_a
@@ -478,15 +478,17 @@ async fn test_linked_worktrees_sync(
     // Now mutate: add a third linked worktree on the host side.
     client_a
         .fs()
-        .with_git_state(Path::new(path!("/project/.git")), true, |state| {
-            state.worktrees.push(GitWorktree {
-                path: PathBuf::from(path!("/project/hotfix-branch")),
+        .add_linked_worktree_for_repo(
+            Path::new(path!("/project/.git")),
+            true,
+            GitWorktree {
+                path: PathBuf::from(path!("/worktrees/hotfix-branch")),
                 ref_name: Some("refs/heads/hotfix-branch".into()),
                 sha: "ddd444".into(),
                 is_main: false,
-            });
-        })
-        .unwrap();
+            },
+        )
+        .await;
 
     // Wait for the host to re-scan and propagate the update.
     executor.run_until_parked();
@@ -504,7 +506,7 @@ async fn test_linked_worktrees_sync(
     );
     assert_eq!(
         host_linked_updated[2].path,
-        PathBuf::from(path!("/project/hotfix-branch"))
+        PathBuf::from(path!("/worktrees/hotfix-branch"))
     );
 
     // Verify the guest also received the update.
@@ -521,12 +523,12 @@ async fn test_linked_worktrees_sync(
     // Now mutate: remove one linked worktree from the host side.
     client_a
         .fs()
-        .with_git_state(Path::new(path!("/project/.git")), true, |state| {
-            state
-                .worktrees
-                .retain(|wt| wt.ref_name != Some("refs/heads/bugfix-branch".into()));
-        })
-        .unwrap();
+        .remove_worktree_for_repo(
+            Path::new(path!("/project/.git")),
+            true,
+            "refs/heads/bugfix-branch",
+        )
+        .await;
 
     executor.run_until_parked();
 

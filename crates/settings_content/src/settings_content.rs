@@ -65,7 +65,8 @@ macro_rules! settings_overrides {
         }
     }
 }
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::Hash;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
@@ -264,6 +265,35 @@ settings_overrides! {
     pub struct PlatformOverrides { macos, linux, windows }
 }
 
+/// Determines what settings a profile starts from before applying its overrides.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileBase {
+    /// Apply profile settings on top of the user's current settings.
+    #[default]
+    User,
+    /// Apply profile settings on top of Zed's default settings, ignoring user customizations.
+    Default,
+}
+
+/// A named settings profile that can temporarily override settings.
+#[with_fallible_options]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SettingsProfile {
+    /// What base settings to start from before applying this profile's overrides.
+    ///
+    /// - `user`: Apply on top of user's settings (default)
+    /// - `default`: Apply on top of Zed's default settings, ignoring user customizations
+    #[serde(default)]
+    pub base: ProfileBase,
+
+    /// The settings overrides for this profile.
+    #[serde(default)]
+    pub settings: Box<SettingsContent>,
+}
+
 #[with_fallible_options]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
@@ -277,7 +307,7 @@ pub struct UserSettingsContent {
     pub platform_overrides: PlatformOverrides,
 
     #[serde(default)]
-    pub profiles: IndexMap<String, SettingsContent>,
+    pub profiles: IndexMap<String, SettingsProfile>,
 }
 
 pub struct ExtensionsSettingsContent {
@@ -1023,6 +1053,8 @@ pub struct DevContainerConnection {
     pub remote_user: String,
     pub container_id: String,
     pub use_podman: bool,
+    pub extension_ids: Vec<String>,
+    pub remote_env: BTreeMap<String, String>,
 }
 
 #[with_fallible_options]

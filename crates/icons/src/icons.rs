@@ -174,6 +174,7 @@ pub enum IconName {
     LockOutlined,
     MagnifyingGlass,
     Maximize,
+    MaximizeAlt,
     Menu,
     MenuAltTemp,
     Mic,

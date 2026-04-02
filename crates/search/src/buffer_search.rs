@@ -3550,7 +3550,16 @@ mod tests {
 
         // Manually unfold one buffer (simulating a chevron click)
         let first_buffer_id = editor.read_with(cx, |editor, cx| {
-            editor.buffer().read(cx).excerpt_buffer_ids()[0]
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .nth(0)
+                .unwrap()
+                .context
+                .start
+                .buffer_id
         });
         editor.update_in(cx, |editor, _window, cx| {
             editor.unfold_buffer(first_buffer_id, cx);
@@ -3564,7 +3573,16 @@ mod tests {
 
         // Manually unfold the second buffer too
         let second_buffer_id = editor.read_with(cx, |editor, cx| {
-            editor.buffer().read(cx).excerpt_buffer_ids()[1]
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .nth(1)
+                .unwrap()
+                .context
+                .start
+                .buffer_id
         });
         editor.update_in(cx, |editor, _window, cx| {
             editor.unfold_buffer(second_buffer_id, cx);

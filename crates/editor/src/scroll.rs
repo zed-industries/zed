@@ -44,13 +44,13 @@ impl ScrollAnchor {
     pub(super) fn new() -> Self {
         Self {
             offset: gpui::Point::default(),
-            anchor: Anchor::min(),
+            anchor: Anchor::Min,
         }
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.offset.apply_along(Axis::Vertical, |offset| {
-            if self.anchor == Anchor::min() {
+            if self.anchor == Anchor::Min {
                 0.
             } else {
                 let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();

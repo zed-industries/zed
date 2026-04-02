@@ -1166,7 +1166,7 @@ impl CollabPanel {
                                 "Failed to join project",
                                 window,
                                 cx,
-                                |_, _, _| None,
+                                |error, _, _| Some(format!("{error:#}")),
                             );
                     })
                     .ok();
@@ -1729,7 +1729,7 @@ impl CollabPanel {
                                 "Failed to join project",
                                 window,
                                 cx,
-                                |_, _, _| None,
+                                |error, _, _| Some(format!("{error:#}")),
                             );
                     }
                 }
