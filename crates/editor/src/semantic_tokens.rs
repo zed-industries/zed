@@ -472,7 +472,9 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::{AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext};
+    use gpui::{
+        AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext, UpdateGlobal as _,
+    };
     use language::{Language, LanguageConfig, LanguageMatcher};
     use languages::FakeLspAdapter;
     use multi_buffer::{
@@ -481,7 +483,10 @@ mod tests {
     use project::Project;
     use rope::Point;
     use serde_json::json;
-    use settings::{LanguageSettingsContent, SemanticTokenRules, SemanticTokens, SettingsStore};
+    use settings::{
+        GlobalLspSettingsContent, LanguageSettingsContent, SemanticTokenRule, SemanticTokenRules,
+        SemanticTokens, SettingsStore,
+    };
     use workspace::{MultiWorkspace, WorkspaceHandle as _};
 
     use crate::{
@@ -1827,9 +1832,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_semantic_token_disabling_with_empty_rule(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal as _;
-        use settings::{GlobalLspSettingsContent, SemanticTokenRule};
-
         init_test(cx, |_| {});
         update_test_language_settings(cx, &|s| {
             s.languages.0.insert(
@@ -1982,7 +1984,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_semantic_token_specific_rule_does_not_disable_broad_token(cx: &mut TestAppContext) {
+    async fn test_semantic_token_specific_rule_does_not_disable_broad_token(
+        cx: &mut TestAppContext,
+    ) {
         use gpui::UpdateGlobal as _;
         use settings::{GlobalLspSettingsContent, SemanticTokenRule};
 
