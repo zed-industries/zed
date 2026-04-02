@@ -42,5 +42,8 @@ thiserror.workspace = true
 util.workspace = true
 zed_env_vars.workspace = true
 
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
+image = { workspace = true, features = ["avif-native"] }
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

@@ -117,6 +117,7 @@ impl LanguageModelImage {
                     .and_then(image::DynamicImage::from_decoder),
                 ImageFormat::Tiff => image::codecs::tiff::TiffDecoder::new(image_bytes)
                     .and_then(image::DynamicImage::from_decoder),
+                #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
                 ImageFormat::Avif => image::codecs::avif::AvifDecoder::new(image_bytes)
                     .and_then(image::DynamicImage::from_decoder),
                 _ => return None,
