@@ -5468,9 +5468,7 @@ impl GitPanel {
                         }
                         this.selected_entry = Some(ix);
                         if let Some(path) = this.marked_entry_for_ix(ix) {
-                            if let Some(pos) =
-                                this.marked_entries.iter().position(|p| *p == path)
-                            {
+                            if let Some(pos) = this.marked_entries.iter().position(|p| *p == path) {
                                 this.marked_entries.remove(pos);
                             } else {
                                 this.marked_entries.push(path);
