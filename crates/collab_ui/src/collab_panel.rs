@@ -260,7 +260,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
-    filter_active_channels: bool,
+    filter_occupied_channels: bool,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -393,7 +393,7 @@ impl CollabPanel {
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
-                filter_active_channels: false,
+                filter_occupied_channels: false,
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
             };
@@ -780,14 +780,14 @@ impl CollabPanel {
 
             channels.retain(|chan| channel_ids_of_matches_or_parents.contains(&chan.id));
 
-            if self.filter_active_channels {
-                let active_channel_ids_or_ancestors: HashSet<_> = channel_store
+            if self.filter_occupied_channels {
+                let occupied_channel_ids_or_ancestors: HashSet<_> = channel_store
                     .ordered_channels()
                     .map(|(_, channel)| channel)
                     .filter(|channel| !channel_store.channel_participants(channel.id).is_empty())
                     .flat_map(|channel| channel.parent_path.iter().copied().chain(Some(channel.id)))
                     .collect();
-                channels.retain(|channel| active_channel_ids_or_ancestors.contains(&channel.id));
+                channels.retain(|channel| occupied_channel_ids_or_ancestors.contains(&channel.id));
             }
 
             if let Some(state) = &self.channel_editing_state
@@ -796,7 +796,7 @@ impl CollabPanel {
                 self.entries.push(ListEntry::ChannelEditor { depth: 0 });
             }
 
-            let should_respect_collapse = query.is_empty() && !self.filter_active_channels;
+            let should_respect_collapse = query.is_empty() && !self.filter_occupied_channels;
             let mut collapse_depth = None;
 
             for (idx, channel) in channels.into_iter().enumerate() {
@@ -2843,14 +2843,14 @@ impl CollabPanel {
                 Some(
                     h_flex()
                         .child(
-                            IconButton::new("filter-active-channels", IconName::ListFilter)
+                            IconButton::new("filter-occupied-channels", IconName::ListFilter)
                                 .icon_size(IconSize::Small)
-                                .toggle_state(self.filter_active_channels)
+                                .toggle_state(self.filter_occupied_channels)
                                 .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.filter_active_channels = !this.filter_active_channels;
+                                    this.filter_occupied_channels = !this.filter_occupied_channels;
                                     this.update_entries(true, cx);
                                 }))
-                                .tooltip(Tooltip::text(if self.filter_active_channels {
+                                .tooltip(Tooltip::text(if self.filter_occupied_channels {
                                     "Show All Channels"
                                 } else {
                                     "Show Occupied Channels"
