@@ -136,7 +136,7 @@ require (
 	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/hashicorp/go-version v1.8.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
-	github.com/helixml/kodit v1.2.1 // indirect
+	github.com/helixml/kodit v1.2.4 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect
 	github.com/infracloudio/msbotbuilder-go v0.2.5 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
@@ -289,7 +289,7 @@ require (
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/term v0.40.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/time v0.12.0 // indirect
 	golang.org/x/tools v0.42.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
