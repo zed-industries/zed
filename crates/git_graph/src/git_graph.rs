@@ -905,7 +905,6 @@ pub struct GitGraph {
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
     horizontal_scroll_offset: Pixels,
-    graph_viewport_width: Pixels,
     selected_entry_idx: Option<usize>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -976,26 +975,19 @@ impl GitGraph {
         ColumnWidthConfig::explicit(widths)
     }
 
-    fn clamp_horizontal_scroll_offset(&mut self) {
+    fn graph_viewport_width(&self, window: &Window, cx: &App) -> Pixels {
+        self.column_widths
+            .read(cx)
+            .preview_column_width(0, window)
+            .unwrap_or_else(|| self.graph_canvas_content_width())
+    }
+
+    fn clamp_horizontal_scroll_offset(&mut self, graph_viewport_width: Pixels) {
         let max_horizontal_scroll =
-            (self.graph_canvas_content_width() - self.graph_viewport_width).max(px(0.));
+            (self.graph_canvas_content_width() - graph_viewport_width).max(px(0.));
         self.horizontal_scroll_offset = self
             .horizontal_scroll_offset
             .clamp(px(0.), max_horizontal_scroll);
-    }
-
-    fn set_graph_viewport_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
-        if self.graph_viewport_width == width {
-            return;
-        }
-
-        self.graph_viewport_width = width;
-        let previous_horizontal_scroll_offset = self.horizontal_scroll_offset;
-        self.clamp_horizontal_scroll_offset();
-
-        if self.horizontal_scroll_offset != previous_horizontal_scroll_offset {
-            cx.notify();
-        }
     }
 
     pub fn new(
@@ -1085,7 +1077,6 @@ impl GitGraph {
             table_interaction_state,
             column_widths,
             horizontal_scroll_offset: px(0.),
-            graph_viewport_width: px(88.),
             selected_entry_idx: None,
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
@@ -1145,7 +1136,6 @@ impl GitGraph {
                                     cx,
                                 );
                                 self.graph_data.add_commits(commits);
-                                self.clamp_horizontal_scroll_offset();
 
                                 let pending_sha_index = self.pending_select_sha.and_then(|oid| {
                                     repository.get_graph_data(source.clone(), *order).and_then(
@@ -1189,7 +1179,6 @@ impl GitGraph {
                     .graph_data(self.log_source.clone(), self.log_order, 0..usize::MAX, cx)
                     .commits;
                 self.graph_data.add_commits(commits);
-                self.clamp_horizontal_scroll_offset();
             });
         }
     }
@@ -2154,10 +2143,11 @@ impl GitGraph {
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
         let horizontal_scroll_offset = self.horizontal_scroll_offset;
 
-        let graph_width = if self.graph_canvas_content_width() > self.graph_viewport_width {
+        let graph_viewport_width = self.graph_viewport_width(window, cx);
+        let graph_width = if self.graph_canvas_content_width() > graph_viewport_width {
             self.graph_canvas_content_width()
         } else {
-            self.graph_viewport_width
+            graph_viewport_width
         };
         let last_visible_row =
             first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
@@ -2482,8 +2472,9 @@ impl GitGraph {
         let new_y = (current_offset.y + delta.y).clamp(max_vertical_scroll, px(0.));
         let new_offset = Point::new(current_offset.x, new_y);
 
+        let graph_viewport_width = self.graph_viewport_width(window, cx);
         let max_horizontal_scroll =
-            (self.graph_canvas_content_width() - self.graph_viewport_width).max(px(0.));
+            (self.graph_canvas_content_width() - graph_viewport_width).max(px(0.));
 
         let new_horizontal_offset =
             (self.horizontal_scroll_offset - delta.x).clamp(px(0.), max_horizontal_scroll);
@@ -2564,7 +2555,8 @@ impl Render for GitGraph {
                             cx,
                         );
                         self.graph_data.add_commits(&commits);
-                        self.clamp_horizontal_scroll_offset();
+                        let graph_viewport_width = self.graph_viewport_width(window, cx);
+                        self.clamp_horizontal_scroll_offset(graph_viewport_width);
                         (commits.len(), is_loading)
                     })
                 } else {
@@ -2610,10 +2602,8 @@ impl Render for GitGraph {
             let table_fraction =
                 description_fraction + date_fraction + author_fraction + commit_fraction;
             let table_width_config = self.table_column_width_config(window, cx);
-            let cached_container_width = self.column_widths.read(cx).cached_container_width();
-            if cached_container_width > px(0.) {
-                self.set_graph_viewport_width(cached_container_width * graph_fraction, cx);
-            }
+            let graph_viewport_width = self.graph_viewport_width(window, cx);
+            self.clamp_horizontal_scroll_offset(graph_viewport_width);
 
             h_flex()
                 .size_full()

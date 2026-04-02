@@ -116,6 +116,20 @@ impl RedistributableColumnsState {
         }
     }
 
+    pub fn preview_column_width(&self, column_index: usize, window: &Window) -> Option<Pixels> {
+        let width = self.preview_widths().as_slice().get(column_index)?;
+        match width {
+            DefiniteLength::Fraction(fraction) if self.cached_container_width > px(0.) => {
+                Some(self.cached_container_width * *fraction)
+            }
+            DefiniteLength::Fraction(_) => None,
+            DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels)) => Some(*pixels),
+            DefiniteLength::Absolute(AbsoluteLength::Rems(rems_width)) => {
+                Some(rems_width.to_pixels(window.rem_size()))
+            }
+        }
+    }
+
     pub fn cached_container_width(&self) -> Pixels {
         self.cached_container_width
     }
