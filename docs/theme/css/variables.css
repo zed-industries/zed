@@ -152,7 +152,7 @@
   --inline-code-color: hsl(40, 100%, 80%);
   --code-text: hsl(220, 13%, 95%);
   --code-bg: hsl(220, 93%, 50%, 0.2);
-  --keybinding-bg: hsl(0, 0%, 12%);
+  --keybinding-bg: hsl(220, 20%, 10%);
 
   --pre-bg: hsl(220, 13%, 5%);
   --pre-border: hsla(220, 93%, 70%, 0.3);
@@ -163,7 +163,7 @@
   --popover-shadow:
     0 10px 15px -3px hsl(0, 0%, 0%, 0.1), 0 4px 6px -4px hsl(0, 0%, 0%, 0.1);
 
-  --theme-hover: hsl(220, 13%, 25%);
+  --theme-hover: hsl(220, 13%, 20%);
   --hover-section-title: hsl(220, 13%, 11%);
 
   --quote-bg: hsl(220, 13%, 25%, 0.4);

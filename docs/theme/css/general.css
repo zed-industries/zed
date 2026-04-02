@@ -398,15 +398,17 @@ blockquote .warning:before {
 }
 
 kbd {
-  background-color: rgba(8, 76, 207, 0.1);
+  background-color: var(--keybinding-bg);
+  padding: 4px 4px 6px 4px;
   border-radius: 4px;
+  font-family: var(--mono-font);
+  display: inline-block;
+  margin: 0 2px;
   border: solid 1px var(--popover-border);
   box-shadow: inset 0 -1px 0 var(--theme-hover);
-  display: inline-block;
   font-size: var(--code-font-size);
-  font-family: var(--mono-font);
+  color: var(--full-contrast);
   line-height: 10px;
-  padding: 4px 5px;
   vertical-align: middle;
 }
 
