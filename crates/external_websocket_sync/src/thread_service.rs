@@ -1303,11 +1303,15 @@ fn open_existing_thread_sync(
     // the first entity's event subscriptions.
     {
         let mut loading = THREAD_LOAD_IN_PROGRESS.lock();
-        if loading.is_some() {
-            eprintln!("⏳ [THREAD_SERVICE] Thread load already in progress ({:?}), skipping load of {}", loading, request.acp_thread_id);
-            log::info!("⏳ [THREAD_SERVICE] Thread load already in progress ({:?}), skipping load of {}", loading, request.acp_thread_id);
+        if let Some(in_progress) = loading.as_ref() {
+            eprintln!("⏳ [THREAD_SERVICE] DUPLICATE LOAD PREVENTED: {} is already loading, skipping load of {}",
+                      in_progress, request.acp_thread_id);
+            log::warn!("⏳ [THREAD_SERVICE] DUPLICATE LOAD PREVENTED: {} is already loading, skipping load of {}",
+                       in_progress, request.acp_thread_id);
             return Ok(());
         }
+        eprintln!("🔒 [THREAD_SERVICE] Acquired thread load lock for {}", request.acp_thread_id);
+        log::info!("🔒 [THREAD_SERVICE] Acquired thread load lock for {}", request.acp_thread_id);
         *loading = Some(request.acp_thread_id.clone());
     }
 
@@ -1365,7 +1369,10 @@ fn open_existing_thread_sync(
         struct ClearLoadingGuard;
         impl Drop for ClearLoadingGuard {
             fn drop(&mut self) {
-                *THREAD_LOAD_IN_PROGRESS.lock() = None;
+                let mut loading = THREAD_LOAD_IN_PROGRESS.lock();
+                eprintln!("🔓 [THREAD_SERVICE] Released thread load lock (was {:?})", loading);
+                log::info!("🔓 [THREAD_SERVICE] Released thread load lock (was {:?})", loading);
+                *loading = None;
             }
         }
         let _loading_guard = ClearLoadingGuard;
