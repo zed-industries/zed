@@ -411,14 +411,17 @@ pub fn render_redistributable_columns_resize_handles(
                     .h_full();
 
                 if resize_behavior[current_column_ix].is_resizable() {
-                    let hovered = window.use_state(cx, |_window, _cx| false);
+                    let is_highlighted = window.use_state(cx, |_window, _cx| false);
 
-                    resize_divider = resize_divider.when(*hovered.read(cx), |div| {
+                    resize_divider = resize_divider.when(*is_highlighted.read(cx), |div| {
                         div.bg(cx.theme().colors().border_focused)
                     });
 
                     resize_handle = resize_handle
-                        .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
+                        .on_hover({
+                            let is_highlighted = is_highlighted.clone();
+                            move |&was_hovered, _, cx| is_highlighted.write(cx, was_hovered)
+                        })
                         .cursor_col_resize()
                         .on_click(move |event, window, cx| {
                             if event.click_count() >= 2 {
@@ -430,10 +433,16 @@ pub fn render_redistributable_columns_resize_handles(
 
                             cx.stop_propagation();
                         })
-                        .on_drag(
-                            DraggedColumn(current_column_ix),
-                            |_, _offset, _window, cx| cx.new(|_cx| Empty),
-                        );
+                        .on_drag(DraggedColumn(current_column_ix), {
+                            let is_highlighted = is_highlighted.clone();
+                            move |_, _offset, _window, cx| {
+                                is_highlighted.write(cx, true);
+                                cx.new(|_cx| Empty)
+                            }
+                        })
+                        .on_drop::<DraggedColumn>(move |_, _, cx| {
+                            is_highlighted.write(cx, false);
+                        });
                 }
 
                 resize_divider.child(resize_handle).into_any_element()
