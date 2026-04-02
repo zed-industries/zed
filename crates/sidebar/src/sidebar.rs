@@ -974,21 +974,21 @@ impl Sidebar {
 
                     let session_id = &thread.metadata.session_id;
 
-                    let is_thread_workspace_active = match &thread.workspace {
-                        ThreadEntryWorkspace::Open(thread_workspace) => active_workspace
-                            .as_ref()
-                            .is_some_and(|active| active == thread_workspace),
-                        ThreadEntryWorkspace::Closed(_) => false,
-                    };
+                    let is_active_thread = self.active_entry.as_ref().is_some_and(|entry| {
+                        entry.is_active_thread(session_id)
+                            && active_workspace
+                                .as_ref()
+                                .is_some_and(|active| active == entry.workspace())
+                    });
 
                     if thread.status == AgentThreadStatus::Completed
-                        && !is_thread_workspace_active
+                        && !is_active_thread
                         && old_statuses.get(session_id) == Some(&AgentThreadStatus::Running)
                     {
                         notified_threads.insert(session_id.clone());
                     }
 
-                    if is_thread_workspace_active && !thread.is_background {
+                    if is_active_thread && !thread.is_background {
                         notified_threads.remove(session_id);
                     }
                 }
