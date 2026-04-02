@@ -1160,7 +1160,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                             .update(cx, |multi_workspace, window, cx| {
                                                 multi_workspace.open_project(
                                                     paths,
-                                                    OpenMode::Replace,
+                                                    OpenMode::Activate,
                                                     window,
                                                     cx,
                                                 )
