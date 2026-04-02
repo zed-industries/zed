@@ -30,6 +30,10 @@ struct NodeContext {
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
+    /// Unrounded cumulative absolute position for each node, in device pixels.
+    /// Used to implement cumulative-edge rounding that guarantees gap-free
+    /// abutment between siblings.
+    cumulative_positions: FxHashMap<LayoutId, Point<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
 }
@@ -39,10 +43,11 @@ const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by constructio
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         let mut taffy = TaffyTree::new();
-        taffy.enable_rounding();
+        taffy.disable_rounding();
         TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
+            cumulative_positions: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
@@ -51,6 +56,7 @@ impl TaffyLayoutEngine {
     pub fn clear(&mut self) {
         self.taffy.clear();
         self.absolute_layout_bounds.clear();
+        self.cumulative_positions.clear();
         self.computed_layouts.clear();
     }
 
@@ -170,10 +176,11 @@ impl TaffyLayoutEngine {
         //
 
         if !self.computed_layouts.insert(id) {
-            let mut stack = &mut self.layout_bounds_scratch_space;
+            let stack = &mut self.layout_bounds_scratch_space;
             stack.push(id);
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
+                self.cumulative_positions.remove(&id);
                 stack.extend(
                     self.taffy
                         .children(id.into())
@@ -238,30 +245,58 @@ impl TaffyLayoutEngine {
             return layout;
         }
 
+        // Taffy's rounding is disabled because its post-pass stores rounded
+        // relative positions but uses unrounded cumulative positions for edge
+        // rounding — GPUI reconstructs absolute positions by summing relative
+        // positions through parents, which breaks the cumulative invariant.
+        //
+        // Instead we implement cumulative-edge rounding here:
+        //  1. Accumulate UNROUNDED absolute positions through parents
+        //  2. Round edges: left = round(abs_x), right = round(abs_x + width)
+        //  3. Size = right - left
+        //
+        // This guarantees gap-free abutment: for abutting siblings, sibling N's
+        // (abs_x + width) is the same float as sibling N+1's abs_x, so both
+        // round to the same device pixel.
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let location_x = layout.location.x;
+        let location_y = layout.location.y;
+        let size_width = layout.size.width;
+        let size_height = layout.size.height;
 
-        // Taffy already rounds positions and sizes via a cumulative edge-based
-        // post-pass (see `round_layout` in taffy). That pass uses absolute
-        // positions to guarantee gap-free abutment between siblings. We must
-        // NOT re-round here — doing so would destroy the cumulative rounding
-        // invariant and could introduce 1-device-pixel gaps or size mismatches.
-        let mut bounds = Bounds {
-            origin: point(
-                Pixels(layout.location.x / scale_factor),
-                Pixels(layout.location.y / scale_factor),
-            ),
+        let parent_cumulative = if let Some(parent_id) = self.taffy.parent(id.0) {
+            // Ensure the parent is computed first (populates its cache).
+            self.layout_bounds(parent_id.into(), scale_factor);
+            self.cumulative_positions
+                .get(&LayoutId::from(parent_id))
+                .copied()
+                .unwrap_or_default()
+        } else {
+            Point::default()
+        };
+
+        // Unrounded cumulative absolute position in device pixels.
+        let cumulative = point(
+            parent_cumulative.x + location_x,
+            parent_cumulative.y + location_y,
+        );
+        self.cumulative_positions.insert(id, cumulative);
+
+        // Round edges, then derive position and size.
+        let left = round_half_toward_zero(cumulative.x);
+        let top = round_half_toward_zero(cumulative.y);
+        let right = round_half_toward_zero(cumulative.x + size_width);
+        let bottom = round_half_toward_zero(cumulative.y + size_height);
+
+        let bounds = Bounds {
+            origin: point(Pixels(left / scale_factor), Pixels(top / scale_factor)),
             size: size(
-                Pixels(layout.size.width / scale_factor),
-                Pixels(layout.size.height / scale_factor),
+                Pixels((right - left) / scale_factor),
+                Pixels((bottom - top) / scale_factor),
             ),
         };
 
-        if let Some(parent_id) = self.taffy.parent(id.0) {
-            let parent_bounds = self.layout_bounds(parent_id.into(), scale_factor);
-            bounds.origin += parent_bounds.origin;
-        }
         self.absolute_layout_bounds.insert(id, bounds);
-
         bounds
     }
 }
