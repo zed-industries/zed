@@ -4,7 +4,7 @@
 // tests and production.
 //
 // The server runs multiple "rounds", one per agent type (zed-agent, claude, etc.).
-// Each round executes the same 9 test phases:
+// Each round executes the same 12 test phases:
 //
 //	Phase 1: Basic thread creation (new chat_message, no thread ID)
 //	Phase 2: Follow-up on existing thread (same thread ID)
@@ -17,6 +17,7 @@
 //	Phase 9: Rapid 3-turn cancel (chat_message, then simulate_user_input interrupt, then chat_message)
 //	Phase 10: User-created thread (inject user_created_thread, verify work session, send chat on new thread)
 //	Phase 11: Spectask routing (set SpecTaskID on threads, verify FindConnectedSessionForSpecTask picks most recent)
+//	Phase 12: Reconnect test (kill Zed, wait for reconnection, send message to existing thread, verify delivery)
 //
 // Exit codes: 0 = all tests passed, 1 = test failure
 package main
@@ -80,6 +81,9 @@ type roundState struct {
 	phase11RoutedSessionID string // which session the routing picked
 	phase11ExpectedThreadID string // which thread we expect the message to land on
 	phase11Completed        bool   // whether the routed message completed
+
+	// Phase 12: reconnect test (kill Zed, reconnect, verify message delivery)
+	phase12Completed bool // whether the reconnected message completed
 }
 
 func newRoundState(agentName string) *roundState {
@@ -570,6 +574,22 @@ func (d *testDriver) advanceAfterCompletion(completedPhase int) {
 		agentName := d.round.agentName
 		d.mu.Unlock()
 		log.Printf("[%s] Phase 11: ✅ Routed message completed", agentName)
+		d.mu.Lock()
+		d.phase = 12
+		d.mu.Unlock()
+		d.runPhase12()
+	case 12:
+		d.mu.Lock()
+		if d.round.phase12Completed {
+			agentName := d.round.agentName
+			d.mu.Unlock()
+			log.Printf("[%s] Phase 12: DUPLICATE completion ignored (already advanced)", agentName)
+			return
+		}
+		d.round.phase12Completed = true
+		agentName := d.round.agentName
+		d.mu.Unlock()
+		log.Printf("[%s] Phase 12: ✅ Reconnect message completed", agentName)
 		d.advanceToNextRound()
 	}
 }
@@ -967,6 +987,29 @@ func (d *testDriver) runPhase11() {
 	// Completion will be detected by syncEventCallback when message_completed arrives
 }
 
+func (d *testDriver) runPhase12() {
+	agent := d.round.agentName
+	log.Printf("\n==================================================")
+	log.Printf("  [%s] PHASE 12: Reconnect test (kill Zed, reconnect, verify delivery)", agent)
+	log.Printf("==================================================")
+	d.startPhaseTimeout(12)
+	log.Println("  Creates signal file to request Zed restart, then waits")
+	log.Println("  for reconnection. After Zed reconnects, sends a chat")
+	log.Println("  message to Thread A and verifies message_completed.")
+
+	// Create signal file to tell run_e2e.sh to restart Zed
+	signalFile := "/tmp/zed-restart-requested"
+	if err := os.WriteFile(signalFile, []byte("phase12"), 0644); err != nil {
+		log.Printf("[%s] Phase 12: ERROR creating signal file: %v", agent, err)
+		go d.advanceToNextRound()
+		return
+	}
+	log.Printf("[%s] Phase 12: Created signal file %s, waiting for Zed to disconnect and reconnect...", agent, signalFile)
+	// The HTTP handler will detect the reconnection (phase == 12) and send
+	// the chat message to Thread A. syncEventCallback will handle
+	// message_completed and call advanceAfterCompletion(12).
+}
+
 // --- Per-round validation ---
 
 func (d *testDriver) validateRound() roundResult {
@@ -1190,6 +1233,31 @@ func (d *testDriver) validateRound() roundResult {
 		}
 	}
 
+	// Phase 12: reconnect test — verify message was delivered AND has content
+	if !d.round.phase12Completed {
+		errors = append(errors, "Phase 12: Reconnect message did not complete (Zed may not have reconnected)")
+	} else {
+		// Verify the interaction in the store has actual content (not response_length=0).
+		// After reconnect, request_id may differ from what we sent (pickupWaitingInteraction
+		// creates new mappings), so we match by prompt content instead.
+		phase12HasContent := false
+		allInteractions := d.store.GetAllInteractions()
+		for _, i := range allInteractions {
+			if i.PromptMessage == "What is 12 + 12? Reply with just the number." && i.State == types.InteractionStateComplete {
+				if len(i.ResponseMessage) > 0 {
+					phase12HasContent = true
+					log.Printf("[%s] Phase 12: ✅ Reconnect interaction %s has %d bytes of response", agent, truncate(i.ID, 12), len(i.ResponseMessage))
+				} else {
+					errors = append(errors, fmt.Sprintf("Phase 12: Interaction %s completed but response_message is EMPTY — message ID collision or history replay corruption", truncate(i.ID, 12)))
+				}
+				break
+			}
+		}
+		if !phase12HasContent {
+			errors = append(errors, "Phase 12: No completed interaction found with Phase 12 prompt content")
+		}
+	}
+
 	// Thread count: at minimum 3 threads (phases 1, 3, 8). ACP agents that don't
 	// support session reload (like Claude Code) may create additional threads when
 	// follow-up messages fall through to create_new_thread (phases 4, 7, 11).
@@ -1275,6 +1343,9 @@ func (d *testDriver) validateRound() roundResult {
 		log.Printf("[%s] Phase 7: Open thread + follow-up - PASSED", agent)
 		log.Printf("[%s] Phase 8: Mid-stream interrupt - PASSED", agent)
 		log.Printf("[%s] Phase 9: Rapid 3-turn cancel - PASSED", agent)
+		log.Printf("[%s] Phase 10: User-created thread - PASSED", agent)
+		log.Printf("[%s] Phase 11: Spectask routing - PASSED", agent)
+		log.Printf("[%s] Phase 12: Reconnect test - PASSED", agent)
 	}
 
 	totalCompletions := 0
@@ -1675,8 +1746,32 @@ func main() {
 			srv.SetExternalAgentUserMapping(agentID, "e2e-test-user")
 			driver.mu.Lock()
 			driver.agentID = agentID
+			currentPhase := driver.phase
 			driver.mu.Unlock()
-			log.Printf("[test-server] Agent connecting: %s", agentID)
+			log.Printf("[test-server] Agent connecting: %s (phase=%d)", agentID, currentPhase)
+
+			// Phase 12: detect reconnection after Zed restart
+			if currentPhase == 12 {
+				go func() {
+					agent := driver.round.agentName
+					log.Printf("[%s] Phase 12: Zed reconnected (new agentID=%s), waiting 5s for initialization...", agent, agentID)
+					time.Sleep(5 * time.Second)
+
+					// Send a chat message to Thread A (from Phase 1)
+					driver.mu.Lock()
+					if len(driver.round.threadIDs) == 0 {
+						driver.mu.Unlock()
+						log.Printf("[%s] Phase 12: ERROR no thread IDs available", agent)
+						return
+					}
+					threadA := driver.round.threadIDs[0]
+					driver.mu.Unlock()
+
+					reqID := driver.round.reqID("phase12")
+					log.Printf("[%s] Phase 12: Sending chat_message to Thread A (%s) with reqID=%s", agent, truncate(threadA, 16), reqID)
+					driver.sendChatMessage("What is 12 + 12? Reply with just the number.", reqID, agent, threadA)
+				}()
+			}
 		}
 
 		// Delegate to the REAL production handler

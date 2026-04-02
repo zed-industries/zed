@@ -245,6 +245,22 @@ echo "[test] Waiting for protocol flow to complete (timeout: ${TEST_TIMEOUT}s)..
 # ---- Wait for test to complete ----
 ELAPSED=0
 while [ "$ELAPSED" -lt "$TEST_TIMEOUT" ]; do
+    # Check if test server requested Zed restart (Phase 12: reconnect test)
+    if [ -f "/tmp/zed-restart-requested" ]; then
+        echo "[zed] Restart requested by test server (Phase 12: reconnect test)"
+        rm -f /tmp/zed-restart-requested
+        kill "$ZED_PID" 2>/dev/null || true
+        wait "$ZED_PID" 2>/dev/null || true
+        sleep 2
+        echo "[zed] Restarting Zed..."
+        "$ZED_BINARY" \
+            --allow-multiple-instances \
+            "$PROJECT_DIR" \
+            >> "$ZED_LOG_FILE" 2>&1 &
+        ZED_PID=$!
+        echo "[zed] Restarted (new PID $ZED_PID)"
+    fi
+
     # Check if Zed crashed
     if ! kill -0 "$ZED_PID" 2>/dev/null; then
         wait "$ZED_PID" || ZED_EXIT=$?
