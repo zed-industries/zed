@@ -272,6 +272,7 @@ impl From<ImageFormat> for UTType {
             ImageFormat::Bmp => Self::bmp(),
             ImageFormat::Svg => Self::svg(),
             ImageFormat::Ico => Self::ico(),
+            ImageFormat::Avif => Self::avif(),
         }
     }
 }
@@ -313,6 +314,10 @@ impl UTType {
     pub fn ico() -> Self {
         // https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/ico
         Self(unsafe { ns_string("com.microsoft.ico") })
+    }
+
+    pub fn avif() -> Self {
+        Self(unsafe { ns_string("public.avif") })
     }
 
     pub fn tiff() -> Self {

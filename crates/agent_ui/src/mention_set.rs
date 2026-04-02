@@ -831,6 +831,7 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
         image::ImageFormat::Bmp => Some(ImageFormat::Bmp),
         image::ImageFormat::Tiff => Some(ImageFormat::Tiff),
         image::ImageFormat::Ico => Some(ImageFormat::Ico),
+        image::ImageFormat::Avif => Some(ImageFormat::Avif),
         _ => None,
     }
 }

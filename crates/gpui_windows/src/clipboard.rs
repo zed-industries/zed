@@ -303,6 +303,7 @@ fn convert_dib_to_bmp(dib: &[u8]) -> Option<Vec<u8>> {
     Some(bmp)
 }
 
+<<<<<<< HEAD
 fn log_unsupported_clipboard_formats() {
     let count = unsafe { CountClipboardFormats() };
     let mut format = 0;
@@ -327,6 +328,8 @@ fn gpui_to_image_format(value: ImageFormat) -> Option<image::ImageFormat> {
         ImageFormat::Gif => Some(image::ImageFormat::Gif),
         ImageFormat::Bmp => Some(image::ImageFormat::Bmp),
         ImageFormat::Tiff => Some(image::ImageFormat::Tiff),
+        ImageFormat::Ico => Some(image::ImageFormat::Ico),
+        ImageFormat::Avif => Some(image::ImageFormat::Avif),
         other => {
             log::warn!("No image crate equivalent for format: {other:?}");
             None
