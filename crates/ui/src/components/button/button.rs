@@ -2,6 +2,7 @@ use crate::component_prelude::*;
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::RegisterComponent;
 
+use crate::traits::animation_ext::CommonAnimationExt;
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, Icon, Label};
 use crate::{
     Color, DynamicSpacing, ElevationIndex, KeyBinding, KeybindingPosition, TintColor, prelude::*,
@@ -88,6 +89,7 @@ pub struct Button {
     key_binding_position: KeybindingPosition,
     alpha: Option<f32>,
     truncate: bool,
+    loading: bool,
 }
 
 impl Button {
@@ -111,6 +113,7 @@ impl Button {
             key_binding_position: KeybindingPosition::default(),
             alpha: None,
             truncate: false,
+            loading: false,
         }
     }
 
@@ -181,6 +184,14 @@ impl Button {
     /// this is only used when the label is dynamic and may overflow.
     pub fn truncate(mut self, truncate: bool) -> Self {
         self.truncate = truncate;
+        self
+    }
+
+    /// Displays a rotating loading spinner in place of the `start_icon`.
+    ///
+    /// When `loading` is `true`, any `start_icon` is ignored. and a rotating
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
         self
     }
 }
@@ -378,11 +389,21 @@ impl RenderOnce for Button {
             h_flex()
                 .when(self.truncate, |this| this.min_w_0().overflow_hidden())
                 .gap(DynamicSpacing::Base04.rems(cx))
-                .when_some(self.start_icon, |this, icon| {
-                    this.child(if is_disabled {
-                        icon.color(Color::Disabled)
-                    } else {
-                        icon
+                .when(self.loading, |this| {
+                    this.child(
+                        Icon::new(IconName::LoadCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                            .with_rotate_animation(2),
+                    )
+                })
+                .when(!self.loading, |this| {
+                    this.when_some(self.start_icon, |this, icon| {
+                        this.child(if is_disabled {
+                            icon.color(Color::Disabled)
+                        } else {
+                            icon
+                        })
                     })
                 })
                 .child(

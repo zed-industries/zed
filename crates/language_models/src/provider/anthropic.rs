@@ -1,3 +1,5 @@
+pub mod telemetry;
+
 use anthropic::{
     ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, CountTokensRequest, Event,
     ResponseContent, ToolResultContent, ToolResultPart, Usage,
@@ -8,7 +10,8 @@ use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
+    ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
@@ -24,12 +27,12 @@ use ui::{ButtonLink, ConfiguredApiCard, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::util::parse_tool_arguments;
+use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
-const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
-const PROVIDER_NAME: LanguageModelProviderName = language_model::ANTHROPIC_PROVIDER_NAME;
+const PROVIDER_ID: LanguageModelProviderId = ANTHROPIC_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = ANTHROPIC_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
@@ -140,13 +143,10 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
     }
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        [
-            anthropic::Model::ClaudeSonnet4_6,
-            anthropic::Model::ClaudeSonnet4_6Thinking,
-        ]
-        .into_iter()
-        .map(|model| self.create_language_model(model))
-        .collect()
+        [anthropic::Model::ClaudeSonnet4_6]
+            .into_iter()
+            .map(|model| self.create_language_model(model))
+            .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -178,7 +178,12 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
-                    mode: model.mode.unwrap_or_default().into(),
+                    mode: match model.mode.unwrap_or_default() {
+                        settings::ModelMode::Default => AnthropicModelMode::Default,
+                        settings::ModelMode::Thinking { budget_tokens } => {
+                            AnthropicModelMode::Thinking { budget_tokens }
+                        }
+                    },
                 },
             );
         }
@@ -356,10 +361,14 @@ pub fn into_anthropic_count_tokens_request(
         } else {
             Some(anthropic::StringOrContents::String(system_message))
         },
-        thinking: if request.thinking_allowed
-            && let AnthropicModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(anthropic::Thinking::Enabled { budget_tokens })
+        thinking: if request.thinking_allowed {
+            match mode {
+                AnthropicModelMode::Thinking { budget_tokens } => {
+                    Some(anthropic::Thinking::Enabled { budget_tokens })
+                }
+                AnthropicModelMode::AdaptiveThinking => Some(anthropic::Thinking::Adaptive),
+                AnthropicModelMode::Default => None,
+            }
         } else {
             None
         },
@@ -517,7 +526,36 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        matches!(self.model.mode(), AnthropicModelMode::Thinking { .. })
+        self.model.supports_thinking()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
+        if self.model.supports_adaptive_thinking() {
+            vec![
+                language_model::LanguageModelEffortLevel {
+                    name: "Low".into(),
+                    value: "low".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Medium".into(),
+                    value: "medium".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "High".into(),
+                    value: "high".into(),
+                    is_default: true,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Max".into(),
+                    value: "max".into(),
+                    is_default: false,
+                },
+            ]
+        } else {
+            Vec::new()
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -700,10 +738,14 @@ pub fn into_anthropic(
         } else {
             Some(anthropic::StringOrContents::String(system_message))
         },
-        thinking: if request.thinking_allowed
-            && let AnthropicModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(anthropic::Thinking::Enabled { budget_tokens })
+        thinking: if request.thinking_allowed {
+            match mode {
+                AnthropicModelMode::Thinking { budget_tokens } => {
+                    Some(anthropic::Thinking::Enabled { budget_tokens })
+                }
+                AnthropicModelMode::AdaptiveThinking => Some(anthropic::Thinking::Adaptive),
+                AnthropicModelMode::Default => None,
+            }
         } else {
             None
         },
@@ -723,7 +765,24 @@ pub fn into_anthropic(
             LanguageModelToolChoice::None => anthropic::ToolChoice::None,
         }),
         metadata: None,
-        output_config: None,
+        output_config: if request.thinking_allowed
+            && matches!(mode, AnthropicModelMode::AdaptiveThinking)
+        {
+            request.thinking_effort.as_deref().and_then(|effort| {
+                let effort = match effort {
+                    "low" => Some(anthropic::Effort::Low),
+                    "medium" => Some(anthropic::Effort::Medium),
+                    "high" => Some(anthropic::Effort::High),
+                    "max" => Some(anthropic::Effort::Max),
+                    _ => None,
+                };
+                effort.map(|effort| anthropic::OutputConfig {
+                    effort: Some(effort),
+                })
+            })
+        } else {
+            None
+        },
         stop_sequences: Vec::new(),
         speed: request.speed.map(From::from),
         temperature: request.temperature.or(Some(default_temperature)),
@@ -817,9 +876,9 @@ impl AnthropicEventMapper {
                         // valid JSON that serde can accept, e.g. by closing
                         // unclosed delimiters. This way, we can update the
                         // UI with whatever has been streamed back so far.
-                        if let Ok(input) = serde_json::Value::from_str(
-                            &partial_json_fixer::fix_json(&tool_use.input_json),
-                        ) {
+                        if let Ok(input) =
+                            serde_json::Value::from_str(&fix_streamed_json(&tool_use.input_json))
+                        {
                             return vec![Ok(LanguageModelCompletionEvent::ToolUse(
                                 LanguageModelToolUse {
                                     id: tool_use.id.clone().into(),

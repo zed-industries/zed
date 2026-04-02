@@ -414,7 +414,7 @@ mod tests {
                 capture_example(
                     project.clone(),
                     buffer.clone(),
-                    Anchor::MIN,
+                    Anchor::min_for_buffer(buffer.read(cx).remote_id()),
                     events,
                     true,
                     cx,

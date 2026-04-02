@@ -1,12 +1,12 @@
+use agent_servers::GEMINI_ID;
 use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
 };
-use project::agent_server_store::GEMINI_NAME;
 use ui::{TintColor, Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
-use crate::agent_panel::{AgentPanel, AgentType};
+use crate::{Agent, agent_panel::AgentPanel};
 
 macro_rules! acp_onboarding_event {
     ($name:expr) => {
@@ -38,8 +38,8 @@ impl AcpOnboardingModal {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel.new_agent_thread(
-                        AgentType::Custom {
-                            name: GEMINI_NAME.into(),
+                        Agent::Custom {
+                            id: GEMINI_ID.into(),
                         },
                         window,
                         cx,

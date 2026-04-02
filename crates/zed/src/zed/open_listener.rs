@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -491,7 +491,8 @@ async fn open_workspaces(
 
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
-        if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
             cx.update(|cx| show_onboarding_view(app_state, cx).detach());
         }
         // If not the first launch, show an empty window with empty editor
@@ -528,7 +529,7 @@ async fn open_workspaces(
         };
         let open_options = workspace::OpenOptions {
             open_new_workspace,
-            replace_window,
+            requesting_window: replace_window,
             wait,
             env: env.clone(),
             ..Default::default()
@@ -1291,7 +1292,7 @@ mod tests {
                         vec![],
                         false,
                         workspace::OpenOptions {
-                            replace_window: Some(window_to_replace),
+                            requesting_window: Some(window_to_replace),
                             ..Default::default()
                         },
                         &response_tx,

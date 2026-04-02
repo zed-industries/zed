@@ -12,7 +12,7 @@ use markdown::{Markdown, MarkdownElement};
 use project::git_store::Repository;
 use settings::Settings;
 use std::hash::Hash;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{Avatar, CopyButton, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;

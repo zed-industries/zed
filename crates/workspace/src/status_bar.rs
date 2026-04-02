@@ -1,11 +1,14 @@
-use crate::{ItemHandle, Pane};
+use crate::{
+    ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
+    sidebar_side_context_menu,
+};
 use gpui::{
-    AnyView, App, Context, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
-    Subscription, Window,
+    AnyView, App, Context, Corner, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
+    Subscription, WeakEntity, Window,
 };
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
-use ui::{h_flex, prelude::*};
+use ui::{Divider, Indicator, Tooltip, prelude::*};
 use util::ResultExt;
 
 pub trait StatusItemView: Render {
@@ -29,71 +32,192 @@ trait StatusItemViewHandle: Send {
     fn item_type(&self) -> TypeId;
 }
 
+#[derive(Default)]
+struct SidebarStatus {
+    open: bool,
+    side: SidebarSide,
+    has_notifications: bool,
+    show_toggle: bool,
+}
+
+impl SidebarStatus {
+    fn query(multi_workspace: &Option<WeakEntity<MultiWorkspace>>, cx: &App) -> Self {
+        multi_workspace
+            .as_ref()
+            .and_then(|mw| mw.upgrade())
+            .map(|mw| {
+                let mw = mw.read(cx);
+                let enabled = mw.multi_workspace_enabled(cx);
+                Self {
+                    open: mw.sidebar_open() && enabled,
+                    side: mw.sidebar_side(cx),
+                    has_notifications: mw.sidebar_has_notifications(cx),
+                    show_toggle: enabled,
+                }
+            })
+            .unwrap_or_default()
+    }
+}
+
 pub struct StatusBar {
     left_items: Vec<Box<dyn StatusItemViewHandle>>,
     right_items: Vec<Box<dyn StatusItemViewHandle>>,
     active_pane: Entity<Pane>,
+    multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     _observe_active_pane: Subscription,
 }
 
 impl Render for StatusBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar = SidebarStatus::query(&self.multi_workspace, cx);
+
         h_flex()
             .w_full()
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .py(DynamicSpacing::Base04.rems(cx))
-            .px(DynamicSpacing::Base06.rems(cx))
+            .p(DynamicSpacing::Base04.rems(cx))
             .bg(cx.theme().colors().status_bar_background)
             .map(|el| match window.window_decorations() {
                 Decorations::Server => el,
                 Decorations::Client { tiling, .. } => el
-                    .when(!(tiling.bottom || tiling.right), |el| {
-                        el.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
-                    .when(!(tiling.bottom || tiling.left), |el| {
-                        el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING)
-                    })
+                    .when(
+                        !(tiling.bottom || tiling.right)
+                            && !(sidebar.open && sidebar.side == SidebarSide::Right),
+                        |el| el.rounded_br(CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
+                    .when(
+                        !(tiling.bottom || tiling.left)
+                            && !(sidebar.open && sidebar.side == SidebarSide::Left),
+                        |el| el.rounded_bl(CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
                     // This border is to avoid a transparent gap in the rounded corners
                     .mb(px(-1.))
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
-            .child(self.render_left_tools())
-            .child(self.render_right_tools())
+            .child(self.render_left_tools(&sidebar, cx))
+            .child(self.render_right_tools(&sidebar, cx))
     }
 }
 
 impl StatusBar {
-    fn render_left_tools(&self) -> impl IntoElement {
+    fn render_left_tools(
+        &self,
+        sidebar: &SidebarStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         h_flex()
             .gap_1()
             .min_w_0()
             .overflow_x_hidden()
+            .when(
+                sidebar.show_toggle && !sidebar.open && sidebar.side == SidebarSide::Left,
+                |this| this.child(self.render_sidebar_toggle(sidebar, cx)),
+            )
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
-    fn render_right_tools(&self) -> impl IntoElement {
+    fn render_right_tools(
+        &self,
+        sidebar: &SidebarStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         h_flex()
             .flex_shrink_0()
             .gap_1()
             .overflow_x_hidden()
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
+            .when(
+                sidebar.show_toggle && !sidebar.open && sidebar.side == SidebarSide::Right,
+                |this| this.child(self.render_sidebar_toggle(sidebar, cx)),
+            )
+    }
+
+    fn render_sidebar_toggle(
+        &self,
+        sidebar: &SidebarStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let on_right = sidebar.side == SidebarSide::Right;
+        let has_notifications = sidebar.has_notifications;
+        let indicator_border = cx.theme().colors().status_bar_background;
+
+        let toggle = sidebar_side_context_menu("sidebar-status-toggle-menu", cx)
+            .anchor(if on_right {
+                Corner::BottomRight
+            } else {
+                Corner::BottomLeft
+            })
+            .attach(if on_right {
+                Corner::TopRight
+            } else {
+                Corner::TopLeft
+            })
+            .trigger(move |_is_active, _window, _cx| {
+                IconButton::new(
+                    "toggle-workspace-sidebar",
+                    if on_right {
+                        IconName::ThreadsSidebarRightClosed
+                    } else {
+                        IconName::ThreadsSidebarLeftClosed
+                    },
+                )
+                .icon_size(IconSize::Small)
+                .when(has_notifications, |this| {
+                    this.indicator(Indicator::dot().color(Color::Accent))
+                        .indicator_border_color(Some(indicator_border))
+                })
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                })
+                .on_click(move |_, window, cx| {
+                    if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                        multi_workspace.update(cx, |multi_workspace, cx| {
+                            multi_workspace.toggle_sidebar(window, cx);
+                        });
+                    }
+                })
+            });
+
+        h_flex()
+            .gap_0p5()
+            .when(on_right, |this| {
+                this.child(Divider::vertical().color(ui::DividerColor::Border))
+            })
+            .child(toggle)
+            .when(!on_right, |this| {
+                this.child(Divider::vertical().color(ui::DividerColor::Border))
+            })
     }
 }
 
 impl StatusBar {
-    pub fn new(active_pane: &Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        active_pane: &Entity<Pane>,
+        multi_workspace: Option<WeakEntity<MultiWorkspace>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut this = Self {
             left_items: Default::default(),
             right_items: Default::default(),
             active_pane: active_pane.clone(),
+            multi_workspace,
             _observe_active_pane: cx.observe_in(active_pane, window, |this, _, window, cx| {
                 this.update_active_pane_item(window, cx)
             }),
         };
         this.update_active_pane_item(window, cx);
         this
+    }
+
+    pub fn set_multi_workspace(
+        &mut self,
+        multi_workspace: WeakEntity<MultiWorkspace>,
+        cx: &mut Context<Self>,
+    ) {
+        self.multi_workspace = Some(multi_workspace);
+        cx.notify();
     }
 
     pub fn add_left_item<T>(&mut self, item: Entity<T>, window: &mut Window, cx: &mut Context<Self>)

@@ -3,7 +3,6 @@ use edit_prediction::{
     ApiKeyState,
     mercury::{MERCURY_CREDENTIALS_URL, mercury_api_token},
     open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
-    sweep_ai::{SWEEP_CREDENTIALS_URL, sweep_api_token},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
 use gpui::{Entity, ScrollHandle, prelude::*};
@@ -47,30 +46,6 @@ pub(crate) fn render_edit_prediction_setup_page(
         ),
         Some(
             render_api_key_provider(
-                IconName::SweepAi,
-                "Sweep",
-                ApiKeyDocs::Link {
-                    dashboard_url: "https://app.sweep.dev/".into(),
-                },
-                sweep_api_token(cx),
-                |_cx| SWEEP_CREDENTIALS_URL,
-                Some(
-                    settings_window
-                        .render_sub_page_items_section(
-                            sweep_settings().iter().enumerate(),
-                            true,
-                            window,
-                            cx,
-                        )
-                        .into_any_element(),
-                ),
-                window,
-                cx,
-            )
-            .into_any_element(),
-        ),
-        Some(
-            render_api_key_provider(
                 IconName::AiMistral,
                 "Codestral",
                 ApiKeyDocs::Link {
@@ -99,8 +74,7 @@ pub(crate) fn render_edit_prediction_setup_page(
                 IconName::AiOpenAiCompat,
                 "OpenAI Compatible API",
                 ApiKeyDocs::Custom {
-                    message: "Set an API key here. It will be sent as Authorization: Bearer {key}."
-                        .into(),
+                    message: "The API key sent as Authorization: Bearer {key}.".into(),
                 },
                 open_ai_compatible_api_token(cx),
                 |cx| open_ai_compatible_api_url(cx),
@@ -172,10 +146,12 @@ fn render_provider_dropdown(window: &mut Window, cx: &mut App) -> AnyElement {
             h_flex()
                 .pt_2p5()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     v_flex()
                         .w_full()
+                        .min_w_0()
                         .max_w_1_2()
                         .child(Label::new("Provider"))
                         .child(
@@ -246,13 +222,15 @@ fn render_api_key_provider(
         .no_padding(true);
     let button_link_label = format!("{} dashboard", title);
     let description = match docs {
-        ApiKeyDocs::Custom { message } => h_flex().min_w_0().gap_0p5().child(
+        ApiKeyDocs::Custom { message } => div().min_w_0().w_full().child(
             Label::new(message)
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         ),
         ApiKeyDocs::Link { dashboard_url } => h_flex()
+            .w_full()
             .min_w_0()
+            .flex_wrap()
             .gap_0p5()
             .child(
                 Label::new("Visit the")
@@ -300,10 +278,12 @@ fn render_api_key_provider(
             h_flex()
                 .pt_2p5()
                 .w_full()
+                .min_w_0()
                 .justify_between()
                 .child(
                     v_flex()
                         .w_full()
+                        .min_w_0()
                         .max_w_1_2()
                         .child(Label::new("API Key"))
                         .child(description)
@@ -338,39 +318,6 @@ fn render_api_key_provider(
                 .child(additional_fields),
         )
     })
-}
-
-fn sweep_settings() -> Box<[SettingsPageItem]> {
-    Box::new([SettingsPageItem::SettingItem(SettingItem {
-        title: "Privacy Mode",
-        description: "When enabled, Sweep will not store edit prediction inputs or outputs. When disabled, Sweep may collect data including buffer contents, diagnostics, file paths, and generated predictions to improve the service.",
-        field: Box::new(SettingField {
-            pick: |settings| {
-                settings
-                    .project
-                    .all_languages
-                    .edit_predictions
-                    .as_ref()?
-                    .sweep
-                    .as_ref()?
-                    .privacy_mode
-                    .as_ref()
-            },
-            write: |settings, value| {
-                settings
-                    .project
-                    .all_languages
-                    .edit_predictions
-                    .get_or_insert_default()
-                    .sweep
-                    .get_or_insert_default()
-                    .privacy_mode = value;
-            },
-            json_path: Some("edit_predictions.sweep.privacy_mode"),
-        }),
-        metadata: None,
-        files: USER,
-    })])
 }
 
 fn render_ollama_provider(
@@ -466,7 +413,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prompt Format",
-            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings
@@ -597,7 +544,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
         }),
         SettingsPageItem::SettingItem(SettingItem {
             title: "Prompt Format",
-            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name",
+            description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
             field: Box::new(SettingField {
                 pick: |settings| {
                     settings
@@ -763,12 +710,9 @@ fn render_github_copilot_provider(window: &mut Window, cx: &mut App) -> Option<i
     let configuration_view = window.use_state(cx, |_, cx| {
         copilot_ui::ConfigurationView::new(
             move |cx| {
-                if let Some(app_state) = AppState::global(cx).upgrade() {
-                    copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
-                        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
-                } else {
-                    false
-                }
+                let app_state = AppState::global(cx);
+                copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+                    .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
             },
             copilot_ui::ConfigurationMode::EditPrediction,
             cx,

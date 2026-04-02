@@ -54,6 +54,7 @@ shell_command_parser.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

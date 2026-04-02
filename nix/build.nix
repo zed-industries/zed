@@ -38,6 +38,8 @@
   libxfixes,
   libxkbcommon,
   libxrandr,
+  libx11,
+  libxcb,
   nodejs_22,
   openssl,
   perl,
@@ -180,8 +182,9 @@ let
         libxkbcommon
         wayland
         gpu-lib
-        xorg.libX11
-        xorg.libxcb
+        libglvnd
+        libx11
+        libxcb
         libdrm
         libgbm
         libva

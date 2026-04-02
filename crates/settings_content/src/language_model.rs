@@ -16,6 +16,7 @@ pub struct AllLanguageModelSettingsContent {
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
+    pub opencode: Option<OpenCodeSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
@@ -142,6 +143,24 @@ impl Default for KeepAlive {
     fn default() -> Self {
         Self::indefinite()
     }
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct OpenCodeSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<OpenCodeAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct OpenCodeAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google".
+    pub protocol: String,
 }
 
 #[with_fallible_options]

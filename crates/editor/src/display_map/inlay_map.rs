@@ -1342,7 +1342,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
-    use text::{Patch, Rope};
+    use text::{BufferId, Patch, Rope};
     use util::RandomCharIter;
     use util::post_inc;
 
@@ -1351,10 +1351,10 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1371,10 +1371,10 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("a".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1391,10 +1391,10 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: false,
                     padding_right: false,
                     tooltip: None,
@@ -1411,10 +1411,10 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String(" a ".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -1434,10 +1434,10 @@ mod tests {
         assert_eq!(
             Inlay::hint(
                 InlayId::Hint(0),
-                Anchor::min(),
+                Anchor::Min,
                 &InlayHint {
                     label: InlayHintLabel::String("🎨".to_string()),
-                    position: text::Anchor::MIN,
+                    position: text::Anchor::min_for_buffer(BufferId::new(1).unwrap()),
                     padding_left: true,
                     padding_right: true,
                     tooltip: None,
@@ -2227,7 +2227,7 @@ mod tests {
     fn init_test(cx: &mut App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
     }
 
     /// Helper to create test highlights for an inlay

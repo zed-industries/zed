@@ -11,10 +11,10 @@ use gpui::{App, Entity, Pixels, Task};
 use itertools::Itertools;
 use language::{
     BufferRow,
-    language_settings::{InlayHintKind, InlayHintSettings, language_settings},
+    language_settings::{InlayHintKind, InlayHintSettings},
 };
 use lsp::LanguageServerId;
-use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
+use multi_buffer::{Anchor, MultiBufferSnapshot};
 use project::{
     HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
     InvalidationStrategy, ResolveState,
@@ -38,9 +38,7 @@ pub fn inlay_hint_settings(
     snapshot: &MultiBufferSnapshot,
     cx: &mut Context<Editor>,
 ) -> InlayHintSettings {
-    let file = snapshot.file_at(location);
-    let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints
+    snapshot.language_settings_at(location, cx).inlay_hints
 }
 
 #[derive(Debug)]
@@ -112,14 +110,15 @@ impl LspInlayHintData {
         &mut self,
         buffer_ids: &HashSet<BufferId>,
         current_hints: impl IntoIterator<Item = Inlay>,
+        snapshot: &MultiBufferSnapshot,
     ) {
         for buffer_id in buffer_ids {
             self.hint_refresh_tasks.remove(buffer_id);
             self.hint_chunk_fetching.remove(buffer_id);
         }
         for hint in current_hints {
-            if let Some(buffer_id) = hint.position.text_anchor.buffer_id {
-                if buffer_ids.contains(&buffer_id) {
+            if let Some((text_anchor, _)) = snapshot.anchor_to_buffer_anchor(hint.position) {
+                if buffer_ids.contains(&text_anchor.buffer_id) {
                     self.added_hints.remove(&hint.id);
                 }
             }
@@ -239,7 +238,7 @@ pub enum InlayHintRefreshReason {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
-    ExcerptsRemoved(Vec<ExcerptId>),
+    BuffersRemoved(Vec<BufferId>),
 }
 
 impl Editor {
@@ -305,7 +304,7 @@ impl Editor {
         let debounce = match &reason {
             InlayHintRefreshReason::SettingsChange(_)
             | InlayHintRefreshReason::Toggle(_)
-            | InlayHintRefreshReason::ExcerptsRemoved(_)
+            | InlayHintRefreshReason::BuffersRemoved(_)
             | InlayHintRefreshReason::ModifiersChanged(_) => None,
             _may_need_lsp_call => self.inlay_hints.as_ref().and_then(|inlay_hints| {
                 if invalidate_cache.should_invalidate() {
@@ -316,7 +315,8 @@ impl Editor {
             }),
         };
 
-        let mut visible_excerpts = self.visible_excerpts(true, cx);
+        let mut visible_excerpts = self.visible_buffer_ranges(cx);
+        visible_excerpts.retain(|(snapshot, _, _)| self.is_lsp_relevant(snapshot.file(), cx));
 
         let mut invalidate_hints_for_buffers = HashSet::default();
         let ignore_previous_fetches = match reason {
@@ -326,7 +326,7 @@ impl Editor {
             | InlayHintRefreshReason::ServerRemoved => true,
             InlayHintRefreshReason::NewLinesShown
             | InlayHintRefreshReason::RefreshRequested { .. }
-            | InlayHintRefreshReason::ExcerptsRemoved(_) => false,
+            | InlayHintRefreshReason::BuffersRemoved(_) => false,
             InlayHintRefreshReason::BufferEdited(buffer_id) => {
                 let Some(affected_language) = self
                     .buffer()
@@ -353,8 +353,8 @@ impl Editor {
                 );
 
                 semantics_provider.invalidate_inlay_hints(&invalidate_hints_for_buffers, cx);
-                visible_excerpts.retain(|_, (visible_buffer, _, _)| {
-                    visible_buffer.read(cx).language() == Some(&affected_language)
+                visible_excerpts.retain(|(buffer_snapshot, _, _)| {
+                    buffer_snapshot.language() == Some(&affected_language)
                 });
                 false
             }
@@ -373,6 +373,7 @@ impl Editor {
                 inlay_hints.clear_for_buffers(
                     &invalidate_hints_for_buffers,
                     Self::visible_inlay_hints(self.display_map.read(cx)),
+                    &multi_buffer.read(cx).snapshot(cx),
                 );
             }
         }
@@ -381,14 +382,18 @@ impl Editor {
             .extend(invalidate_hints_for_buffers);
 
         let mut buffers_to_query = HashMap::default();
-        for (_, (buffer, buffer_version, visible_range)) in visible_excerpts {
-            let buffer_id = buffer.read(cx).remote_id();
+        for (buffer_snapshot, visible_range, _) in visible_excerpts {
+            let buffer_id = buffer_snapshot.remote_id();
 
             if !self.registered_buffers.contains_key(&buffer_id) {
                 continue;
             }
 
-            let buffer_snapshot = buffer.read(cx).snapshot();
+            let Some(buffer) = multi_buffer.read(cx).buffer(buffer_id) else {
+                continue;
+            };
+
+            let buffer_version = buffer_snapshot.version().clone();
             let buffer_anchor_range = buffer_snapshot.anchor_before(visible_range.start)
                 ..buffer_snapshot.anchor_after(visible_range.end);
 
@@ -516,13 +521,14 @@ impl Editor {
                     }
                 }
             }
-            InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
+            InlayHintRefreshReason::BuffersRemoved(buffers_removed) => {
                 let to_remove = self
                     .display_map
                     .read(cx)
                     .current_inlays()
                     .filter_map(|inlay| {
-                        if excerpts_removed.contains(&inlay.position.excerpt_id) {
+                        let anchor = inlay.position.raw_text_anchor()?;
+                        if buffers_removed.contains(&anchor.buffer_id) {
                             Some(inlay.id)
                         } else {
                             None
@@ -612,13 +618,11 @@ impl Editor {
                 })
                 .max_by_key(|hint| hint.id)
             {
-                if let Some(ResolvedHint::Resolved(cached_hint)) = hovered_hint
-                    .position
-                    .text_anchor
-                    .buffer_id
-                    .and_then(|buffer_id| {
+                if let Some(ResolvedHint::Resolved(cached_hint)) = buffer_snapshot
+                    .anchor_to_buffer_anchor(hovered_hint.position)
+                    .and_then(|(anchor, _)| {
                         lsp_store.update(cx, |lsp_store, cx| {
-                            lsp_store.resolved_hint(buffer_id, hovered_hint.id, cx)
+                            lsp_store.resolved_hint(anchor.buffer_id, hovered_hint.id, cx)
                         })
                     })
                 {
@@ -789,15 +793,19 @@ impl Editor {
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
         cx: &mut Context<Self>,
     ) {
+        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let visible_inlay_hint_ids = Self::visible_inlay_hints(self.display_map.read(cx))
-            .filter(|inlay| inlay.position.text_anchor.buffer_id == Some(buffer_id))
+            .filter(|inlay| {
+                multi_buffer_snapshot
+                    .anchor_to_buffer_anchor(inlay.position)
+                    .map(|(anchor, _)| anchor.buffer_id)
+                    == Some(buffer_id)
+            })
             .map(|inlay| inlay.id)
             .collect::<Vec<_>>();
         let Some(inlay_hints) = &mut self.inlay_hints else {
             return;
         };
-
-        let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let Some(buffer_snapshot) = self
             .buffer
             .read(cx)
@@ -912,12 +920,10 @@ impl Editor {
             hints_to_remove.extend(
                 Self::visible_inlay_hints(self.display_map.read(cx))
                     .filter(|inlay| {
-                        inlay
-                            .position
-                            .text_anchor
-                            .buffer_id
-                            .is_none_or(|buffer_id| {
-                                invalidate_hints_for_buffers.contains(&buffer_id)
+                        multi_buffer_snapshot
+                            .anchor_to_buffer_anchor(inlay.position)
+                            .is_none_or(|(anchor, _)| {
+                                invalidate_hints_for_buffers.contains(&anchor.buffer_id)
                             })
                     })
                     .map(|inlay| inlay.id),
@@ -2287,17 +2293,15 @@ pub mod tests {
         cx: &mut gpui::TestAppContext,
     ) -> Range<Point> {
         let ranges = editor
-            .update(cx, |editor, _window, cx| editor.visible_excerpts(true, cx))
+            .update(cx, |editor, _window, cx| editor.visible_buffer_ranges(cx))
             .unwrap();
         assert_eq!(
             ranges.len(),
             1,
             "Single buffer should produce a single excerpt with visible range"
         );
-        let (_, (excerpt_buffer, _, excerpt_visible_range)) = ranges.into_iter().next().unwrap();
-        excerpt_buffer.read_with(cx, |buffer, _| {
-            excerpt_visible_range.to_point(&buffer.snapshot())
-        })
+        let (buffer_snapshot, visible_range, _) = ranges.into_iter().next().unwrap();
+        visible_range.to_point(&buffer_snapshot)
     }
 
     #[gpui::test]
@@ -2970,7 +2974,7 @@ let c = 3;"#
             .await
             .unwrap();
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
-        let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.set_excerpts_for_path(
                 PathKey::sorted(0),
                 buffer_1.clone(),
@@ -2985,14 +2989,7 @@ let c = 3;"#
                 0,
                 cx,
             );
-            let excerpt_ids = multibuffer.excerpt_ids();
-            let buffer_1_excerpts = vec![excerpt_ids[0]];
-            let buffer_2_excerpts = vec![excerpt_ids[1]];
-            (buffer_1_excerpts, buffer_2_excerpts)
         });
-
-        assert!(!buffer_1_excerpts.is_empty());
-        assert!(!buffer_2_excerpts.is_empty());
 
         cx.executor().run_until_parked();
         let editor = cx.add_window(|window, cx| {
@@ -3094,7 +3091,7 @@ let c = 3;"#
         editor
             .update(cx, |editor, _, cx| {
                 editor.buffer().update(cx, |multibuffer, cx| {
-                    multibuffer.remove_excerpts_for_path(PathKey::sorted(1), cx);
+                    multibuffer.remove_excerpts(PathKey::sorted(1), cx);
                 })
             })
             .unwrap();
@@ -4800,7 +4797,7 @@ let c = 3;"#
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             crate::init(cx);
         });

@@ -103,12 +103,13 @@ use {
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
     gpui::{
-        Action as _, App, AppContext as _, Bounds, KeyBinding, Modifiers, SharedString,
-        VisualTestAppContext, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+        App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, VisualTestAppContext,
+        WindowBounds, WindowHandle, WindowOptions, point, px, size,
     },
     image::RgbaImage,
+    project::{AgentId, Project},
     project_panel::ProjectPanel,
-    settings::{NotifyWhenAgentWaiting, Settings as _},
+    settings::{NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings as _},
     settings_ui::SettingsWindow,
     std::{
         any::Any,
@@ -118,7 +119,7 @@ use {
         time::Duration,
     },
     util::ResultExt as _,
-    workspace::{AppState, MultiWorkspace, Panel as _, Workspace},
+    workspace::{AppState, MultiWorkspace, Workspace},
     zed_actions::OpenSettingsAt,
 };
 
@@ -169,13 +170,13 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     // Set the global app state so settings_ui and other subsystems can find it
     cx.update(|cx| {
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
     });
 
     // Initialize all Zed subsystems
     cx.update(|cx| {
         gpui_tokio::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         client::init(&app_state.client, cx);
         audio::init(cx);
         workspace::init(app_state.clone(), cx);
@@ -210,9 +211,9 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         );
         agent_ui::init(
             app_state.fs.clone(),
-            app_state.client.clone(),
             prompt_builder,
             app_state.languages.clone(),
+            true,
             false,
             cx,
         );
@@ -230,7 +231,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         agent_settings::AgentSettings::override_global(
             agent_settings::AgentSettings {
                 notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-                play_sound_when_agent_done: false,
+                play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
                 ..agent_settings::AgentSettings::get_global(cx).clone()
             },
             cx,
@@ -964,7 +965,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
     let workspace_store = cx.new(|cx| workspace::WorkspaceStore::new(client.clone(), cx));
 
-    theme::init(theme::LoadThemes::JustBase, cx);
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
     client::init(&client, cx);
 
     let app_state = Arc::new(AppState {
@@ -977,7 +978,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         build_window_options: |_, _| Default::default(),
         session,
     });
-    AppState::set_global(Arc::downgrade(&app_state), cx);
+    AppState::set_global(app_state.clone(), cx);
     app_state
 }
 
@@ -1958,13 +1959,14 @@ impl AgentServer for StubAgentServer {
         ui::IconName::ZedAssistant
     }
 
-    fn name(&self) -> SharedString {
+    fn agent_id(&self) -> AgentId {
         "Visual Test Agent".into()
     }
 
     fn connect(
         &self,
         _delegate: AgentServerDelegate,
+        _project: Entity<Project>,
         _cx: &mut App,
     ) -> gpui::Task<gpui::Result<Rc<dyn AgentConnection>>> {
         gpui::Task::ready(Ok(Rc::new(self.connection.clone())))
@@ -2131,16 +2133,10 @@ fn run_agent_thread_view_test(
         })
         .context("Failed to get workspace handle")?;
 
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
     cx.background_executor.allow_parking();
     let panel = cx
         .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
+        .block_test(AgentPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load AgentPanel")?;
     cx.background_executor.forbid_parking();
 
@@ -2592,7 +2588,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                     });
                     cx.new(|cx| {
                         let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
-                        multi_workspace.activate(workspace2, cx);
+                        multi_workspace.activate(workspace2, window, cx);
                         multi_workspace
                     })
                 },
@@ -2643,9 +2639,27 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Switch to workspace 1 so it's highlighted as active (index 0)
     multi_workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.activate_index(0, window, cx);
+            let workspace = multi_workspace.workspaces()[0].clone();
+            multi_workspace.activate(workspace, window, cx);
         })
         .context("Failed to activate workspace 1")?;
+
+    cx.run_until_parked();
+
+    // Create the sidebar outside the MultiWorkspace update to avoid a
+    // re-entrant read panic (Sidebar::new reads the MultiWorkspace).
+    let sidebar = cx
+        .update_window(multi_workspace_window.into(), |root_view, window, cx| {
+            let multi_workspace_handle: Entity<MultiWorkspace> = root_view.downcast().unwrap();
+            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+        })
+        .context("Failed to create sidebar")?;
+
+    multi_workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), cx);
+        })
+        .context("Failed to register sidebar")?;
 
     cx.run_until_parked();
 
@@ -2726,8 +2740,8 @@ fn run_multi_workspace_sidebar_visual_tests(
 
     // Open the sidebar
     multi_workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            window.dispatch_action(workspace::ToggleWorkspaceSidebar.boxed_clone(), cx);
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.toggle_sidebar(window, cx);
         })
         .context("Failed to toggle sidebar")?;
 
@@ -3165,10 +3179,25 @@ edition = "2021"
 
     cx.run_until_parked();
 
+    // Create the sidebar outside the MultiWorkspace update to avoid a
+    // re-entrant read panic (Sidebar::new reads the MultiWorkspace).
+    let sidebar = cx
+        .update_window(workspace_window.into(), |root_view, window, cx| {
+            let multi_workspace_handle: Entity<MultiWorkspace> = root_view.downcast().unwrap();
+            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+        })
+        .context("Failed to create sidebar")?;
+
+    workspace_window
+        .update(cx, |multi_workspace, _window, cx| {
+            multi_workspace.register_sidebar(sidebar.clone(), cx);
+        })
+        .context("Failed to register sidebar")?;
+
     // Open the sidebar
     workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            window.dispatch_action(workspace::ToggleWorkspaceSidebar.boxed_clone(), cx);
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.toggle_sidebar(window, cx);
         })
         .context("Failed to toggle sidebar")?;
 
@@ -3262,52 +3291,40 @@ edition = "2021"
         })
         .context("Failed to get workspace handle for agent panel")?;
 
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
-
     // Register an observer so that workspaces created by the worktree creation
     // flow get AgentPanel and ProjectPanel loaded automatically. Without this,
     // `workspace.panel::<AgentPanel>(cx)` returns None in the new workspace and
     // the creation flow's `focus_panel::<AgentPanel>` call is a no-op.
-    let _workspace_observer = cx.update({
-        let prompt_builder = prompt_builder.clone();
-        |cx| {
-            cx.observe_new(move |workspace: &mut Workspace, window, cx| {
-                let Some(window) = window else { return };
-                let prompt_builder = prompt_builder.clone();
-                let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
-                    let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
-                    let agent_panel =
-                        AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
-                    if let Ok(panel) = project_panel.await {
-                        workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
-                            })
-                            .log_err();
-                    }
-                    if let Ok(panel) = agent_panel.await {
-                        workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
-                            })
-                            .log_err();
-                    }
-                    anyhow::Ok(())
-                });
-                workspace.set_panels_task(panels_task);
-            })
-        }
+    let _workspace_observer = cx.update(|cx| {
+        cx.observe_new(move |workspace: &mut Workspace, window, cx| {
+            let Some(window) = window else { return };
+            let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
+                let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+                let agent_panel = AgentPanel::load(workspace_handle.clone(), cx.clone());
+                if let Ok(panel) = project_panel.await {
+                    workspace_handle
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.add_panel(panel, window, cx);
+                        })
+                        .log_err();
+                }
+                if let Ok(panel) = agent_panel.await {
+                    workspace_handle
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.add_panel(panel, window, cx);
+                        })
+                        .log_err();
+                }
+                anyhow::Ok(())
+            });
+            workspace.set_panels_task(panels_task);
+        })
     });
 
     cx.background_executor.allow_parking();
     let panel = cx
         .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
+        .block_test(AgentPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load AgentPanel")?;
     cx.background_executor.forbid_parking();
 
@@ -3458,7 +3475,7 @@ edition = "2021"
 
     // Insert a message into the active thread's message editor and submit.
     let thread_view = cx
-        .read(|cx| panel.read(cx).as_active_thread_view(cx))
+        .read(|cx| panel.read(cx).active_thread_view(cx))
         .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
 
     cx.update_window(workspace_window.into(), |_, window, cx| {
@@ -3513,7 +3530,6 @@ edition = "2021"
         new_workspace.update(cx, |workspace, cx| {
             if let Some(new_panel) = workspace.panel::<AgentPanel>(cx) {
                 new_panel.update(cx, |panel, cx| {
-                    panel.set_size(Some(px(480.0)), window, cx);
                     panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
                 });
             }
@@ -3527,7 +3543,7 @@ edition = "2021"
         new_workspace.read(cx).panel::<AgentPanel>(cx)
     })?;
     if let Some(new_panel) = new_panel {
-        let new_thread_view = cx.read(|cx| new_panel.read(cx).as_active_thread_view(cx));
+        let new_thread_view = cx.read(|cx| new_panel.read(cx).active_thread_view(cx));
         if let Some(new_thread_view) = new_thread_view {
             cx.update_window(workspace_window.into(), |_, window, cx| {
                 let message_editor = new_thread_view.read(cx).message_editor.clone();

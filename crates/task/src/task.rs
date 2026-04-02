@@ -23,8 +23,8 @@ pub use debug_format::{
     Request, TcpArgumentsTemplate, ZedDebugConfig,
 };
 pub use task_template::{
-    DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
-    substitute_variables_in_map, substitute_variables_in_str,
+    DebugArgsRequest, HideStrategy, RevealStrategy, SaveStrategy, TaskHook, TaskTemplate,
+    TaskTemplates, substitute_variables_in_map, substitute_variables_in_str,
 };
 pub use util::shell::{Shell, ShellKind};
 pub use util::shell_builder::ShellBuilder;
@@ -75,6 +75,8 @@ pub struct SpawnInTerminal {
     pub show_command: bool,
     /// Whether to show the rerun button in the terminal tab.
     pub show_rerun: bool,
+    /// Which edited buffers to save before running the task.
+    pub save: SaveStrategy,
 }
 
 impl SpawnInTerminal {
@@ -172,11 +174,17 @@ pub enum VariableName {
     Column,
     /// Text from the latest selection.
     SelectedText,
+    /// The language of the currently opened buffer (e.g., "Rust", "Python").
+    Language,
     /// The symbol selected by the symbol tagging system, specifically the @run capture in a runnables.scm
     RunnableSymbol,
     /// Open a Picker to select a process ID to use in place
     /// Can only be used to debug configurations
     PickProcessId,
+    /// An absolute path of the main (original) git worktree for the current repository.
+    /// For normal checkouts, this equals the worktree root. For linked worktrees,
+    /// this is the original repo's working directory.
+    MainGitWorktree,
     /// Custom variable, provided by the plugin or other external source.
     /// Will be printed with `CUSTOM_` prefix to avoid potential conflicts with other variables.
     Custom(Cow<'static, str>),
@@ -209,8 +217,10 @@ impl FromStr for VariableName {
             "SYMBOL" => Self::Symbol,
             "RUNNABLE_SYMBOL" => Self::RunnableSymbol,
             "SELECTED_TEXT" => Self::SelectedText,
+            "LANGUAGE" => Self::Language,
             "ROW" => Self::Row,
             "COLUMN" => Self::Column,
+            "MAIN_GIT_WORKTREE" => Self::MainGitWorktree,
             _ => {
                 if let Some(custom_name) =
                     without_prefix.strip_prefix(ZED_CUSTOM_VARIABLE_NAME_PREFIX)
@@ -243,8 +253,10 @@ impl std::fmt::Display for VariableName {
             Self::Row => write!(f, "{ZED_VARIABLE_NAME_PREFIX}ROW"),
             Self::Column => write!(f, "{ZED_VARIABLE_NAME_PREFIX}COLUMN"),
             Self::SelectedText => write!(f, "{ZED_VARIABLE_NAME_PREFIX}SELECTED_TEXT"),
+            Self::Language => write!(f, "{ZED_VARIABLE_NAME_PREFIX}LANGUAGE"),
             Self::RunnableSymbol => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RUNNABLE_SYMBOL"),
             Self::PickProcessId => write!(f, "{ZED_VARIABLE_NAME_PREFIX}PICK_PID"),
+            Self::MainGitWorktree => write!(f, "{ZED_VARIABLE_NAME_PREFIX}MAIN_GIT_WORKTREE"),
             Self::Custom(s) => write!(
                 f,
                 "{ZED_VARIABLE_NAME_PREFIX}{ZED_CUSTOM_VARIABLE_NAME_PREFIX}{s}"

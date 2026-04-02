@@ -4,6 +4,8 @@ mod create_directory_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_file_tool;
+#[cfg(all(test, feature = "unit-eval"))]
+mod evals;
 mod fetch_tool;
 mod find_path_tool;
 mod grep_tool;
@@ -19,6 +21,7 @@ mod streaming_edit_file_tool;
 mod terminal_tool;
 mod tool_edit_parser;
 mod tool_permissions;
+mod update_plan_tool;
 mod web_search_tool;
 
 use crate::AgentTool;
@@ -44,6 +47,7 @@ pub use spawn_agent_tool::*;
 pub use streaming_edit_file_tool::*;
 pub use terminal_tool::*;
 pub use tool_permissions::*;
+pub use update_plan_tool::*;
 pub use web_search_tool::*;
 
 macro_rules! tools {
@@ -132,5 +136,6 @@ tools! {
     SaveFileTool,
     SpawnAgentTool,
     TerminalTool,
+    UpdatePlanTool,
     WebSearchTool,
 }

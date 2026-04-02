@@ -1388,7 +1388,11 @@ impl Client {
                     // Start an HTTP server to receive the redirect from Zed's sign-in page.
                     let server = tiny_http::Server::http("127.0.0.1:0")
                         .map_err(|e| anyhow!(e).context("failed to bind callback port"))?;
-                    let port = server.server_addr().port();
+                    let port = server
+                        .server_addr()
+                        .to_ip()
+                        .context("server not bound to a TCP address")?
+                        .port();
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
@@ -2137,11 +2141,13 @@ mod tests {
             project_id: 1,
             committer_name: None,
             committer_email: None,
+            features: Vec::new(),
         });
         server.send(proto::JoinProject {
             project_id: 2,
             committer_name: None,
             committer_email: None,
+            features: Vec::new(),
         });
         done_rx1.recv().await.unwrap();
         done_rx2.recv().await.unwrap();
