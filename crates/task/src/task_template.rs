@@ -116,11 +116,11 @@ pub enum HideStrategy {
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SaveStrategy {
-    #[default]
     /// Save all edited buffers.
     All,
     /// Save the current buffer.
     Current,
+    #[default]
     /// Don't save any buffers.
     None,
 }
