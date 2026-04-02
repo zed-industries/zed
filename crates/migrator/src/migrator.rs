@@ -248,7 +248,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2026_03_16,
         ),
         MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
-        MigrationType::Json(migrations::m_2026_04_02::wrap_profile_settings),
+        MigrationType::Json(migrations::m_2026_04_01::restructure_profiles_with_settings_key),
     ];
     run_migrations(text, migrations)
 }
@@ -4610,7 +4610,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wrap_profile_settings() {
+    fn test_restructure_profiles_with_settings_key() {
         assert_migrate_settings(
             &r#"
                 {
@@ -4652,7 +4652,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wrap_profile_settings_already_migrated() {
+    fn test_restructure_profiles_with_settings_key_already_migrated() {
         assert_migrate_settings(
             &r#"
                 {
@@ -4671,7 +4671,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wrap_profile_settings_no_profiles() {
+    fn test_restructure_profiles_with_settings_key_no_profiles() {
         assert_migrate_settings(
             &r#"
                 {

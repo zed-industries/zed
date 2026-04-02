@@ -323,8 +323,8 @@ pub(crate) mod m_2026_03_30 {
     pub(crate) use settings::make_play_sound_when_agent_done_an_enum;
 }
 
-pub(crate) mod m_2026_04_02 {
+pub(crate) mod m_2026_04_01 {
     mod settings;
 
-    pub(crate) use settings::wrap_profile_settings;
+    pub(crate) use settings::restructure_profiles_with_settings_key;
 }
