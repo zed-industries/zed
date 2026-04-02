@@ -70,8 +70,19 @@ h5,
 h6 {
   position: relative;
   font-family: var(--title-font);
-  font-weight: 480;
+  font-weight: 400;
+}
+
+h1 {
   color: var(--title-color);
+}
+
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--full-contrast);
 }
 
 /* Don't change font size in headers. */
@@ -272,9 +283,13 @@ hr {
   border-radius: 8px;
   overflow: clip;
 }
-.content .header:link,
-.content .header:visited {
+.content h1 .header:link,
+.content h1 .header:visited {
   color: var(--title-color);
+}
+.content :is(h2, h3, h4, h5, h6) .header:link,
+.content :is(h2, h3, h4, h5, h6) .header:visited {
+  color: var(--full-contrast);
 }
 .content .header:link,
 .content .header:visited:hover {
