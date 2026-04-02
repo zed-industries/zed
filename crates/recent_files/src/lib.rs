@@ -2,7 +2,7 @@ use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, AsyncApp, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, WindowHandle,
 };
 use gpui::{Pixels, px};
 
@@ -15,6 +15,7 @@ use std::{
     sync::Arc,
 };
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
     self, ModalView, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
@@ -300,9 +301,10 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|action: &OpenFileFromDirectory, cx| {
         let directory = PathBuf::from(&action.directory);
+
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let Some(picker) = workspace.active_modal::<DirectoryFilePicker>(cx) else {
-                DirectoryFilePicker::open(workspace, directory, window, cx);
+                DirectoryFilePicker::open(workspace, directory.clone(), window, cx);
                 return;
             };
 
@@ -899,18 +901,53 @@ impl PickerDelegate for DirectoryFileDelegate {
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if let Some(hit) = self.matches.get(self.selected_index()) {
             let path = self.files[hit.candidate_id].clone();
+            let directory = self.directory.clone();
 
-            if let Some(workspace) = self.workspace.upgrade() {
-                workspace.update(cx, |workspace, cx| {
-                    workspace
-                        .open_paths(
-                            vec![path],
-                            workspace::OpenOptions::default(),
-                            None,
-                            window,
-                            cx,
-                        )
-                        .detach();
+            let existing_window = (|| -> Option<WindowHandle<Workspace>> {
+                for window in workspace::local_workspace_windows(cx) {
+                    if let Ok(workspace) = window.read(cx) {
+                        let project = workspace.project().read(cx);
+                        for worktree in project.worktrees(cx) {
+                            let worktree = worktree.read(cx);
+                            let expanded_root = expand_tilde(worktree.abs_path().as_ref());
+                            if directory.starts_with(&expanded_root)
+                                || expanded_root.starts_with(&directory)
+                            {
+                                return Some(window);
+                            }
+                        }
+                    }
+                }
+                None
+            })();
+
+            if let Some(existing_window) = existing_window {
+                let path = path.clone();
+                window.defer(cx, move |_, cx| {
+                    existing_window
+                        .update(cx, |workspace, window, cx| {
+                            window.activate_window();
+                            workspace
+                                .open_paths(
+                                    vec![path],
+                                    workspace::OpenOptions::default(),
+                                    None,
+                                    window,
+                                    cx,
+                                )
+                                .detach();
+                        })
+                        .log_err();
+                });
+            } else if let Some(workspace) = self.workspace.upgrade() {
+                let directory = directory.clone();
+                let path = path.clone();
+                window.defer(cx, move |window, cx| {
+                    let _ = workspace.update(cx, |workspace, cx| {
+                        workspace
+                            .open_workspace_for_paths(false, vec![directory, path], window, cx)
+                            .detach_and_log_err(cx);
+                    });
                 });
             }
         }

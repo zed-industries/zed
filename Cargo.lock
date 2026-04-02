@@ -13647,6 +13647,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "worktree",
  "zed_actions",
 ]
 
