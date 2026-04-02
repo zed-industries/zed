@@ -1415,6 +1415,7 @@ mod tests {
 
         cx.update(|cx| {
             thread_without_worktree.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "content".into(), cx);
                 thread.set_title("No Project Thread".into(), cx).detach();
             });
         });
@@ -1490,6 +1491,7 @@ mod tests {
         // Set a title on the regular thread to trigger a save via handle_thread_update.
         cx.update(|cx| {
             regular_thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "content".into(), cx);
                 thread.set_title("Regular Thread".into(), cx).detach();
             });
         });

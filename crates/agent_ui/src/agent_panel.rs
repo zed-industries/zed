@@ -4849,6 +4849,7 @@ mod tests {
         // Open thread B — thread A goes to background.
         let connection_b = StubAgentConnection::new();
         open_thread_with_connection(&panel, connection_b, &mut cx);
+        send_message(&panel, &mut cx);
 
         let session_id_b = active_session_id(&panel, &cx);
 
