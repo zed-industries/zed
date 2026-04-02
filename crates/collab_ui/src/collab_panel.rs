@@ -474,6 +474,15 @@ impl CollabPanel {
                 });
             }
 
+            let filter_occupied_channels = KeyValueStore::global(cx)
+                .read_kvp("filter_occupied_channels")
+                .ok()
+                .flatten()
+                .is_some();
+            panel.update(cx, |panel, _cx| {
+                panel.filter_occupied_channels = filter_occupied_channels;
+            });
+
             let favorites: Vec<ChannelId> = KeyValueStore::global(cx)
                 .read_kvp("favorite_channels")
                 .ok()
@@ -1970,6 +1979,26 @@ impl CollabPanel {
         self.channel_store.read(cx).is_channel_favorited(channel_id)
     }
 
+    fn persist_filter_occupied_channels(&mut self, cx: &mut Context<Self>) {
+        let is_enabled = self.filter_occupied_channels;
+        let kvp_store = KeyValueStore::global(cx);
+        self.pending_serialization = cx.background_spawn(
+            async move {
+                if is_enabled {
+                    kvp_store
+                        .write_kvp("filter_occupied_channels".to_string(), "1".to_string())
+                        .await?;
+                } else {
+                    kvp_store
+                        .delete_kvp("filter_occupied_channels".to_string())
+                        .await?;
+                }
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
+    }
+
     fn persist_favorites(&mut self, cx: &mut Context<Self>) {
         let favorite_ids: Vec<u64> = self
             .channel_store
@@ -2849,6 +2878,7 @@ impl CollabPanel {
                                 .on_click(cx.listener(|this, _, _window, cx| {
                                     this.filter_occupied_channels = !this.filter_occupied_channels;
                                     this.update_entries(true, cx);
+                                    this.persist_filter_occupied_channels(cx);
                                 }))
                                 .tooltip(Tooltip::text(if self.filter_occupied_channels {
                                     "Show All Channels"
