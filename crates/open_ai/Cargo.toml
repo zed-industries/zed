@@ -21,7 +21,6 @@ collections.workspace = true
 futures.workspace = true
 http_client.workspace = true
 language_model_core.workspace = true
-partial-json-fixer.workspace = true
 rand.workspace = true
 schemars = { workspace = true, optional = true }
 log.workspace = true

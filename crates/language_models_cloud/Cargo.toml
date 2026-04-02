@@ -14,7 +14,6 @@ path = "src/language_models_cloud.rs"
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
-cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }

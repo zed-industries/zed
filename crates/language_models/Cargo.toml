@@ -50,16 +50,13 @@ ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 opencode = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
-partial-json-fixer.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
-semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 strum.workspace = true
-thiserror.workspace = true
 tiktoken-rs.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
