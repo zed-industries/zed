@@ -115,12 +115,12 @@ impl Render for BufferSearchBar {
                     let editor_ref = splittable_editor.read(cx);
                     let diff_view_style = editor_ref.diff_view_style();
 
-                    let is_split_setting = diff_view_style == DiffViewStyle::Split;
-                    let is_really_split = editor_ref.is_split();
+                    let is_split_set = diff_view_style == DiffViewStyle::Split;
+                    let is_split_active = editor_ref.is_split();
                     let min_columns =
                         EditorSettings::get_global(cx).minimum_split_diff_width as u32;
 
-                    let split_icon = if is_split_setting && !is_really_split {
+                    let split_icon = if is_split_set && !is_split_active {
                         IconName::DiffSplitAuto
                     } else {
                         IconName::DiffSplit
@@ -163,7 +163,7 @@ impl Render for BufferSearchBar {
                                 .toggle_state(diff_view_style == DiffViewStyle::Split)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::element(move |_, cx| {
-                                    let message = if is_split_setting && !is_really_split {
+                                    let message = if is_split_set && !is_split_active {
                                         format!("Split when wider than {} columns", min_columns)
                                             .into()
                                     } else {
