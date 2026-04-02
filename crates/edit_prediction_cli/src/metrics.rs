@@ -48,6 +48,12 @@ impl ClassificationMetrics {
         }
     }
 
+    pub fn accumulate(&mut self, other: &ClassificationMetrics) {
+        self.true_positives += other.true_positives;
+        self.false_positives += other.false_positives;
+        self.false_negatives += other.false_negatives;
+    }
+
     pub fn precision(&self) -> f64 {
         if self.true_positives + self.false_positives == 0 {
             0.0
@@ -76,16 +82,36 @@ impl ClassificationMetrics {
 }
 
 enum ChrfWhitespace {
+    /// Preserve whitespace as-is
     #[allow(unused)]
     Unchanged,
+
+    /// Ignore all whitespace differences
+    #[allow(unused)]
     Ignore,
+
+    /// Collapse whitespace into single spaces
+    Collapse,
 }
 
 const CHR_F_CHAR_ORDER: usize = 6;
-const CHR_F_BETA: f64 = 2.0;
-const CHR_F_WHITESPACE: ChrfWhitespace = ChrfWhitespace::Ignore;
+const CHR_F_BETA: f64 = 0.5;
+const CHR_F_WHITESPACE: ChrfWhitespace = ChrfWhitespace::Collapse;
 
-/// Computes a delta-chrF score that compares two sets of edits.
+pub fn delta_chr_f_beta() -> f64 {
+    CHR_F_BETA
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct DeltaChrFMetrics {
+    pub score: f64,
+    pub beta: f64,
+    pub counts: ClassificationMetrics,
+    pub precision: f64,
+    pub recall: f64,
+}
+
+/// Computes delta-chrF metrics that compare two sets of edits.
 ///
 /// This metric works by:
 /// 1. Computing n-gram count differences (deltas) between original→expected and original→actual
@@ -93,13 +119,17 @@ const CHR_F_WHITESPACE: ChrfWhitespace = ChrfWhitespace::Ignore;
 ///
 /// Returns a score from 0.0 to 100.0, where 100.0 means the actual edits perfectly match
 /// the expected edits.
-pub fn delta_chr_f(original: &str, expected: &str, actual: &str) -> f64 {
-    // Edge case: if all texts are identical, the edits match perfectly
+pub fn delta_chr_f(original: &str, expected: &str, actual: &str) -> DeltaChrFMetrics {
     if original == expected && expected == actual {
-        return 100.0;
+        return DeltaChrFMetrics {
+            score: 100.0,
+            beta: CHR_F_BETA,
+            precision: 1.0,
+            recall: 1.0,
+            ..DeltaChrFMetrics::default()
+        };
     }
 
-    // Pre-filter whitespace once for all texts
     let orig_chars: Vec<char> = filter_whitespace_chars(original);
     let exp_chars: Vec<char> = filter_whitespace_chars(expected);
     let act_chars: Vec<char> = filter_whitespace_chars(actual);
@@ -111,9 +141,9 @@ pub fn delta_chr_f(original: &str, expected: &str, actual: &str) -> f64 {
 
     let mut total_precision = 0.0;
     let mut total_recall = 0.0;
+    let mut total_counts = ClassificationMetrics::default();
 
     for order in 1..=CHR_F_CHAR_ORDER {
-        // Compute n-grams only on the affected regions
         let orig_ngrams_for_exp = count_ngrams_from_chars(&orig_for_exp, order);
         let exp_ngrams = count_ngrams_from_chars(&exp_region, order);
         let expected_delta = compute_ngram_delta(&exp_ngrams, &orig_ngrams_for_exp);
@@ -131,28 +161,43 @@ pub fn delta_chr_f(original: &str, expected: &str, actual: &str) -> f64 {
         let expected_counts = ngram_delta_to_counts(&expected_delta);
         let actual_counts = ngram_delta_to_counts(&actual_delta);
 
-        let score = ClassificationMetrics::from_counts(&expected_counts, &actual_counts);
-        total_precision += score.precision();
-        total_recall += score.recall();
+        let counts = ClassificationMetrics::from_counts(&expected_counts, &actual_counts);
+        total_precision += counts.precision();
+        total_recall += counts.recall();
+        total_counts.accumulate(&counts);
     }
 
-    let prec = total_precision / CHR_F_CHAR_ORDER as f64;
-    let recall = total_recall / CHR_F_CHAR_ORDER as f64;
-    let f_score = if prec + recall == 0.0 {
+    let average_precision = total_precision / CHR_F_CHAR_ORDER as f64;
+    let average_recall = total_recall / CHR_F_CHAR_ORDER as f64;
+    let score = if average_precision + average_recall == 0.0 {
         0.0
     } else {
-        (1.0 + CHR_F_BETA * CHR_F_BETA) * prec * recall / (CHR_F_BETA * CHR_F_BETA * prec + recall)
+        (1.0 + CHR_F_BETA * CHR_F_BETA) * average_precision * average_recall
+            / (CHR_F_BETA * CHR_F_BETA * average_precision + average_recall)
+            * 100.0
     };
 
-    f_score * 100.0
+    DeltaChrFMetrics {
+        score,
+        beta: CHR_F_BETA,
+        counts: total_counts,
+        precision: average_precision,
+        recall: average_recall,
+    }
 }
 
-/// Reference implementation of delta_chr_f (original, non-optimized version).
+/// Reference implementation of delta-chrF metrics (original, non-optimized version).
 /// Used for testing that the optimized version produces identical results.
 #[cfg(test)]
-fn delta_chr_f_reference(original: &str, expected: &str, actual: &str) -> f64 {
+fn delta_chr_f_reference(original: &str, expected: &str, actual: &str) -> DeltaChrFMetrics {
     if original == expected && expected == actual {
-        return 100.0;
+        return DeltaChrFMetrics {
+            score: 100.0,
+            beta: CHR_F_BETA,
+            precision: 1.0,
+            recall: 1.0,
+            ..DeltaChrFMetrics::default()
+        };
     }
 
     let original_ngrams = chr_f_ngram_counts(original);
@@ -161,6 +206,7 @@ fn delta_chr_f_reference(original: &str, expected: &str, actual: &str) -> f64 {
 
     let mut total_precision = 0.0;
     let mut total_recall = 0.0;
+    let mut total_counts = ClassificationMetrics::default();
 
     for order in 0..CHR_F_CHAR_ORDER {
         let expected_delta = compute_ngram_delta(&expected_ngrams[order], &original_ngrams[order]);
@@ -175,20 +221,29 @@ fn delta_chr_f_reference(original: &str, expected: &str, actual: &str) -> f64 {
         let expected_counts = ngram_delta_to_counts(&expected_delta);
         let actual_counts = ngram_delta_to_counts(&actual_delta);
 
-        let score = ClassificationMetrics::from_counts(&expected_counts, &actual_counts);
-        total_precision += score.precision();
-        total_recall += score.recall();
+        let counts = ClassificationMetrics::from_counts(&expected_counts, &actual_counts);
+        total_precision += counts.precision();
+        total_recall += counts.recall();
+        total_counts.accumulate(&counts);
     }
 
-    let prec = total_precision / CHR_F_CHAR_ORDER as f64;
-    let recall = total_recall / CHR_F_CHAR_ORDER as f64;
-    let f_score = if prec + recall == 0.0 {
+    let average_precision = total_precision / CHR_F_CHAR_ORDER as f64;
+    let average_recall = total_recall / CHR_F_CHAR_ORDER as f64;
+    let score = if average_precision + average_recall == 0.0 {
         0.0
     } else {
-        (1.0 + CHR_F_BETA * CHR_F_BETA) * prec * recall / (CHR_F_BETA * CHR_F_BETA * prec + recall)
+        (1.0 + CHR_F_BETA * CHR_F_BETA) * average_precision * average_recall
+            / (CHR_F_BETA * CHR_F_BETA * average_precision + average_recall)
+            * 100.0
     };
 
-    f_score * 100.0
+    DeltaChrFMetrics {
+        score,
+        beta: CHR_F_BETA,
+        counts: total_counts,
+        precision: average_precision,
+        recall: average_recall,
+    }
 }
 
 /// Filter whitespace from a string and return as Vec<char>
@@ -196,7 +251,32 @@ fn filter_whitespace_chars(text: &str) -> Vec<char> {
     match CHR_F_WHITESPACE {
         ChrfWhitespace::Unchanged => text.chars().collect(),
         ChrfWhitespace::Ignore => text.chars().filter(|c| !c.is_whitespace()).collect(),
+        ChrfWhitespace::Collapse => collapse_whitespace(text.chars()),
     }
+}
+
+/// Collapse whitespace into single spaces.
+/// Newlines and spaces are collapsed separately.
+fn collapse_whitespace(chars: impl Iterator<Item = char>) -> Vec<char> {
+    let mut result = Vec::new();
+    let mut last_whitespace = None;
+    for c in chars {
+        if c.is_whitespace() && c != '\n' {
+            if last_whitespace != Some(' ') {
+                result.push(' ');
+                last_whitespace = Some(' ');
+            }
+        } else if c == '\n' {
+            if last_whitespace != Some('\n') {
+                result.push(c);
+                last_whitespace = Some('\n');
+            }
+        } else {
+            result.push(c);
+            last_whitespace = None;
+        }
+    }
+    result
 }
 
 /// Extract only the changed regions between two texts, with context for n-gram boundaries.
@@ -269,14 +349,14 @@ fn count_ngrams_from_chars(chars: &[char], n: usize) -> Counts {
 
 #[allow(dead_code)]
 fn chr_f_ngram_counts(text: &str) -> Vec<Counts> {
-    // Ignore whitespace. The original chrF implementation skips all
-    // whitespace. We should consider compressing multiple consecutive
-    // spaces into one -- this may reflect our task more closely.
     let text = match CHR_F_WHITESPACE {
         ChrfWhitespace::Unchanged => text.to_string(),
         ChrfWhitespace::Ignore => text
             .chars()
             .filter(|c| !c.is_whitespace())
+            .collect::<String>(),
+        ChrfWhitespace::Collapse => collapse_whitespace(text.chars())
+            .into_iter()
             .collect::<String>(),
     };
 
@@ -632,7 +712,7 @@ mod test_optimization {
         ];
 
         for (original, expected, actual) in test_cases {
-            let score = delta_chr_f(original, expected, actual);
+            let score = delta_chr_f(original, expected, actual).score;
             // Just verify it produces a reasonable score (0-100)
             assert!(
                 score >= 0.0 && score <= 100.0,
@@ -701,19 +781,50 @@ mod test_optimization {
         ];
 
         for (original, expected, actual) in test_cases {
-            let optimized_score = delta_chr_f(original, expected, actual);
-            let reference_score = delta_chr_f_reference(original, expected, actual);
+            let optimized_metrics = delta_chr_f(original, expected, actual);
+            let reference_metrics = delta_chr_f_reference(original, expected, actual);
 
             assert!(
-                (optimized_score - reference_score).abs() < 1e-10,
-                "Mismatch for ({:?}, {:?}, {:?}):\n  optimized: {}\n  reference: {}",
+                (optimized_metrics.score - reference_metrics.score).abs() < 1e-10,
+                "Score mismatch for ({:?}, {:?}, {:?}):\n  optimized: {}\n  reference: {}",
                 original,
                 expected,
                 actual,
-                optimized_score,
-                reference_score
+                optimized_metrics.score,
+                reference_metrics.score
             );
+            assert_eq!(
+                optimized_metrics.counts.true_positives,
+                reference_metrics.counts.true_positives
+            );
+            assert_eq!(
+                optimized_metrics.counts.false_positives,
+                reference_metrics.counts.false_positives
+            );
+            assert_eq!(
+                optimized_metrics.counts.false_negatives,
+                reference_metrics.counts.false_negatives
+            );
+            assert!((optimized_metrics.precision - reference_metrics.precision).abs() < 1e-10);
+            assert!((optimized_metrics.recall - reference_metrics.recall).abs() < 1e-10);
         }
+    }
+
+    #[test]
+    fn test_delta_chr_f_metrics_include_counts_and_rates() {
+        let original = "one two three";
+        let expected = "one three";
+        let actual = "one two four";
+
+        let metrics = delta_chr_f(original, expected, actual);
+
+        assert!(metrics.score > 20.0 && metrics.score < 40.0);
+        assert!(metrics.counts.true_positives > 0);
+        assert!(metrics.counts.false_positives > 0);
+        assert!(metrics.counts.false_negatives > 0);
+        assert!(metrics.precision > 0.0 && metrics.precision < 1.0);
+        assert!(metrics.recall > 0.0 && metrics.recall < 1.0);
+        assert_eq!(metrics.beta, CHR_F_BETA);
     }
 }
 
@@ -738,7 +849,7 @@ mod test {
         let original = "fn main() {    println!(\"Hello\");}";
         let expected = "fn main() {    println!(\"Hello, World!\");}";
 
-        let score = delta_chr_f(original, expected, expected);
+        let score = delta_chr_f(original, expected, expected).score;
         assert!((score - 100.0).abs() < 1e-2);
     }
 
@@ -750,7 +861,7 @@ mod test {
         let actual = "one two four"; // deleted "three", added "four"
 
         // Then the score should be low
-        let score = delta_chr_f(original, expected, actual);
+        let score = delta_chr_f(original, expected, actual).score;
         assert!(score > 20.0 && score < 40.0);
     }
 
@@ -762,7 +873,7 @@ mod test {
 
         // We got the edit location right, but the replacement text is wrong.
         // Deleted ngrams will match, bringing the score somewhere in the middle.
-        let score = delta_chr_f(original, expected, actual);
+        let score = delta_chr_f(original, expected, actual).score;
         assert!(score > 40.0 && score < 60.0);
     }
 
@@ -774,7 +885,7 @@ mod test {
         let actual = "prefix old suffix"; // no change
 
         // Then the score should be low (all expected changes are false negatives)
-        let score = delta_chr_f(original, expected, actual);
+        let score = delta_chr_f(original, expected, actual).score;
         assert!(score < 20.0);
     }
 
@@ -786,14 +897,14 @@ mod test {
         let actual = "helloextraworld"; // added "extra"
 
         // Then the score should be low (all actual changes are false positives)
-        let score = delta_chr_f(original, expected, actual);
+        let score = delta_chr_f(original, expected, actual).score;
         assert!(score < 20.0);
     }
 
     #[test]
     fn test_delta_chr_f_no_changes() {
         let text = "unchanged text";
-        let score = delta_chr_f(text, text, text);
+        let score = delta_chr_f(text, text, text).score;
         assert!((score - 100.0).abs() < 1e-2);
     }
 
@@ -1175,4 +1286,16 @@ index abc123..def456 100644
         assert!(counts.deleted_tokens >= 2);
         assert!(counts.inserted_tokens >= 2);
     }
+
+    #[test]
+    fn test_whitespace_collapse() {
+        let text = "abc   \n\n\n   123";
+        let collapsed = collapse_whitespace(text.chars());
+        assert_eq!(
+            collapsed,
+            vec!['a', 'b', 'c', ' ', '\n', ' ', '1', '2', '3']
+        );
+    }
 }
+
+pub use crate::kept_rate::compute_kept_rate;

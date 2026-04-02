@@ -19,7 +19,7 @@ use util::ResultExt;
 
 use crate::{
     BasicContextProvider, Inventory, ProjectEnvironment, buffer_store::BufferStore,
-    worktree_store::WorktreeStore,
+    git_store::GitStore, worktree_store::WorktreeStore,
 };
 
 // platform-dependent warning
@@ -33,6 +33,7 @@ pub struct StoreState {
     task_inventory: Entity<Inventory>,
     buffer_store: WeakEntity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
 }
 
@@ -163,6 +164,7 @@ impl TaskStore {
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         environment: Entity<ProjectEnvironment>,
+        git_store: Entity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::Functional(StoreState {
@@ -172,6 +174,7 @@ impl TaskStore {
             },
             task_inventory: Inventory::new(cx),
             buffer_store,
+            git_store,
             toolchain_store,
             worktree_store,
         })
@@ -183,6 +186,7 @@ impl TaskStore {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         upstream_client: AnyProtoClient,
         project_id: u64,
+        git_store: Entity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::Functional(StoreState {
@@ -192,6 +196,7 @@ impl TaskStore {
             },
             task_inventory: Inventory::new(cx),
             buffer_store,
+            git_store,
             toolchain_store,
             worktree_store,
         })
@@ -207,6 +212,7 @@ impl TaskStore {
             TaskStore::Functional(state) => match &state.mode {
                 StoreMode::Local { environment, .. } => local_task_context_for_location(
                     state.worktree_store.clone(),
+                    state.git_store.clone(),
                     state.toolchain_store.clone(),
                     environment.clone(),
                     captured_variables,
@@ -220,6 +226,7 @@ impl TaskStore {
                     *project_id,
                     upstream_client.clone(),
                     state.worktree_store.clone(),
+                    state.git_store.clone(),
                     captured_variables,
                     location,
                     state.toolchain_store.clone(),
@@ -302,6 +309,7 @@ impl TaskStore {
 
 fn local_task_context_for_location(
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     environment: Entity<ProjectEnvironment>,
     captured_variables: TaskVariables,
@@ -329,7 +337,7 @@ fn local_task_context_for_location(
                     worktree_store.clone(),
                     location,
                     project_env.clone(),
-                    BasicContextProvider::new(worktree_store),
+                    BasicContextProvider::new(worktree_store, git_store),
                     toolchain_store,
                     cx,
                 )
@@ -351,6 +359,7 @@ fn remote_task_context_for_location(
     project_id: u64,
     upstream_client: AnyProtoClient,
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
     captured_variables: TaskVariables,
     location: Location,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -362,7 +371,7 @@ fn remote_task_context_for_location(
             .update(|cx| {
                 let worktree_root = worktree_root(&worktree_store, &location, cx);
 
-                BasicContextProvider::new(worktree_store).build_context(
+                BasicContextProvider::new(worktree_store, git_store).build_context(
                     &TaskVariables::default(),
                     ContextLocation {
                         fs: None,

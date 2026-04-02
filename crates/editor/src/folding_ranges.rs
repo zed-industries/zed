@@ -1,6 +1,6 @@
 use futures::future::join_all;
 use itertools::Itertools;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use text::BufferId;
 use ui::{Context, Window};
 
@@ -13,7 +13,7 @@ impl Editor {
         _window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || !self.use_document_folding_ranges {
+        if !self.lsp_data_enabled() || !self.use_document_folding_ranges {
             return;
         }
         let Some(project) = self.project.clone() else {
@@ -21,21 +21,17 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
+            .visible_buffers(cx)
+            .into_iter()
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
             .chain(for_buffer.and_then(|id| self.buffer.read(cx).buffer(id)))
             .filter(|buffer| {
                 let id = buffer.read(cx).remote_id();
                 (for_buffer.is_none_or(|target| target == id))
                     && self.registered_buffers.contains_key(&id)
-                    && language_settings(
-                        buffer.read(cx).language().map(|l| l.name()),
-                        buffer.read(cx).file(),
-                        cx,
-                    )
-                    .document_folding_ranges
-                    .enabled()
+                    && LanguageSettings::for_buffer(buffer.read(cx), cx)
+                        .document_folding_ranges
+                        .enabled()
             })
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
@@ -104,7 +100,7 @@ impl Editor {
             .into_iter()
             .filter(|buffer| {
                 let buffer = buffer.read(cx);
-                !language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                !LanguageSettings::for_buffer(&buffer, cx)
                     .document_folding_ranges
                     .enabled()
             })
@@ -538,7 +534,7 @@ mod tests {
                 snapshot.is_line_folded(MultiBufferRow(0)),
                 "Indentation-based fold should work on the function"
             );
-            assert_eq!(editor.display_text(cx), "fn main() {⋯\n}\n",);
+            assert_eq!(editor.display_text(cx), "fn main() {⋯}\n",);
         });
 
         cx.update_editor(|editor, window, cx| {
@@ -666,7 +662,7 @@ mod tests {
                 snapshot.is_line_folded(MultiBufferRow(0)),
                 "Indentation-based fold should work again after switching back"
             );
-            assert_eq!(editor.display_text(cx), "fn main() {⋯\n}\n",);
+            assert_eq!(editor.display_text(cx), "fn main() {⋯}\n",);
         });
     }
 

@@ -585,8 +585,7 @@ async fn raw_to_buffer_semantic_tokens(
                     }
 
                     Some(BufferSemanticToken {
-                        range: buffer_snapshot.anchor_before(start)
-                            ..buffer_snapshot.anchor_after(end),
+                        range: buffer_snapshot.anchor_range_inside(start..end),
                         token_type: token.token_type,
                         token_modifiers: token.token_modifiers,
                     })
@@ -609,6 +608,14 @@ pub struct SemanticTokensData {
     pub(super) raw_tokens: RawSemanticTokens,
     pub(super) latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
     update: Option<(Global, SemanticTokensTask)>,
+}
+
+impl SemanticTokensData {
+    pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
+        self.raw_tokens.servers.remove(&server_id);
+        self.latest_invalidation_requests.remove(&server_id);
+        self.update = None;
+    }
 }
 
 /// All the semantic token tokens for a buffer.

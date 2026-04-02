@@ -223,8 +223,8 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
     // 1.txt | [3.txt] | 2.txt | 4.txt
     //
     // With 3.txt being the active item in the pane.
-    cx.dispatch_action(ActivatePreviousItem);
-    cx.dispatch_action(ActivatePreviousItem);
+    cx.dispatch_action(ActivatePreviousItem::default());
+    cx.dispatch_action(ActivatePreviousItem::default());
     cx.run_until_parked();
 
     cx.simulate_modifiers_change(Modifiers::control());
@@ -258,7 +258,7 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         super::init(cx);
         editor::init(cx);
         state

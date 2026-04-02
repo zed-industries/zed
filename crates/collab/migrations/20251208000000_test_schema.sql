@@ -1,3 +1,6 @@
+-- This file is auto-generated. Do not modify it by hand.
+-- To regenerate, run `cargo xtask db dump-schema app --collab` from the Cloud repository.
+
 CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
 
 CREATE TABLE public.breakpoints (
@@ -304,7 +307,8 @@ CREATE TABLE public.project_repositories (
     head_commit_details character varying,
     merge_message character varying,
     remote_upstream_url character varying,
-    remote_origin_url character varying
+    remote_origin_url character varying,
+    linked_worktrees text
 );
 
 CREATE TABLE public.project_repository_statuses (
@@ -316,7 +320,9 @@ CREATE TABLE public.project_repository_statuses (
     first_status integer,
     second_status integer,
     scan_id bigint NOT NULL,
-    is_deleted boolean NOT NULL
+    is_deleted boolean NOT NULL,
+    lines_added integer,
+    lines_deleted integer
 );
 
 CREATE TABLE public.projects (
@@ -326,7 +332,8 @@ CREATE TABLE public.projects (
     room_id integer,
     host_connection_id integer,
     host_connection_server_id integer,
-    windows_paths boolean DEFAULT false
+    windows_paths boolean DEFAULT false,
+    features text NOT NULL DEFAULT ''
 );
 
 CREATE SEQUENCE public.projects_id_seq
@@ -704,6 +711,8 @@ CREATE INDEX trigram_index_extensions_name ON public.extensions USING gin (name 
 
 CREATE INDEX trigram_index_users_on_github_login ON public.users USING gin (github_login public.gin_trgm_ops);
 
+CREATE INDEX trigram_index_users_on_name ON public.users USING gin (name public.gin_trgm_ops);
+
 CREATE UNIQUE INDEX uix_channels_parent_path_name ON public.channels USING btree (parent_path, name) WHERE ((parent_path IS NOT NULL) AND (parent_path <> ''::text));
 
 CREATE UNIQUE INDEX uix_users_on_github_user_id ON public.users USING btree (github_user_id);
@@ -751,7 +760,7 @@ ALTER TABLE ONLY public.contacts
     ADD CONSTRAINT contacts_user_id_b_fkey FOREIGN KEY (user_id_b) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.contributors
-    ADD CONSTRAINT contributors_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id);
+    ADD CONSTRAINT contributors_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.extension_versions
     ADD CONSTRAINT extension_versions_extension_id_fkey FOREIGN KEY (extension_id) REFERENCES public.extensions(id);

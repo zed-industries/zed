@@ -38,6 +38,8 @@
   libxfixes,
   libxkbcommon,
   libxrandr,
+  libx11,
+  libxcb,
   nodejs_22,
   openssl,
   perl,
@@ -52,6 +54,7 @@
 
   withGLES ? false,
   profile ? "release",
+  commitSha ? null,
 }:
 assert withGLES -> stdenv.hostPlatform.isLinux;
 let
@@ -84,7 +87,10 @@ let
     in
     rec {
       pname = "zed-editor";
-      version = zedCargoLock.package.version + "-nightly";
+      version =
+        zedCargoLock.package.version
+        + "-nightly"
+        + lib.optionalString (commitSha != null) "+${builtins.substring 0 7 commitSha}";
       src = builtins.path {
         path = ../.;
         filter = mkIncludeFilter ../.;
@@ -176,8 +182,9 @@ let
         libxkbcommon
         wayland
         gpu-lib
-        xorg.libX11
-        xorg.libxcb
+        libglvnd
+        libx11
+        libxcb
         libdrm
         libgbm
         libva
@@ -220,6 +227,7 @@ let
         };
         ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
+        ZED_COMMIT_SHA = lib.optionalString (commitSha != null) "${commitSha}";
         LK_CUSTOM_WEBRTC = pkgs.callPackage ./livekit-libwebrtc/package.nix { };
         PROTOC = "${protobuf}/bin/protoc";
 
@@ -233,6 +241,7 @@ let
           lib.makeLibraryPath [
             gpu-lib
             wayland
+            libva
           ]
         }";
 

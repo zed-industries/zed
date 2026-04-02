@@ -906,6 +906,18 @@ mod tests {
             }
 
             #[test]
+            // <https://github.com/zed-industries/zed/issues/50531>
+            fn issue_50531() {
+                // Paths preceded by "N:" prefix (e.g. grep output line numbers)
+                // should still be clickable
+                test_path!("0: ‹«foo/👉bar.txt»›");
+                test_path!("0: ‹«👉foo/bar.txt»›");
+                test_path!("42: ‹«👉foo/bar.txt»›");
+                test_path!("1: ‹«/👉test/cool.rs»›");
+                test_path!("1: ‹«/👉test/cool.rs»:«4»:«2»›");
+            }
+
+            #[test]
             // <https://github.com/zed-industries/zed/issues/46795>
             fn issue_46795() {
                 // Box drawing characters are commonly used as UI elements and

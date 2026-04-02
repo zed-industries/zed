@@ -655,6 +655,7 @@ mod tests {
     use super::*;
     use edit_prediction::udiff::apply_diff_to_string;
     use indoc::indoc;
+    use zeta_prompt::ExcerptRanges;
 
     fn make_test_prompt_inputs(
         content: &str,
@@ -664,15 +665,25 @@ mod tests {
         ZetaPromptInput {
             cursor_path: Arc::from(Path::new("src/test.rs")),
             cursor_excerpt: content.into(),
-            editable_range_in_excerpt: 0..content.len(),
             cursor_offset_in_excerpt: 0,
             excerpt_start_row,
             events,
-            related_files: Vec::new(),
-            excerpt_ranges: None,
-            preferred_model: None,
+            related_files: Some(Vec::new()),
+            active_buffer_diagnostics: Vec::new(),
+            excerpt_ranges: ExcerptRanges {
+                editable_150: 0..content.len(),
+                editable_180: 0..content.len(),
+                editable_350: 0..content.len(),
+                editable_150_context_350: 0..content.len(),
+                editable_180_context_350: 0..content.len(),
+                editable_350_context_150: 0..content.len(),
+                ..Default::default()
+            },
+            syntax_ranges: None,
+            experiment: None,
             in_open_source_repo: false,
             can_collect_data: false,
+            repo_url: None,
         }
     }
 

@@ -245,7 +245,7 @@ pub fn editor_content_with_blocks_and_size(
                     format!(
                         "§ {}",
                         first_excerpt
-                            .buffer
+                            .buffer(snapshot.buffer_snapshot())
                             .file()
                             .map(|file| file.file_name(cx))
                             .unwrap_or("<no file>")
@@ -274,7 +274,7 @@ pub fn editor_content_with_blocks_and_size(
                     format!(
                         "§ {}",
                         excerpt
-                            .buffer
+                            .buffer(snapshot.buffer_snapshot())
                             .file()
                             .map(|file| file.file_name(cx))
                             .unwrap_or("<no file>")

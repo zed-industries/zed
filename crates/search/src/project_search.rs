@@ -4,8 +4,8 @@ use crate::{
     ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
     search_bar::{
-        ActionButtonState, alignment_element, input_base_styles, render_action_button,
-        render_text_input,
+        ActionButtonState, HistoryNavigationDirection, alignment_element, input_base_styles,
+        render_action_button, render_text_input, should_navigate_history,
     },
 };
 use anyhow::Context as _;
@@ -27,6 +27,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, Language};
 use menu::Confirm;
+use multi_buffer;
 use project::{
     Project, ProjectPath, SearchResults,
     search::{SearchInputKind, SearchQuery},
@@ -239,6 +240,7 @@ pub struct ProjectSearch {
     search_history_cursor: SearchHistoryCursor,
     search_included_history_cursor: SearchHistoryCursor,
     search_excluded_history_cursor: SearchHistoryCursor,
+    _excerpts_subscription: Subscription,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -264,6 +266,7 @@ pub struct ProjectSearchView {
     excluded_files_editor: Entity<Editor>,
     filters_enabled: bool,
     replace_enabled: bool,
+    pending_replace_all: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
     _subscriptions: Vec<Subscription>,
@@ -283,10 +286,12 @@ pub struct ProjectSearchBar {
 impl ProjectSearch {
     pub fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let capability = project.read(cx).capability();
+        let excerpts = cx.new(|_| MultiBuffer::new(capability));
+        let subscription = Self::subscribe_to_excerpts(&excerpts, cx);
 
         Self {
             project,
-            excerpts: cx.new(|_| MultiBuffer::new(capability)),
+            excerpts,
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -297,27 +302,76 @@ impl ProjectSearch {
             search_history_cursor: Default::default(),
             search_included_history_cursor: Default::default(),
             search_excluded_history_cursor: Default::default(),
+            _excerpts_subscription: subscription,
         }
     }
 
     fn clone(&self, cx: &mut Context<Self>) -> Entity<Self> {
-        cx.new(|cx| Self {
-            project: self.project.clone(),
-            excerpts: self
+        cx.new(|cx| {
+            let excerpts = self
                 .excerpts
-                .update(cx, |excerpts, cx| cx.new(|cx| excerpts.clone(cx))),
-            pending_search: Default::default(),
-            match_ranges: self.match_ranges.clone(),
-            active_query: self.active_query.clone(),
-            last_search_query_text: self.last_search_query_text.clone(),
-            search_id: self.search_id,
-            no_results: self.no_results,
-            limit_reached: self.limit_reached,
-            search_history_cursor: self.search_history_cursor.clone(),
-            search_included_history_cursor: self.search_included_history_cursor.clone(),
-            search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
+                .update(cx, |excerpts, cx| cx.new(|cx| excerpts.clone(cx)));
+            let subscription = Self::subscribe_to_excerpts(&excerpts, cx);
+
+            Self {
+                project: self.project.clone(),
+                excerpts,
+                pending_search: Default::default(),
+                match_ranges: self.match_ranges.clone(),
+                active_query: self.active_query.clone(),
+                last_search_query_text: self.last_search_query_text.clone(),
+                search_id: self.search_id,
+                no_results: self.no_results,
+                limit_reached: self.limit_reached,
+                search_history_cursor: self.search_history_cursor.clone(),
+                search_included_history_cursor: self.search_included_history_cursor.clone(),
+                search_excluded_history_cursor: self.search_excluded_history_cursor.clone(),
+                _excerpts_subscription: subscription,
+            }
         })
     }
+    fn subscribe_to_excerpts(
+        excerpts: &Entity<MultiBuffer>,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe(excerpts, |this, _, event, cx| {
+            if matches!(event, multi_buffer::Event::FileHandleChanged) {
+                this.remove_deleted_buffers(cx);
+            }
+        })
+    }
+
+    fn remove_deleted_buffers(&mut self, cx: &mut Context<Self>) {
+        let deleted_buffer_ids = self
+            .excerpts
+            .read(cx)
+            .all_buffers_iter()
+            .filter(|buffer| {
+                buffer
+                    .read(cx)
+                    .file()
+                    .is_some_and(|file| file.disk_state().is_deleted())
+            })
+            .map(|buffer| buffer.read(cx).remote_id())
+            .collect::<Vec<_>>();
+
+        if deleted_buffer_ids.is_empty() {
+            return;
+        }
+
+        let snapshot = self.excerpts.update(cx, |excerpts, cx| {
+            for buffer_id in deleted_buffer_ids {
+                excerpts.remove_excerpts_for_buffer(buffer_id, cx);
+            }
+            excerpts.snapshot(cx)
+        });
+
+        self.match_ranges
+            .retain(|range| snapshot.anchor_to_buffer_anchor(range.start).is_some());
+
+        cx.notify();
+    }
+
     fn cursor(&self, kind: SearchInputKind) -> &SearchHistoryCursor {
         match kind {
             SearchInputKind::Query => &self.search_history_cursor,
@@ -735,6 +789,9 @@ impl ProjectSearchView {
     }
 
     fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
+        if self.entity.read(cx).pending_search.is_some() {
+            return;
+        }
         if let Some(last_search_query_text) = &self.entity.read(cx).last_search_query_text
             && self.query_editor.read(cx).text(cx) != *last_search_query_text
         {
@@ -762,14 +819,24 @@ impl ProjectSearchView {
             self.select_match(Direction::Next, window, cx)
         }
     }
+
     fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(last_search_query_text) = &self.entity.read(cx).last_search_query_text
-            && self.query_editor.read(cx).text(cx) != *last_search_query_text
-        {
-            // search query has changed, restart search and bail
-            self.search(cx);
+        if self.entity.read(cx).pending_search.is_some() {
+            self.pending_replace_all = true;
             return;
         }
+        let query_text = self.query_editor.read(cx).text(cx);
+        let query_is_stale =
+            self.entity.read(cx).last_search_query_text.as_deref() != Some(query_text.as_str());
+        if query_is_stale {
+            self.pending_replace_all = true;
+            self.search(cx);
+            if self.entity.read(cx).pending_search.is_none() {
+                self.pending_replace_all = false;
+            }
+            return;
+        }
+        self.pending_replace_all = false;
         if self.active_match_index.is_none() {
             return;
         }
@@ -858,8 +925,9 @@ impl ProjectSearchView {
         }));
 
         let query_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_placeholder_text("Search all files…", window, cx);
+            editor.set_use_autoclose(false);
             editor.set_text(query_text, window, cx);
             editor
         });
@@ -881,7 +949,7 @@ impl ProjectSearchView {
             }),
         );
         let replacement_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_placeholder_text("Replace in project…", window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
@@ -981,6 +1049,7 @@ impl ProjectSearchView {
             excluded_files_editor,
             filters_enabled,
             replace_enabled: false,
+            pending_replace_all: false,
             included_opened_only: false,
             regex_language: None,
             _subscriptions: subscriptions,
@@ -1474,8 +1543,9 @@ impl ProjectSearchView {
 
             SearchInputKind::Exclude => &self.excluded_files_editor,
         };
-        editor.update(cx, |included_editor, cx| {
-            included_editor.set_text(text, window, cx)
+        editor.update(cx, |editor, cx| {
+            editor.set_text(text, window, cx);
+            editor.request_autoscroll(Autoscroll::fit(), cx);
         });
     }
 
@@ -1521,6 +1591,10 @@ impl ProjectSearchView {
 
         cx.emit(ViewEvent::UpdateTab);
         cx.notify();
+
+        if self.pending_replace_all && self.entity.read(cx).pending_search.is_none() {
+            self.replace_all(&ReplaceAll, window, cx);
+        }
     }
 
     fn update_match_index(&mut self, cx: &mut Context<Self>) {
@@ -1583,9 +1657,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("filter-paths", "Include/exclude specific paths")
-                    .icon(IconName::Filter)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::Filter).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(&ToggleFilters, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFilters.boxed_clone(), cx)
@@ -1593,9 +1665,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("find-replace", "Find and replace")
-                    .icon(IconName::Replace)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::Replace).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(&ToggleReplace, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleReplace.boxed_clone(), cx)
@@ -1603,9 +1673,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("regex", "Match with regex")
-                    .icon(IconName::Regex)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::Regex).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(&ToggleRegex, &focus_handle, cx))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleRegex.boxed_clone(), cx)
@@ -1613,9 +1681,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("match-case", "Match case")
-                    .icon(IconName::CaseSensitive)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::CaseSensitive).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleCaseSensitive,
                         &focus_handle,
@@ -1627,9 +1693,7 @@ impl ProjectSearchView {
             )
             .child(
                 Button::new("match-whole-words", "Match whole words")
-                    .icon(IconName::WholeWord)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
+                    .start_icon(Icon::new(IconName::WholeWord).size(IconSize::Small))
                     .key_binding(KeyBinding::for_action_in(
                         &ToggleWholeWord,
                         &focus_handle,
@@ -1926,6 +1990,11 @@ impl ProjectSearchBar {
                     ),
                 ] {
                     if editor.focus_handle(cx).is_focused(window) {
+                        if !should_navigate_history(&editor, HistoryNavigationDirection::Next, cx) {
+                            cx.propagate();
+                            return;
+                        }
+
                         let new_query = search_view.entity.update(cx, |model, cx| {
                             let project = model.project.clone();
 
@@ -1935,13 +2004,14 @@ impl ProjectSearchBar {
                                     .next(model.cursor_mut(kind))
                                     .map(str::to_string)
                             }) {
-                                new_query
+                                Some(new_query)
                             } else {
-                                model.cursor_mut(kind).reset();
-                                String::new()
+                                model.cursor_mut(kind).take_draft()
                             }
                         });
-                        search_view.set_search_editor(kind, &new_query, window, cx);
+                        if let Some(new_query) = new_query {
+                            search_view.set_search_editor(kind, &new_query, window, cx);
+                        }
                     }
                 }
             });
@@ -1968,6 +2038,15 @@ impl ProjectSearchBar {
                     ),
                 ] {
                     if editor.focus_handle(cx).is_focused(window) {
+                        if !should_navigate_history(
+                            &editor,
+                            HistoryNavigationDirection::Previous,
+                            cx,
+                        ) {
+                            cx.propagate();
+                            return;
+                        }
+
                         if editor.read(cx).text(cx).is_empty()
                             && let Some(new_query) = search_view
                                 .entity
@@ -1982,12 +2061,13 @@ impl ProjectSearchBar {
                             return;
                         }
 
+                        let current_query = editor.read(cx).text(cx);
                         if let Some(new_query) = search_view.entity.update(cx, |model, cx| {
                             let project = model.project.clone();
                             project.update(cx, |project, _| {
                                 project
                                     .search_history_mut(kind)
-                                    .previous(model.cursor_mut(kind))
+                                    .previous(model.cursor_mut(kind), &current_query)
                                     .map(str::to_string)
                             })
                         }) {
@@ -2086,7 +2166,11 @@ impl Render for ProjectSearchBar {
             .on_action(
                 cx.listener(|this, action, window, cx| this.next_history_query(action, window, cx)),
             )
-            .child(render_text_input(&search.query_editor, color_override, cx))
+            .child(div().flex_1().py_1().child(render_text_input(
+                &search.query_editor,
+                color_override,
+                cx,
+            )))
             .child(
                 h_flex()
                     .gap_1()
@@ -2244,18 +2328,22 @@ impl Render for ProjectSearchBar {
             .child(mode_column);
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column = input_base_styles(InputPanel::Replacement)
-                .child(render_text_input(&search.replacement_editor, None, cx));
+            let replace_column = input_base_styles(InputPanel::Replacement).child(
+                div().flex_1().py_1().child(render_text_input(
+                    &search.replacement_editor,
+                    None,
+                    cx,
+                )),
+            );
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
-
             let replace_actions = h_flex()
                 .min_w_64()
                 .gap_1()
                 .child(render_action_button(
                     "project-search-replace-button",
                     IconName::ReplaceNext,
-                    Default::default(),
+                    is_search_underway.then_some(ActionButtonState::Disabled),
                     "Replace Next Match",
                     &ReplaceNext,
                     focus_handle.clone(),
@@ -2519,7 +2607,7 @@ pub mod tests {
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use language::{FakeLspAdapter, rust_lang};
     use pretty_assertions::assert_eq;
-    use project::FakeFs;
+    use project::{FakeFs, Fs};
     use serde_json::json;
     use settings::{
         InlayHintSettingsContent, SettingsStore, ThemeColorsContent, ThemeStyleContent,
@@ -2893,7 +2981,13 @@ pub mod tests {
                     .read(cx)
                     .buffer()
                     .read(cx)
-                    .excerpt_buffer_ids()[0]
+                    .snapshot(cx)
+                    .excerpts()
+                    .next()
+                    .unwrap()
+                    .context
+                    .start
+                    .buffer_id
             })
             .expect("should read buffer ids");
 
@@ -3845,7 +3939,7 @@ pub mod tests {
             })
             .unwrap();
 
-        // Next history query after the latest should set the query to the empty string.
+        // Next history query after the latest should preserve the current query.
         window
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
@@ -3857,7 +3951,10 @@ pub mod tests {
         window
             .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
-                    assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+                    assert_eq!(
+                        search_view.query_editor.read(cx).text(cx),
+                        "JUST_TEXT_INPUT"
+                    );
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
                 });
             })
@@ -3873,13 +3970,16 @@ pub mod tests {
         window
             .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
-                    assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+                    assert_eq!(
+                        search_view.query_editor.read(cx).text(cx),
+                        "JUST_TEXT_INPUT"
+                    );
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
                 });
             })
             .unwrap();
 
-        // First previous query for empty current query should set the query to the latest submitted one.
+        // Previous query should navigate backwards through history.
         window
             .update(cx, |_, window, cx| {
                 search_bar.update(cx, |search_bar, cx| {
@@ -3891,7 +3991,7 @@ pub mod tests {
         window
             .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
-                    assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
                 });
             })
@@ -3909,7 +4009,7 @@ pub mod tests {
         window
             .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
-                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
                 });
             })
@@ -4063,8 +4163,72 @@ pub mod tests {
         window
             .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
-                    assert_eq!(search_view.query_editor.read(cx).text(cx), "");
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
+                });
+            })
+            .unwrap();
+
+        // Typing text without running a search, then navigating history, should allow
+        // restoring the draft when pressing next past the end.
+        window
+            .update(cx, |_, window, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    search_view.query_editor.update(cx, |query_editor, cx| {
+                        query_editor.set_text("unsaved draft", window, cx)
+                    });
+                })
+            })
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        // Navigate up into history — the draft should be stashed.
+        window
+            .update(cx, |_, window, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(window, cx);
+                    search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
+                });
+            })
+            .unwrap();
+
+        // Navigate forward through history.
+        window
+            .update(cx, |_, window, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(window, cx);
+                    search_bar.next_history_query(&NextHistoryQuery, window, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
+                });
+            })
+            .unwrap();
+
+        // Navigate past the end — the draft should be restored.
+        window
+            .update(cx, |_, window, cx| {
+                search_bar.update(cx, |search_bar, cx| {
+                    search_bar.focus_search(window, cx);
+                    search_bar.next_history_query(&NextHistoryQuery, window, cx);
+                });
+            })
+            .unwrap();
+        window
+            .update(cx, |_, _, cx| {
+                search_view.update(cx, |search_view, cx| {
+                    assert_eq!(search_view.query_editor.read(cx).text(cx), "unsaved draft");
                 });
             })
             .unwrap();
@@ -4253,13 +4417,13 @@ pub mod tests {
         cx.background_executor.run_until_parked();
 
         select_next_history_item(&search_bar_2, cx);
-        assert_eq!(active_query(&search_view_2, cx), "");
-
-        select_prev_history_item(&search_bar_2, cx);
         assert_eq!(active_query(&search_view_2, cx), "THREE");
 
         select_prev_history_item(&search_bar_2, cx);
         assert_eq!(active_query(&search_view_2, cx), "TWO");
+
+        select_prev_history_item(&search_bar_2, cx);
+        assert_eq!(active_query(&search_view_2, cx), "ONE");
 
         select_prev_history_item(&search_bar_2, cx);
         assert_eq!(active_query(&search_view_2, cx), "ONE");
@@ -4278,7 +4442,7 @@ pub mod tests {
         assert_eq!(active_query(&search_view_2, cx), "THREE");
 
         select_next_history_item(&search_bar_2, cx);
-        assert_eq!(active_query(&search_view_2, cx), "");
+        assert_eq!(active_query(&search_view_2, cx), "THREE");
 
         select_next_history_item(&search_bar_1, cx);
         assert_eq!(active_query(&search_view_1, cx), "TWO");
@@ -4287,7 +4451,7 @@ pub mod tests {
         assert_eq!(active_query(&search_view_1, cx), "THREE");
 
         select_next_history_item(&search_bar_1, cx);
-        assert_eq!(active_query(&search_view_1, cx), "");
+        assert_eq!(active_query(&search_view_1, cx), "THREE");
     }
 
     #[perf]
@@ -4887,12 +5051,97 @@ pub mod tests {
             .unwrap();
     }
 
+    #[gpui::test]
+    async fn test_deleted_file_removed_from_search_results(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file_a.txt": "hello world",
+                "file_b.txt": "hello universe",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "hello", cx);
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let match_count = search_view.entity.read(cx).match_ranges.len();
+                assert_eq!(match_count, 2, "Should have matches from both files");
+            })
+            .unwrap();
+
+        // Delete file_b.txt
+        fs.remove_file(
+            path!("/dir/file_b.txt").as_ref(),
+            fs::RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        // Verify deleted file's results are removed proactively
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let results_text = search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx));
+                assert!(
+                    !results_text.contains("universe"),
+                    "Deleted file's content should be removed from results, got: {results_text}"
+                );
+                assert!(
+                    results_text.contains("world"),
+                    "Remaining file's content should still be present, got: {results_text}"
+                );
+            })
+            .unwrap();
+
+        // Re-run the search and verify deleted file stays gone
+        perform_search(search_view, "hello", cx);
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let results_text = search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx));
+                assert!(
+                    !results_text.contains("universe"),
+                    "Deleted file should not reappear after re-search, got: {results_text}"
+                );
+                assert!(
+                    results_text.contains("world"),
+                    "Remaining file should still be found, got: {results_text}"
+                );
+                assert_eq!(
+                    search_view.entity.read(cx).match_ranges.len(),
+                    1,
+                    "Should only have match from the remaining file"
+                );
+            })
+            .unwrap();
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
 
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
 
             editor::init(cx);
             crate::init(cx);

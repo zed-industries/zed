@@ -14,7 +14,7 @@ jobs:
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -22,7 +22,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -31,7 +31,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
     - name: steps::setup_sccache
@@ -43,6 +43,8 @@ jobs:
         SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
+    - name: steps::cargo_build_visual_tests
+      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -58,7 +60,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -66,14 +68,12 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_node
@@ -81,7 +81,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
     - name: steps::setup_sccache
@@ -113,7 +113,7 @@ jobs:
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -153,7 +153,7 @@ jobs:
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -161,7 +161,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -185,7 +185,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -193,14 +193,12 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_sccache
@@ -220,7 +218,7 @@ jobs:
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -248,7 +246,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
@@ -257,8 +255,14 @@ jobs:
       name: run_tests::check_scripts::download_actionlint
       run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
     - name: run_tests::check_scripts::run_actionlint
-      run: |
-        ${{ steps.get_actionlint.outputs.executable }} -color
+      run: '"$ACTIONLINT_BIN" -color'
+      env:
+        ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: run_tests::check_scripts::check_xtask_workflows
       run: |
         cargo xtask workflows
@@ -273,7 +277,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 25
@@ -303,7 +307,7 @@ jobs:
       CXX: clang++-18
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -312,8 +316,6 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
@@ -345,7 +347,7 @@ jobs:
       CXX: clang++-18
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -354,8 +356,6 @@ jobs:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: ./script/bundle-linux
@@ -390,7 +390,7 @@ jobs:
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_node
@@ -435,7 +435,7 @@ jobs:
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_node
@@ -484,7 +484,7 @@ jobs:
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -529,7 +529,7 @@ jobs:
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -619,16 +619,16 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - id: get-app-token
+    - id: generate-token
       name: steps::authenticate_as_zippy
-      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
       run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
       env:
-        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
   push_release_update_notification:
     needs:
     - create_draft_release
@@ -654,12 +654,7 @@ jobs:
     - id: generate-webhook-message
       name: release::generate_slack_message
       run: |
-        MESSAGE=$(DRAFT_RESULT="${{ needs.create_draft_release.result }}"
-        UPLOAD_RESULT="${{ needs.upload_release_assets.result }}"
-        VALIDATE_RESULT="${{ needs.validate_release_assets.result }}"
-        AUTO_RELEASE_RESULT="${{ needs.auto_release_preview.result }}"
-        TAG="$GITHUB_REF_NAME"
-        RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        MESSAGE=$(TAG="$GITHUB_REF_NAME"
 
         if [ "$DRAFT_RESULT" == "failure" ]; then
             echo "❌ Draft release creation failed for $TAG: $RUN_URL"
@@ -669,19 +664,19 @@ jobs:
                 echo "❌ Release asset upload failed for $TAG: $RELEASE_URL"
             elif [ "$UPLOAD_RESULT" == "cancelled" ] || [ "$UPLOAD_RESULT" == "skipped" ]; then
                 FAILED_JOBS=""
-                if [ "${{ needs.run_tests_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_mac"; fi
-                if [ "${{ needs.run_tests_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_linux"; fi
-                if [ "${{ needs.run_tests_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_windows"; fi
-                if [ "${{ needs.clippy_mac.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_mac"; fi
-                if [ "${{ needs.clippy_linux.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
-                if [ "${{ needs.clippy_windows.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
-                if [ "${{ needs.check_scripts.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
-                if [ "${{ needs.bundle_linux_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
-                if [ "${{ needs.bundle_linux_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
-                if [ "${{ needs.bundle_mac_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
-                if [ "${{ needs.bundle_mac_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_x86_64"; fi
-                if [ "${{ needs.bundle_windows_aarch64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_aarch64"; fi
-                if [ "${{ needs.bundle_windows_x86_64.result }}" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_x86_64"; fi
+                if [ "$RESULT_RUN_TESTS_MAC" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_mac"; fi
+                if [ "$RESULT_RUN_TESTS_LINUX" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_linux"; fi
+                if [ "$RESULT_RUN_TESTS_WINDOWS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS run_tests_windows"; fi
+                if [ "$RESULT_CLIPPY_MAC" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_mac"; fi
+                if [ "$RESULT_CLIPPY_LINUX" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_linux"; fi
+                if [ "$RESULT_CLIPPY_WINDOWS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS clippy_windows"; fi
+                if [ "$RESULT_CHECK_SCRIPTS" == "failure" ];then FAILED_JOBS="$FAILED_JOBS check_scripts"; fi
+                if [ "$RESULT_BUNDLE_LINUX_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_aarch64"; fi
+                if [ "$RESULT_BUNDLE_LINUX_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_linux_x86_64"; fi
+                if [ "$RESULT_BUNDLE_MAC_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_aarch64"; fi
+                if [ "$RESULT_BUNDLE_MAC_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_mac_x86_64"; fi
+                if [ "$RESULT_BUNDLE_WINDOWS_AARCH64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_aarch64"; fi
+                if [ "$RESULT_BUNDLE_WINDOWS_X86_64" == "failure" ];then FAILED_JOBS="$FAILED_JOBS bundle_windows_x86_64"; fi
                 FAILED_JOBS=$(echo "$FAILED_JOBS" | xargs)
                 if [ "$UPLOAD_RESULT" == "cancelled" ]; then
                     if [ -n "$FAILED_JOBS" ]; then
@@ -710,12 +705,29 @@ jobs:
         echo "message=$MESSAGE" >> "$GITHUB_OUTPUT"
       env:
         GH_TOKEN: ${{ github.token }}
+        DRAFT_RESULT: ${{ needs.create_draft_release.result }}
+        UPLOAD_RESULT: ${{ needs.upload_release_assets.result }}
+        VALIDATE_RESULT: ${{ needs.validate_release_assets.result }}
+        AUTO_RELEASE_RESULT: ${{ needs.auto_release_preview.result }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
+        RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
+        RESULT_RUN_TESTS_WINDOWS: ${{ needs.run_tests_windows.result }}
+        RESULT_CLIPPY_MAC: ${{ needs.clippy_mac.result }}
+        RESULT_CLIPPY_LINUX: ${{ needs.clippy_linux.result }}
+        RESULT_CLIPPY_WINDOWS: ${{ needs.clippy_windows.result }}
+        RESULT_CHECK_SCRIPTS: ${{ needs.check_scripts.result }}
+        RESULT_BUNDLE_LINUX_AARCH64: ${{ needs.bundle_linux_aarch64.result }}
+        RESULT_BUNDLE_LINUX_X86_64: ${{ needs.bundle_linux_x86_64.result }}
+        RESULT_BUNDLE_MAC_AARCH64: ${{ needs.bundle_mac_aarch64.result }}
+        RESULT_BUNDLE_MAC_X86_64: ${{ needs.bundle_mac_x86_64.result }}
+        RESULT_BUNDLE_WINDOWS_AARCH64: ${{ needs.bundle_windows_aarch64.result }}
+        RESULT_BUNDLE_WINDOWS_X86_64: ${{ needs.bundle_windows_x86_64.result }}
     - name: release::send_slack_message
-      run: |
-        curl -X POST -H 'Content-type: application/json'\
-         --data '{"text":"${{ steps.generate-webhook-message.outputs.message }}"}' "$SLACK_WEBHOOK"
+      run: 'curl -X POST -H ''Content-type: application/json'' --data "$(jq -n --arg text "$SLACK_MESSAGE" ''{"text": $text}'')" "$SLACK_WEBHOOK"'
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        SLACK_MESSAGE: ${{ steps.generate-webhook-message.outputs.message }}
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
   cancel-in-progress: true
