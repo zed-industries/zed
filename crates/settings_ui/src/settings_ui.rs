@@ -4011,12 +4011,14 @@ fn render_text_field<T: From<String> + Into<String> + AsRef<str> + Clone>(
         )
         .on_confirm({
             move |new_text, window, cx| {
+                log::info!("on_confirm {:?}", new_text);
                 update_settings_file(
                     file.clone(),
                     field.json_path,
                     window,
                     cx,
                     move |settings, _cx| {
+                        log::info!("This saves the relevant setting");
                         (field.write)(settings, new_text.map(Into::into));
                     },
                 )
