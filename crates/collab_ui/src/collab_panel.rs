@@ -3144,10 +3144,14 @@ impl CollabPanel {
             (IconName::Star, Color::Default, "Add to Favorites")
         };
 
+        let height = px(24.);
+
         h_flex()
             .id(ix)
             .group("")
+            .h(height)
             .w_full()
+            .overflow_hidden()
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, _, cx| {
                     cx.new(|_| DraggedChannelView {
@@ -3175,6 +3179,7 @@ impl CollabPanel {
             )
             .child(
                 ListItem::new(ix)
+                    .height(height)
                     // Add one level of depth for the disclosure arrow.
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
@@ -3256,12 +3261,13 @@ impl CollabPanel {
             .child(
                 h_flex()
                     .visible_on_hover("")
+                    .h_full()
                     .absolute()
                     .right_0()
                     .px_1()
                     .gap_px()
-                    .bg(cx.theme().colors().background)
                     .rounded_l_md()
+                    .bg(cx.theme().colors().background)
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("channel_favorite", favorite_icon)
