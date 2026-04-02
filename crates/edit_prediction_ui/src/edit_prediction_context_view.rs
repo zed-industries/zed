@@ -201,10 +201,14 @@ impl EditPredictionContextView {
                 multibuffer.clear(cx);
 
                 for (path, buffer, ranges, orders, _) in paths {
-                    let (anchor_ranges, _) =
-                        multibuffer.set_excerpts_for_path(path, buffer, ranges, 0, cx);
-                    for (anchor_range, order) in anchor_ranges.into_iter().zip(orders) {
-                        excerpt_anchors_with_orders.push((anchor_range.start, order));
+                    multibuffer.set_excerpts_for_path(path, buffer.clone(), ranges.clone(), 0, cx);
+                    let snapshot = multibuffer.snapshot(cx);
+                    let buffer_snapshot = buffer.read(cx).snapshot();
+                    for (range, order) in ranges.into_iter().zip(orders) {
+                        let text_anchor = buffer_snapshot.anchor_range_inside(range);
+                        if let Some(start) = snapshot.anchor_in_buffer(text_anchor.start) {
+                            excerpt_anchors_with_orders.push((start, order));
+                        }
                     }
                 }
             });

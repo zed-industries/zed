@@ -529,7 +529,7 @@ async fn open_workspaces(
         };
         let open_options = workspace::OpenOptions {
             open_new_workspace,
-            replace_window,
+            requesting_window: replace_window,
             wait,
             env: env.clone(),
             ..Default::default()
@@ -1292,7 +1292,7 @@ mod tests {
                         vec![],
                         false,
                         workspace::OpenOptions {
-                            replace_window: Some(window_to_replace),
+                            requesting_window: Some(window_to_replace),
                             ..Default::default()
                         },
                         &response_tx,

@@ -57,7 +57,8 @@ impl FoldPlaceholder {
     pub fn fold_element(fold_id: FoldId, cx: &App) -> Stateful<gpui::Div> {
         use gpui::{InteractiveElement as _, StatefulInteractiveElement as _, Styled as _};
         use settings::Settings as _;
-        use theme::{ActiveTheme as _, ThemeSettings};
+        use theme::ActiveTheme as _;
+        use theme_settings::ThemeSettings;
         let settings = ThemeSettings::get_global(cx);
         gpui::div()
             .id(fold_id)
@@ -184,16 +185,18 @@ impl FoldMapWriter<'_> {
                 continue;
             }
 
+            let fold_range = buffer.anchor_after(range.start)..buffer.anchor_before(range.end);
             // For now, ignore any ranges that span an excerpt boundary.
-            let fold_range =
-                FoldRange(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
-            if fold_range.0.start.excerpt_id != fold_range.0.end.excerpt_id {
+            if buffer
+                .anchor_range_to_buffer_anchor_range(fold_range.clone())
+                .is_none()
+            {
                 continue;
             }
 
             folds.push(Fold {
                 id: FoldId(post_inc(&mut self.0.next_fold_id.0)),
-                range: fold_range,
+                range: FoldRange(fold_range),
                 placeholder: fold_text,
             });
 
@@ -509,7 +512,7 @@ impl FoldMap {
                     .snapshot
                     .folds
                     .cursor::<FoldRange>(&inlay_snapshot.buffer);
-                folds_cursor.seek(&FoldRange(anchor..Anchor::max()), Bias::Left);
+                folds_cursor.seek(&FoldRange(anchor..Anchor::Max), Bias::Left);
 
                 let mut folds = iter::from_fn({
                     let inlay_snapshot = &inlay_snapshot;
@@ -1225,7 +1228,7 @@ impl DerefMut for FoldRange {
 
 impl Default for FoldRange {
     fn default() -> Self {
-        Self(Anchor::min()..Anchor::max())
+        Self(Anchor::Min..Anchor::Max)
     }
 }
 
@@ -1261,10 +1264,10 @@ pub struct FoldSummary {
 impl Default for FoldSummary {
     fn default() -> Self {
         Self {
-            start: Anchor::min(),
-            end: Anchor::max(),
-            min_start: Anchor::max(),
-            max_end: Anchor::min(),
+            start: Anchor::Min,
+            end: Anchor::Max,
+            min_start: Anchor::Max,
+            max_end: Anchor::Min,
             count: 0,
         }
     }

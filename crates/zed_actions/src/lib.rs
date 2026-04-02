@@ -85,8 +85,6 @@ pub enum ExtensionCategoryFilter {
     LanguageServers,
     ContextServers,
     AgentServers,
-    SlashCommands,
-    IndexedDocsProviders,
     Snippets,
     DebugAdapters,
 }
@@ -452,8 +450,6 @@ pub mod agent {
             OpenOnboardingModal,
             /// Opens the ACP onboarding modal.
             OpenAcpOnboardingModal,
-            /// Opens the Claude Agent onboarding modal.
-            OpenClaudeAgentOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
@@ -525,14 +521,6 @@ pub mod assistant {
             Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus
-        ]
-    );
-
-    actions!(
-        assistant,
-        [
-            /// Shows the assistant configuration panel.
-            ShowConfiguration
         ]
     );
 
@@ -779,7 +767,18 @@ pub mod preview {
 }
 
 pub mod agents_sidebar {
-    use gpui::actions;
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Toggles the thread switcher popup when the sidebar is focused.
+    #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
+    #[action(namespace = agents_sidebar)]
+    #[serde(deny_unknown_fields)]
+    pub struct ToggleThreadSwitcher {
+        #[serde(default)]
+        pub select_last: bool,
+    }
 
     actions!(
         agents_sidebar,

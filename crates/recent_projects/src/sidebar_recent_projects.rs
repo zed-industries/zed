@@ -17,9 +17,11 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    MultiWorkspace, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb,
-    WorkspaceId, notifications::DetachAndPromptErr,
+    MultiWorkspace, OpenMode, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace,
+    WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
 };
+
+use zed_actions::OpenRemote;
 
 use crate::{highlights_for_path, icon_for_remote_connection, open_remote_project};
 
@@ -272,7 +274,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace.open_project(paths, window, cx)
+                                multi_workspace.open_project(paths, OpenMode::Activate, window, cx)
                             })
                             .log_err()
                         {
@@ -287,7 +289,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     let app_state = workspace.app_state().clone();
                     let replace_window = window.window_handle().downcast::<MultiWorkspace>();
                     let open_options = OpenOptions {
-                        replace_window,
+                        requesting_window: replace_window,
                         ..Default::default()
                     };
                     if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
@@ -409,16 +411,33 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child({
-                    let open_action = workspace::Open {
-                        create_new_window: false,
-                    };
+                    let open_action = workspace::Open::default();
                     Button::new("open_local_folder", "Add Local Project")
                         .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
-                        .on_click(cx.listener(move |_, _, window, cx| {
-                            cx.emit(DismissEvent);
+                        .on_click(move |_, window, cx| {
                             window.dispatch_action(open_action.boxed_clone(), cx)
-                        }))
+                        })
                 })
+                .child(
+                    Button::new("open_remote_folder", "Add Remote Project")
+                        .key_binding(KeyBinding::for_action(
+                            &OpenRemote {
+                                from_existing_connection: false,
+                                create_new_window: false,
+                            },
+                            cx,
+                        ))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                OpenRemote {
+                                    from_existing_connection: false,
+                                    create_new_window: false,
+                                }
+                                .boxed_clone(),
+                                cx,
+                            )
+                        }),
+                )
                 .into_any(),
         )
     }

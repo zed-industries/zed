@@ -48,7 +48,8 @@ CREATE TABLE "projects" (
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
     "unregistered" BOOLEAN NOT NULL DEFAULT FALSE,
-    "windows_paths" BOOLEAN NOT NULL DEFAULT FALSE
+    "windows_paths" BOOLEAN NOT NULL DEFAULT FALSE,
+    "features" TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");

@@ -1,7 +1,7 @@
 use editor::{Editor, EditorElement, EditorStyle, MultiBufferOffset, ToOffset};
 use gpui::{Action, App, Entity, FocusHandle, Hsla, IntoElement, TextStyle};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{IconButton, IconButtonShape};
 use ui::{Tooltip, prelude::*};
 

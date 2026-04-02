@@ -70,6 +70,11 @@ impl PathList {
         self.paths.as_ref()
     }
 
+    /// Get the paths in the lexicographic order.
+    pub fn paths_owned(&self) -> Arc<[PathBuf]> {
+        self.paths.clone()
+    }
+
     /// Get the order in which the paths were provided.
     pub fn order(&self) -> &[usize] {
         self.order.as_ref()

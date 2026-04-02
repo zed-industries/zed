@@ -16,7 +16,7 @@ use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings as _;
 use terminal_view::TerminalView;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Context, TextSize};
 use workspace::Workspace;
 
@@ -594,7 +594,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
     }

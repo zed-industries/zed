@@ -32,10 +32,6 @@ pub enum MentionUri {
         id: acp::SessionId,
         name: String,
     },
-    TextThread {
-        path: PathBuf,
-        name: String,
-    },
     Rule {
         id: PromptId,
         name: String,
@@ -137,12 +133,6 @@ impl MentionUri {
                         id: acp::SessionId::new(thread_id),
                         name,
                     })
-                } else if let Some(path) = path.strip_prefix("/agent/text-thread/") {
-                    let name = single_query_param(&url, "name")?.context("Missing thread name")?;
-                    Ok(Self::TextThread {
-                        path: path.into(),
-                        name,
-                    })
                 } else if let Some(rule_id) = path.strip_prefix("/agent/rule/") {
                     let name = single_query_param(&url, "name")?.context("Missing rule name")?;
                     let rule_id = UserPromptId(rule_id.parse()?);
@@ -240,7 +230,6 @@ impl MentionUri {
             MentionUri::PastedImage => "Image".to_string(),
             MentionUri::Symbol { name, .. } => name.clone(),
             MentionUri::Thread { name, .. } => name.clone(),
-            MentionUri::TextThread { name, .. } => name.clone(),
             MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
             MentionUri::TerminalSelection { line_count } => {
@@ -312,7 +301,6 @@ impl MentionUri {
                 .unwrap_or_else(|| IconName::Folder.path().into()),
             MentionUri::Symbol { .. } => IconName::Code.path().into(),
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
-            MentionUri::TextThread { .. } => IconName::Thread.path().into(),
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
             MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
@@ -378,15 +366,6 @@ impl MentionUri {
             MentionUri::Thread { name, id } => {
                 let mut url = Url::parse("zed:///").unwrap();
                 url.set_path(&format!("/agent/thread/{id}"));
-                url.query_pairs_mut().append_pair("name", name);
-                url
-            }
-            MentionUri::TextThread { path, name } => {
-                let mut url = Url::parse("zed:///").unwrap();
-                url.set_path(&format!(
-                    "/agent/text-thread/{}",
-                    path.to_string_lossy().trim_start_matches('/')
-                ));
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }

@@ -179,7 +179,7 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
 }
 
 fn auto_release_preview(deps: &[&NamedJob]) -> NamedJob {
-    let (authenticate, token) = steps::authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy().into();
 
     named::job(
         dependant_job(deps)

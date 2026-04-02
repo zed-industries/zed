@@ -106,7 +106,7 @@ impl CachedMermaidDiagram {
                     let svg_string = mermaid_rs_renderer::render(&contents.contents)?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
-                        .render_single_frame(svg_string.as_bytes(), scale, true)
+                        .render_single_frame(svg_string.as_bytes(), scale)
                         .map_err(|error| anyhow::anyhow!("{error}"))
                 })
                 .await;
@@ -266,7 +266,10 @@ mod tests {
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState,
         ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
     };
-    use crate::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownOptions, MarkdownStyle};
+    use crate::{
+        CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
+        MarkdownStyle,
+    };
     use collections::HashMap;
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
     use std::sync::Arc;
@@ -278,7 +281,7 @@ mod tests {
                 settings::init(cx);
             }
             if !cx.has_global::<theme::GlobalTheme>() {
-                theme::init(theme::LoadThemes::JustBase, cx);
+                theme_settings::init(theme::LoadThemes::JustBase, cx);
             }
         });
     }
@@ -309,8 +312,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -325,7 +327,6 @@ mod tests {
                 .render_single_frame(
                     br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>"#,
                     1.0,
-                    true,
                 )
                 .unwrap()
         })
@@ -582,8 +583,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
                     .code_block_renderer(CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     })
             },

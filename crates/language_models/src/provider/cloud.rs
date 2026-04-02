@@ -19,12 +19,15 @@ use gpui::{AnyElement, AnyView, App, AsyncApp, Context, Entity, Subscription, Ta
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, AuthenticateError, GOOGLE_PROVIDER_ID,
+    GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh,
-    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
+    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, PaymentRequiredError, RateLimiter,
+    RefreshLlmTokenListener, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID,
+    ZED_CLOUD_PROVIDER_NAME,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -53,8 +56,8 @@ use crate::provider::open_ai::{
 };
 use crate::provider::x_ai::count_xai_tokens;
 
-const PROVIDER_ID: LanguageModelProviderId = language_model::ZED_CLOUD_PROVIDER_ID;
-const PROVIDER_NAME: LanguageModelProviderName = language_model::ZED_CLOUD_PROVIDER_NAME;
+const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct ZedDotDevSettings {
@@ -568,20 +571,20 @@ impl LanguageModel for CloudLanguageModel {
     fn upstream_provider_id(&self) -> LanguageModelProviderId {
         use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
-            Anthropic => language_model::ANTHROPIC_PROVIDER_ID,
-            OpenAi => language_model::OPEN_AI_PROVIDER_ID,
-            Google => language_model::GOOGLE_PROVIDER_ID,
-            XAi => language_model::X_AI_PROVIDER_ID,
+            Anthropic => ANTHROPIC_PROVIDER_ID,
+            OpenAi => OPEN_AI_PROVIDER_ID,
+            Google => GOOGLE_PROVIDER_ID,
+            XAi => X_AI_PROVIDER_ID,
         }
     }
 
     fn upstream_provider_name(&self) -> LanguageModelProviderName {
         use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
-            Anthropic => language_model::ANTHROPIC_PROVIDER_NAME,
-            OpenAi => language_model::OPEN_AI_PROVIDER_NAME,
-            Google => language_model::GOOGLE_PROVIDER_NAME,
-            XAi => language_model::X_AI_PROVIDER_NAME,
+            Anthropic => ANTHROPIC_PROVIDER_NAME,
+            OpenAi => OPEN_AI_PROVIDER_NAME,
+            Google => GOOGLE_PROVIDER_NAME,
+            XAi => X_AI_PROVIDER_NAME,
         }
     }
 
@@ -1047,12 +1050,10 @@ where
 
 fn provider_name(provider: &cloud_llm_client::LanguageModelProvider) -> LanguageModelProviderName {
     match provider {
-        cloud_llm_client::LanguageModelProvider::Anthropic => {
-            language_model::ANTHROPIC_PROVIDER_NAME
-        }
-        cloud_llm_client::LanguageModelProvider::OpenAi => language_model::OPEN_AI_PROVIDER_NAME,
-        cloud_llm_client::LanguageModelProvider::Google => language_model::GOOGLE_PROVIDER_NAME,
-        cloud_llm_client::LanguageModelProvider::XAi => language_model::X_AI_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::Anthropic => ANTHROPIC_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::OpenAi => OPEN_AI_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::Google => GOOGLE_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::XAi => X_AI_PROVIDER_NAME,
     }
 }
 

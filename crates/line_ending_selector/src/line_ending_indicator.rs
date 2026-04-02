@@ -18,7 +18,7 @@ impl LineEndingIndicator {
         self.line_ending = None;
         self.active_editor = None;
 
-        if let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx) {
+        if let Some(buffer) = editor.read(cx).active_buffer(cx) {
             let line_ending = buffer.read(cx).line_ending();
             self.line_ending = Some(line_ending);
             self.active_editor = Some(editor.downgrade());

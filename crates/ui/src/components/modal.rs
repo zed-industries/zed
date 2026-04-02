@@ -1,7 +1,5 @@
-use crate::{
-    Clickable, Color, DynamicSpacing, Headline, HeadlineSize, Icon, IconButton, IconButtonShape,
-    IconName, Label, LabelCommon, LabelSize, h_flex, v_flex,
-};
+use crate::{IconButtonShape, prelude::*};
+
 use gpui::{prelude::FluentBuilder, *};
 use smallvec::SmallVec;
 use theme::ActiveTheme;
@@ -169,6 +167,7 @@ impl RenderOnce for ModalHeader {
         }
 
         h_flex()
+            .min_w_0()
             .flex_none()
             .justify_between()
             .w_full()
@@ -187,26 +186,33 @@ impl RenderOnce for ModalHeader {
             })
             .child(
                 v_flex()
+                    .min_w_0()
                     .flex_1()
                     .child(
                         h_flex()
+                            .w_full()
                             .gap_1()
-                            .when_some(self.icon, |this, icon| this.child(icon))
-                            .children(children),
+                            .justify_between()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .when_some(self.icon, |this, icon| this.child(icon))
+                                    .children(children),
+                            )
+                            .when(self.show_dismiss_button, |this| {
+                                this.child(
+                                    IconButton::new("dismiss", IconName::Close)
+                                        .icon_size(IconSize::Small)
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
+                                        }),
+                                )
+                            }),
                     )
                     .when_some(self.description, |this, description| {
-                        this.child(Label::new(description).color(Color::Muted).mb_2())
+                        this.child(Label::new(description).color(Color::Muted).mb_2().flex_1())
                     }),
             )
-            .when(self.show_dismiss_button, |this| {
-                this.child(
-                    IconButton::new("dismiss", IconName::Close)
-                        .shape(IconButtonShape::Square)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Cancel.boxed_clone(), cx);
-                        }),
-                )
-            })
     }
 }
 
