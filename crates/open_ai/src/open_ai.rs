@@ -8,9 +8,9 @@ use http_client::{
     AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
     http::{HeaderMap, HeaderValue},
 };
+pub use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 use thiserror::Error;

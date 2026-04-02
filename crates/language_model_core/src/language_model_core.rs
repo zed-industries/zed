@@ -9,6 +9,7 @@ pub mod util;
 use anyhow::{Result, anyhow};
 use cloud_llm_client::CompletionRequestStatus;
 use http_client::{StatusCode, http};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Sub};
 use std::str::FromStr;
@@ -448,7 +449,7 @@ impl From<Arc<str>> for LanguageModelProviderName {
 ///
 /// Mirrors the shape of `settings_content::ModelMode` but lives here so that
 /// crates below the settings layer can reference it.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ModelMode {
     #[default]
@@ -462,8 +463,11 @@ pub enum ModelMode {
 ///
 /// Mirrors the shape of `settings_content::OpenAiReasoningEffort` but lives
 /// here so that crates below the settings layer can reference it.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, strum::EnumString,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "lowercase")]
 pub enum ReasoningEffort {
     Minimal,
     Low,

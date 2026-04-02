@@ -7554,7 +7554,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "settings",
  "strum 0.27.2",
  "tiktoken-rs",
 ]
@@ -9533,6 +9532,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "strum 0.27.2",
  "thiserror 2.0.18",
 ]
 
@@ -11729,7 +11729,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "settings",
  "strum 0.27.2",
  "thiserror 2.0.18",
  "tiktoken-rs",
@@ -15905,6 +15904,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "language_model_core",
  "log",
  "schemars",
  "serde",

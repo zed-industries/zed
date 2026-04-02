@@ -181,7 +181,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
-                    reasoning_effort: model.reasoning_effort.clone(),
+                    reasoning_effort: model.reasoning_effort,
                     supports_chat_completions: model.capabilities.chat_completions,
                 },
             );
