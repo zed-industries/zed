@@ -13,12 +13,13 @@ use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent,
-    Div, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement,
-    KeyContext, ListOffset, ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
-    Render, SharedString, Styled, Subscription, Task, TextStyle, WeakEntity, Window, actions,
-    anchored, canvas, deferred, div, fill, list, point, prelude::*, px,
+    AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
+    Empty, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, KeyContext, ListOffset,
+    ListState, MouseDownEvent, Pixels, Point, PromptLevel, SharedString, Subscription, Task,
+    TextStyle, WeakEntity, Window, actions, anchored, canvas, deferred, div, fill, list, point,
+    prelude::*, px,
 };
+
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
 use rpc::{
@@ -1091,27 +1092,30 @@ impl CollabPanel {
             room.read(cx).local_participant().role == proto::ChannelRole::Admin
         });
 
+        let end_slot = if is_pending {
+            Label::new("Calling").color(Color::Muted).into_any_element()
+        } else if is_current_user {
+            IconButton::new("leave-call", IconName::Exit)
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text("Leave Call"))
+                .on_click(move |_, window, cx| Self::leave_call(window, cx))
+                .into_any_element()
+        } else if role == proto::ChannelRole::Guest {
+            Label::new("Guest").color(Color::Muted).into_any_element()
+        } else if role == proto::ChannelRole::Talker {
+            Label::new("Mic only")
+                .color(Color::Muted)
+                .into_any_element()
+        } else {
+            Empty.into_any_element()
+        };
+
         ListItem::new(user.github_login.clone())
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(render_participant_name_and_handle(user))
             .toggle_state(is_selected)
-            .end_slot(if is_pending {
-                Label::new("Calling").color(Color::Muted).into_any_element()
-            } else if is_current_user {
-                IconButton::new("leave-call", IconName::Exit)
-                    .style(ButtonStyle::Subtle)
-                    .on_click(move |_, window, cx| Self::leave_call(window, cx))
-                    .tooltip(Tooltip::text("Leave Call"))
-                    .into_any_element()
-            } else if role == proto::ChannelRole::Guest {
-                Label::new("Guest").color(Color::Muted).into_any_element()
-            } else if role == proto::ChannelRole::Talker {
-                Label::new("Mic only")
-                    .color(Color::Muted)
-                    .into_any_element()
-            } else {
-                div().into_any_element()
-            })
+            .end_slot(end_slot)
+            .tooltip(Tooltip::text("Click to Follow"))
             .when_some(peer_id, |el, peer_id| {
                 if role == proto::ChannelRole::Guest {
                     return el;
