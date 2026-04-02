@@ -11,11 +11,12 @@
   --page-padding: 15px;
   --content-max-width: 690px;
   --menu-bar-height: 64px;
-  --font: "IA Writer Quattro S", sans-serif;
-  --title-font: "Lora", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font: "iA Writer Quattro S", sans-serif;
+  --title-font:
+    "IBM Plex Serif", "Helvetica Neue", Helvetica, Arial, sans-serif;
   --mono-font:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono,
-    Courier New, monospace;
+    "Lilex", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    Liberation Mono, Courier New, monospace;
   --code-font-size: 0.875em
     /* please adjust the ace font size accordingly in editor.js */;
 
