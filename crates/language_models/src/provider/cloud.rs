@@ -185,14 +185,6 @@ impl CloudLanguageModelProvider {
             _maintain_client_status: maintain_client_status,
         }
     }
-
-    fn create_language_model(
-        &self,
-        model: &Arc<cloud_llm_client::LanguageModel>,
-        provider: &CloudModelProvider,
-    ) -> Arc<dyn LanguageModel> {
-        provider.create_model(model)
-    }
 }
 
 impl LanguageModelProviderState for CloudLanguageModelProvider {
@@ -220,14 +212,14 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
         let model = provider.default_model()?;
-        Some(self.create_language_model(model, &provider))
+        Some(provider.create_model(model))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let state = self.state.read(cx);
         let provider = state.provider.read(cx);
         let model = provider.default_fast_model()?;
-        Some(self.create_language_model(model, &provider))
+        Some(provider.create_model(model))
     }
 
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -236,7 +228,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         provider
             .recommended_models()
             .iter()
-            .map(|model| self.create_language_model(model, &provider))
+            .map(|model| provider.create_model(model))
             .collect()
     }
 
@@ -246,7 +238,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         provider
             .models()
             .iter()
-            .map(|model| self.create_language_model(model, &provider))
+            .map(|model| provider.create_model(model))
             .collect()
     }
 
