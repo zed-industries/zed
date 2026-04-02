@@ -627,7 +627,7 @@ impl RenderOnce for Table {
                 ))
             })
             .when_some(redistributable_entity, |this, widths| {
-                bind_redistributable_columns(this, widths.clone())
+                bind_redistributable_columns(this, widths)
             })
             .child({
                 let content = div()
