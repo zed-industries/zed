@@ -1757,7 +1757,7 @@ func main() {
 					log.Printf("[%s] Phase 12: Zed reconnected (new agentID=%s), waiting 5s for initialization...", agent, agentID)
 					time.Sleep(5 * time.Second)
 
-					// Send a chat message to Thread A (from Phase 1)
+					// Send open_thread first so Zed loads the thread from its DB
 					driver.mu.Lock()
 					if len(driver.round.threadIDs) == 0 {
 						driver.mu.Unlock()
@@ -1766,6 +1766,14 @@ func main() {
 					}
 					threadA := driver.round.threadIDs[0]
 					driver.mu.Unlock()
+
+					log.Printf("[%s] Phase 12: Sending open_thread for Thread A (%s) before chat_message", agent, truncate(threadA, 16))
+					driver.sendOpenThread(threadA, agent)
+
+					// Wait for Zed to load the thread before sending the message.
+					// Thread loading is async — Zed receives open_thread, spawns load task,
+					// connects to agent, loads session from DB. This can take several seconds.
+					time.Sleep(10 * time.Second)
 
 					reqID := driver.round.reqID("phase12")
 					log.Printf("[%s] Phase 12: Sending chat_message to Thread A (%s) with reqID=%s", agent, truncate(threadA, 16), reqID)
