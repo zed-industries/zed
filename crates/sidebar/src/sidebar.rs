@@ -2823,7 +2823,7 @@ impl Sidebar {
         let color = cx.theme().colors();
         let sidebar_bg = color
             .title_bar_background
-            .blend(color.panel_background.opacity(0.32));
+            .blend(color.panel_background.opacity(0.25));
 
         let timestamp = format_history_entry_timestamp(
             self.thread_last_message_sent_or_queued
@@ -3680,7 +3680,7 @@ impl Render for Sidebar {
         let color = cx.theme().colors();
         let bg = color
             .title_bar_background
-            .blend(color.panel_background.opacity(0.32));
+            .blend(color.panel_background.opacity(0.25));
 
         let no_open_projects = !self.contents.has_open_projects;
         let no_search_results = self.contents.entries.is_empty();

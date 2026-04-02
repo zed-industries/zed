@@ -215,7 +215,7 @@ impl RenderOnce for ThreadItem {
         let color = cx.theme().colors();
         let sidebar_base_bg = color
             .title_bar_background
-            .blend(color.panel_background.opacity(0.32));
+            .blend(color.panel_background.opacity(0.25));
 
         let raw_bg = self.base_bg.unwrap_or(sidebar_base_bg);
         let apparent_bg = color.background.blend(raw_bg);
@@ -548,12 +548,17 @@ impl Component for ThreadItem {
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let color = cx.theme().colors();
+        let bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.25));
+
         let container = || {
             v_flex()
                 .w_72()
                 .border_1()
-                .border_color(cx.theme().colors().border_variant)
-                .bg(cx.theme().colors().panel_background)
+                .border_color(color.border_variant)
+                .bg(bg)
         };
 
         let thread_item_examples = vec![
@@ -564,16 +569,6 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-1", "Linking to the Agent Panel Depending on Settings")
                             .icon(IconName::AiOpenAi)
                             .timestamp("15m"),
-                    )
-                    .into_any_element(),
-            ),
-            single_example(
-                "Timestamp Only (hours)",
-                container()
-                    .child(
-                        ThreadItem::new("ti-1b", "Thread with just a timestamp")
-                            .icon(IconName::AiClaude)
-                            .timestamp("3h"),
                     )
                     .into_any_element(),
             ),
