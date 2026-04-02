@@ -365,11 +365,20 @@ fn convert_token(
     modifiers: u32,
 ) -> Option<HighlightStyle> {
     let rules = stylizer.rules_for_token(token_type)?;
-    let matching = rules.iter().filter(|rule| {
-        rule.token_modifiers
-            .iter()
-            .all(|m| stylizer.has_modifier(modifiers, m))
-    });
+    let matching: Vec<_> = rules
+        .iter()
+        .filter(|rule| {
+            rule.token_modifiers
+                .iter()
+                .all(|m| stylizer.has_modifier(modifiers, m))
+        })
+        .collect();
+
+    if let Some(rule) = matching.last() {
+        if rule.no_style_defined() {
+            return None;
+        }
+    }
 
     let mut highlight = HighlightStyle::default();
     let mut empty = true;
