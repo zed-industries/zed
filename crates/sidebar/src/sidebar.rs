@@ -1388,7 +1388,6 @@ impl Sidebar {
                 }
             })
             .justify_between()
-            .hover(|s| s.bg(hover_color))
             .child(
                 h_flex()
                     .when(!is_active, |this| this.cursor_pointer())
@@ -1469,7 +1468,6 @@ impl Sidebar {
                                 IconName::ListCollapse,
                             )
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("Collapse Displayed Threads"))
                             .on_click(cx.listener({
                                 let path_list_for_collapse = path_list_for_collapse.clone();
@@ -1491,7 +1489,6 @@ impl Sidebar {
                                 IconName::Plus,
                             )
                             .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
                             .tooltip(Tooltip::text("New Thread"))
                             .on_click(cx.listener({
                                 let workspace_for_new_thread = workspace_for_new_thread.clone();
@@ -1692,8 +1689,7 @@ impl Sidebar {
                     IconName::Ellipsis,
                 )
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted),
+                .icon_size(IconSize::Small),
             )
             .anchor(gpui::Corner::TopRight)
             .offset(gpui::Point {
