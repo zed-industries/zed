@@ -11224,13 +11224,75 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 
     cx.executor().run_until_parked();
     cx.read(|cx| {
-        assert_entry_git_state(tree.read(cx), repository.read(cx), "a.xml", None, true);
+        assert_entry_git_state(tree.read(cx), repository.read(cx), "a.xml", None, false);
         assert_entry_git_state(
             tree.read(cx),
             repository.read(cx),
             "b.txt",
             Some(StatusCode::Added),
             false,
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_tracked_nested_bin_path_is_not_ignored_with_real_fs(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        ".gitignore": "bin/\n",
+        "bin": {
+            "ignored-root-file": "ignored"
+        },
+        "images": {
+            "simple-bridge": {
+                "src": {
+                    "rootfs": {
+                        "bin": {
+                            "simple-bridge": "tracked"
+                        }
+                    }
+                }
+            }
+        }
+    }));
+    let work_dir = root.path();
+
+    let repo = git_init(work_dir);
+    git_add(".gitignore", &repo);
+    git_add("images/simple-bridge/src/rootfs/bin/simple-bridge", &repo);
+    git_commit("Initial commit", &repo);
+
+    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [work_dir], cx).await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    cx.read(|cx| {
+        assert_entry_git_state(
+            tree.read(cx),
+            repository.read(cx),
+            "images/simple-bridge/src/rootfs/bin/simple-bridge",
+            None,
+            false,
+        );
+        assert!(
+            !tree.read(cx)
+                .entry_for_path(&rel_path("images/simple-bridge/src/rootfs/bin"))
+                .unwrap()
+                .is_ignored,
+            "tracked nested bin directory should not be ignored"
         );
     });
 }
