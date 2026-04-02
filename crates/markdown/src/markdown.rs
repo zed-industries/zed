@@ -478,15 +478,18 @@ impl Markdown {
 
     pub fn escape(s: &str) -> Cow<'_, str> {
         // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
+        let has_leading_whitespace =
+            s.starts_with(' ') || s.starts_with('\t') || s.contains("\n ") || s.contains("\n\t");
         let count = s
             .bytes()
             .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
             .count();
-        if count > 0 {
+        if count > 0 || has_leading_whitespace {
             let mut output = String::with_capacity(s.len() + count);
-            let mut is_newline = false;
+            let mut is_newline = true;
             for c in s.chars() {
-                if is_newline && c == ' ' {
+                if is_newline && (c == ' ' || c == '\t') {
+                    output.push('\u{00A0}');
                     continue;
                 }
                 is_newline = c == '\n';
@@ -3082,7 +3085,56 @@ mod tests {
         assert_eq!(Markdown::escape("hello `world`"), "hello \\`world\\`");
         assert_eq!(
             Markdown::escape("hello\n    cool world"),
-            "hello\n\ncool world"
+            "hello\n\n\u{00A0}\u{00A0}\u{00A0}\u{00A0}cool world"
+        );
+
+        // Leading whitespace on the first line is replaced with non-breaking
+        // spaces to preserve indentation without triggering code blocks.
+        assert_eq!(
+            Markdown::escape("    | { a: string }"),
+            "\u{00A0}\u{00A0}\u{00A0}\u{00A0}\\| \\{ a\\: string \\}"
+        );
+        assert_eq!(Markdown::escape("    hello"), "\u{00A0}\u{00A0}\u{00A0}\u{00A0}hello");
+
+        // Tabs are also replaced with non-breaking spaces.
+        assert_eq!(
+            Markdown::escape("hello\n\t\tindented"),
+            "hello\n\n\u{00A0}\u{00A0}indented"
+        );
+
+        // Multi-line diagnostic with leading whitespace on each line.
+        assert_eq!(
+            Markdown::escape("    | { a: string }\n    | { b: number }"),
+            "\u{00A0}\u{00A0}\u{00A0}\u{00A0}\\| \\{ a\\: string \\}\n\n\u{00A0}\u{00A0}\u{00A0}\u{00A0}\\| \\{ b\\: number \\}"
+        );
+
+        // No escaping needed for plain text.
+        assert_eq!(Markdown::escape("hello world"), "hello world");
+    }
+
+    #[gpui::test]
+    fn test_escape_rendering(cx: &mut TestAppContext) {
+        // Simulate a luau-lsp diagnostic message with punctuation.
+        // Backslash escapes added by Markdown::escape should be consumed
+        // by the markdown parser and NOT appear in the rendered output.
+        let diagnostic_message = "'{ a: string } | { b: number }'";
+        let escaped = Markdown::escape(diagnostic_message);
+        let rendered = render_markdown(&escaped, cx);
+        let total_len = rendered
+            .lines
+            .iter()
+            .map(|l| {
+                l.source_mappings
+                    .last()
+                    .map_or(0, |m| m.rendered_index + 1)
+            })
+            .max()
+            .unwrap_or(0);
+        let full_text = rendered.text_for_range(0..total_len);
+        assert!(
+            !full_text.contains('\\'),
+            "Rendered text should not contain visible backslash escapes, got: {:?}",
+            full_text
         );
     }
 
