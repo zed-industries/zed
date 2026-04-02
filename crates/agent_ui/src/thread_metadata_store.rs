@@ -1436,6 +1436,7 @@ mod tests {
 
         cx.update(|cx| {
             thread_with_worktree.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "content".into(), cx);
                 thread.set_title("Project Thread".into(), cx).detach();
             });
         });
