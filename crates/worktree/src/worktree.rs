@@ -259,6 +259,7 @@ struct BackgroundScannerState {
     snapshot: LocalSnapshot,
     external_symlink_paths_by_target: HashMap<Arc<Path>, SmallVec<[Arc<RelPath>; 1]>>,
     scanned_dirs: HashSet<ProjectEntryId>,
+    watched_dir_abs_paths_by_entry_id: HashMap<ProjectEntryId, Arc<Path>>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
     paths_to_scan: HashSet<Arc<RelPath>>,
     /// The ids of all of the entries that were removed from the snapshot
@@ -1124,6 +1125,7 @@ impl LocalWorktree {
                         snapshot,
                         external_symlink_paths_by_target: Default::default(),
                         scanned_dirs: Default::default(),
+                        watched_dir_abs_paths_by_entry_id: Default::default(),
                         scanning_enabled,
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
@@ -3034,7 +3036,12 @@ impl BackgroundScannerState {
         let mut removed_dir_abs_paths = Vec::new();
         for entry in removed_entries.cursor::<()>(()) {
             if entry.is_dir() {
-                removed_dir_abs_paths.push(self.snapshot.absolutize(&entry.path));
+                let watch_path = self
+                    .watched_dir_abs_paths_by_entry_id
+                    .remove(&entry.id)
+                    .map(|path| path.as_ref().to_path_buf())
+                    .unwrap_or_else(|| self.snapshot.absolutize(&entry.path));
+                removed_dir_abs_paths.push(watch_path);
             }
 
             match self.removed_entries.entry(entry.inode) {
@@ -4660,6 +4667,9 @@ impl BackgroundScanner {
                 continue;
             };
 
+            let child_worktree_abs_path: Arc<Path> =
+                Arc::from(root_abs_path.join(child_path.as_std_path()));
+
             if child_name == DOT_GIT {
                 let mut state = self.state.lock().await;
                 state
@@ -4756,7 +4766,8 @@ impl BackgroundScanner {
             }
 
             if child_entry.is_dir() {
-                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
+                child_entry.is_ignored =
+                    ignore_stack.is_abs_path_ignored(&child_worktree_abs_path, true);
                 child_entry.is_always_included =
                     self.settings.is_path_always_included(&child_path, true);
 
@@ -4781,7 +4792,8 @@ impl BackgroundScanner {
                     }));
                 }
             } else {
-                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
+                child_entry.is_ignored =
+                    ignore_stack.is_abs_path_ignored(&child_worktree_abs_path, false);
                 child_entry.is_always_included =
                     self.settings.is_path_always_included(&child_path, false);
             }
@@ -4827,7 +4839,18 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
+
         self.watcher.add(job.abs_path.as_ref()).log_err();
+
+        let entry_id = state
+            .snapshot
+            .entry_for_path(&job.path)
+            .map(|entry| entry.id);
+        if let Some(entry_id) = entry_id {
+            state
+                .watched_dir_abs_paths_by_entry_id
+                .insert(entry_id, job.abs_path.clone());
+        }
 
         for new_job in new_jobs.into_iter().flatten() {
             job.scan_queue
