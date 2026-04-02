@@ -1044,7 +1044,7 @@ impl GitGraph {
                     DefiniteLength::Fraction(0.0516),
                 ],
                 vec![
-                    TableResizeBehavior::MinSize(0.12),
+                    TableResizeBehavior::Resizable,
                     TableResizeBehavior::Resizable,
                     TableResizeBehavior::Resizable,
                     TableResizeBehavior::Resizable,
@@ -2154,7 +2154,11 @@ impl GitGraph {
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
         let horizontal_scroll_offset = self.horizontal_scroll_offset;
 
-        let graph_width = self.graph_canvas_content_width();
+        let graph_width = if self.graph_canvas_content_width() > self.graph_viewport_width {
+            self.graph_canvas_content_width()
+        } else {
+            self.graph_viewport_width
+        };
         let last_visible_row =
             first_visible_row + (viewport_height / row_height).ceil() as usize + 1;
 
@@ -2623,7 +2627,10 @@ impl Render for GitGraph {
                         .child(render_table_header(
                             TableRow::from_vec(
                                 vec![
-                                    Label::new("Graph").color(Color::Muted).into_any_element(),
+                                    Label::new("Graph")
+                                        .color(Color::Muted)
+                                        .truncate()
+                                        .into_any_element(),
                                     Label::new("Description")
                                         .color(Color::Muted)
                                         .into_any_element(),
