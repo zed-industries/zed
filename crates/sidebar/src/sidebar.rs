@@ -1327,7 +1327,7 @@ impl Sidebar {
         has_running_threads: bool,
         waiting_thread_count: usize,
         is_active: bool,
-        is_selected: bool,
+        is_focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id_prefix = if is_sticky { "sticky-" } else { "" };
@@ -1381,7 +1381,7 @@ impl Sidebar {
             .pr_1p5()
             .border_1()
             .map(|this| {
-                if is_selected {
+                if is_focused {
                     this.border_color(color.border_focused)
                 } else {
                     this.border_color(gpui::transparent_black())
@@ -1508,7 +1508,9 @@ impl Sidebar {
                     })
             })
             .when(!is_active, |this| {
-                this.tooltip(Tooltip::text("Activate Workspace"))
+                this.cursor_pointer()
+                    .hover(|s| s.bg(hover_color))
+                    .tooltip(Tooltip::text("Activate Workspace"))
                     .on_click(cx.listener({
                         move |this, _, window, cx| {
                             this.active_entry =
