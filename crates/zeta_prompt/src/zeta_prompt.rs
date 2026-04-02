@@ -822,13 +822,6 @@ pub fn encode_patch_as_output_for_format(
 
 /// Given a `ZetaPromptInput`, a format, and a patch (with cursor already
 /// extracted), produce the expected model output string for training.
-///
-/// This orchestrates the full pipeline:
-/// 1. Resolve the cursor region to get the old editable text.
-/// 2. Delegate to `encode_patch_as_output_for_format` for formats that have
-///    their own encoding (hashline, variable-edit, multi-region empty patches).
-/// 3. For remaining cases, apply the diff to get the new text, insert the
-///    cursor marker, and append the format's end marker.
 pub fn format_expected_output(
     input: &ZetaPromptInput,
     format: ZetaFormat,
@@ -836,7 +829,7 @@ pub fn format_expected_output(
     cursor_offset: Option<usize>,
 ) -> Result<String> {
     let (context, editable_range, _, _) = resolve_cursor_region(input, format);
-    let mut old_editable = context[editable_range.clone()].to_string();
+    let mut old_editable = context[editable_range].to_string();
     if !old_editable.is_empty() && !old_editable.ends_with('\n') {
         old_editable.push('\n');
     }
