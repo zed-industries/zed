@@ -137,7 +137,9 @@ fn main() {
             .update(cx, move |_, window, cx| {
                 cx.spawn_in(
                     window,
-                    async move |weak: WeakEntity<Editor>, cx: &mut AsyncWindowContext| {
+                    async move |weak: WeakEntity<Editor>,
+                                cx: &mut AsyncWindowContext|
+                                -> anyhow::Result<()> {
                         let find_task = weak.update_in(cx, |editor, window, cx| {
                             editor.find_matches(query.clone(), window, cx)
                         })?;
