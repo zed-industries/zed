@@ -250,30 +250,36 @@ impl WebSocketSync {
         eprintln!("✅ [WEBSOCKET] Sent test ping successfully");
         log::info!("✅ [WEBSOCKET] Sent test ping successfully");
 
-        // Send agent_ready immediately on connection to prevent deadlock
-        // The API waits for agent_ready before sending the initial chat_message,
-        // so we need to signal readiness as soon as we connect.
-        // Note: We send with no thread_id since no thread exists yet.
-        // The agent_name is just for logging - actual session mapping uses the WebSocket URL param.
-        let agent_ready_msg = serde_json::json!({
-            "event_type": "agent_ready",
-            "data": {
-                "agent_name": "zed-connection",
-                "thread_id": null
-            }
-        });
-        if let Err(e) = ws_sink.send(Message::Text(agent_ready_msg.to_string().into())).await {
-            eprintln!("⚠️ [WEBSOCKET] Failed to send initial agent_ready: {}", e);
-            log::warn!("⚠️ [WEBSOCKET] Failed to send initial agent_ready: {}", e);
-            // Don't return - this is not fatal, the API has a timeout fallback
-        } else {
-            eprintln!("✅ [WEBSOCKET] Sent initial agent_ready (connection ready for messages)");
-            log::info!("✅ [WEBSOCKET] Sent initial agent_ready (connection ready for messages)");
-        }
+        // Delay agent_ready until we know whether an open_thread is coming.
+        // If an open_thread arrives, the thread service sends its own agent_ready
+        // after fully loading the thread (preventing the race where chat_message
+        // arrives before history replay is complete). If no open_thread arrives
+        // within 5 seconds, this is a fresh start — send agent_ready from here.
+        let mut agent_ready_sent = false;
+        let agent_ready_timer = tokio::time::sleep(std::time::Duration::from_secs(5));
+        tokio::pin!(agent_ready_timer);
 
         // Main select loop - handle both incoming and outgoing messages
         loop {
             tokio::select! {
+                // Fallback timer: send agent_ready if no open_thread arrived
+                () = &mut agent_ready_timer, if !agent_ready_sent => {
+                    let agent_ready_msg = serde_json::json!({
+                        "event_type": "agent_ready",
+                        "data": {
+                            "agent_name": "zed-connection",
+                            "thread_id": null
+                        }
+                    });
+                    if let Err(e) = ws_sink.send(Message::Text(agent_ready_msg.to_string().into())).await {
+                        eprintln!("⚠️ [WEBSOCKET] Failed to send timer-based agent_ready: {}", e);
+                        log::warn!("⚠️ [WEBSOCKET] Failed to send timer-based agent_ready: {}", e);
+                    } else {
+                        eprintln!("✅ [WEBSOCKET] Sent timer-based agent_ready (no open_thread received within 5s)");
+                        log::info!("✅ [WEBSOCKET] Sent timer-based agent_ready (no open_thread received within 5s)");
+                    }
+                    agent_ready_sent = true;
+                }
                 // Handle outgoing events
                 Some(event) = outgoing_rx.recv() => {
                     eprintln!("📤 [WEBSOCKET-OUT] Received event to send: {:?}", std::mem::discriminant(&event));
@@ -314,6 +320,20 @@ impl WebSocketSync {
                         Some(Ok(Message::Text(text))) => {
                             eprintln!("📥 [WEBSOCKET-IN] Received text: {}", text);
                             log::info!("📥 [WEBSOCKET-IN] Received text: {}", text);
+
+                            // Check if this is an open_thread command BEFORE processing.
+                            // If so, the thread service will send its own agent_ready
+                            // after loading the thread, so we suppress the timer-based one.
+                            let is_open_thread = serde_json::from_str::<serde_json::Value>(&text)
+                                .ok()
+                                .and_then(|v| v.get("type")?.as_str().map(|s| s == "open_thread"))
+                                .unwrap_or(false);
+
+                            if is_open_thread && !agent_ready_sent {
+                                eprintln!("📖 [WEBSOCKET] open_thread received — thread service will send agent_ready after loading");
+                                log::info!("📖 [WEBSOCKET] open_thread received — thread service will send agent_ready after loading");
+                                agent_ready_sent = true;
+                            }
 
                             if let Err(e) = Self::handle_incoming_message(&text).await {
                                 eprintln!("❌ [WEBSOCKET-IN] Failed to handle message: {}", e);
