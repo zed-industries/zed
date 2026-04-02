@@ -754,43 +754,21 @@ impl AgentPanel {
                 .as_ref()
                 .and_then(|p| p.last_active_thread.as_ref())
             {
-                if thread_info.agent_type.is_native() {
-                    let session_id = acp::SessionId::new(thread_info.session_id.clone());
-                    let load_result = cx.update(|_window, cx| {
-                        let thread_store = ThreadStore::global(cx);
-                        thread_store.update(cx, |store, cx| store.load_thread(session_id, cx))
-                    });
-                    let thread_exists = if let Ok(task) = load_result {
-                        task.await.ok().flatten().is_some()
-                    } else {
-                        false
-                    };
-                    if thread_exists {
-                        Some(thread_info)
-                    } else {
-                        log::warn!(
-                            "last active thread {} not found in database, skipping restoration",
-                            thread_info.session_id
-                        );
-                        None
-                    }
+                let session_id = acp::SessionId::new(thread_info.session_id.clone());
+                let has_metadata = cx
+                    .update(|_window, cx| {
+                        let store = ThreadMetadataStore::global(cx);
+                        store.read(cx).entry(&session_id).is_some()
+                    })
+                    .unwrap_or(false);
+                if has_metadata {
+                    Some(thread_info)
                 } else {
-                    let session_id = acp::SessionId::new(thread_info.session_id.clone());
-                    let has_metadata = cx
-                        .update(|_window, cx| {
-                            let store = ThreadMetadataStore::global(cx);
-                            store.read(cx).entry(&session_id).is_some()
-                        })
-                        .unwrap_or(false);
-                    if has_metadata {
-                        Some(thread_info)
-                    } else {
-                        log::warn!(
-                            "last active thread {} has no metadata, skipping restoration",
-                            thread_info.session_id
-                        );
-                        None
-                    }
+                    log::warn!(
+                        "last active thread {} has no metadata, skipping restoration",
+                        thread_info.session_id
+                    );
+                    None
                 }
             } else {
                 None
