@@ -1280,7 +1280,7 @@ impl Sidebar {
             v_flex()
                 .w_full()
                 .border_t_1()
-                .border_color(cx.theme().colors().border.opacity(0.5))
+                .border_color(cx.theme().colors().border)
                 .child(rendered)
                 .into_any_element()
         } else {
