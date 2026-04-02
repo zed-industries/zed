@@ -1,6 +1,5 @@
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
-use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
@@ -730,8 +729,7 @@ pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, workspace, _, cx| {
             div.when(
-                workspace.project().read(cx).active_repository(cx).is_some()
-                    && cx.has_flag::<GitGraphFeatureFlag>(),
+                workspace.project().read(cx).active_repository(cx).is_some(),
                 |div| {
                     let workspace = workspace.weak_handle();
 
