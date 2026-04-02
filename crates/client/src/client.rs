@@ -26,7 +26,7 @@ use futures::{
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
-use language_model::LlmApiToken;
+use cloud_api_client::LlmApiToken;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;

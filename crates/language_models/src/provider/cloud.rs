@@ -5,9 +5,10 @@ use cloud_api_types::Plan;
 use futures::StreamExt;
 use futures::future::BoxFuture;
 use gpui::{AnyElement, AnyView, App, Context, Entity, Subscription, Task};
+use cloud_api_client::LlmApiToken;
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LlmApiToken, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderName, LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
     ZED_CLOUD_PROVIDER_NAME,
 };
 use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};

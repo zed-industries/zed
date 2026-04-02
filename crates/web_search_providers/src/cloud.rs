@@ -7,7 +7,7 @@ use cloud_llm_client::{WebSearchBody, WebSearchResponse};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Task};
 use http_client::{HttpClient, Method};
-use language_model::LlmApiToken;
+use cloud_api_client::LlmApiToken;
 use web_search::{WebSearchProvider, WebSearchProviderId};
 
 pub struct CloudWebSearchProvider {

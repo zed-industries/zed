@@ -3025,6 +3025,7 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
+ "smol",
  "thiserror 2.0.18",
  "yawc",
 ]
@@ -5252,6 +5253,7 @@ dependencies = [
  "buffer_diff",
  "client",
  "clock",
+ "cloud_api_client",
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
@@ -9497,8 +9499,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "cloud_api_client",
- "cloud_api_types",
  "collections",
  "credentials_provider",
  "env_var",
@@ -9512,7 +9512,6 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "smol",
  "thiserror 2.0.18",
  "util",
 ]
@@ -9549,6 +9548,7 @@ dependencies = [
  "base64 0.22.1",
  "bedrock",
  "client",
+ "cloud_api_client",
  "cloud_api_types",
  "collections",
  "component",
@@ -20277,6 +20277,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_api_client",
  "cloud_api_types",
  "cloud_llm_client",
  "futures 0.3.32",
