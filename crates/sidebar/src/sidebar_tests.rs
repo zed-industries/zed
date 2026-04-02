@@ -5449,6 +5449,12 @@ mod property_test {
                     for metadata in thread_store.read(cx).entries_for_path(&main_path_list) {
                         metadata_thread_ids.insert(metadata.session_id.clone());
                     }
+                    for metadata in thread_store
+                        .read(cx)
+                        .entries_for_main_worktree_path(&main_path_list)
+                    {
+                        metadata_thread_ids.insert(metadata.session_id.clone());
+                    }
                 }
             }
         }

@@ -913,11 +913,16 @@ impl Sidebar {
                     .collect();
 
                 for main_repo_path_list in main_repo_queries {
-                    for row in thread_store
+                    let folder_path_matches = thread_store
                         .read(cx)
                         .entries_for_path(&main_repo_path_list)
-                        .cloned()
-                    {
+                        .cloned();
+                    let main_worktree_path_matches = thread_store
+                        .read(cx)
+                        .entries_for_main_worktree_path(&main_repo_path_list)
+                        .cloned();
+
+                    for row in folder_path_matches.chain(main_worktree_path_matches) {
                         if !seen_session_ids.insert(row.session_id.clone()) {
                             continue;
                         }
