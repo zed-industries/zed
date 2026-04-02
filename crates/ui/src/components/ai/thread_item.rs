@@ -1,7 +1,4 @@
-use crate::{
-    CommonAnimationExt, DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration,
-    IconDecorationKind, Tooltip, prelude::*,
-};
+use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
     Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
@@ -266,31 +263,31 @@ impl RenderOnce for ThreadItem {
             Icon::new(self.icon).color(icon_color).size(IconSize::Small)
         };
 
-        let decoration = |icon: IconDecorationKind, color: Hsla| {
-            IconDecoration::new(icon, base_bg, cx)
-                .color(color)
-                .position(gpui::Point {
-                    x: px(-2.),
-                    y: px(-2.),
-                })
-        };
-
-        let (decoration, icon_tooltip) = if self.status == AgentThreadStatus::Error {
+        let (status_icon, icon_tooltip) = if self.status == AgentThreadStatus::Error {
             (
-                Some(decoration(IconDecorationKind::X, cx.theme().status().error)),
+                Some(
+                    Icon::new(IconName::Close)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                ),
                 Some("Thread has an Error"),
             )
         } else if self.status == AgentThreadStatus::WaitingForConfirmation {
             (
-                Some(decoration(
-                    IconDecorationKind::Triangle,
-                    cx.theme().status().warning,
-                )),
+                Some(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::XSmall)
+                        .color(Color::Warning),
+                ),
                 Some("Thread is Waiting for Confirmation"),
             )
         } else if self.notified {
             (
-                Some(decoration(IconDecorationKind::Dot, color.text_accent)),
+                Some(
+                    Icon::new(IconName::Circle)
+                        .size(IconSize::Small)
+                        .color(Color::Accent),
+                ),
                 Some("Thread's Generation is Complete"),
             )
         } else {
@@ -306,9 +303,9 @@ impl RenderOnce for ThreadItem {
                         .with_rotate_animation(2),
                 )
                 .into_any_element()
-        } else if let Some(decoration) = decoration {
+        } else if let Some(status_icon) = status_icon {
             icon_container()
-                .child(DecoratedIcon::new(agent_icon, Some(decoration)))
+                .child(status_icon)
                 .when_some(icon_tooltip, |icon, tooltip| {
                     icon.tooltip(Tooltip::text(tooltip))
                 })
