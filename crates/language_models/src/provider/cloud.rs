@@ -1,19 +1,18 @@
 use ai_onboarding::YoungAccountBanner;
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
-use cloud_api_types::{OrganizationId, Plan};
-use cloud_llm_client::{CLIENT_SUPPORTS_X_AI_HEADER_NAME, ListModelsResponse};
+use cloud_api_types::Plan;
 use futures::StreamExt;
+use futures::future::BoxFuture;
 use gpui::{AnyElement, AnyView, App, Context, Entity, Subscription, Task};
-use http_client::{AsyncBody, HttpClient, Method};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState, LlmApiToken,
-    RateLimiter, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LlmApiToken, ZED_CLOUD_PROVIDER_ID,
+    ZED_CLOUD_PROVIDER_NAME,
 };
-use language_models_cloud::{CloudLanguageModel, CloudLlmTokenProvider};
+use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
+use parking_lot::Mutex;
 use release_channel::AppVersion;
-use smol::io::AsyncReadExt;
 
 use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
@@ -27,14 +26,14 @@ const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
 struct ClientTokenProvider {
     client: Arc<Client>,
     llm_api_token: LlmApiToken,
-    organization_id: Option<cloud_api_types::OrganizationId>,
+    organization_id: Mutex<Option<cloud_api_types::OrganizationId>>,
 }
 
 impl CloudLlmTokenProvider for ClientTokenProvider {
-    fn acquire_token(&self) -> futures::future::BoxFuture<'_, Result<String>> {
+    fn acquire_token(&self) -> BoxFuture<'_, Result<String>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
-        let organization_id = self.organization_id.clone();
+        let organization_id = self.organization_id.lock().clone();
         Box::pin(async move {
             Ok(client
                 .acquire_llm_token(&llm_api_token, organization_id)
@@ -42,10 +41,10 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         })
     }
 
-    fn refresh_token(&self) -> futures::future::BoxFuture<'_, Result<String>> {
+    fn refresh_token(&self) -> BoxFuture<'_, Result<String>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
-        let organization_id = self.organization_id.clone();
+        let organization_id = self.organization_id.lock().clone();
         Box::pin(async move {
             Ok(client
                 .refresh_llm_token(&llm_api_token, organization_id)
@@ -60,23 +59,19 @@ pub struct ZedDotDevSettings {
 }
 
 pub struct CloudLanguageModelProvider {
-    client: Arc<Client>,
     state: Entity<State>,
     _maintain_client_status: Task<()>,
 }
 
 pub struct State {
     client: Arc<Client>,
-    llm_api_token: LlmApiToken,
     user_store: Entity<UserStore>,
     status: client::Status,
-    models: Vec<Arc<cloud_llm_client::LanguageModel>>,
-    default_model: Option<Arc<cloud_llm_client::LanguageModel>>,
-    default_fast_model: Option<Arc<cloud_llm_client::LanguageModel>>,
-    recommended_models: Vec<Arc<cloud_llm_client::LanguageModel>>,
+    provider: Entity<CloudModelProvider>,
     _user_store_subscription: Subscription,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
+    _provider_subscription: Subscription,
 }
 
 impl State {
@@ -87,16 +82,31 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-        let llm_api_token = global_llm_token(cx);
+        let token_provider = Arc::new(ClientTokenProvider {
+            client: client.clone(),
+            llm_api_token: global_llm_token(cx),
+            organization_id: Mutex::new(
+                user_store
+                    .read(cx)
+                    .current_organization()
+                    .map(|organization| organization.id.clone()),
+            ),
+        });
+
+        let provider = cx.new(|cx| {
+            CloudModelProvider::new(
+                token_provider.clone(),
+                client.http_client(),
+                Some(AppVersion::global(cx)),
+            )
+        });
+
         Self {
             client: client.clone(),
-            llm_api_token,
             user_store: user_store.clone(),
             status,
-            models: Vec::new(),
-            default_model: None,
-            default_fast_model: None,
-            recommended_models: Vec::new(),
+            _provider_subscription: cx.observe(&provider, |_, _, cx| cx.notify()),
+            provider,
             _user_store_subscription: cx.subscribe(
                 &user_store,
                 move |this, _user_store, event, cx| match event {
@@ -105,20 +115,13 @@ impl State {
                         if status.is_signed_out() {
                             return;
                         }
-
-                        let client = this.client.clone();
-                        let llm_api_token = this.llm_api_token.clone();
-                        let organization_id = this
+                        *token_provider.organization_id.lock() = this
                             .user_store
                             .read(cx)
                             .current_organization()
                             .map(|organization| organization.id.clone());
-                        cx.spawn(async move |this, cx| {
-                            let response =
-                                Self::fetch_models(client, llm_api_token, organization_id).await?;
-                            this.update(cx, |this, cx| this.update_models(response, cx))
-                        })
-                        .detach_and_log_err(cx);
+
+                        this.refresh_models(cx);
                     }
                     _ => {}
                 },
@@ -129,21 +132,7 @@ impl State {
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
                 move |this, _listener, _event, cx| {
-                    let client = this.client.clone();
-                    let llm_api_token = this.llm_api_token.clone();
-                    let organization_id = this
-                        .user_store
-                        .read(cx)
-                        .current_organization()
-                        .map(|organization| organization.id.clone());
-                    cx.spawn(async move |this, cx| {
-                        let response =
-                            Self::fetch_models(client, llm_api_token, organization_id).await?;
-                        this.update(cx, |this, cx| {
-                            this.update_models(response, cx);
-                        })
-                    })
-                    .detach_and_log_err(cx);
+                    this.refresh_models(cx);
                 },
             ),
         }
@@ -161,74 +150,10 @@ impl State {
         })
     }
 
-    fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
-        let mut models = Vec::new();
-
-        for model in response.models {
-            models.push(Arc::new(model.clone()));
-        }
-
-        self.default_model = models
-            .iter()
-            .find(|model| {
-                response
-                    .default_model
-                    .as_ref()
-                    .is_some_and(|default_model_id| &model.id == default_model_id)
-            })
-            .cloned();
-        self.default_fast_model = models
-            .iter()
-            .find(|model| {
-                response
-                    .default_fast_model
-                    .as_ref()
-                    .is_some_and(|default_fast_model_id| &model.id == default_fast_model_id)
-            })
-            .cloned();
-        self.recommended_models = response
-            .recommended_models
-            .iter()
-            .filter_map(|id| models.iter().find(|model| &model.id == id))
-            .cloned()
-            .collect();
-        self.models = models;
-        cx.notify();
-    }
-
-    async fn fetch_models(
-        client: Arc<Client>,
-        llm_api_token: LlmApiToken,
-        organization_id: Option<OrganizationId>,
-    ) -> Result<ListModelsResponse> {
-        let http_client = &client.http_client();
-        let token = client
-            .acquire_llm_token(&llm_api_token, organization_id)
-            .await?;
-
-        let request = http_client::Request::builder()
-            .method(Method::GET)
-            .header(CLIENT_SUPPORTS_X_AI_HEADER_NAME, "true")
-            .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
-            .header("Authorization", format!("Bearer {token}"))
-            .body(AsyncBody::empty())?;
-        let mut response = http_client
-            .send(request)
-            .await
-            .context("failed to send list models request")?;
-
-        if response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-            Ok(serde_json::from_str(&body)?)
-        } else {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-            anyhow::bail!(
-                "error listing models.\nStatus: {:?}\nBody: {body}",
-                response.status(),
-            );
-        }
+    fn refresh_models(&mut self, cx: &mut Context<Self>) {
+        self.provider.update(cx, |provider, cx| {
+            provider.refresh_models(cx).detach_and_log_err(cx);
+        });
     }
 }
 
@@ -256,7 +181,6 @@ impl CloudLanguageModelProvider {
         });
 
         Self {
-            client,
             state,
             _maintain_client_status: maintain_client_status,
         }
@@ -264,24 +188,10 @@ impl CloudLanguageModelProvider {
 
     fn create_language_model(
         &self,
-        model: Arc<cloud_llm_client::LanguageModel>,
-        llm_api_token: LlmApiToken,
-        organization_id: Option<cloud_api_types::OrganizationId>,
-        cx: &App,
+        model: &Arc<cloud_llm_client::LanguageModel>,
+        provider: &CloudModelProvider,
     ) -> Arc<dyn LanguageModel> {
-        let token_provider = Arc::new(ClientTokenProvider {
-            client: self.client.clone(),
-            llm_api_token,
-            organization_id,
-        });
-        Arc::new(CloudLanguageModel {
-            id: LanguageModelId::from(model.id.0.to_string()),
-            model,
-            token_provider,
-            http_client: self.client.http_client(),
-            app_version: Some(AppVersion::global(cx)),
-            request_limiter: RateLimiter::new(4),
-        })
+        provider.create_model(model)
     }
 }
 
@@ -308,71 +218,35 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let state = self.state.read(cx);
-        let default_model = state.default_model.clone()?;
-        let llm_api_token = state.llm_api_token.clone();
-        let organization_id = state
-            .user_store
-            .read(cx)
-            .current_organization()
-            .map(|organization| organization.id.clone());
-        Some(self.create_language_model(default_model, llm_api_token, organization_id, cx))
+        let provider = state.provider.read(cx);
+        let model = provider.default_model()?;
+        Some(self.create_language_model(model, &provider))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let state = self.state.read(cx);
-        let default_fast_model = state.default_fast_model.clone()?;
-        let llm_api_token = state.llm_api_token.clone();
-        let organization_id = state
-            .user_store
-            .read(cx)
-            .current_organization()
-            .map(|organization| organization.id.clone());
-        Some(self.create_language_model(default_fast_model, llm_api_token, organization_id, cx))
+        let provider = state.provider.read(cx);
+        let model = provider.default_fast_model()?;
+        Some(self.create_language_model(model, &provider))
     }
 
     fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let state = self.state.read(cx);
-        let llm_api_token = state.llm_api_token.clone();
-        let organization_id = state
-            .user_store
-            .read(cx)
-            .current_organization()
-            .map(|organization| organization.id.clone());
-        state
-            .recommended_models
+        let provider = state.provider.read(cx);
+        provider
+            .recommended_models()
             .iter()
-            .cloned()
-            .map(|model| {
-                self.create_language_model(
-                    model,
-                    llm_api_token.clone(),
-                    organization_id.clone(),
-                    cx,
-                )
-            })
+            .map(|model| self.create_language_model(model, &provider))
             .collect()
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let state = self.state.read(cx);
-        let llm_api_token = state.llm_api_token.clone();
-        let organization_id = state
-            .user_store
-            .read(cx)
-            .current_organization()
-            .map(|organization| organization.id.clone());
-        state
-            .models
+        let provider = state.provider.read(cx);
+        provider
+            .models()
             .iter()
-            .cloned()
-            .map(|model| {
-                self.create_language_model(
-                    model,
-                    llm_api_token.clone(),
-                    organization_id.clone(),
-                    cx,
-                )
-            })
+            .map(|model| self.create_language_model(model, &provider))
             .collect()
     }
 

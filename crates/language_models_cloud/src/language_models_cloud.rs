@@ -1,10 +1,11 @@
 use anthropic::AnthropicModelMode;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
-    CompletionBody, CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
-    EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    CLIENT_SUPPORTS_X_AI_HEADER_NAME, CompletionBody, CompletionEvent, CompletionRequestStatus,
+    CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse,
+    OUTDATED_LLM_TOKEN_HEADER_NAME, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
+    ZED_VERSION_HEADER_NAME,
 };
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt,
@@ -12,7 +13,7 @@ use futures::{
     stream::{self, BoxStream},
 };
 use google_ai::GoogleModelMode;
-use gpui::{App, AppContext, AsyncApp};
+use gpui::{App, AppContext, AsyncApp, Context, Task};
 use http_client::http::{HeaderMap, HeaderValue};
 use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
@@ -649,6 +650,137 @@ impl LanguageModel for CloudLanguageModel {
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
         }
+    }
+}
+
+pub struct CloudModelProvider {
+    token_provider: Arc<dyn CloudLlmTokenProvider>,
+    http_client: Arc<HttpClientWithUrl>,
+    app_version: Option<Version>,
+    models: Vec<Arc<cloud_llm_client::LanguageModel>>,
+    default_model: Option<Arc<cloud_llm_client::LanguageModel>>,
+    default_fast_model: Option<Arc<cloud_llm_client::LanguageModel>>,
+    recommended_models: Vec<Arc<cloud_llm_client::LanguageModel>>,
+}
+
+impl CloudModelProvider {
+    pub fn new(
+        token_provider: Arc<dyn CloudLlmTokenProvider>,
+        http_client: Arc<HttpClientWithUrl>,
+        app_version: Option<Version>,
+    ) -> Self {
+        Self {
+            token_provider,
+            http_client,
+            app_version,
+            models: Vec::new(),
+            default_model: None,
+            default_fast_model: None,
+            recommended_models: Vec::new(),
+        }
+    }
+
+    pub fn refresh_models(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let http_client = self.http_client.clone();
+        let token_provider = self.token_provider.clone();
+        cx.spawn(async move |this, cx| {
+            let response = Self::fetch_models_request(&http_client, &*token_provider).await?;
+            this.update(cx, |this, cx| {
+                this.update_models(response);
+                cx.notify();
+            })
+        })
+    }
+
+    async fn fetch_models_request(
+        http_client: &HttpClientWithUrl,
+        token_provider: &dyn CloudLlmTokenProvider,
+    ) -> Result<ListModelsResponse> {
+        let token = token_provider.acquire_token().await?;
+
+        let request = http_client::Request::builder()
+            .method(Method::GET)
+            .header(CLIENT_SUPPORTS_X_AI_HEADER_NAME, "true")
+            .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
+            .header("Authorization", format!("Bearer {token}"))
+            .body(AsyncBody::empty())?;
+        let mut response = http_client
+            .send(request)
+            .await
+            .context("failed to send list models request")?;
+
+        if response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            Ok(serde_json::from_str(&body)?)
+        } else {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            anyhow::bail!(
+                "error listing models.\nStatus: {:?}\nBody: {body}",
+                response.status(),
+            );
+        }
+    }
+
+    pub fn update_models(&mut self, response: ListModelsResponse) {
+        let models: Vec<_> = response.models.into_iter().map(Arc::new).collect();
+
+        self.default_model = models
+            .iter()
+            .find(|model| {
+                response
+                    .default_model
+                    .as_ref()
+                    .is_some_and(|default_model_id| &model.id == default_model_id)
+            })
+            .cloned();
+        self.default_fast_model = models
+            .iter()
+            .find(|model| {
+                response
+                    .default_fast_model
+                    .as_ref()
+                    .is_some_and(|default_fast_model_id| &model.id == default_fast_model_id)
+            })
+            .cloned();
+        self.recommended_models = response
+            .recommended_models
+            .iter()
+            .filter_map(|id| models.iter().find(|model| &model.id == id))
+            .cloned()
+            .collect();
+        self.models = models;
+    }
+
+    pub fn create_model(
+        &self,
+        model: &Arc<cloud_llm_client::LanguageModel>,
+    ) -> Arc<dyn LanguageModel> {
+        Arc::new(CloudLanguageModel {
+            id: LanguageModelId::from(model.id.0.to_string()),
+            model: model.clone(),
+            token_provider: self.token_provider.clone(),
+            http_client: self.http_client.clone(),
+            app_version: self.app_version.clone(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
+
+    pub fn models(&self) -> &[Arc<cloud_llm_client::LanguageModel>] {
+        &self.models
+    }
+
+    pub fn default_model(&self) -> Option<&Arc<cloud_llm_client::LanguageModel>> {
+        self.default_model.as_ref()
+    }
+
+    pub fn default_fast_model(&self) -> Option<&Arc<cloud_llm_client::LanguageModel>> {
+        self.default_fast_model.as_ref()
+    }
+
+    pub fn recommended_models(&self) -> &[Arc<cloud_llm_client::LanguageModel>] {
+        &self.recommended_models
     }
 }
 

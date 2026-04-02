@@ -49,6 +49,7 @@ mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 opencode = { workspace = true, features = ["schemars"] }
+parking_lot.workspace = true
 open_router = { workspace = true, features = ["schemars"] }
 release_channel.workspace = true
 schemars.workspace = true
