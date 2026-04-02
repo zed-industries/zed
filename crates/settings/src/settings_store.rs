@@ -36,8 +36,8 @@ use crate::{
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
-        UserSettingsContent, merge_from::MergeFrom,
+        ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent, RootUserSettings,
+        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
@@ -241,6 +241,11 @@ impl LocalSettingsPath {
 
 impl Global for SettingsStore {}
 
+#[derive(Default)]
+pub struct DefaultSemanticTokenRules(pub SemanticTokenRules);
+
+impl gpui::Global for DefaultSemanticTokenRules {}
+
 #[doc(hidden)]
 #[derive(Debug)]
 pub struct SettingValue<T> {
@@ -264,6 +269,7 @@ pub trait AnySettingValue: 'static + Send + Sync {
 }
 
 /// Parameters that are used when generating some JSON schemas at runtime.
+#[derive(Default)]
 pub struct SettingsJsonSchemaParams<'a> {
     pub language_names: &'a [String],
     pub font_names: &'a [String],
@@ -274,29 +280,22 @@ pub struct SettingsJsonSchemaParams<'a> {
 
 impl SettingsStore {
     pub fn new(cx: &mut App, default_settings: &str) -> Self {
-        Self::new_with_semantic_tokens(cx, default_settings, &crate::default_semantic_token_rules())
+        Self::new_with_semantic_tokens(cx, default_settings)
     }
 
-    pub fn new_with_semantic_tokens(
-        cx: &mut App,
-        default_settings: &str,
-        default_semantic_tokens: &str,
-    ) -> Self {
+    pub fn new_with_semantic_tokens(cx: &mut App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let mut default_settings: SettingsContent =
+        let default_settings: SettingsContent =
             SettingsContent::parse_json_with_comments(default_settings).unwrap();
-        if let Ok(semantic_token_rules) =
-            crate::parse_json_with_comments::<SemanticTokenRules>(default_semantic_tokens)
-        {
-            let global_lsp = default_settings
-                .global_lsp_settings
-                .get_or_insert_with(Default::default);
-            let existing_rules = global_lsp
-                .semantic_token_rules
-                .get_or_insert_with(Default::default);
-            existing_rules.rules.extend(semantic_token_rules.rules);
+        if !cx.has_global::<DefaultSemanticTokenRules>() {
+            cx.set_global::<DefaultSemanticTokenRules>(
+                crate::parse_json_with_comments::<SemanticTokenRules>(
+                    &crate::default_semantic_token_rules(),
+                )
+                .map(DefaultSemanticTokenRules)
+                .unwrap_or_default(),
+            );
         }
-
         let default_settings: Rc<SettingsContent> = default_settings.into();
         let mut this = Self {
             setting_values: Default::default(),
@@ -369,6 +368,10 @@ impl SettingsStore {
         let setting_value = entry.or_insert((registered_setting.settings_value)());
         let value = (registered_setting.from_settings)(&self.merged_settings);
         setting_value.set_global_value(value);
+    }
+
+    pub fn merged_settings(&self) -> &SettingsContent {
+        &self.merged_settings
     }
 
     /// Get the value of a setting.
@@ -543,9 +546,9 @@ impl SettingsStore {
         update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
     ) {
         _ = self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            Ok(cx.read_global(|store: &SettingsStore, cx| {
+            cx.read_global(|store: &SettingsStore, cx| {
                 store.new_text_for_update(old_text, |content| update(content, cx))
-            }))
+            })
         });
     }
 
@@ -555,9 +558,9 @@ impl SettingsStore {
         vscode_settings: VsCodeSettings,
     ) -> oneshot::Receiver<Result<()>> {
         self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
-            Ok(cx.read_global(|store: &SettingsStore, _cx| {
+            cx.read_global(|store: &SettingsStore, _cx| {
                 store.get_vscode_edits(old_text, &vscode_settings)
-            }))
+            })
         })
     }
 
@@ -748,16 +751,16 @@ impl SettingsStore {
         &self,
         old_text: String,
         update: impl FnOnce(&mut SettingsContent),
-    ) -> String {
-        let edits = self.edits_for_update(&old_text, update);
+    ) -> Result<String> {
+        let edits = self.edits_for_update(&old_text, update)?;
         let mut new_text = old_text;
         for (range, replacement) in edits.into_iter() {
             new_text.replace_range(range, &replacement);
         }
-        new_text
+        Ok(new_text)
     }
 
-    pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> String {
+    pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> Result<String> {
         self.new_text_for_update(old_text, |content| {
             content.merge_from(&vscode.settings_content())
         })
@@ -769,10 +772,17 @@ impl SettingsStore {
         &self,
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
-    ) -> Vec<(Range<usize>, String)> {
-        let old_content = UserSettingsContent::parse_json_with_comments(text)
-            .log_err()
-            .unwrap_or_default();
+    ) -> Result<Vec<(Range<usize>, String)>> {
+        let old_content = if text.trim().is_empty() {
+            UserSettingsContent::default()
+        } else {
+            let (old_content, parse_status) = UserSettingsContent::parse_json(text);
+            if let ParseStatus::Failed { error } = &parse_status {
+                log::error!("Failed to parse settings for update: {error}");
+            }
+            old_content
+                .context("Settings file could not be parsed. Fix syntax errors before updating.")?
+        };
         let mut new_content = old_content.clone();
         update(&mut new_content.content);
 
@@ -791,7 +801,18 @@ impl SettingsStore {
             &new_value,
             &mut edits,
         );
-        edits
+        Ok(edits)
+    }
+
+    /// Mutates the default settings in place and recomputes all setting values.
+    pub fn update_default_settings(
+        &mut self,
+        cx: &mut App,
+        update: impl FnOnce(&mut SettingsContent),
+    ) {
+        let default_settings = Rc::make_mut(&mut self.default_settings);
+        update(default_settings);
+        self.recompute_values(None, cx);
     }
 
     /// Sets the default settings via a JSON string.
@@ -867,18 +888,30 @@ impl SettingsStore {
     /// Sets language-specific semantic token rules.
     ///
     /// These rules are registered by language modules (e.g. the Rust language module)
-    /// and are stored separately from the global rules. They are only applied to
-    /// buffers of the matching language by the `SemanticTokenStylizer`.
+    /// or by third-party extensions (via `semantic_token_rules.json` in their language
+    /// directories). They are stored separately from the global rules and are only
+    /// applied to buffers of the matching language by the `SemanticTokenStylizer`.
     ///
-    /// These should be registered before any `SemanticTokenStylizer` instances are
-    /// created (typically during `languages::init`), as existing cached stylizers
-    /// are not automatically invalidated.
+    /// This triggers a settings recomputation so that observers (e.g. `LspStore`)
+    /// are notified and can invalidate cached stylizers.
     pub fn set_language_semantic_token_rules(
         &mut self,
         language: SharedString,
         rules: SemanticTokenRules,
+        cx: &mut App,
     ) {
         self.language_semantic_token_rules.insert(language, rules);
+        self.recompute_values(None, cx);
+    }
+
+    /// Removes language-specific semantic token rules for the given language.
+    ///
+    /// This should be called when an extension that registered rules for a language
+    /// is unloaded. Triggers a settings recomputation so that observers (e.g.
+    /// `LspStore`) are notified and can invalidate cached stylizers.
+    pub fn remove_language_semantic_token_rules(&mut self, language: &str, cx: &mut App) {
+        self.language_semantic_token_rules.remove(language);
+        self.recompute_values(None, cx);
     }
 
     /// Returns the language-specific semantic token rules for the given language,
@@ -1047,13 +1080,15 @@ impl SettingsStore {
             .subschema_for::<LanguageSettingsContent>()
             .to_value();
 
-        replace_subschema::<LanguageToSettingsMap>(generator, || {
-            json_schema!({
-                "type": "object",
-                "errorMessage": "No language with this name is installed.",
-                "properties": params.language_names.iter().map(|name| (name.clone(), language_settings_content_ref.clone())).collect::<serde_json::Map<_, _>>()
-            })
-        });
+        if !params.language_names.is_empty() {
+            replace_subschema::<LanguageToSettingsMap>(generator, || {
+                json_schema!({
+                    "type": "object",
+                    "errorMessage": "No language with this name is installed.",
+                    "properties": params.language_names.iter().map(|name| (name.clone(), language_settings_content_ref.clone())).collect::<serde_json::Map<_, _>>()
+                })
+            });
+        }
 
         generator.subschema_for::<LspSettings>();
 
@@ -1063,46 +1098,48 @@ impl SettingsStore {
             .expect("LspSettings should be defined")
             .clone();
 
-        replace_subschema::<LspSettingsMap>(generator, || {
-            let mut lsp_properties = serde_json::Map::new();
+        if !params.lsp_adapter_names.is_empty() {
+            replace_subschema::<LspSettingsMap>(generator, || {
+                let mut lsp_properties = serde_json::Map::new();
 
-            for adapter_name in params.lsp_adapter_names {
-                let mut base_lsp_settings = lsp_settings_definition
-                    .as_object()
-                    .expect("LspSettings should be an object")
-                    .clone();
+                for adapter_name in params.lsp_adapter_names {
+                    let mut base_lsp_settings = lsp_settings_definition
+                        .as_object()
+                        .expect("LspSettings should be an object")
+                        .clone();
 
-                if let Some(properties) = base_lsp_settings.get_mut("properties") {
-                    if let Some(properties_object) = properties.as_object_mut() {
-                        properties_object.insert(
+                    if let Some(properties) = base_lsp_settings.get_mut("properties") {
+                        if let Some(properties_object) = properties.as_object_mut() {
+                            properties_object.insert(
                             "initialization_options".to_string(),
                             serde_json::json!({
                                 "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}/initialization_options")
                             }),
                         );
-                        properties_object.insert(
+                            properties_object.insert(
                             "settings".to_string(),
                             serde_json::json!({
                                 "$ref": format!("{LSP_SETTINGS_SCHEMA_URL_PREFIX}{adapter_name}/settings")
                             }),
                         );
+                        }
                     }
+
+                    lsp_properties.insert(
+                        adapter_name.clone(),
+                        serde_json::Value::Object(base_lsp_settings),
+                    );
                 }
 
-                lsp_properties.insert(
-                    adapter_name.clone(),
-                    serde_json::Value::Object(base_lsp_settings),
-                );
-            }
-
-            json_schema!({
-                "type": "object",
-                "properties": lsp_properties
-            })
-        });
+                json_schema!({
+                    "type": "object",
+                    "properties": lsp_properties
+                })
+            });
+        }
     }
 
-    pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
+    pub fn json_schema(params: &SettingsJsonSchemaParams) -> Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
             .with_transform(AllowTrailingCommas)
@@ -1111,26 +1148,32 @@ impl SettingsStore {
         UserSettingsContent::json_schema(&mut generator);
         Self::configure_schema_generator(&mut generator, params);
 
-        replace_subschema::<FontFamilyName>(&mut generator, || {
-            json_schema!({
-                "type": "string",
-                "enum": params.font_names,
-            })
-        });
+        if !params.font_names.is_empty() {
+            replace_subschema::<FontFamilyName>(&mut generator, || {
+                json_schema!({
+                     "type": "string",
+                     "enum": params.font_names,
+                })
+            });
+        }
 
-        replace_subschema::<ThemeName>(&mut generator, || {
-            json_schema!({
-                "type": "string",
-                "enum": params.theme_names,
-            })
-        });
+        if !params.theme_names.is_empty() {
+            replace_subschema::<ThemeName>(&mut generator, || {
+                json_schema!({
+                    "type": "string",
+                    "enum": params.theme_names,
+                })
+            });
+        }
 
-        replace_subschema::<IconThemeName>(&mut generator, || {
-            json_schema!({
-                "type": "string",
-                "enum": params.icon_theme_names,
-            })
-        });
+        if !params.icon_theme_names.is_empty() {
+            replace_subschema::<IconThemeName>(&mut generator, || {
+                json_schema!({
+                    "type": "string",
+                    "enum": params.icon_theme_names,
+                })
+            });
+        }
 
         generator
             .root_schema_for::<UserSettingsContent>()
@@ -1139,7 +1182,7 @@ impl SettingsStore {
 
     /// Generate JSON schema for project settings, including only settings valid
     /// for project-level configurations.
-    pub fn project_json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
+    pub fn project_json_schema(params: &SettingsJsonSchemaParams) -> Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
             .with_transform(AllowTrailingCommas)
@@ -1167,12 +1210,69 @@ impl SettingsStore {
             merged.merge_from_option(self.extension_settings.as_deref());
             merged.merge_from_option(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
-                merged.merge_from(&user_settings.content);
-                merged.merge_from_option(user_settings.for_release_channel());
-                merged.merge_from_option(user_settings.for_os());
-                merged.merge_from_option(user_settings.for_profile(cx));
+                let active_profile = user_settings.for_profile(cx);
+                let should_merge_user_settings =
+                    active_profile.is_none_or(|profile| profile.base == ProfileBase::User);
+
+                if should_merge_user_settings {
+                    merged.merge_from(&user_settings.content);
+                    merged.merge_from_option(user_settings.for_release_channel());
+                    merged.merge_from_option(user_settings.for_os());
+                }
+
+                if let Some(profile) = active_profile {
+                    merged.merge_from(&profile.settings);
+                }
             }
             merged.merge_from_option(self.server_settings.as_deref());
+
+            // Merge `disable_ai` from all project/local settings into the global value.
+            // Since `SaturatingBool` uses OR logic, if any project has `disable_ai: true`,
+            // the global value will be true. This allows project-level `disable_ai` to
+            // affect the global setting used by UI elements without file context.
+            for local_settings in self.local_settings.values() {
+                merged
+                    .project
+                    .disable_ai
+                    .merge_from(&local_settings.project.disable_ai);
+            }
+
+            self.merged_settings = Rc::new(merged);
+
+            for setting_value in self.setting_values.values_mut() {
+                let value = setting_value.from_settings(&self.merged_settings);
+                setting_value.set_global_value(value);
+            }
+        } else {
+            // When only a local path changed, we still need to recompute the global
+            // `disable_ai` value since it depends on all local settings.
+            let mut merged = (*self.merged_settings).clone();
+            // Reset disable_ai to compute fresh from base settings
+            merged.project.disable_ai = self.default_settings.project.disable_ai;
+            if let Some(global) = &self.global_settings {
+                merged
+                    .project
+                    .disable_ai
+                    .merge_from(&global.project.disable_ai);
+            }
+            if let Some(user) = &self.user_settings {
+                merged
+                    .project
+                    .disable_ai
+                    .merge_from(&user.content.project.disable_ai);
+            }
+            if let Some(server) = &self.server_settings {
+                merged
+                    .project
+                    .disable_ai
+                    .merge_from(&server.project.disable_ai);
+            }
+            for local_settings in self.local_settings.values() {
+                merged
+                    .project
+                    .disable_ai
+                    .merge_from(&local_settings.project.disable_ai);
+            }
             self.merged_settings = Rc::new(merged);
 
             for setting_value in self.setting_values.values_mut() {
@@ -1340,9 +1440,7 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::DefaultSettings { message }
             | InvalidSettingsError::Tasks { message, .. }
             | InvalidSettingsError::Editorconfig { message, .. }
-            | InvalidSettingsError::Debug { message, .. } => {
-                write!(f, "{message}")
-            }
+            | InvalidSettingsError::Debug { message, .. } => write!(f, "{message}"),
         }
     }
 }
@@ -1619,7 +1717,7 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old_json, cx).ok();
-        let edits = store.edits_for_update(&old_json, update);
+        let edits = store.edits_for_update(&old_json, update).unwrap();
         let mut new_json = old_json;
         for (range, replacement) in edits.into_iter() {
             new_json.replace_range(range, &replacement);
@@ -1637,7 +1735,7 @@ mod tests {
             r#"{
                 "languages": {
                     "JSON": {
-                        "auto_indent": true
+                        "auto_indent": "syntax_aware"
                     }
                 }
             }"#
@@ -1647,12 +1745,12 @@ mod tests {
                     .languages_mut()
                     .get_mut("JSON")
                     .unwrap()
-                    .auto_indent = Some(false);
+                    .auto_indent = Some(crate::AutoIndentMode::None);
 
                 settings.languages_mut().insert(
                     "Rust".into(),
                     LanguageSettingsContent {
-                        auto_indent: Some(true),
+                        auto_indent: Some(crate::AutoIndentMode::SyntaxAware),
                         ..Default::default()
                     },
                 );
@@ -1660,10 +1758,10 @@ mod tests {
             r#"{
                 "languages": {
                     "Rust": {
-                        "auto_indent": true
+                        "auto_indent": "syntax_aware"
                     },
                     "JSON": {
-                        "auto_indent": false
+                        "auto_indent": "none"
                     }
                 }
             }"#
@@ -1808,6 +1906,39 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_edits_for_update_preserves_unknown_keys(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<AutoUpdateSetting>();
+
+        let old_json = r#"{
+            "some_unknown_key": "should_be_preserved",
+            "auto_update": false
+        }"#
+        .unindent();
+
+        check_settings_update(
+            &mut store,
+            old_json,
+            |settings| settings.auto_update = Some(true),
+            r#"{
+            "some_unknown_key": "should_be_preserved",
+            "auto_update": true
+        }"#
+            .unindent(),
+            cx,
+        );
+    }
+
+    #[gpui::test]
+    fn test_edits_for_update_returns_error_on_invalid_json(cx: &mut App) {
+        let store = SettingsStore::new(cx, &test_settings());
+
+        let invalid_json = r#"{ this is not valid json at all !!!"#;
+        let result = store.edits_for_update(invalid_json, |_| {});
+        assert!(result.is_err());
+    }
+
+    #[gpui::test]
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>();
@@ -1927,10 +2058,12 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old, cx).ok();
-        let new = store.get_vscode_edits(
-            old,
-            &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
-        );
+        let new = store
+            .get_vscode_edits(
+                old,
+                &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
+            )
+            .unwrap();
         pretty_assertions::assert_eq!(new, expected);
     }
 
@@ -1938,14 +2071,16 @@ mod tests {
     fn test_update_git_settings(cx: &mut App) {
         let store = SettingsStore::new(cx, &test_settings());
 
-        let actual = store.new_text_for_update("{}".to_string(), |current| {
-            current
-                .git
-                .get_or_insert_default()
-                .inline_blame
-                .get_or_insert_default()
-                .enabled = Some(true);
-        });
+        let actual = store
+            .new_text_for_update("{}".to_string(), |current| {
+                current
+                    .git
+                    .get_or_insert_default()
+                    .inline_blame
+                    .get_or_insert_default()
+                    .enabled = Some(true);
+            })
+            .unwrap();
         pretty_assertions::assert_str_eq!(
             actual,
             r#"{
@@ -2373,9 +2508,9 @@ mod tests {
 
     #[gpui::test]
     fn test_lsp_settings_schema_generation(cx: &mut App) {
-        let store = SettingsStore::test(cx);
+        SettingsStore::test(cx);
 
-        let schema = store.json_schema(&SettingsJsonSchemaParams {
+        let schema = SettingsStore::json_schema(&SettingsJsonSchemaParams {
             language_names: &["Rust".to_string(), "TypeScript".to_string()],
             font_names: &["Zed Mono".to_string()],
             theme_names: &["One Dark".into()],
@@ -2424,9 +2559,9 @@ mod tests {
 
     #[gpui::test]
     fn test_lsp_project_settings_schema_generation(cx: &mut App) {
-        let store = SettingsStore::test(cx);
+        SettingsStore::test(cx);
 
-        let schema = store.project_json_schema(&SettingsJsonSchemaParams {
+        let schema = SettingsStore::project_json_schema(&SettingsJsonSchemaParams {
             language_names: &["Rust".to_string(), "TypeScript".to_string()],
             font_names: &["Zed Mono".to_string()],
             theme_names: &["One Dark".into()],
@@ -2475,7 +2610,7 @@ mod tests {
 
     #[gpui::test]
     fn test_project_json_schema_differs_from_user_schema(cx: &mut App) {
-        let store = SettingsStore::test(cx);
+        SettingsStore::test(cx);
 
         let params = SettingsJsonSchemaParams {
             language_names: &["Rust".to_string()],
@@ -2485,8 +2620,8 @@ mod tests {
             lsp_adapter_names: &["rust-analyzer".to_string()],
         };
 
-        let user_schema = store.json_schema(&params);
-        let project_schema = store.project_json_schema(&params);
+        let user_schema = SettingsStore::json_schema(&params);
+        let project_schema = SettingsStore::project_json_schema(&params);
 
         assert_ne!(user_schema, project_schema);
 

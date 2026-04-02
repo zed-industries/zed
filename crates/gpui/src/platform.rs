@@ -2,20 +2,9 @@ mod app_menu;
 mod keyboard;
 mod keystroke;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-mod linux;
-
-#[cfg(target_os = "macos")]
-mod mac;
-
-#[cfg(any(
-    all(
-        any(target_os = "linux", target_os = "freebsd"),
-        any(feature = "x11", feature = "wayland")
-    ),
-    all(target_os = "macos", feature = "macos-blade")
-))]
-mod blade;
+#[cfg(all(target_os = "linux", feature = "wayland"))]
+#[expect(missing_docs)]
+pub mod layer_shell;
 
 #[cfg(any(test, feature = "test-support"))]
 mod test;
@@ -23,30 +12,33 @@ mod test;
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 mod visual_test;
 
-#[cfg(target_os = "windows")]
-mod windows;
-
 #[cfg(all(
     feature = "screen-capture",
-    any(
-        target_os = "windows",
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            any(feature = "wayland", feature = "x11"),
-        )
-    )
+    any(target_os = "windows", target_os = "linux", target_os = "freebsd",)
 ))]
-pub(crate) mod scap_screen_capture;
+pub mod scap_screen_capture;
+
+#[cfg(all(
+    any(target_os = "windows", target_os = "linux"),
+    feature = "screen-capture"
+))]
+pub(crate) type PlatformScreenCaptureFrame = scap::frame::Frame;
+#[cfg(not(feature = "screen-capture"))]
+pub(crate) type PlatformScreenCaptureFrame = ();
+#[cfg(all(target_os = "macos", feature = "screen-capture"))]
+pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBuffer;
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, TaskTiming,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task,
     ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use anyhow::bail;
 use async_task::Runnable;
 use futures::channel::oneshot;
 #[cfg(any(test, feature = "test-support"))]
@@ -54,6 +46,7 @@ use image::RgbaImage;
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use scheduler::Instant;
 pub use scheduler::RunnableMeta;
 use schemars::JsonSchema;
 use seahash::SeaHasher;
@@ -63,7 +56,7 @@ use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
 use std::ops;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{
     fmt::{self, Debug},
     ops::Range,
@@ -78,17 +71,8 @@ pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) use linux::*;
-#[cfg(target_os = "macos")]
-pub(crate) use mac::*;
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;
-#[cfg(target_os = "windows")]
-pub(crate) use windows::*;
-
-#[cfg(all(target_os = "linux", feature = "wayland"))]
-pub use linux::layer_shell;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
@@ -96,52 +80,9 @@ pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream}
 #[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
 pub use visual_test::VisualTestPlatform;
 
-/// Returns a background executor for the current platform.
-pub fn background_executor() -> BackgroundExecutor {
-    current_platform(true).background_executor()
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
-    Rc::new(MacPlatform::new(headless))
-}
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
-    #[cfg(feature = "x11")]
-    use anyhow::Context as _;
-
-    if headless {
-        return Rc::new(HeadlessClient::new());
-    }
-
-    match guess_compositor() {
-        #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(WaylandClient::new()),
-
-        #[cfg(feature = "x11")]
-        "X11" => Rc::new(
-            X11Client::new()
-                .context("Failed to initialize X11 client.")
-                .unwrap(),
-        ),
-
-        "Headless" => Rc::new(HeadlessClient::new()),
-        _ => unreachable!(),
-    }
-}
-
-#[cfg(target_os = "windows")]
-pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
-    Rc::new(
-        WindowsPlatform::new(headless)
-            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
-            .unwrap(),
-    )
-}
-
+// TODO(jk): return an enum instead of a string
 /// Return which compositor we're guessing we'll use.
-/// Does not attempt to connect to the given compositor
+/// Does not attempt to connect to the given compositor.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[inline]
 pub fn guess_compositor() -> &'static str {
@@ -171,7 +112,8 @@ pub fn guess_compositor() -> &'static str {
     }
 }
 
-pub(crate) trait Platform: 'static {
+#[expect(missing_docs)]
+pub trait Platform: 'static {
     fn background_executor(&self) -> BackgroundExecutor;
     fn foreground_executor(&self) -> ForegroundExecutor;
     fn text_system(&self) -> Arc<dyn PlatformTextSystem>;
@@ -191,16 +133,10 @@ pub(crate) trait Platform: 'static {
         None
     }
 
-    #[cfg(feature = "screen-capture")]
-    fn is_screen_capture_supported(&self) -> bool;
-    #[cfg(not(feature = "screen-capture"))]
     fn is_screen_capture_supported(&self) -> bool {
         false
     }
-    #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(&self)
-    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
-    #[cfg(not(feature = "screen-capture"))]
+
     fn screen_capture_sources(
         &self,
     ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
@@ -221,6 +157,11 @@ pub(crate) trait Platform: 'static {
 
     /// Returns the appearance of the application's windows.
     fn window_appearance(&self) -> WindowAppearance;
+
+    /// Returns the window button layout configuration when supported.
+    fn button_layout(&self) -> Option<WindowButtonLayout> {
+        None
+    }
 
     fn open_url(&self, url: &str);
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>);
@@ -296,7 +237,7 @@ pub(crate) trait Platform: 'static {
 }
 
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
-pub trait PlatformDisplay: Send + Sync + Debug {
+pub trait PlatformDisplay: Debug {
     /// Get the ID for this display
     fn id(&self) -> DisplayId;
 
@@ -379,6 +320,19 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
 pub struct DisplayId(pub(crate) u32);
 
+impl DisplayId {
+    /// Create a new `DisplayId` from a raw platform display identifier.
+    pub fn new(id: u32) -> Self {
+        Self(id)
+    }
+}
+
+impl From<u32> for DisplayId {
+    fn from(id: u32) -> Self {
+        Self(id)
+    }
+}
+
 impl From<DisplayId> for u32 {
     fn from(id: DisplayId) -> Self {
         id.0
@@ -460,6 +414,145 @@ impl Default for WindowControls {
     }
 }
 
+/// A window control button type used in [`WindowButtonLayout`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WindowButton {
+    /// The minimize button
+    Minimize,
+    /// The maximize button
+    Maximize,
+    /// The close button
+    Close,
+}
+
+impl WindowButton {
+    /// Returns a stable element ID for rendering this button.
+    pub fn id(&self) -> &'static str {
+        match self {
+            WindowButton::Minimize => "minimize",
+            WindowButton::Maximize => "maximize",
+            WindowButton::Close => "close",
+        }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn index(&self) -> usize {
+        match self {
+            WindowButton::Minimize => 0,
+            WindowButton::Maximize => 1,
+            WindowButton::Close => 2,
+        }
+    }
+}
+
+/// Maximum number of [`WindowButton`]s per side in the titlebar.
+pub const MAX_BUTTONS_PER_SIDE: usize = 3;
+
+/// Describes which [`WindowButton`]s appear on each side of the titlebar.
+///
+/// On Linux, this is read from the desktop environment's configuration
+/// (e.g. GNOME's `gtk-decoration-layout` gsetting) via [`WindowButtonLayout::parse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowButtonLayout {
+    /// Buttons on the left side of the titlebar.
+    pub left: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+    /// Buttons on the right side of the titlebar.
+    pub right: [Option<WindowButton>; MAX_BUTTONS_PER_SIDE],
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+impl WindowButtonLayout {
+    /// Returns Zed's built-in fallback button layout for Linux titlebars.
+    pub fn linux_default() -> Self {
+        Self {
+            left: [None; MAX_BUTTONS_PER_SIDE],
+            right: [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close),
+            ],
+        }
+    }
+
+    /// Parses a GNOME-style `button-layout` string (e.g. `"close,minimize:maximize"`).
+    pub fn parse(layout_string: &str) -> Result<Self> {
+        fn parse_side(
+            s: &str,
+            seen_buttons: &mut [bool; MAX_BUTTONS_PER_SIDE],
+            unrecognized: &mut Vec<String>,
+        ) -> [Option<WindowButton>; MAX_BUTTONS_PER_SIDE] {
+            let mut result = [None; MAX_BUTTONS_PER_SIDE];
+            let mut i = 0;
+            for name in s.split(',') {
+                let trimmed = name.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let button = match trimmed {
+                    "minimize" => Some(WindowButton::Minimize),
+                    "maximize" => Some(WindowButton::Maximize),
+                    "close" => Some(WindowButton::Close),
+                    other => {
+                        unrecognized.push(other.to_string());
+                        None
+                    }
+                };
+                if let Some(button) = button {
+                    if seen_buttons[button.index()] {
+                        continue;
+                    }
+                    if let Some(slot) = result.get_mut(i) {
+                        *slot = Some(button);
+                        seen_buttons[button.index()] = true;
+                        i += 1;
+                    }
+                }
+            }
+            result
+        }
+
+        let (left_str, right_str) = layout_string.split_once(':').unwrap_or(("", layout_string));
+        let mut unrecognized = Vec::new();
+        let mut seen_buttons = [false; MAX_BUTTONS_PER_SIDE];
+        let layout = Self {
+            left: parse_side(left_str, &mut seen_buttons, &mut unrecognized),
+            right: parse_side(right_str, &mut seen_buttons, &mut unrecognized),
+        };
+
+        if !unrecognized.is_empty()
+            && layout.left.iter().all(Option::is_none)
+            && layout.right.iter().all(Option::is_none)
+        {
+            bail!(
+                "button layout string {:?} contains no valid buttons (unrecognized: {})",
+                layout_string,
+                unrecognized.join(", ")
+            );
+        }
+
+        Ok(layout)
+    }
+
+    /// Formats the layout back into a GNOME-style `button-layout` string.
+    #[cfg(test)]
+    pub fn format(&self) -> String {
+        fn format_side(buttons: &[Option<WindowButton>; MAX_BUTTONS_PER_SIDE]) -> String {
+            buttons
+                .iter()
+                .flatten()
+                .map(|button| match button {
+                    WindowButton::Minimize => "minimize",
+                    WindowButton::Maximize => "maximize",
+                    WindowButton::Close => "close",
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+
+        format!("{}:{}", format_side(&self.left), format_side(&self.right))
+    }
+}
+
 /// A type to describe which sides of the window are currently tiled in some way
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct Tiling {
@@ -491,13 +584,16 @@ impl Tiling {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
-pub(crate) struct RequestFrameOptions {
-    pub(crate) require_presentation: bool,
-    /// Force refresh of all rendering states when true
-    pub(crate) force_render: bool,
+#[expect(missing_docs)]
+pub struct RequestFrameOptions {
+    /// Whether a presentation is required.
+    pub require_presentation: bool,
+    /// Force refresh of all rendering states when true.
+    pub force_render: bool,
 }
 
-pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+#[expect(missing_docs)]
+pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
     fn is_maximized(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
@@ -538,6 +634,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
+    fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
     fn completed_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
@@ -567,7 +664,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_tabbing_identifier(&self, _identifier: Option<String>) {}
 
     #[cfg(target_os = "windows")]
-    fn get_raw_handle(&self) -> windows::HWND;
+    fn get_raw_handle(&self) -> windows::Win32::Foundation::HWND;
 
     // Linux specific methods
     fn inner_window_bounds(&self) -> WindowBounds {
@@ -592,6 +689,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
+    fn play_system_bell(&self) {}
+
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {
         None
@@ -606,34 +705,39 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     }
 }
 
+/// A renderer for headless windows that can produce real rendered output.
+#[cfg(any(test, feature = "test-support"))]
+pub trait PlatformHeadlessRenderer {
+    /// Render a scene and return the result as an RGBA image.
+    fn render_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> Result<RgbaImage>;
+
+    /// Returns the sprite atlas used by this renderer.
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+}
+
 /// Type alias for runnables with metadata.
 /// Previously an enum with a single variant, now simplified to a direct type alias.
 #[doc(hidden)]
 pub type RunnableVariant = Runnable<RunnableMeta>;
 
 #[doc(hidden)]
-pub struct TimerResolutionGuard {
-    cleanup: Option<Box<dyn FnOnce() + Send>>,
-}
-
-impl Drop for TimerResolutionGuard {
-    fn drop(&mut self) {
-        if let Some(cleanup) = self.cleanup.take() {
-            cleanup();
-        }
-    }
-}
+pub type TimerResolutionGuard = gpui_util::Deferred<Box<dyn FnOnce() + Send>>;
 
 /// This type is public so that our test macro can generate and use it, but it should not
 /// be considered part of our public API.
 #[doc(hidden)]
 pub trait PlatformDispatcher: Send + Sync {
     fn get_all_timings(&self) -> Vec<ThreadTaskTimings>;
-    fn get_current_thread_timings(&self) -> Vec<TaskTiming>;
+    fn get_current_thread_timings(&self) -> ThreadTaskTimings;
     fn is_main_thread(&self) -> bool;
     fn dispatch(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_on_main_thread(&self, runnable: RunnableVariant, priority: Priority);
     fn dispatch_after(&self, duration: Duration, runnable: RunnableVariant);
+
     fn spawn_realtime(&self, f: Box<dyn FnOnce() + Send>);
 
     fn now(&self) -> Instant {
@@ -641,7 +745,7 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 
     fn increase_timer_resolution(&self) -> TimerResolutionGuard {
-        TimerResolutionGuard { cleanup: None }
+        gpui_util::defer(Box::new(|| {}))
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -650,27 +754,40 @@ pub trait PlatformDispatcher: Send + Sync {
     }
 }
 
-pub(crate) trait PlatformTextSystem: Send + Sync {
+#[expect(missing_docs)]
+pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
+    /// Get all available font names.
     fn all_font_names(&self) -> Vec<String>;
+    /// Get the font ID for a font descriptor.
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
+    /// Get metrics for a font.
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
+    /// Get typographic bounds for a glyph.
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
+    /// Get the advance width for a glyph.
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
+    /// Get the glyph ID for a character.
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
+    /// Get raster bounds for a glyph.
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>>;
+    /// Rasterize a glyph.
     fn rasterize_glyph(
         &self,
         params: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
+    /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
 }
 
-pub(crate) struct NoopTextSystem;
+#[expect(missing_docs)]
+pub struct NoopTextSystem;
 
+#[expect(missing_docs)]
 impl NoopTextSystem {
     #[allow(dead_code)]
     pub fn new() -> Self {
@@ -800,8 +917,9 @@ impl PlatformTextSystem for NoopTextSystem {
 // Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
+/// Compute gamma correction ratios for subpixel text rendering.
 #[allow(dead_code)]
-pub(crate) fn get_gamma_correction_ratios(gamma: f32) -> [f32; 4] {
+pub fn get_gamma_correction_ratios(gamma: f32) -> [f32; 4] {
     const GAMMA_INCORRECT_TARGET_RATIOS: [[f32; 4]; 13] = [
         [0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0, 0.0000 / 4.0], // gamma = 1.0
         [0.0166 / 4.0, -0.0807 / 4.0, 0.2227 / 4.0, -0.0751 / 4.0], // gamma = 1.1
@@ -833,7 +951,8 @@ pub(crate) fn get_gamma_correction_ratios(gamma: f32) -> [f32; 4] {
 }
 
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub(crate) enum AtlasKey {
+#[expect(missing_docs)]
+pub enum AtlasKey {
     Glyph(RenderGlyphParams),
     Svg(RenderSvgParams),
     Image(RenderImageParams),
@@ -847,7 +966,8 @@ impl AtlasKey {
         ),
         allow(dead_code)
     )]
-    pub(crate) fn texture_kind(&self) -> AtlasTextureKind {
+    /// Returns the texture kind for this atlas key.
+    pub fn texture_kind(&self) -> AtlasTextureKind {
         match self {
             AtlasKey::Glyph(params) => {
                 if params.is_emoji {
@@ -882,7 +1002,8 @@ impl From<RenderImageParams> for AtlasKey {
     }
 }
 
-pub(crate) trait PlatformAtlas: Send + Sync {
+#[expect(missing_docs)]
+pub trait PlatformAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
@@ -891,9 +1012,10 @@ pub(crate) trait PlatformAtlas: Send + Sync {
     fn remove(&self, key: &AtlasKey);
 }
 
-struct AtlasTextureList<T> {
-    textures: Vec<Option<T>>,
-    free_list: Vec<usize>,
+#[doc(hidden)]
+pub struct AtlasTextureList<T> {
+    pub textures: Vec<Option<T>>,
+    pub free_list: Vec<usize>,
 }
 
 impl<T> Default for AtlasTextureList<T> {
@@ -915,32 +1037,40 @@ impl<T> ops::Index<usize> for AtlasTextureList<T> {
 
 impl<T> AtlasTextureList<T> {
     #[allow(unused)]
-    fn drain(&mut self) -> std::vec::Drain<'_, Option<T>> {
+    pub fn drain(&mut self) -> std::vec::Drain<'_, Option<T>> {
         self.free_list.clear();
         self.textures.drain(..)
     }
 
     #[allow(dead_code)]
-    fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {
+    pub fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {
         self.textures.iter_mut().flatten()
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub(crate) struct AtlasTile {
-    pub(crate) texture_id: AtlasTextureId,
-    pub(crate) tile_id: TileId,
-    pub(crate) padding: u32,
-    pub(crate) bounds: Bounds<DevicePixels>,
+#[expect(missing_docs)]
+pub struct AtlasTile {
+    /// The texture this tile belongs to.
+    pub texture_id: AtlasTextureId,
+    /// The unique ID of this tile within its texture.
+    pub tile_id: TileId,
+    /// Padding around the tile content in pixels.
+    pub padding: u32,
+    /// The bounds of this tile within the texture.
+    pub bounds: Bounds<DevicePixels>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
-pub(crate) struct AtlasTextureId {
+#[expect(missing_docs)]
+pub struct AtlasTextureId {
     // We use u32 instead of usize for Metal Shader Language compatibility
-    pub(crate) index: u32,
-    pub(crate) kind: AtlasTextureKind,
+    /// The index of this texture in the atlas.
+    pub index: u32,
+    /// The kind of content stored in this texture.
+    pub kind: AtlasTextureKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -952,7 +1082,8 @@ pub(crate) struct AtlasTextureId {
     ),
     allow(dead_code)
 )]
-pub(crate) enum AtlasTextureKind {
+#[expect(missing_docs)]
+pub enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
     Subpixel = 2,
@@ -960,7 +1091,8 @@ pub(crate) enum AtlasTextureKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
-pub(crate) struct TileId(pub(crate) u32);
+#[expect(missing_docs)]
+pub struct TileId(pub u32);
 
 impl From<etagere::AllocId> for TileId {
     fn from(id: etagere::AllocId) -> Self {
@@ -974,11 +1106,13 @@ impl From<TileId> for etagere::AllocId {
     }
 }
 
-pub(crate) struct PlatformInputHandler {
+#[expect(missing_docs)]
+pub struct PlatformInputHandler {
     cx: AsyncWindowContext,
     handler: Box<dyn InputHandler>,
 }
 
+#[expect(missing_docs)]
 #[cfg_attr(
     all(
         any(target_os = "linux", target_os = "freebsd"),
@@ -991,7 +1125,7 @@ impl PlatformInputHandler {
         Self { cx, handler }
     }
 
-    fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
+    pub fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
         self.cx
             .update(|window, cx| {
                 self.handler
@@ -1002,7 +1136,7 @@ impl PlatformInputHandler {
     }
 
     #[cfg_attr(target_os = "windows", allow(dead_code))]
-    fn marked_text_range(&mut self) -> Option<Range<usize>> {
+    pub fn marked_text_range(&mut self) -> Option<Range<usize>> {
         self.cx
             .update(|window, cx| self.handler.marked_text_range(window, cx))
             .ok()
@@ -1013,7 +1147,7 @@ impl PlatformInputHandler {
         any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
         allow(dead_code)
     )]
-    fn text_for_range(
+    pub fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
         adjusted: &mut Option<Range<usize>>,
@@ -1027,7 +1161,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
+    pub fn replace_text_in_range(&mut self, replacement_range: Option<Range<usize>>, text: &str) {
         self.cx
             .update(|window, cx| {
                 self.handler
@@ -1056,13 +1190,13 @@ impl PlatformInputHandler {
     }
 
     #[cfg_attr(target_os = "windows", allow(dead_code))]
-    fn unmark_text(&mut self) {
+    pub fn unmark_text(&mut self) {
         self.cx
             .update(|window, cx| self.handler.unmark_text(window, cx))
             .ok();
     }
 
-    fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
+    pub fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
         self.cx
             .update(|window, cx| self.handler.bounds_for_range(range_utf16, window, cx))
             .ok()
@@ -1070,11 +1204,11 @@ impl PlatformInputHandler {
     }
 
     #[allow(dead_code)]
-    fn apple_press_and_hold_enabled(&mut self) -> bool {
+    pub fn apple_press_and_hold_enabled(&mut self) -> bool {
         self.handler.apple_press_and_hold_enabled()
     }
 
-    pub(crate) fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
+    pub fn dispatch_input(&mut self, input: &str, window: &mut Window, cx: &mut App) {
         self.handler.replace_text_in_range(None, input, window, cx);
     }
 
@@ -1100,8 +1234,22 @@ impl PlatformInputHandler {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
+    pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.handler.accepts_text_input(window, cx)
+    }
+
+    #[allow(dead_code)]
+    pub fn query_accepts_text_input(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.accepts_text_input(window, cx))
+            .unwrap_or(true)
+    }
+
+    #[allow(dead_code)]
+    pub fn query_prefers_ime_for_printable_keys(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| self.handler.prefers_ime_for_printable_keys(window, cx))
+            .unwrap_or(false)
     }
 }
 
@@ -1216,6 +1364,18 @@ pub trait InputHandler: 'static {
     fn accepts_text_input(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
         true
     }
+
+    /// Returns whether printable keys should be routed to the IME before keybinding
+    /// matching when a non-ASCII input source (e.g. Japanese, Korean, Chinese IME)
+    /// is active. This prevents multi-stroke keybindings like `jj` from intercepting
+    /// keys that the IME should compose.
+    ///
+    /// Defaults to `false`. The editor overrides this based on whether it expects
+    /// character input (e.g. Vim insert mode returns `true`, normal mode returns `false`).
+    /// The terminal keeps the default `false` so that raw keys reach the terminal process.
+    fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
+        false
+    }
 }
 
 /// The variables that can be configured when creating a new window
@@ -1277,7 +1437,8 @@ pub struct WindowOptions {
     ),
     allow(dead_code)
 )]
-pub(crate) struct WindowParams {
+#[allow(missing_docs)]
+pub struct WindowParams {
     pub bounds: Bounds<Pixels>,
 
     /// The titlebar configuration of the window
@@ -1532,8 +1693,9 @@ impl PromptButton {
         PromptButton::Cancel(label.into())
     }
 
+    /// Returns true if this button is a cancel button.
     #[allow(dead_code)]
-    pub(crate) fn is_cancel(&self) -> bool {
+    pub fn is_cancel(&self) -> bool {
         matches!(self, PromptButton::Cancel(_))
     }
 
@@ -1651,7 +1813,8 @@ pub enum CursorStyle {
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardItem {
-    entries: Vec<ClipboardEntry>,
+    /// The entries in this clipboard item.
+    pub entries: Vec<ClipboardEntry>,
 }
 
 /// Either a ClipboardString or a ClipboardImage
@@ -1851,7 +2014,7 @@ pub struct Image {
     /// The raw image bytes
     pub bytes: Vec<u8>,
     /// The unique ID for the image
-    id: u64,
+    pub id: u64,
 }
 
 impl Hash for Image {
@@ -1947,7 +2110,7 @@ impl Image {
             ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
                 return svg_renderer
-                    .render_single_frame(&self.bytes, 1.0, false)
+                    .render_single_frame(&self.bytes, 1.0)
                     .map_err(Into::into);
             }
         };
@@ -1969,8 +2132,10 @@ impl Image {
 /// A clipboard item that should be copied to the clipboard
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClipboardString {
-    pub(crate) text: String,
-    pub(crate) metadata: Option<String>,
+    /// The text content.
+    pub text: String,
+    /// Optional metadata associated with this clipboard string.
+    pub metadata: Option<String>,
 }
 
 impl ClipboardString {
@@ -2010,7 +2175,8 @@ impl ClipboardString {
     }
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
-    pub(crate) fn text_hash(text: &str) -> u64 {
+    /// Compute a hash of the given text for clipboard change detection.
+    pub fn text_hash(text: &str) -> u64 {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);
         hasher.finish()
@@ -2023,5 +2189,211 @@ impl From<String> for ClipboardString {
             text: value,
             metadata: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_svg_image_to_image_data_converts_to_bgra() {
+        let image = Image::from_bytes(
+            ImageFormat::Svg,
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1">
+<rect width="1" height="1" fill="#38BDF8"/>
+</svg>"##
+                .to_vec(),
+        );
+
+        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
+        let bytes = render_image.as_bytes(0).unwrap();
+
+        for pixel in bytes.chunks_exact(4) {
+            assert_eq!(pixel, &[0xF8, 0xBD, 0x38, 0xFF]);
+        }
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_window_button_layout_parse_standard() {
+        let layout = WindowButtonLayout::parse("close,minimize:maximize").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_right_only() {
+        let layout = WindowButtonLayout::parse("minimize,maximize,close").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close)
+            ]
+        );
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_left_only() {
+        let layout = WindowButtonLayout::parse("close,minimize,maximize:").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize)
+            ]
+        );
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_with_whitespace() {
+        let layout = WindowButtonLayout::parse(" close , minimize : maximize ").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_empty() {
+        let layout = WindowButtonLayout::parse("").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_intentionally_empty() {
+        let layout = WindowButtonLayout::parse(":").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [None, None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_invalid_buttons() {
+        let layout = WindowButtonLayout::parse("close,invalid,minimize:maximize,foo").unwrap();
+        assert_eq!(
+            layout.left,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_deduplicates_same_side_buttons() {
+        let layout = WindowButtonLayout::parse("close,close,minimize").unwrap();
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Close),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+        assert_eq!(layout.format(), ":close,minimize");
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_deduplicates_buttons_across_sides() {
+        let layout = WindowButtonLayout::parse("close:maximize,close,minimize").unwrap();
+        assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Minimize),
+                None
+            ]
+        );
+
+        let button_ids: Vec<_> = layout
+            .left
+            .iter()
+            .chain(layout.right.iter())
+            .flatten()
+            .map(WindowButton::id)
+            .collect();
+        let unique_button_ids = button_ids.iter().copied().collect::<HashSet<_>>();
+        assert_eq!(unique_button_ids.len(), button_ids.len());
+        assert_eq!(layout.format(), "close:maximize,minimize");
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_gnome_style() {
+        let layout = WindowButtonLayout::parse("close").unwrap();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(layout.right, [Some(WindowButton::Close), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_elementary_style() {
+        let layout = WindowButtonLayout::parse("close:maximize").unwrap();
+        assert_eq!(layout.left, [Some(WindowButton::Close), None, None]);
+        assert_eq!(layout.right, [Some(WindowButton::Maximize), None, None]);
+    }
+
+    #[test]
+    fn test_window_button_layout_round_trip() {
+        let cases = [
+            "close:minimize,maximize",
+            "minimize,maximize,close:",
+            ":close",
+            "close:",
+            "close:maximize",
+            ":",
+        ];
+
+        for case in cases {
+            let layout = WindowButtonLayout::parse(case).unwrap();
+            assert_eq!(layout.format(), case, "Round-trip failed for: {}", case);
+        }
+    }
+
+    #[test]
+    fn test_window_button_layout_linux_default() {
+        let layout = WindowButtonLayout::linux_default();
+        assert_eq!(layout.left, [None, None, None]);
+        assert_eq!(
+            layout.right,
+            [
+                Some(WindowButton::Minimize),
+                Some(WindowButton::Maximize),
+                Some(WindowButton::Close)
+            ]
+        );
+
+        let round_tripped = WindowButtonLayout::parse(&layout.format()).unwrap();
+        assert_eq!(round_tripped, layout);
+    }
+
+    #[test]
+    fn test_window_button_layout_parse_all_invalid() {
+        assert!(WindowButtonLayout::parse("asdfghjkl").is_err());
     }
 }

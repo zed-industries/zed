@@ -468,7 +468,7 @@ impl PickerDelegate for StashListDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
 
@@ -501,16 +501,66 @@ impl PickerDelegate for StashListDelegate {
                     .size(LabelSize::Small),
             );
 
+        let view_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("view-stash", ix), IconName::Eye)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("View Stash", &ShowStashItem, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.delegate.show_stash_at(ix, window, cx);
+                }))
+        };
+
+        let pop_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("pop-stash", ix), IconName::MaximizeAlt)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("Pop Stash", &menu::SecondaryConfirm, &focus_handle, cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                })
+        };
+
+        let drop_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("drop-stash", ix), IconName::Trash)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("Drop Stash", &DropStashItem, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.delegate.drop_stash_at(ix, window, cx);
+                }))
+        };
+
         Some(
             ListItem::new(format!("stash-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(v_flex().w_full().child(stash_label).child(branch_info))
-                .tooltip(Tooltip::text(format!(
-                    "stash@{{{}}}",
-                    entry_match.entry.index
-                ))),
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2p5()
+                        .child(
+                            Icon::new(IconName::BoxOpen)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(div().w_full().child(stash_label).child(branch_info)),
+                )
+                .end_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .child(view_button)
+                        .child(pop_button)
+                        .child(drop_button),
+                )
+                .show_end_slot_on_hover(),
         )
     }
 
@@ -519,6 +569,10 @@ impl PickerDelegate for StashListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        if self.matches.is_empty() {
+            return None;
+        }
+
         let focus_handle = self.focus_handle.clone();
 
         Some(
@@ -527,6 +581,7 @@ impl PickerDelegate for StashListDelegate {
                 .p_1p5()
                 .gap_0p5()
                 .justify_end()
+                .flex_wrap()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
@@ -594,14 +649,14 @@ mod tests {
     use picker::PickerDelegate;
     use project::{FakeFs, Project};
     use settings::SettingsStore;
-    use workspace::Workspace;
+    use workspace::MultiWorkspace;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
 
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         })
     }
@@ -626,25 +681,27 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let cx = &mut VisualTestContext::from_window(*multi_workspace, cx);
+        let workspace = multi_workspace
+            .update(cx, |workspace, _, _| workspace.workspace().clone())
+            .unwrap();
         let stash_entries = vec![
             stash_entry(0, "stash #0", Some("main")),
             stash_entry(1, "stash #1", Some("develop")),
         ];
 
-        let stash_list = workspace
-            .update(cx, |workspace, window, cx| {
-                let weak_workspace = workspace.weak_handle();
+        let stash_list = workspace.update_in(cx, |workspace, window, cx| {
+            let weak_workspace = workspace.weak_handle();
 
-                workspace.toggle_modal(window, cx, move |window, cx| {
-                    StashList::new(None, weak_workspace, rems(34.), window, cx)
-                });
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                StashList::new(None, weak_workspace, rems(34.), window, cx)
+            });
 
-                assert!(workspace.active_modal::<StashList>(cx).is_some());
-                workspace.active_modal::<StashList>(cx).unwrap()
-            })
-            .unwrap();
+            assert!(workspace.active_modal::<StashList>(cx).is_some());
+            workspace.active_modal::<StashList>(cx).unwrap()
+        });
 
         cx.run_until_parked();
         stash_list.update(cx, |stash_list, cx| {
@@ -667,10 +724,8 @@ mod tests {
             stash_list.handle_show_stash(&Default::default(), window, cx);
         });
 
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(workspace.active_modal::<StashList>(cx).is_none());
-            })
-            .unwrap();
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<StashList>(cx).is_none());
+        });
     }
 }

@@ -1,28 +1,26 @@
 mod api_key;
 mod model;
+mod provider;
 mod rate_limiter;
 mod registry;
 mod request;
 mod role;
-mod telemetry;
 pub mod tool_schema;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
+use client::UserStore;
 use cloud_llm_client::CompletionRequestStatus;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Entity, SharedString, Task, Window};
 use http_client::{StatusCode, http};
 use icons::IconName;
-use open_router::OpenRouterError;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-pub use settings::LanguageModelCacheConfiguration;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -37,37 +35,24 @@ pub use crate::rate_limiter::*;
 pub use crate::registry::*;
 pub use crate::request::*;
 pub use crate::role::*;
-pub use crate::telemetry::*;
 pub use crate::tool_schema::LanguageModelToolSchemaFormat;
+pub use provider::*;
 pub use zed_env_vars::{EnvVar, env_var};
 
-pub const ANTHROPIC_PROVIDER_ID: LanguageModelProviderId =
-    LanguageModelProviderId::new("anthropic");
-pub const ANTHROPIC_PROVIDER_NAME: LanguageModelProviderName =
-    LanguageModelProviderName::new("Anthropic");
-
-pub const GOOGLE_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("google");
-pub const GOOGLE_PROVIDER_NAME: LanguageModelProviderName =
-    LanguageModelProviderName::new("Google AI");
-
-pub const OPEN_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai");
-pub const OPEN_AI_PROVIDER_NAME: LanguageModelProviderName =
-    LanguageModelProviderName::new("OpenAI");
-
-pub const X_AI_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
-pub const X_AI_PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
-
-pub const ZED_CLOUD_PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("zed.dev");
-pub const ZED_CLOUD_PROVIDER_NAME: LanguageModelProviderName =
-    LanguageModelProviderName::new("Zed");
-
-pub fn init(client: Arc<Client>, cx: &mut App) {
+pub fn init(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
-    RefreshLlmTokenListener::register(client, cx);
+    RefreshLlmTokenListener::register(client, user_store, cx);
 }
 
 pub fn init_settings(cx: &mut App) {
     registry::init(cx);
+}
+
+#[derive(Clone, Debug)]
+pub struct LanguageModelCacheConfiguration {
+    pub max_cache_anchors: usize,
+    pub should_speculate: bool,
+    pub min_total_token: u64,
 }
 
 /// A completion event from a language model.
@@ -104,16 +89,13 @@ impl LanguageModelCompletionEvent {
     pub fn from_completion_request_status(
         status: CompletionRequestStatus,
         upstream_provider: LanguageModelProviderName,
-    ) -> Result<Self, LanguageModelCompletionError> {
+    ) -> Result<Option<Self>, LanguageModelCompletionError> {
         match status {
             CompletionRequestStatus::Queued { position } => {
-                Ok(LanguageModelCompletionEvent::Queued { position })
+                Ok(Some(LanguageModelCompletionEvent::Queued { position }))
             }
-            CompletionRequestStatus::Started => Ok(LanguageModelCompletionEvent::Started),
-            CompletionRequestStatus::UsageUpdated { .. }
-            | CompletionRequestStatus::ToolUseLimitReached => Err(
-                LanguageModelCompletionError::Other(anyhow!("Unexpected status: {status:?}")),
-            ),
+            CompletionRequestStatus::Started => Ok(Some(LanguageModelCompletionEvent::Started)),
+            CompletionRequestStatus::Unknown | CompletionRequestStatus::StreamEnded => Ok(None),
             CompletionRequestStatus::Failed {
                 code,
                 message,
@@ -212,6 +194,9 @@ pub enum LanguageModelCompletionError {
         error: serde_json::Error,
     },
 
+    #[error("stream from {provider} ended unexpectedly")]
+    StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+
     // TODO: Ideally this would be removed in favor of having a comprehensive list of errors.
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -304,165 +289,6 @@ impl LanguageModelCompletionError {
                 provider,
                 status_code,
                 message,
-            },
-        }
-    }
-}
-
-impl From<AnthropicError> for LanguageModelCompletionError {
-    fn from(error: AnthropicError) -> Self {
-        let provider = ANTHROPIC_PROVIDER_NAME;
-        match error {
-            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
-            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
-            AnthropicError::HttpSend(error) => Self::HttpSend { provider, error },
-            AnthropicError::DeserializeResponse(error) => {
-                Self::DeserializeResponse { provider, error }
-            }
-            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
-            AnthropicError::HttpResponseError {
-                status_code,
-                message,
-            } => Self::HttpResponseError {
-                provider,
-                status_code,
-                message,
-            },
-            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
-                provider,
-                retry_after: Some(retry_after),
-            },
-            AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
-            AnthropicError::ApiError(api_error) => api_error.into(),
-        }
-    }
-}
-
-impl From<anthropic::ApiError> for LanguageModelCompletionError {
-    fn from(error: anthropic::ApiError) -> Self {
-        use anthropic::ApiErrorCode::*;
-        let provider = ANTHROPIC_PROVIDER_NAME;
-        match error.code() {
-            Some(code) => match code {
-                InvalidRequestError => Self::BadRequestFormat {
-                    provider,
-                    message: error.message,
-                },
-                AuthenticationError => Self::AuthenticationError {
-                    provider,
-                    message: error.message,
-                },
-                PermissionError => Self::PermissionError {
-                    provider,
-                    message: error.message,
-                },
-                NotFoundError => Self::ApiEndpointNotFound { provider },
-                RequestTooLarge => Self::PromptTooLarge {
-                    tokens: parse_prompt_too_long(&error.message),
-                },
-                RateLimitError => Self::RateLimitExceeded {
-                    provider,
-                    retry_after: None,
-                },
-                ApiError => Self::ApiInternalServerError {
-                    provider,
-                    message: error.message,
-                },
-                OverloadedError => Self::ServerOverloaded {
-                    provider,
-                    retry_after: None,
-                },
-            },
-            None => Self::Other(error.into()),
-        }
-    }
-}
-
-impl From<open_ai::RequestError> for LanguageModelCompletionError {
-    fn from(error: open_ai::RequestError) -> Self {
-        match error {
-            open_ai::RequestError::HttpResponseError {
-                provider,
-                status_code,
-                body,
-                headers,
-            } => {
-                let retry_after = headers
-                    .get(http::header::RETRY_AFTER)
-                    .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
-                    .map(Duration::from_secs);
-
-                Self::from_http_status(provider.into(), status_code, body, retry_after)
-            }
-            open_ai::RequestError::Other(e) => Self::Other(e),
-        }
-    }
-}
-
-impl From<OpenRouterError> for LanguageModelCompletionError {
-    fn from(error: OpenRouterError) -> Self {
-        let provider = LanguageModelProviderName::new("OpenRouter");
-        match error {
-            OpenRouterError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
-            OpenRouterError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
-            OpenRouterError::HttpSend(error) => Self::HttpSend { provider, error },
-            OpenRouterError::DeserializeResponse(error) => {
-                Self::DeserializeResponse { provider, error }
-            }
-            OpenRouterError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
-            OpenRouterError::RateLimit { retry_after } => Self::RateLimitExceeded {
-                provider,
-                retry_after: Some(retry_after),
-            },
-            OpenRouterError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
-            OpenRouterError::ApiError(api_error) => api_error.into(),
-        }
-    }
-}
-
-impl From<open_router::ApiError> for LanguageModelCompletionError {
-    fn from(error: open_router::ApiError) -> Self {
-        use open_router::ApiErrorCode::*;
-        let provider = LanguageModelProviderName::new("OpenRouter");
-        match error.code {
-            InvalidRequestError => Self::BadRequestFormat {
-                provider,
-                message: error.message,
-            },
-            AuthenticationError => Self::AuthenticationError {
-                provider,
-                message: error.message,
-            },
-            PaymentRequiredError => Self::AuthenticationError {
-                provider,
-                message: format!("Payment required: {}", error.message),
-            },
-            PermissionError => Self::PermissionError {
-                provider,
-                message: error.message,
-            },
-            RequestTimedOut => Self::HttpResponseError {
-                provider,
-                status_code: StatusCode::REQUEST_TIMEOUT,
-                message: error.message,
-            },
-            RateLimitError => Self::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
-            ApiError => Self::ApiInternalServerError {
-                provider,
-                message: error.message,
-            },
-            OverloadedError => Self::ServerOverloaded {
-                provider,
-                retry_after: None,
             },
         }
     }
@@ -603,8 +429,17 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    /// Information about the cost of using this model, if available.
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        None
+    }
+
     /// Whether this model supports thinking.
     fn supports_thinking(&self) -> bool {
+        false
+    }
+
+    fn supports_fast_mode(&self) -> bool {
         false
     }
 
@@ -847,16 +682,6 @@ pub enum ConfigurationViewTargetAgent {
     Other(SharedString),
 }
 
-#[derive(PartialEq, Eq)]
-pub enum LanguageModelProviderTosView {
-    /// When there are some past interactions in the Agent Panel.
-    ThreadEmptyState,
-    /// When there are no past interactions in the Agent Panel.
-    ThreadFreshStart,
-    TextThreadPopup,
-    Configuration,
-}
-
 pub trait LanguageModelProviderState: 'static {
     type ObservableEntity;
 
@@ -885,6 +710,44 @@ pub struct LanguageModelProviderId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LanguageModelCostInfo {
+    /// Cost per 1,000 input and output tokens
+    TokenCost {
+        input_token_cost_per_1m: f64,
+        output_token_cost_per_1m: f64,
+    },
+    /// Cost per request
+    RequestCost { cost_per_request: f64 },
+}
+
+impl LanguageModelCostInfo {
+    pub fn to_shared_string(&self) -> SharedString {
+        match self {
+            LanguageModelCostInfo::RequestCost { cost_per_request } => {
+                let cost_str = format!("{}×", Self::cost_value_to_string(cost_per_request));
+                SharedString::from(cost_str)
+            }
+            LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m,
+                output_token_cost_per_1m,
+            } => {
+                let input_cost = Self::cost_value_to_string(input_token_cost_per_1m);
+                let output_cost = Self::cost_value_to_string(output_token_cost_per_1m);
+                SharedString::from(format!("{}$/{}$", input_cost, output_cost))
+            }
+        }
+    }
+
+    fn cost_value_to_string(cost: &f64) -> SharedString {
+        if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
+            SharedString::from(format!("{:.0}", cost))
+        } else {
+            SharedString::from(format!("{:.2}", cost))
+        }
+    }
+}
 
 impl LanguageModelProviderId {
     pub const fn new(id: &'static str) -> Self {

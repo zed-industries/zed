@@ -31,6 +31,7 @@ pub struct WorkspaceSettings {
     pub text_rendering_mode: settings::TextRenderingMode,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
+    pub close_panel_on_toggle: bool,
     pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
@@ -108,6 +109,7 @@ impl Settings for WorkspaceSettings {
                 .map(Into::into)
                 .collect(),
             close_on_file_delete: workspace.close_on_file_delete.unwrap(),
+            close_panel_on_toggle: workspace.close_panel_on_toggle.unwrap(),
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
@@ -130,6 +132,7 @@ impl Settings for TabBarSettings {
 #[derive(Deserialize, RegisterSetting)]
 pub struct StatusBarSettings {
     pub show: bool,
+    pub show_active_file: bool,
     pub active_language_button: bool,
     pub cursor_position_button: bool,
     pub line_endings_button: bool,
@@ -141,6 +144,7 @@ impl Settings for StatusBarSettings {
         let status_bar = content.status_bar.clone().unwrap();
         StatusBarSettings {
             show: status_bar.show.unwrap(),
+            show_active_file: status_bar.show_active_file.unwrap(),
             active_language_button: status_bar.active_language_button.unwrap(),
             cursor_position_button: status_bar.cursor_position_button.unwrap(),
             line_endings_button: status_bar.line_endings_button.unwrap(),

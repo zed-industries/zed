@@ -51,7 +51,7 @@ pub fn init_visual_test(cx: &mut VisualTestAppContext) -> Arc<AppState> {
         let app_state = AppState::test(cx);
 
         gpui_tokio::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         audio::init(cx);
         workspace::init(app_state.clone(), cx);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_visual_test_smoke() {
-        let mut cx = VisualTestAppContext::new();
+        let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
 
         let _window = cx
             .open_offscreen_window_default(|_, cx| cx.new(|_| Empty))
@@ -438,7 +438,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_workspace_opens() {
-        let mut cx = VisualTestAppContext::new();
+        let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
         let app_state = init_visual_test(&mut cx);
 
         smol::block_on(async {
@@ -479,7 +479,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_workspace_screenshot() {
-        let mut cx = VisualTestAppContext::new();
+        let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
         let app_state = init_visual_test(&mut cx);
 
         smol::block_on(async {

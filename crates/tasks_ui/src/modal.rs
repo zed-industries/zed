@@ -184,23 +184,11 @@ impl TasksModal {
         };
         let mut new_candidates = used_tasks;
         new_candidates.extend(lsp_tasks);
-        let hide_vscode = current_resolved_tasks.iter().any(|(kind, _)| match kind {
-            TaskSourceKind::Worktree {
-                id: _,
-                directory_in_worktree: dir,
-                id_base: _,
-            } => dir.file_name().is_some_and(|name| name == ".zed"),
-            _ => false,
-        });
         // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
         // We should move the filter to new_candidates instead of on current
         // and add a test for this
         new_candidates.extend(current_resolved_tasks.into_iter().filter(|(task_kind, _)| {
             match task_kind {
-                TaskSourceKind::Worktree {
-                    directory_in_worktree: dir,
-                    ..
-                } => !(hide_vscode && dir.file_name().is_some_and(|name| name == ".vscode")),
                 TaskSourceKind::Language { .. } => add_current_language_tasks,
                 _ => true,
             }
@@ -582,7 +570,7 @@ impl PickerDelegate for TasksModalDelegate {
                                     Tooltip::simple("Delete Previously Scheduled Task", cx)
                                 }),
                         );
-                        item.end_hover_slot(delete_button)
+                        item.end_slot_on_hover(delete_button)
                     } else {
                         item
                     }
@@ -754,7 +742,7 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use util::path;
-    use workspace::{CloseInactiveTabsAndPanes, OpenOptions, OpenVisible};
+    use workspace::{CloseInactiveTabsAndPanes, MultiWorkspace, OpenOptions, OpenVisible};
 
     use crate::{modal::Spawn, tests::init_test};
 
@@ -787,8 +775,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -960,8 +949,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
@@ -1115,8 +1105,9 @@ mod tests {
                 ))),
             ));
         });
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {

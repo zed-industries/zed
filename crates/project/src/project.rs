@@ -33,7 +33,7 @@ pub mod search_history;
 pub mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
-use itertools::Either;
+use itertools::{Either, Itertools};
 
 use crate::{
     git_store::GitStore,
@@ -43,12 +43,11 @@ use crate::{
     worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
-pub use agent_server_store::{
-    AgentServerStore, AgentServersUpdated, ExternalAgentServerName, ExternalAgentSource,
-};
+pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, ExternalAgentSource};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
+    linked_worktree_short_name, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -121,6 +120,7 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     ffi::OsString,
+    future::Future,
     ops::{Not as _, Range},
     path::{Path, PathBuf},
     pin::pin,
@@ -135,6 +135,7 @@ use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
+    path_list::PathList,
     paths::{PathStyle, SanitizedPath, is_absolute},
     rel_path::RelPath,
 };
@@ -149,6 +150,8 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
+#[cfg(any(test, feature = "test-support"))]
+pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
 pub use task_inventory::{
     BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, Inventory, TaskContexts,
     TaskSourceKind,
@@ -306,7 +309,7 @@ enum ProjectClientState {
     /// Multi-player mode but still a local project.
     Shared { remote_id: u64 },
     /// Multi-player mode but working on a remote project.
-    Remote {
+    Collab {
         sharing_has_stopped: bool,
         capability: Capability,
         remote_id: u64,
@@ -488,11 +491,11 @@ pub struct InlayHint {
     pub resolve_state: ResolveState,
 }
 
-/// The user's intent behind a given completion confirmation
+/// The user's intent behind a given completion confirmation.
 #[derive(PartialEq, Eq, Hash, Debug, Clone, Copy)]
 pub enum CompletionIntent {
-    /// The user intends to 'commit' this result, if possible
-    /// completion confirmations should run side effects.
+    /// The user intends to 'commit' this result, if possible.
+    /// Completion confirmations should run side effects.
     ///
     /// For LSP completions, will respect the setting `completions.lsp_insert_mode`.
     Complete,
@@ -500,9 +503,9 @@ pub enum CompletionIntent {
     CompleteWithInsert,
     /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `replace`.
     CompleteWithReplace,
-    /// The user intends to continue 'composing' this completion
-    /// completion confirmations should not run side effects and
-    /// let the user continue composing their action
+    /// The user intends to continue 'composing' this completion.
+    /// Completion confirmations should not run side effects and
+    /// let the user continue composing their action.
     Compose,
 }
 
@@ -540,7 +543,7 @@ pub struct Completion {
     /// Whether to adjust indentation (the default) or not.
     pub insert_text_mode: Option<InsertTextMode>,
     /// An optional callback to invoke when this completion is confirmed.
-    /// Returns, whether new completions should be retriggered after the current one.
+    /// Returns whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
@@ -668,7 +671,7 @@ impl std::fmt::Debug for Completion {
 pub struct CompletionResponse {
     pub completions: Vec<Completion>,
     pub display_options: CompletionDisplayOptions,
-    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// When false, indicates that the list is complete and does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
 }
@@ -688,7 +691,7 @@ impl CompletionDisplayOptions {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CoreCompletionResponse {
     pub completions: Vec<CoreCompletion>,
-    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// When false, indicates that the list is complete and does not need to be re-queried if it
     /// can be filtered instead.
     pub is_incomplete: bool,
 }
@@ -1029,6 +1032,8 @@ impl DirectoryLister {
     }
 }
 
+pub const CURRENT_PROJECT_FEATURES: &[&str] = &["new-style-anchors"];
+
 #[cfg(feature = "test-support")]
 pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
@@ -1076,8 +1081,26 @@ pub struct DisableAiSettings {
 impl settings::Settings for DisableAiSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         Self {
-            disable_ai: content.disable_ai.unwrap().0,
+            disable_ai: content.project.disable_ai.unwrap().0,
         }
+    }
+}
+
+impl DisableAiSettings {
+    /// Returns whether AI is disabled for the given file.
+    ///
+    /// This checks the project-level settings for the file's worktree,
+    /// allowing `disable_ai` to be configured per-project in `.zed/settings.json`.
+    pub fn is_ai_disabled_for_buffer(buffer: Option<&Entity<Buffer>>, cx: &App) -> bool {
+        Self::is_ai_disabled_for_file(buffer.and_then(|buffer| buffer.read(cx).file()), cx)
+    }
+
+    pub fn is_ai_disabled_for_file(file: Option<&Arc<dyn language::File>>, cx: &App) -> bool {
+        let location = file.map(|f| settings::SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
+        Self::get(location, cx).disable_ai
     }
 }
 
@@ -1167,7 +1190,6 @@ impl Project {
                     worktree_store.clone(),
                     environment.clone(),
                     manifest_tree.clone(),
-                    fs.clone(),
                     cx,
                 )
             });
@@ -1208,12 +1230,23 @@ impl Project {
                 )
             });
 
+            let git_store = cx.new(|cx| {
+                GitStore::local(
+                    &worktree_store,
+                    buffer_store.clone(),
+                    environment.clone(),
+                    fs.clone(),
+                    cx,
+                )
+            });
+
             let task_store = cx.new(|cx| {
                 TaskStore::local(
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     environment.clone(),
+                    git_store.clone(),
                     cx,
                 )
             });
@@ -1244,16 +1277,6 @@ impl Project {
                     manifest_tree,
                     languages.clone(),
                     client.http_client(),
-                    fs.clone(),
-                    cx,
-                )
-            });
-
-            let git_store = cx.new(|cx| {
-                GitStore::local(
-                    &worktree_store,
-                    buffer_store.clone(),
-                    environment.clone(),
                     fs.clone(),
                     cx,
                 )
@@ -1393,30 +1416,6 @@ impl Project {
                 )
             });
 
-            let task_store = cx.new(|cx| {
-                TaskStore::remote(
-                    buffer_store.downgrade(),
-                    worktree_store.clone(),
-                    toolchain_store.read(cx).as_language_toolchain_store(),
-                    remote.read(cx).proto_client(),
-                    REMOTE_SERVER_PROJECT_ID,
-                    cx,
-                )
-            });
-
-            let settings_observer = cx.new(|cx| {
-                SettingsObserver::new_remote(
-                    fs.clone(),
-                    worktree_store.clone(),
-                    task_store.clone(),
-                    Some(remote_proto.clone()),
-                    false,
-                    cx,
-                )
-            });
-            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
-                .detach();
-
             let context_server_store = cx.new(|cx| {
                 ContextServerStore::remote(
                     rpc::proto::REMOTE_SERVER_PROJECT_ID,
@@ -1481,8 +1480,38 @@ impl Project {
                 )
             });
 
-            let agent_server_store =
-                cx.new(|_| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone()));
+            let task_store = cx.new(|cx| {
+                TaskStore::remote(
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    toolchain_store.read(cx).as_language_toolchain_store(),
+                    remote.read(cx).proto_client(),
+                    REMOTE_SERVER_PROJECT_ID,
+                    git_store.clone(),
+                    cx,
+                )
+            });
+
+            let settings_observer = cx.new(|cx| {
+                SettingsObserver::new_remote(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    Some(remote_proto.clone()),
+                    false,
+                    cx,
+                )
+            });
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
+
+            let agent_server_store = cx.new(|_| {
+                AgentServerStore::remote(
+                    REMOTE_SERVER_PROJECT_ID,
+                    remote.clone(),
+                    worktree_store.clone(),
+                )
+            });
 
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
@@ -1619,6 +1648,10 @@ impl Project {
                 project_id: remote_id,
                 committer_email: committer.email,
                 committer_name: committer.name,
+                features: CURRENT_PROJECT_FEATURES
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
             })
             .await?;
         Self::from_join_project_response(
@@ -1701,6 +1734,17 @@ impl Project {
             )
         });
 
+        let git_store = cx.new(|cx| {
+            GitStore::remote(
+                // In this remote case we pass None for the environment
+                &worktree_store,
+                buffer_store.clone(),
+                client.clone().into(),
+                remote_id,
+                cx,
+            )
+        });
+
         let task_store = cx.new(|cx| {
             if run_tasks {
                 TaskStore::remote(
@@ -1709,6 +1753,7 @@ impl Project {
                     Arc::new(EmptyToolchainStore),
                     client.clone().into(),
                     remote_id,
+                    git_store.clone(),
                     cx,
                 )
             } else {
@@ -1723,17 +1768,6 @@ impl Project {
                 task_store.clone(),
                 None,
                 true,
-                cx,
-            )
-        });
-
-        let git_store = cx.new(|cx| {
-            GitStore::remote(
-                // In this remote case we pass None for the environment
-                &worktree_store,
-                buffer_store.clone(),
-                client.clone().into(),
-                remote_id,
                 cx,
             )
         });
@@ -1797,7 +1831,7 @@ impl Project {
                 client_subscriptions: Default::default(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 collab_client: client.clone(),
-                client_state: ProjectClientState::Remote {
+                client_state: ProjectClientState::Collab {
                     sharing_has_stopped: false,
                     capability: Capability::ReadWrite,
                     remote_id,
@@ -1915,13 +1949,18 @@ impl Project {
             ProjectClientState::Shared { .. } => {
                 let _ = self.unshare_internal(cx);
             }
-            ProjectClientState::Remote { remote_id, .. } => {
+            ProjectClientState::Collab { remote_id, .. } => {
                 let _ = self.collab_client.send(proto::LeaveProject {
                     project_id: *remote_id,
                 });
                 self.disconnected_from_host_internal(cx);
             }
         }
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn client_subscriptions(&self) -> &Vec<client::Subscription> {
+        &self.client_subscriptions
     }
 
     #[cfg(feature = "test-support")]
@@ -2055,6 +2094,12 @@ impl Project {
         self.worktree_store.clone()
     }
 
+    /// Returns a future that resolves when all visible worktrees have completed
+    /// their initial scan.
+    pub fn wait_for_initial_scan(&self, cx: &App) -> impl Future<Output = ()> + use<> {
+        self.worktree_store.read(cx).wait_for_initial_scan()
+    }
+
     #[inline]
     pub fn context_server_store(&self) -> Entity<ContextServerStore> {
         self.context_server_store.clone()
@@ -2136,7 +2181,7 @@ impl Project {
         match self.client_state {
             ProjectClientState::Local => None,
             ProjectClientState::Shared { remote_id, .. }
-            | ProjectClientState::Remote { remote_id, .. } => Some(remote_id),
+            | ProjectClientState::Collab { remote_id, .. } => Some(remote_id),
         }
     }
 
@@ -2190,7 +2235,7 @@ impl Project {
     #[inline]
     pub fn replica_id(&self) -> ReplicaId {
         match self.client_state {
-            ProjectClientState::Remote { replica_id, .. } => replica_id,
+            ProjectClientState::Collab { replica_id, .. } => replica_id,
             _ => {
                 if self.remote_client.is_some() {
                     ReplicaId::REMOTE_SERVER
@@ -2262,6 +2307,40 @@ impl Project {
         cx: &'a App,
     ) -> impl 'a + DoubleEndedIterator<Item = Entity<Worktree>> {
         self.worktree_store.read(cx).visible_worktrees(cx)
+    }
+
+    pub(crate) fn default_visible_worktree_paths(
+        worktree_store: &WorktreeStore,
+        cx: &App,
+    ) -> Vec<PathBuf> {
+        worktree_store
+            .visible_worktrees(cx)
+            .sorted_by(|left, right| {
+                left.read(cx)
+                    .is_single_file()
+                    .cmp(&right.read(cx).is_single_file())
+            })
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let path = worktree.abs_path();
+                if worktree.is_single_file() {
+                    Some(path.parent()?.to_path_buf())
+                } else {
+                    Some(path.to_path_buf())
+                }
+            })
+            .collect()
+    }
+
+    pub fn default_path_list(&self, cx: &App) -> PathList {
+        let worktree_roots =
+            Self::default_visible_worktree_paths(&self.worktree_store.read(cx), cx);
+
+        if worktree_roots.is_empty() {
+            PathList::new(&[paths::home_dir().as_path()])
+        } else {
+            PathList::new(&worktree_roots)
+        }
     }
 
     #[inline]
@@ -2704,7 +2783,7 @@ impl Project {
             } else {
                 Capability::ReadOnly
             };
-        if let ProjectClientState::Remote { capability, .. } = &mut self.client_state {
+        if let ProjectClientState::Collab { capability, .. } = &mut self.client_state {
             if *capability == new_capability {
                 return;
             }
@@ -2717,12 +2796,13 @@ impl Project {
     }
 
     fn disconnected_from_host_internal(&mut self, cx: &mut App) {
-        if let ProjectClientState::Remote {
+        if let ProjectClientState::Collab {
             sharing_has_stopped,
             ..
         } = &mut self.client_state
         {
             *sharing_has_stopped = true;
+            self.client_subscriptions.clear();
             self.collaborators.clear();
             self.worktree_store.update(cx, |store, cx| {
                 store.disconnected_from_host(cx);
@@ -2743,7 +2823,7 @@ impl Project {
     #[inline]
     pub fn is_disconnected(&self, cx: &App) -> bool {
         match &self.client_state {
-            ProjectClientState::Remote {
+            ProjectClientState::Collab {
                 sharing_has_stopped,
                 ..
             } => *sharing_has_stopped,
@@ -2765,7 +2845,7 @@ impl Project {
     #[inline]
     pub fn capability(&self) -> Capability {
         match &self.client_state {
-            ProjectClientState::Remote { capability, .. } => *capability,
+            ProjectClientState::Collab { capability, .. } => *capability,
             ProjectClientState::Shared { .. } | ProjectClientState::Local => Capability::ReadWrite,
         }
     }
@@ -2781,7 +2861,7 @@ impl Project {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
                 self.remote_client.is_none()
             }
-            ProjectClientState::Remote { .. } => false,
+            ProjectClientState::Collab { .. } => false,
         }
     }
 
@@ -2792,7 +2872,7 @@ impl Project {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => {
                 self.remote_client.is_some()
             }
-            ProjectClientState::Remote { .. } => false,
+            ProjectClientState::Collab { .. } => false,
         }
     }
 
@@ -2801,7 +2881,7 @@ impl Project {
     pub fn is_via_collab(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local | ProjectClientState::Shared { .. } => false,
-            ProjectClientState::Remote { .. } => true,
+            ProjectClientState::Collab { .. } => true,
         }
     }
 
@@ -3612,11 +3692,11 @@ impl Project {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        if matches!(event, BufferEvent::Edited | BufferEvent::Reloaded) {
+        if matches!(event, BufferEvent::Edited { .. } | BufferEvent::Reloaded) {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
-        if matches!(event, BufferEvent::Edited) {
+        if matches!(event, BufferEvent::Edited { .. }) {
             cx.emit(Event::BufferEdited);
         }
 
@@ -4474,7 +4554,7 @@ impl Project {
         match &self.client_state {
             ProjectClientState::Shared { .. } => true,
             ProjectClientState::Local => false,
-            ProjectClientState::Remote { .. } => true,
+            ProjectClientState::Collab { .. } => true,
         }
     }
 
@@ -5475,25 +5555,51 @@ impl Project {
                     let key = (worktree_id, path);
                     log::debug!("handle_create_file_for_peer: looking up key={:?}", key);
 
-                    let mut files = downloading_files.lock();
-                    log::trace!(
-                        "handle_create_file_for_peer: current downloading_files keys: {:?}",
-                        files.keys().collect::<Vec<_>>()
-                    );
+                    let empty_file_destination: Option<PathBuf> = {
+                        let mut files = downloading_files.lock();
+                        log::trace!(
+                            "handle_create_file_for_peer: current downloading_files keys: {:?}",
+                            files.keys().collect::<Vec<_>>()
+                        );
 
-                    if let Some(file_entry) = files.get_mut(&key) {
-                        file_entry.total_size = state.content_size;
-                        file_entry.file_id = Some(state.id);
+                        if let Some(file_entry) = files.get_mut(&key) {
+                            file_entry.total_size = state.content_size;
+                            file_entry.file_id = Some(state.id);
+                            log::debug!(
+                                "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
+                                state.content_size,
+                                state.id
+                            );
+                        } else {
+                            log::warn!(
+                                "handle_create_file_for_peer: key={:?} not found in downloading_files",
+                                key
+                            );
+                        }
+
+                        if state.content_size == 0 {
+                            // No chunks will arrive for an empty file; write it now.
+                            files.remove(&key).map(|entry| entry.destination_path)
+                        } else {
+                            None
+                        }
+                    };
+
+                    if let Some(destination) = empty_file_destination {
                         log::debug!(
-                            "handle_create_file_for_peer: updated file entry: total_size={}, file_id={}",
-                            state.content_size,
-                            state.id
+                            "handle_create_file_for_peer: writing empty file to {:?}",
+                            destination
                         );
-                    } else {
-                        log::warn!(
-                            "handle_create_file_for_peer: key={:?} not found in downloading_files",
-                            key
-                        );
+                        match smol::fs::write(&destination, &[] as &[u8]).await {
+                            Ok(_) => log::info!(
+                                "handle_create_file_for_peer: successfully wrote file to {:?}",
+                                destination
+                            ),
+                            Err(e) => log::error!(
+                                "handle_create_file_for_peer: failed to write empty file: {:?}",
+                                e
+                            ),
+                        }
                     }
                 } else {
                     log::warn!("handle_create_file_for_peer: State has no file field");
@@ -5573,7 +5679,7 @@ impl Project {
 
     fn synchronize_remote_buffers(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let project_id = match self.client_state {
-            ProjectClientState::Remote {
+            ProjectClientState::Collab {
                 sharing_has_stopped,
                 remote_id,
                 ..

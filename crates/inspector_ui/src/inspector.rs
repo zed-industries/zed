@@ -1,9 +1,8 @@
 use anyhow::{Context as _, anyhow};
 use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
-use platform_title_bar::PlatformTitleBar;
 use std::{cell::OnceCell, path::Path, sync::Arc};
-use ui::{Label, Tooltip, prelude::*};
-use util::{ResultExt as _, command::new_smol_command};
+use ui::{Label, Tooltip, prelude::*, utils::platform_title_bar_height};
+use util::{ResultExt as _, command::new_command};
 use workspace::AppState;
 
 use crate::div_inspector::DivInspector;
@@ -58,10 +57,10 @@ fn render_inspector(
     window: &mut Window,
     cx: &mut Context<Inspector>,
 ) -> AnyElement {
-    let ui_font = theme::setup_ui_font(window, cx);
+    let ui_font = theme_settings::setup_ui_font(window, cx);
     let colors = cx.theme().colors();
     let inspector_id = inspector.active_element_id();
-    let toolbar_height = PlatformTitleBar::height(window);
+    let toolbar_height = platform_title_bar_height(window);
 
     v_flex()
         .size_full()
@@ -170,7 +169,7 @@ async fn open_zed_source_location(
         location.column()
     );
 
-    let output = new_smol_command("zed")
+    let output = new_command("zed")
         .arg(&path_arg)
         .output()
         .await

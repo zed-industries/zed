@@ -18,7 +18,7 @@ use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
 };
-use persistence::COMMAND_PALETTE_HISTORY;
+use persistence::CommandPaletteDB;
 use picker::Direction;
 use picker::{Picker, PickerDelegate};
 use postage::{sink::Sink, stream::Stream};
@@ -33,30 +33,38 @@ pub fn init(cx: &mut App) {
     cx.observe_new(CommandPalette::register).detach();
 }
 
-impl ModalView for CommandPalette {}
+impl ModalView for CommandPalette {
+    fn is_command_palette(&self) -> bool {
+        true
+    }
+}
 
 pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,
 }
 
-/// Removes subsequent whitespace characters and double colons from the query.
+/// Removes subsequent whitespace characters and double colons from the query, and converts
+/// underscores to spaces.
 ///
 /// This improves the likelihood of a match by either humanized name or keymap-style name.
+/// Underscores are converted to spaces because `humanize_action_name` converts them to spaces
+/// when building the search candidates (e.g. `terminal_panel::Toggle` -> `terminal panel: toggle`).
 pub fn normalize_action_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_char = None;
 
     for char in input.trim().chars() {
-        match (last_char, char) {
+        let normalized_char = if char == '_' { ' ' } else { char };
+        match (last_char, normalized_char) {
             (Some(':'), ':') => continue,
-            (Some(last_char), char) if last_char.is_whitespace() && char.is_whitespace() => {
+            (Some(last_char), c) if last_char.is_whitespace() && c.is_whitespace() => {
                 continue;
             }
             _ => {
-                last_char = Some(char);
+                last_char = Some(normalized_char);
             }
         }
-        result.push(char);
+        result.push(normalized_char);
     }
 
     result
@@ -180,9 +188,9 @@ struct QueryHistory {
 }
 
 impl QueryHistory {
-    fn history(&mut self) -> &mut VecDeque<String> {
+    fn history(&mut self, cx: &App) -> &mut VecDeque<String> {
         self.history.get_or_insert_with(|| {
-            COMMAND_PALETTE_HISTORY
+            CommandPaletteDB::global(cx)
                 .list_recent_queries()
                 .unwrap_or_default()
                 .into_iter()
@@ -190,18 +198,18 @@ impl QueryHistory {
         })
     }
 
-    fn add(&mut self, query: String) {
-        if let Some(pos) = self.history().iter().position(|h| h == &query) {
-            self.history().remove(pos);
+    fn add(&mut self, query: String, cx: &App) {
+        if let Some(pos) = self.history(cx).iter().position(|h| h == &query) {
+            self.history(cx).remove(pos);
         }
-        self.history().push_back(query);
+        self.history(cx).push_back(query);
         self.cursor = None;
         self.prefix = None;
     }
 
-    fn validate_cursor(&mut self, current_query: &str) -> Option<usize> {
+    fn validate_cursor(&mut self, current_query: &str, cx: &App) -> Option<usize> {
         if let Some(pos) = self.cursor {
-            if self.history().get(pos).map(|s| s.as_str()) != Some(current_query) {
+            if self.history(cx).get(pos).map(|s| s.as_str()) != Some(current_query) {
                 self.cursor = None;
                 self.prefix = None;
             }
@@ -209,39 +217,39 @@ impl QueryHistory {
         self.cursor
     }
 
-    fn previous(&mut self, current_query: &str) -> Option<&str> {
-        if self.validate_cursor(current_query).is_none() {
+    fn previous(&mut self, current_query: &str, cx: &App) -> Option<&str> {
+        if self.validate_cursor(current_query, cx).is_none() {
             self.prefix = Some(current_query.to_string());
         }
 
         let prefix = self.prefix.clone().unwrap_or_default();
-        let start_index = self.cursor.unwrap_or(self.history().len());
+        let start_index = self.cursor.unwrap_or(self.history(cx).len());
 
         for i in (0..start_index).rev() {
             if self
-                .history()
+                .history(cx)
                 .get(i)
                 .is_some_and(|e| e.starts_with(&prefix))
             {
                 self.cursor = Some(i);
-                return self.history().get(i).map(|s| s.as_str());
+                return self.history(cx).get(i).map(|s| s.as_str());
             }
         }
         None
     }
 
-    fn next(&mut self, current_query: &str) -> Option<&str> {
-        let selected = self.validate_cursor(current_query)?;
+    fn next(&mut self, current_query: &str, cx: &App) -> Option<&str> {
+        let selected = self.validate_cursor(current_query, cx)?;
         let prefix = self.prefix.clone().unwrap_or_default();
 
-        for i in (selected + 1)..self.history().len() {
+        for i in (selected + 1)..self.history(cx).len() {
             if self
-                .history()
+                .history(cx)
                 .get(i)
                 .is_some_and(|e| e.starts_with(&prefix))
             {
                 self.cursor = Some(i);
-                return self.history().get(i).map(|s| s.as_str());
+                return self.history(cx).get(i).map(|s| s.as_str());
             }
         }
         None
@@ -338,8 +346,8 @@ impl CommandPaletteDelegate {
     /// Hit count for each command in the palette.
     /// We only account for commands triggered directly via command palette and not by e.g. keystrokes because
     /// if a user already knows a keystroke for a command, they are unlikely to use a command palette to look for it.
-    fn hit_counts(&self) -> HashMap<String, u16> {
-        if let Ok(commands) = COMMAND_PALETTE_HISTORY.list_commands_used() {
+    fn hit_counts(&self, cx: &App) -> HashMap<String, u16> {
+        if let Ok(commands) = CommandPaletteDB::global(cx).list_commands_used() {
             commands
                 .into_iter()
                 .map(|command| (command.command_name, command.invocations))
@@ -378,21 +386,25 @@ impl PickerDelegate for CommandPaletteDelegate {
         direction: Direction,
         query: &str,
         _window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Option<String> {
         match direction {
             Direction::Up => {
                 let should_use_history =
                     self.selected_ix == 0 || self.query_history.is_navigating();
                 if should_use_history {
-                    if let Some(query) = self.query_history.previous(query).map(|s| s.to_string()) {
+                    if let Some(query) = self
+                        .query_history
+                        .previous(query, cx)
+                        .map(|s| s.to_string())
+                    {
                         return Some(query);
                     }
                 }
             }
             Direction::Down => {
                 if self.query_history.is_navigating() {
-                    if let Some(query) = self.query_history.next(query).map(|s| s.to_string()) {
+                    if let Some(query) = self.query_history.next(query, cx).map(|s| s.to_string()) {
                         return Some(query);
                     } else {
                         let prefix = self.query_history.prefix.take().unwrap_or_default();
@@ -444,7 +456,7 @@ impl PickerDelegate for CommandPaletteDelegate {
 
         let task = cx.background_spawn({
             let mut commands = self.all_commands.clone();
-            let hit_counts = self.hit_counts();
+            let hit_counts = self.hit_counts(cx);
             let executor = cx.background_executor().clone();
             let query = normalize_action_query(query_str);
             let query_for_link = query_str.to_string();
@@ -510,7 +522,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         .delegate
                         .matches_updated(query, commands, matches, intercept_result, cx)
                 })
-                .log_err();
+                .ok();
         })
     }
 
@@ -543,7 +555,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
         self.command_palette
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -566,7 +578,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
 
         if !self.latest_query.is_empty() {
-            self.query_history.add(self.latest_query.clone());
+            self.query_history.add(self.latest_query.clone(), cx);
             self.query_history.reset_cursor();
         }
 
@@ -581,9 +593,9 @@ impl PickerDelegate for CommandPaletteDelegate {
         self.commands.clear();
         let command_name = command.name.clone();
         let latest_query = self.latest_query.clone();
+        let db = CommandPaletteDB::global(cx);
         cx.background_spawn(async move {
-            COMMAND_PALETTE_HISTORY
-                .write_command_invocation(command_name, latest_query)
+            db.write_command_invocation(command_name, latest_query)
                 .await
         })
         .detach_and_log_err(cx);
@@ -723,7 +735,7 @@ mod tests {
     use language::Point;
     use project::Project;
     use settings::KeymapFile;
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace, Workspace};
 
     #[test]
     fn test_humanize_action_name() {
@@ -767,18 +779,25 @@ mod tests {
             normalize_action_query("editor: :GoToDefinition"),
             "editor: :GoToDefinition"
         );
+        assert_eq!(
+            normalize_action_query("terminal_panel::Toggle"),
+            "terminal panel:Toggle"
+        );
+        assert_eq!(
+            normalize_action_query("project_panel::ToggleFocus"),
+            "project panel:ToggleFocus"
+        );
     }
 
     #[gpui::test]
     async fn test_command_palette(cx: &mut TestAppContext) {
-        persistence::COMMAND_PALETTE_HISTORY
-            .clear_all()
-            .await
-            .unwrap();
         let app_state = init_test(cx);
+        let db = cx.update(|cx| persistence::CommandPaletteDB::global(cx));
+        db.clear_all().await.unwrap();
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -848,8 +867,9 @@ mod tests {
     async fn test_normalized_matches(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let editor = cx.new_window_entity(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -884,8 +904,9 @@ mod tests {
     async fn test_go_to_line(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         cx.simulate_keystrokes("cmd-n");
 
@@ -922,7 +943,7 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
             go_to_line::init(cx);
@@ -974,8 +995,9 @@ mod tests {
     async fn test_history_navigation_basic(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["backspace", "select all"], cx);
 
@@ -1017,8 +1039,9 @@ mod tests {
     async fn test_history_mode_exit_on_typing(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["backspace"], cx);
 
@@ -1041,8 +1064,9 @@ mod tests {
     async fn test_history_navigation_with_suggestions(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["editor: close", "editor: open"], cx);
 
@@ -1083,8 +1107,9 @@ mod tests {
     async fn test_history_prefix_search(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(
             &workspace,
@@ -1136,8 +1161,9 @@ mod tests {
     async fn test_history_prefix_search_no_matches(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette =
             open_palette_with_history(&workspace, &["open file", "backspace", "select all"], cx);
@@ -1158,8 +1184,9 @@ mod tests {
     async fn test_history_empty_prefix_searches_all(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let palette = open_palette_with_history(&workspace, &["alpha", "beta", "gamma"], cx);
 

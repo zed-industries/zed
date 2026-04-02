@@ -45,3 +45,4 @@ gpui = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+theme_settings.workspace = true

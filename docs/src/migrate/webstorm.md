@@ -1,3 +1,8 @@
+---
+title: How to Migrate from WebStorm to Zed
+description: "Guide for migrating from WebStorm to Zed, including settings and keybindings."
+---
+
 # How to Migrate from WebStorm to Zed
 
 This guide covers how to set up Zed if you're coming from WebStorm, including keybindings, settings, and the differences you should expect as a JavaScript/TypeScript developer.
@@ -32,28 +37,15 @@ This opens the current directory in Zed.
 
 If you're coming from WebStorm, the fastest way to feel at home is to use the JetBrains keymap. During onboarding, you can select it as your base keymap. If you missed that step, you can change it anytime:
 
-1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
+1. Open Settings with {#kb zed::OpenSettings}
 2. Search for `Base Keymap`
 3. Select `JetBrains`
 
-Or add this directly to your `settings.json`:
-
-```json
-{
-  "base_keymap": "JetBrains"
-}
-```
-
-This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
+This maps familiar shortcuts like {#kb:jetbrains project_symbols::Toggle} for Go to Class and {#kb:jetbrains command_palette::Toggle} for Find Action.
 
 ## Set Up Editor Preferences
 
-You can configure settings manually in the Settings Editor.
-
-To edit your settings:
-
-1. `Cmd+,` to open the Settings Editor.
-2. Run `zed: open settings` in the Command Palette.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run `zed: open settings file` from the Command Palette to edit your settings file directly.
 
 Settings WebStorm users typically configure first:
 
@@ -71,7 +63,7 @@ Zed also supports per-project settings. Create a `.zed/settings.json` file in yo
 
 ## Open or Create a Project
 
-After setup, press `Cmd+Shift+O` (with JetBrains keymap) to open a folder. This becomes your workspace in Zed. Unlike WebStorm, there's no project configuration wizard, no framework selection dialog, and no project structure setup required.
+After setup, use {#kb:jetbrains file_finder::Toggle} to open a folder. This becomes your workspace in Zed. Unlike WebStorm, there's no project configuration wizard, no framework selection dialog, and no project structure setup required.
 
 To start a new project, create a directory using your terminal or file manager, then open it in Zed. The editor will treat that folder as the root of your project. For new projects, you'd typically run `npm init`, `pnpm create`, or your framework's CLI tool first, then open the resulting folder in Zed.
 
@@ -80,60 +72,53 @@ You can also launch Zed from the terminal inside any folder with:
 
 Once inside a project:
 
-- Use `Cmd+Shift+O` or `Cmd+E` to jump between files quickly (like WebStorm's "Recent Files")
-- Use `Cmd+Shift+A` or `Shift Shift` to open the Command Palette (like WebStorm's "Search Everywhere")
-- Use `Cmd+O` to search for symbols (like WebStorm's "Go to Symbol")
+- Use {#kb:jetbrains file_finder::Toggle} to jump between files quickly (like WebStorm's "Recent Files")
+- Use {#kb:jetbrains command_palette::Toggle} to open the Command Palette (like WebStorm's "Search Everywhere")
+- Use {#kb:jetbrains project_symbols::Toggle} to search for symbols (like WebStorm's "Go to Symbol")
 
-Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Toggle it with `Cmd+1` (just like WebStorm's Project tool window).
+Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with {#kb:jetbrains project_panel::ToggleFocus} (just like WebStorm's Project tool window).
 
 ## Differences in Keybindings
 
-If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference for how Zed compares to WebStorm.
+If you chose the JetBrains keymap during onboarding, most of your shortcuts should already feel familiar. Here's a quick reference of common actions and their keybindings with the JetBrains keymap active.
 
-### Common Shared Keybindings
+### Common Keybindings
 
-| Action                        | Shortcut                |
-| ----------------------------- | ----------------------- |
-| Search Everywhere             | `Shift Shift`           |
-| Find Action / Command Palette | `Cmd + Shift + A`       |
-| Go to File                    | `Cmd + Shift + O`       |
-| Go to Symbol                  | `Cmd + O`               |
-| Recent Files                  | `Cmd + E`               |
-| Go to Definition              | `Cmd + B`               |
-| Find Usages                   | `Alt + F7`              |
-| Rename Symbol                 | `Shift + F6`            |
-| Reformat Code                 | `Cmd + Alt + L`         |
-| Toggle Project Panel          | `Cmd + 1`               |
-| Toggle Terminal               | `Alt + F12`             |
-| Duplicate Line                | `Cmd + D`               |
-| Delete Line                   | `Cmd + Backspace`       |
-| Move Line Up/Down             | `Shift + Alt + Up/Down` |
-| Expand/Shrink Selection       | `Alt + Up/Down`         |
-| Comment Line                  | `Cmd + /`               |
-| Go Back / Forward             | `Cmd + [` / `Cmd + ]`   |
-| Toggle Breakpoint             | `Ctrl + F8`             |
-
-### Different Keybindings (WebStorm → Zed)
-
-| Action                 | WebStorm    | Zed (JetBrains keymap)   |
-| ---------------------- | ----------- | ------------------------ |
-| File Structure         | `Cmd + F12` | `Cmd + F12` (outline)    |
-| Navigate to Next Error | `F2`        | `F2`                     |
-| Run                    | `Ctrl + R`  | `Ctrl + Alt + R` (tasks) |
-| Debug                  | `Ctrl + D`  | `Alt + Shift + F9`       |
-| Stop                   | `Cmd + F2`  | `Ctrl + F2`              |
+| Action                 | Zed Keybinding                                  |
+| ---------------------- | ----------------------------------------------- |
+| Command Palette        | {#kb:jetbrains command_palette::Toggle}         |
+| Go to File             | {#kb:jetbrains file_finder::Toggle}             |
+| Go to Symbol           | {#kb:jetbrains project_symbols::Toggle}         |
+| File Outline           | {#kb:jetbrains outline::Toggle}                 |
+| Go to Definition       | {#kb:jetbrains editor::GoToDefinition}          |
+| Find Usages            | {#kb:jetbrains editor::FindAllReferences}       |
+| Rename Symbol          | {#kb:jetbrains editor::Rename}                  |
+| Reformat Code          | {#kb:jetbrains editor::Format}                  |
+| Toggle Project Panel   | {#kb:jetbrains project_panel::ToggleFocus}      |
+| Toggle Terminal        | {#kb:jetbrains terminal_panel::Toggle}          |
+| Duplicate Line         | {#kb:jetbrains editor::DuplicateSelection}      |
+| Delete Line            | {#kb:jetbrains editor::DeleteLine}              |
+| Move Line Up           | {#kb:jetbrains editor::MoveLineUp}              |
+| Move Line Down         | {#kb:jetbrains editor::MoveLineDown}            |
+| Expand Selection       | {#kb:jetbrains editor::SelectLargerSyntaxNode}  |
+| Shrink Selection       | {#kb:jetbrains editor::SelectSmallerSyntaxNode} |
+| Comment Line           | {#kb:jetbrains editor::ToggleComments}          |
+| Go Back                | {#kb:jetbrains pane::GoBack}                    |
+| Go Forward             | {#kb:jetbrains pane::GoForward}                 |
+| Toggle Breakpoint      | {#kb:jetbrains editor::ToggleBreakpoint}        |
+| Navigate to Next Error | {#kb:jetbrains editor::GoToDiagnostic}          |
 
 ### Unique to Zed
 
-| Action            | Shortcut                   | Notes                          |
-| ----------------- | -------------------------- | ------------------------------ |
-| Toggle Right Dock | `Cmd + R`                  | Assistant panel, notifications |
-| Split Panes       | `Cmd + K`, then arrow keys | Create splits in any direction |
+| Action            | Keybinding                       | Notes                                                         |
+| ----------------- | -------------------------------- | ------------------------------------------------------------- |
+| Toggle Right Dock | {#kb workspace::ToggleRightDock} | Assistant panel, notifications                                |
+| Split Pane Right  | {#kb pane::SplitRight}           | Use other arrow keys to create splits in different directions |
 
 ### How to Customize Keybindings
 
-- Open the Command Palette (`Cmd+Shift+A` or `Shift Shift`)
-- Run `Zed: Open Keymap Editor`
+- Open the Command Palette ({#kb:jetbrains command_palette::Toggle})
+- Run `zed: open keymap`
 
 This opens a list of all available bindings. You can override individual shortcuts or remove conflicts.
 
@@ -151,9 +136,9 @@ WebStorm's index enables features like finding all usages across your entire cod
 
 **How to adapt:**
 
-- Search symbols across the project with `Cmd+O` (powered by the TypeScript language server)
-- Find files by name with `Cmd+Shift+O`
-- Use `Cmd+Shift+F` for text search—it stays fast even in large monorepos
+- Search symbols across the project with {#kb:jetbrains project_symbols::Toggle} (powered by the TypeScript language server)
+- Find files by name with {#kb:jetbrains file_finder::Toggle}
+- Use {#kb pane::DeploySearch} for text search—it stays fast even in large monorepos
 - Run `tsc --noEmit` or `eslint .` from the terminal when you need deeper project-wide analysis
 
 ### LSP vs. Native Language Intelligence
@@ -167,7 +152,7 @@ Zed uses the Language Server Protocol (LSP) for code intelligence. For JavaScrip
 - **ESLint** — Linting integration
 - **Prettier** — Code formatting (built-in)
 
-The TypeScript LSP experience is mature and robust. You get accurate completions, type checking, go-to-definition, and find-references. The experience is comparable to VS Code, which uses the same underlying TypeScript services.
+The TypeScript LSP experience is well-supported. You get accurate completions, type checking, go-to-definition, and find-references. The experience is comparable to VS Code, which uses the same underlying TypeScript services.
 
 Where you might notice differences:
 
@@ -177,10 +162,10 @@ Where you might notice differences:
 
 **How to adapt:**
 
-- Use `Alt+Enter` for available code actions—the list will vary by language server
+- Use {#kb:jetbrains editor::ToggleCodeActions} for available code actions—the list will vary by language server
 - Ensure your `tsconfig.json` is properly configured so the language server understands your project structure
 - Use Prettier for consistent formatting (it's enabled by default for JS/TS)
-- For code inspection similar to WebStorm's "Inspect Code," check the Diagnostics panel (`Cmd+6`)—ESLint and TypeScript together catch many of the same issues
+- For code inspection similar to WebStorm's "Inspect Code," check the Diagnostics panel ({#kb:jetbrains diagnostics::Deploy})—ESLint and TypeScript together catch many of the same issues
 
 ### No Project Model
 
@@ -220,8 +205,8 @@ What this means in practice:
 ]
 ```
 
-- Use `Ctrl+Alt+R` to run tasks quickly
-- Lean on your terminal (`Alt+F12`) for anything tasks don't cover
+- Use {#kb:jetbrains task::Spawn} to run tasks quickly
+- Lean on your terminal ({#kb:jetbrains terminal_panel::Toggle}) for anything tasks don't cover
 
 ### No Framework Integration
 
@@ -231,8 +216,8 @@ Zed has none of this built-in. The TypeScript language server sees your code as 
 
 **How to adapt:**
 
-- Use grep and file search liberally. `Cmd+Shift+F` with a regex can find component definitions, route configurations, or API endpoints.
-- Rely on your language server's "find references" (`Alt+F7`) for navigation—it works, just without framework context
+- Use grep and file search liberally. {#kb pane::DeploySearch} with a regex can find component definitions, route configurations, or API endpoints.
+- Rely on your language server's "find references" ({#kb:jetbrains editor::FindAllReferences}) for navigation—it works, just without framework context
 - Consider using framework-specific CLI tools (`ng`, `next`, `vite`) from Zed's terminal
 - For React, JSX/TSX syntax and TypeScript types still provide good intelligence
 
@@ -240,16 +225,16 @@ Zed has none of this built-in. The TypeScript language server sees your code as 
 
 ### Tool Windows vs. Docks
 
-WebStorm organizes auxiliary views into numbered tool windows (Project = 1, npm = Alt+F11, Terminal = Alt+F12, etc.). Zed uses a similar concept called "docks":
+WebStorm organizes auxiliary views into numbered tool windows. Zed uses a similar concept called "docks":
 
-| WebStorm Tool Window | Zed Equivalent | Shortcut (JetBrains keymap) |
-| -------------------- | -------------- | --------------------------- |
-| Project (1)          | Project Panel  | `Cmd + 1`                   |
-| Git (9 or Cmd+0)     | Git Panel      | `Cmd + 0`                   |
-| Terminal (Alt+F12)   | Terminal Panel | `Alt + F12`                 |
-| Structure (7)        | Outline Panel  | `Cmd + 7`                   |
-| Problems (6)         | Diagnostics    | `Cmd + 6`                   |
-| Debug (5)            | Debug Panel    | `Cmd + 5`                   |
+| WebStorm Tool Window | Zed Equivalent | Zed Keybinding                             |
+| -------------------- | -------------- | ------------------------------------------ |
+| Project              | Project Panel  | {#kb:jetbrains project_panel::ToggleFocus} |
+| Git                  | Git Panel      | {#kb:jetbrains git_panel::ToggleFocus}     |
+| Terminal             | Terminal Panel | {#kb:jetbrains terminal_panel::Toggle}     |
+| Structure            | Outline Panel  | {#kb:jetbrains outline_panel::ToggleFocus} |
+| Problems             | Diagnostics    | {#kb:jetbrains diagnostics::Deploy}        |
+| Debug                | Debug Panel    | {#kb:jetbrains debug_panel::ToggleFocus}   |
 
 Zed has three dock positions: left, bottom, and right. Panels can be moved between docks by dragging or through settings.
 
@@ -260,10 +245,10 @@ Note that there's no dedicated npm tool window in Zed. Use the terminal or defin
 Both WebStorm and Zed offer integrated debugging for JavaScript and TypeScript:
 
 - Zed uses `vscode-js-debug` (the same debug adapter that VS Code uses)
-- Set breakpoints with `Ctrl+F8`
-- Start debugging with `Alt+Shift+F9` or press `F4` and select a debug target
-- Step through code with `F7` (step into), `F8` (step over), `Shift+F8` (step out)
-- Continue execution with `F9`
+- Set breakpoints with {#kb:jetbrains editor::ToggleBreakpoint}
+- Start debugging with {#kb:jetbrains debugger::Start}
+- Step through code with {#kb:jetbrains debugger::StepInto} (step into), {#kb:jetbrains debugger::StepOver} (step over), {#kb:jetbrains debugger::StepOut} (step out)
+- Continue execution with {#kb:jetbrains debugger::Continue}
 
 Zed can debug:
 
@@ -320,13 +305,12 @@ The test output appears in the terminal panel. For Jest, use `--verbose` for det
 
 ### Extensions vs. Plugins
 
-WebStorm has a plugin ecosystem covering additional language support, themes, and tool integrations.
+WebStorm has a plugin catalog covering additional language support, themes, and tool integrations.
 
-Zed's extension ecosystem is smaller and more focused:
+Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes
-- Slash commands for AI
 - Context servers
 
 Several features that require plugins in WebStorm are built into Zed:
@@ -367,7 +351,7 @@ If you're used to AI assistants in WebStorm (like GitHub Copilot, JetBrains AI A
 
 ### Configuring GitHub Copilot
 
-1. Open Settings with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows)
+1. Open Settings with {#kb zed::OpenSettings}
 2. Navigate to **AI → Edit Predictions**
 3. Click **Configure** next to "Configure Providers"
 4. Under **GitHub Copilot**, click **Sign in to GitHub**
@@ -378,9 +362,9 @@ Once signed in, just start typing. Zed will offer suggestions inline for you to 
 
 To use other AI models in Zed, you have several options:
 
-- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/accounts.html) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
+- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
 - Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
-- Use [external agents like Claude Code](https://zed.dev/docs/ai/external-agents.html)
+- Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
 
 ## Advanced Config and Productivity Tweaks
 
@@ -394,7 +378,7 @@ Here are a few useful tweaks for JavaScript/TypeScript developers:
 "format_on_save": "on"
 ```
 
-**Configure Prettier as the default formatter:**
+**Configure Prettier as the default formatter** (requires manual JSON editing):
 
 ```json
 {
@@ -407,7 +391,7 @@ Here are a few useful tweaks for JavaScript/TypeScript developers:
 }
 ```
 
-**Enable ESLint code actions:**
+**Enable ESLint code actions** (requires manual JSON editing):
 
 ```json
 {

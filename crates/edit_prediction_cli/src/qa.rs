@@ -82,22 +82,19 @@ pub fn build_prompt(example: &Example) -> Result<String> {
         extract_cursor_excerpt_from_example(example).context("failed to extract cursor excerpt")?;
 
     let mut edit_history = String::new();
-    for event in &prompt_inputs.edit_history {
-        match event.as_ref() {
-            zeta_prompt::Event::BufferChange {
-                path,
-                old_path,
-                diff,
-                predicted: _,
-                in_open_source_repo: _,
-            } => {
-                edit_history.push_str(&format!("--- a{}\n", old_path.display()));
-                edit_history.push_str(&format!("+++ b{}\n", path.display()));
-                let diff_word_diff = unified_to_word_diff(diff);
-                edit_history.push_str(&diff_word_diff);
-                edit_history.push_str("\n\n");
-            }
-        }
+    for event in &prompt_inputs.events {
+        let zeta_prompt::Event::BufferChange {
+            path,
+            old_path,
+            diff,
+            predicted: _,
+            in_open_source_repo: _,
+        } = event.as_ref();
+        edit_history.push_str(&format!("--- a{}\n", old_path.display()));
+        edit_history.push_str(&format!("+++ b{}\n", path.display()));
+        let diff_word_diff = unified_to_word_diff(&diff);
+        edit_history.push_str(&diff_word_diff);
+        edit_history.push_str("\n\n");
     }
 
     let prompt_template = crate::prompt_assets::get_prompt("qa.md");

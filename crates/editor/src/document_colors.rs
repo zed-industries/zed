@@ -8,7 +8,7 @@ use language::point_from_lsp;
 use multi_buffer::Anchor;
 use project::{DocumentColor, InlayId};
 use settings::Settings as _;
-use text::{Bias, BufferId, OffsetRangeExt as _};
+use text::{Bias, BufferId};
 use ui::{App, Context, Window};
 use util::post_inc;
 
@@ -139,13 +139,13 @@ impl LspColorData {
 }
 
 impl Editor {
-    pub(super) fn refresh_colors_for_visible_range(
+    pub(super) fn refresh_document_colors(
         &mut self,
         buffer_id: Option<BufferId>,
         _: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() {
+        if !self.lsp_data_enabled() {
             return;
         }
         let Some(project) = self.project.as_ref() else {
@@ -160,9 +160,9 @@ impl Editor {
         }
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
+            .visible_buffers(cx)
+            .into_iter()
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
@@ -184,9 +184,9 @@ impl Editor {
                         buffers_to_query
                             .into_iter()
                             .filter_map(|buffer| {
-                                let buffer_id = buffer.read(cx).remote_id();
+                                let buffer_snapshot = buffer.read(cx).snapshot();
                                 let colors_task = lsp_store.document_colors(buffer, cx)?;
-                                Some(async move { (buffer_id, colors_task.await) })
+                                Some(async move { (buffer_snapshot, colors_task.await) })
                             })
                             .collect::<Vec<_>>()
                     })
@@ -200,40 +200,21 @@ impl Editor {
             if all_colors.is_empty() {
                 return;
             }
-            let Ok((multi_buffer_snapshot, editor_excerpts)) = editor.update(cx, |editor, cx| {
-                let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                let editor_excerpts = multi_buffer_snapshot.excerpts().fold(
-                    HashMap::default(),
-                    |mut acc, (excerpt_id, buffer_snapshot, excerpt_range)| {
-                        let excerpt_data = acc
-                            .entry(buffer_snapshot.remote_id())
-                            .or_insert_with(Vec::new);
-                        let excerpt_point_range =
-                            excerpt_range.context.to_point_utf16(buffer_snapshot);
-                        excerpt_data.push((
-                            excerpt_id,
-                            buffer_snapshot.clone(),
-                            excerpt_point_range,
-                        ));
-                        acc
-                    },
-                );
-                (multi_buffer_snapshot, editor_excerpts)
-            }) else {
+            let Some(multi_buffer_snapshot) = editor
+                .update(cx, |editor, cx| editor.buffer.read(cx).snapshot(cx))
+                .ok()
+            else {
                 return;
             };
 
             let mut new_editor_colors: HashMap<BufferId, Vec<(Range<Anchor>, DocumentColor)>> =
                 HashMap::default();
-            for (buffer_id, colors) in all_colors {
-                let Some(excerpts) = editor_excerpts.get(&buffer_id) else {
-                    continue;
-                };
+            for (buffer_snapshot, colors) in all_colors {
                 match colors {
                     Ok(colors) => {
                         if colors.colors.is_empty() {
                             new_editor_colors
-                                .entry(buffer_id)
+                                .entry(buffer_snapshot.remote_id())
                                 .or_insert_with(Vec::new)
                                 .clear();
                         } else {
@@ -241,41 +222,33 @@ impl Editor {
                                 let color_start = point_from_lsp(color.lsp_range.start);
                                 let color_end = point_from_lsp(color.lsp_range.end);
 
-                                for (excerpt_id, buffer_snapshot, excerpt_range) in excerpts {
-                                    if !excerpt_range.contains(&color_start.0)
-                                        || !excerpt_range.contains(&color_end.0)
-                                    {
-                                        continue;
-                                    }
-                                    let start = buffer_snapshot.anchor_before(
-                                        buffer_snapshot.clip_point_utf16(color_start, Bias::Left),
-                                    );
-                                    let end = buffer_snapshot.anchor_after(
-                                        buffer_snapshot.clip_point_utf16(color_end, Bias::Right),
-                                    );
-                                    let Some(range) = multi_buffer_snapshot
-                                        .anchor_range_in_excerpt(*excerpt_id, start..end)
-                                    else {
-                                        continue;
-                                    };
+                                let Some(range) = multi_buffer_snapshot
+                                    .buffer_anchor_range_to_anchor_range(
+                                        buffer_snapshot.anchor_range_outside(
+                                            buffer_snapshot
+                                                .clip_point_utf16(color_start, Bias::Left)
+                                                ..buffer_snapshot
+                                                    .clip_point_utf16(color_end, Bias::Right),
+                                        ),
+                                    )
+                                else {
+                                    continue;
+                                };
 
-                                    let new_buffer_colors =
-                                        new_editor_colors.entry(buffer_id).or_insert_with(Vec::new);
+                                let new_buffer_colors = new_editor_colors
+                                    .entry(buffer_snapshot.remote_id())
+                                    .or_insert_with(Vec::new);
 
-                                    let (Ok(i) | Err(i)) =
-                                        new_buffer_colors.binary_search_by(|(probe, _)| {
-                                            probe
-                                                .start
-                                                .cmp(&range.start, &multi_buffer_snapshot)
-                                                .then_with(|| {
-                                                    probe
-                                                        .end
-                                                        .cmp(&range.end, &multi_buffer_snapshot)
-                                                })
-                                        });
-                                    new_buffer_colors.insert(i, (range, color));
-                                    break;
-                                }
+                                let (Ok(i) | Err(i)) =
+                                    new_buffer_colors.binary_search_by(|(probe, _)| {
+                                        probe
+                                            .start
+                                            .cmp(&range.start, &multi_buffer_snapshot)
+                                            .then_with(|| {
+                                                probe.end.cmp(&range.end, &multi_buffer_snapshot)
+                                            })
+                                    });
+                                new_buffer_colors.insert(i, (range, color));
                             }
                         }
                     }
@@ -415,14 +388,14 @@ mod tests {
     };
 
     use futures::StreamExt;
-    use gpui::{Rgba, TestAppContext, VisualTestContext};
+    use gpui::{Rgba, TestAppContext};
     use language::FakeLspAdapter;
     use languages::rust_lang;
     use project::{FakeFs, Project};
     use serde_json::json;
     use util::{path, rel_path::rel_path};
     use workspace::{
-        CloseActiveItem, MoveItemToPaneInDirection, OpenOptions,
+        CloseActiveItem, MoveItemToPaneInDirection, MultiWorkspace, OpenOptions,
         item::{Item as _, SaveOptions},
     };
 
@@ -460,9 +433,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-        let workspace =
-            cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
-        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -490,7 +463,7 @@ mod tests {
         );
 
         let editor = workspace
-            .update(cx, |workspace, window, cx| {
+            .update_in(cx, |workspace, window, cx| {
                 workspace.open_abs_path(
                     PathBuf::from(path!("/a/first.rs")),
                     OpenOptions::default(),
@@ -498,7 +471,6 @@ mod tests {
                     cx,
                 )
             })
-            .unwrap()
             .await
             .unwrap()
             .downcast::<Editor>()
@@ -579,53 +551,49 @@ mod tests {
         });
 
         // opening another file in a split should not influence the LSP query counter
-        workspace
-            .update(cx, |workspace, window, cx| {
-                assert_eq!(
-                    workspace.panes().len(),
-                    1,
-                    "Should have one pane with one editor"
-                );
-                workspace.move_item_to_pane_in_direction(
-                    &MoveItemToPaneInDirection {
-                        direction: workspace::SplitDirection::Right,
-                        focus: false,
-                        clone: true,
-                    },
-                    window,
-                    cx,
-                );
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            assert_eq!(
+                workspace.panes().len(),
+                1,
+                "Should have one pane with one editor"
+            );
+            workspace.move_item_to_pane_in_direction(
+                &MoveItemToPaneInDirection {
+                    direction: workspace::SplitDirection::Right,
+                    focus: false,
+                    clone: true,
+                },
+                window,
+                cx,
+            );
+        });
         cx.run_until_parked();
-        workspace
-            .update(cx, |workspace, _, cx| {
-                let panes = workspace.panes();
-                assert_eq!(panes.len(), 2, "Should have two panes after splitting");
-                for pane in panes {
-                    let editor = pane
-                        .read(cx)
-                        .active_item()
-                        .and_then(|item| item.downcast::<Editor>())
-                        .expect("Should have opened an editor in each split");
-                    let editor_file = editor
-                        .read(cx)
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                        .expect("test deals with singleton buffers")
-                        .read(cx)
-                        .file()
-                        .expect("test buffese should have a file")
-                        .path();
-                    assert_eq!(
-                        editor_file.as_ref(),
-                        rel_path("first.rs"),
-                        "Both editors should be opened for the same file"
-                    )
-                }
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, _, cx| {
+            let panes = workspace.panes();
+            assert_eq!(panes.len(), 2, "Should have two panes after splitting");
+            for pane in panes {
+                let editor = pane
+                    .read(cx)
+                    .active_item()
+                    .and_then(|item| item.downcast::<Editor>())
+                    .expect("Should have opened an editor in each split");
+                let editor_file = editor
+                    .read(cx)
+                    .buffer()
+                    .read(cx)
+                    .as_singleton()
+                    .expect("test deals with singleton buffers")
+                    .read(cx)
+                    .file()
+                    .expect("test buffese should have a file")
+                    .path();
+                assert_eq!(
+                    editor_file.as_ref(),
+                    rel_path("first.rs"),
+                    "Both editors should be opened for the same file"
+                )
+            }
+        });
 
         cx.executor().advance_clock(Duration::from_millis(500));
         let save = editor.update_in(cx, |editor, window, cx| {
@@ -652,54 +620,44 @@ mod tests {
         );
 
         drop(editor);
-        let close = workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.close_active_item(&CloseActiveItem::default(), window, cx)
-                })
+        let close = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
             })
-            .unwrap();
+        });
         close.await.unwrap();
-        let close = workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.close_active_item(&CloseActiveItem::default(), window, cx)
-                })
+        let close = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.close_active_item(&CloseActiveItem::default(), window, cx)
             })
-            .unwrap();
+        });
         close.await.unwrap();
         assert_eq!(
             2,
             requests_made.load(atomic::Ordering::Acquire),
             "After saving and closing all editors, no extra requests should be made"
         );
-        workspace
-            .update(cx, |workspace, _, cx| {
-                assert!(
-                    workspace.active_item(cx).is_none(),
-                    "Should close all editors"
-                )
-            })
-            .unwrap();
+        workspace.update_in(cx, |workspace, _, cx| {
+            assert!(
+                workspace.active_item(cx).is_none(),
+                "Should close all editors"
+            )
+        });
 
-        workspace
-            .update(cx, |workspace, window, cx| {
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.navigate_backward(&workspace::GoBack, window, cx);
-                })
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.navigate_backward(&workspace::GoBack, window, cx);
             })
-            .unwrap();
+        });
         cx.executor().advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
         cx.run_until_parked();
-        let editor = workspace
-            .update(cx, |workspace, _, cx| {
-                workspace
-                    .active_item(cx)
-                    .expect("Should have reopened the editor again after navigating back")
-                    .downcast::<Editor>()
-                    .expect("Should be an editor")
-            })
-            .unwrap();
+        let editor = workspace.update_in(cx, |workspace, _, cx| {
+            workspace
+                .active_item(cx)
+                .expect("Should have reopened the editor again after navigating back")
+                .downcast::<Editor>()
+                .expect("Should be an editor")
+        });
 
         assert_eq!(
             2,

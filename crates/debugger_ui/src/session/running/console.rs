@@ -7,8 +7,8 @@ use anyhow::Result;
 use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
-    HighlightKey, MultiBufferOffset, SizingBehavior,
+    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, HighlightKey,
+    MultiBufferOffset, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -26,7 +26,8 @@ use project::{
 use settings::Settings;
 use std::fmt::Write;
 use std::{ops::Range, rc::Rc, usize};
-use theme::{Theme, ThemeSettings};
+use theme::Theme;
+use theme_settings::ThemeSettings;
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
 
@@ -251,7 +252,7 @@ impl Console {
                         let range = buffer.anchor_after(MultiBufferOffset(range.start))
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
                         let color_fn = color_fetcher(color);
-                        console.highlight_background_key(
+                        console.highlight_background(
                             HighlightKey::ConsoleAnsiHighlight(start_offset),
                             &[range],
                             move |_, theme| color_fn(theme),
@@ -303,7 +304,8 @@ impl Console {
     }
 
     fn previous_query(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
-        let prev = self.history.previous(&mut self.cursor);
+        let current_query = self.query_bar.read(cx).text(cx);
+        let prev = self.history.previous(&mut self.cursor, &current_query);
         if let Some(prev) = prev {
             self.query_bar.update(cx, |editor, cx| {
                 editor.set_text(prev, window, cx);
@@ -526,7 +528,6 @@ struct ConsoleQueryBarCompletionProvider(WeakEntity<Console>);
 impl CompletionProvider for ConsoleQueryBarCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,

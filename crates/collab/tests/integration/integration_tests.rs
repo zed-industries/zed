@@ -3,10 +3,8 @@ use crate::{
     room_participants,
 };
 use anyhow::{Result, anyhow};
-use assistant_slash_command::SlashCommandWorkingSet;
-use assistant_text_thread::TextThreadStore;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
-use call::{ActiveCall, ParticipantLocation, Room, room};
+use call::{ActiveCall, Room, room};
 use client::{RECEIVE_TIMEOUT, User};
 use collab::rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT};
 use collections::{BTreeMap, HashMap, HashSet};
@@ -34,7 +32,6 @@ use project::{
     lsp_store::{FormatTrigger, LspFormatTarget, SymbolLocation},
     search::{SearchQuery, SearchResult},
 };
-use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
 use settings::{LanguageServerFormatterSpecifier, PrettierSettingsContent, SettingsStore};
@@ -51,7 +48,7 @@ use std::{
 };
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path, uri};
-use workspace::Pane;
+use workspace::{Pane, ParticipantLocation};
 
 #[ctor::ctor]
 fn init_logger() {
@@ -1787,6 +1784,7 @@ async fn test_project_reconnect(
 
     // While disconnected, close project 3
     cx_a.update(|_| drop(project_a3));
+    executor.run_until_parked();
 
     // Client B reconnects. They re-join the room and the remaining shared project.
     server.allow_connections();
@@ -2379,11 +2377,11 @@ async fn test_propagate_saves_and_fs_changes(
         .unwrap();
 
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
-        assert_eq!(buffer.language().unwrap().name(), "Rust".into());
+        assert_eq!(buffer.language().unwrap().name(), "Rust");
     });
     buffer_b.update(cx_b, |buf, cx| buf.edit([(0..0, "i-am-b, ")], None, cx));
     buffer_c.update(cx_c, |buf, cx| buf.edit([(0..0, "i-am-c, ")], None, cx));
@@ -2486,17 +2484,17 @@ async fn test_propagate_saves_and_fs_changes(
 
     buffer_a.read_with(cx_a, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     buffer_b.read_with(cx_b, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
         assert_eq!(buffer.file().unwrap().path().as_ref(), rel_path("file1.js"));
-        assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
+        assert_eq!(buffer.language().unwrap().name(), "JavaScript");
     });
 
     let new_buffer_a = project_a
@@ -6595,6 +6593,151 @@ async fn test_join_call_after_screen_was_shared(
     });
 }
 
+#[cfg(target_os = "linux")]
+#[gpui::test(iterations = 10)]
+async fn test_share_screen_wayland(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // User A calls user B.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+
+    // User B accepts.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    executor.run_until_parked();
+    incoming_call_b.next().await.unwrap().unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    let room_b = active_call_b.read_with(cx_b, |call, _| call.room().unwrap().clone());
+    executor.run_until_parked();
+
+    // User A shares their screen via the Wayland path.
+    let events_b = active_call_events(cx_b);
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room()
+                .unwrap()
+                .update(cx, |room, cx| room.share_screen_wayland(cx))
+        })
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+
+    // Room A is sharing and has a nonzero synthetic screen ID.
+    room_a.read_with(cx_a, |room, _| {
+        assert!(room.is_sharing_screen());
+        let screen_id = room.shared_screen_id();
+        assert!(screen_id.is_some(), "shared_screen_id should be Some");
+        assert_ne!(screen_id.unwrap(), 0, "synthetic ID must be nonzero");
+    });
+
+    // User B observes the remote screen sharing track.
+    assert_eq!(events_b.borrow().len(), 1);
+    if let call::room::Event::RemoteVideoTracksChanged { participant_id } =
+        events_b.borrow().first().unwrap()
+    {
+        assert_eq!(*participant_id, client_a.peer_id().unwrap());
+        room_b.read_with(cx_b, |room, _| {
+            assert_eq!(
+                room.remote_participants()[&client_a.user_id().unwrap()]
+                    .video_tracks
+                    .len(),
+                1
+            );
+        });
+    } else {
+        panic!("expected RemoteVideoTracksChanged event");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[gpui::test(iterations = 10)]
+async fn test_unshare_screen_wayland(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .make_contacts(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    // User A calls user B.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.invite(client_b.user_id().unwrap(), None, cx)
+        })
+        .await
+        .unwrap();
+
+    // User B accepts.
+    let mut incoming_call_b = active_call_b.read_with(cx_b, |call, _| call.incoming());
+    executor.run_until_parked();
+    incoming_call_b.next().await.unwrap().unwrap();
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+
+    let room_a = active_call_a.read_with(cx_a, |call, _| call.room().unwrap().clone());
+    executor.run_until_parked();
+
+    // User A shares their screen via the Wayland path.
+    active_call_a
+        .update(cx_a, |call, cx| {
+            call.room()
+                .unwrap()
+                .update(cx, |room, cx| room.share_screen_wayland(cx))
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    room_a.read_with(cx_a, |room, _| {
+        assert!(room.is_sharing_screen());
+    });
+
+    // User A stops sharing.
+    room_a
+        .update(cx_a, |room, cx| room.unshare_screen(true, cx))
+        .unwrap();
+    executor.run_until_parked();
+
+    // Room A is no longer sharing, screen ID is gone.
+    room_a.read_with(cx_a, |room, _| {
+        assert!(!room.is_sharing_screen());
+        assert!(room.shared_screen_id().is_none());
+    });
+}
+
 #[gpui::test]
 async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
     let mut server = TestServer::start(cx.executor().clone()).await;
@@ -6949,141 +7092,6 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 10)]
-async fn test_context_collaboration_with_reconnect(
-    executor: BackgroundExecutor,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    let mut server = TestServer::start(executor.clone()).await;
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    client_a.fs().insert_tree("/a", Default::default()).await;
-    let (project_a, _) = client_a.build_local_project("/a", cx_a).await;
-    let project_id = active_call_a
-        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-        .await
-        .unwrap();
-    let project_b = client_b.join_remote_project(project_id, cx_b).await;
-
-    // Client A sees that a guest has joined.
-    executor.run_until_parked();
-
-    project_a.read_with(cx_a, |project, _| {
-        assert_eq!(project.collaborators().len(), 1);
-    });
-    project_b.read_with(cx_b, |project, _| {
-        assert_eq!(project.collaborators().len(), 1);
-    });
-
-    let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let text_thread_store_a = cx_a
-        .update(|cx| {
-            TextThreadStore::new(
-                project_a.clone(),
-                prompt_builder.clone(),
-                Arc::new(SlashCommandWorkingSet::default()),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-    let text_thread_store_b = cx_b
-        .update(|cx| {
-            TextThreadStore::new(
-                project_b.clone(),
-                prompt_builder.clone(),
-                Arc::new(SlashCommandWorkingSet::default()),
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
-    // Client A creates a new chats.
-    let text_thread_a = text_thread_store_a.update(cx_a, |store, cx| store.create(cx));
-    executor.run_until_parked();
-
-    // Client B retrieves host's contexts and joins one.
-    let text_thread_b = text_thread_store_b
-        .update(cx_b, |store, cx| {
-            let host_text_threads = store.host_text_threads().collect::<Vec<_>>();
-            assert_eq!(host_text_threads.len(), 1);
-            store.open_remote(host_text_threads[0].id.clone(), cx)
-        })
-        .await
-        .unwrap();
-
-    // Host and guest make changes
-    text_thread_a.update(cx_a, |text_thread, cx| {
-        text_thread.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Host change\n")], None, cx)
-        })
-    });
-    text_thread_b.update(cx_b, |text_thread, cx| {
-        text_thread.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Guest change\n")], None, cx)
-        })
-    });
-    executor.run_until_parked();
-    assert_eq!(
-        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest change\nHost change\n"
-    );
-    assert_eq!(
-        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest change\nHost change\n"
-    );
-
-    // Disconnect client A and make some changes while disconnected.
-    server.disconnect_client(client_a.peer_id().unwrap());
-    server.forbid_connections();
-    text_thread_a.update(cx_a, |text_thread, cx| {
-        text_thread.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Host offline change\n")], None, cx)
-        })
-    });
-    text_thread_b.update(cx_b, |text_thread, cx| {
-        text_thread.buffer().update(cx, |buffer, cx| {
-            buffer.edit([(0..0, "Guest offline change\n")], None, cx)
-        })
-    });
-    executor.run_until_parked();
-    assert_eq!(
-        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Host offline change\nGuest change\nHost change\n"
-    );
-    assert_eq!(
-        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest offline change\nGuest change\nHost change\n"
-    );
-
-    // Allow client A to reconnect and verify that contexts converge.
-    server.allow_connections();
-    executor.advance_clock(RECEIVE_TIMEOUT);
-    assert_eq!(
-        text_thread_a.read_with(cx_a, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest offline change\nHost offline change\nGuest change\nHost change\n"
-    );
-    assert_eq!(
-        text_thread_b.read_with(cx_b, |text_thread, cx| text_thread.buffer().read(cx).text()),
-        "Guest offline change\nHost offline change\nGuest change\nHost change\n"
-    );
-
-    // Client A disconnects without being able to reconnect. Context B becomes readonly.
-    server.forbid_connections();
-    server.disconnect_client(client_a.peer_id().unwrap());
-    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
-    text_thread_b.read_with(cx_b, |text_thread, cx| {
-        assert!(text_thread.buffer().read(cx).read_only());
-    });
-}
-
 #[gpui::test]
 async fn test_remote_git_branches(
     executor: BackgroundExecutor,
@@ -7204,4 +7212,90 @@ async fn test_remote_git_branches(
     });
 
     assert_eq!(host_branch.name(), "totally-new-branch");
+}
+
+#[gpui::test]
+async fn test_guest_can_rejoin_shared_project_after_leaving_call(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "file.txt": "hello\n",
+            }),
+        )
+        .await;
+
+    let (project_a, _worktree_id) = client_a.build_local_project(path!("/project"), cx_a).await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let _project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    // third client joins call to prevent room from being torn down
+    let _project_c = client_c.join_remote_project(project_id, cx_c).await;
+    executor.run_until_parked();
+
+    let active_call_b = cx_b.read(ActiveCall::global);
+    active_call_b
+        .update(cx_b, |call, cx| call.hang_up(cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let user_id_b = client_b.current_user_id(cx_b).to_proto();
+    let active_call_a = cx_a.read(ActiveCall::global);
+    active_call_a
+        .update(cx_a, |call, cx| call.invite(user_id_b, None, cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+    let active_call_b = cx_b.read(ActiveCall::global);
+    active_call_b
+        .update(cx_b, |call, cx| call.accept_incoming(cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let _project_b2 = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    project_a.read_with(cx_a, |project, _| {
+        let guest_count = project
+            .collaborators()
+            .values()
+            .filter(|c| !c.is_host)
+            .count();
+
+        assert_eq!(
+            guest_count, 2,
+            "host should have exactly one guest collaborator after rejoin"
+        );
+    });
+
+    _project_b.read_with(cx_b, |project, _| {
+        assert_eq!(
+            project.client_subscriptions().len(),
+            0,
+            "We should clear all host subscriptions after leaving the project"
+        );
+    })
 }

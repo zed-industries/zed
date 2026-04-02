@@ -1,3 +1,8 @@
+---
+title: Uninstall
+description: "This guide covers how to uninstall Zed on different operating systems."
+---
+
 # Uninstall
 
 This guide covers how to uninstall Zed on different operating systems.
@@ -38,6 +43,9 @@ To completely remove all Zed configuration files and data:
    - `~/Library/Saved Application State/dev.zed.Zed.savedState`
    - `~/Library/Logs/Zed`
    - `~/Library/Caches/dev.zed.Zed`
+   - `~/Library/Caches/Zed`
+   - `~/.config/zed`
+   - `~/.local/state/Zed`
 
 ## Linux
 

@@ -589,6 +589,7 @@ pub struct Project {
     pub repositories: Vec<proto::UpdateRepository>,
     pub language_servers: Vec<LanguageServer>,
     pub path_style: PathStyle,
+    pub features: Vec<String>,
 }
 
 pub struct ProjectCollaborator {
@@ -732,6 +733,8 @@ fn db_status_to_proto(
         status: Some(proto::GitFileStatus {
             variant: Some(variant),
         }),
+        diff_stat_added: entry.lines_added.map(|v| v as u32),
+        diff_stat_deleted: entry.lines_deleted.map(|v| v as u32),
     })
 }
 

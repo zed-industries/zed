@@ -2,7 +2,7 @@ pub mod cursor_position;
 
 use cursor_position::UserCaretPosition;
 use editor::{
-    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToOffset, ToPoint,
+    Anchor, Editor, MultiBufferSnapshot, RowHighlightOptions, SelectionEffects, ToPoint,
     actions::Tab,
     scroll::{Autoscroll, ScrollOffset},
 };
@@ -11,6 +11,7 @@ use gpui::{
     Subscription, div, prelude::*,
 };
 use language::Buffer;
+use multi_buffer::MultiBufferRow;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
@@ -62,7 +63,7 @@ impl GoToLine {
                     return;
                 };
                 let editor = editor_handle.read(cx);
-                let Some((_, buffer, _)) = editor.active_excerpt(cx) else {
+                let Some(buffer) = editor.active_buffer(cx) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -92,9 +93,9 @@ impl GoToLine {
             let last_line = editor
                 .buffer()
                 .read(cx)
-                .excerpts_for_buffer(snapshot.remote_id(), cx)
-                .into_iter()
-                .map(move |(_, range)| text::ToPoint::to_point(&range.context.end, &snapshot).row)
+                .snapshot(cx)
+                .excerpts_for_buffer(snapshot.remote_id())
+                .map(move |range| text::ToPoint::to_point(&range.context.end, &snapshot).row)
                 .max()
                 .unwrap_or(0);
 
@@ -226,31 +227,14 @@ impl GoToLine {
         let row = query_row.saturating_sub(1);
         let character = query_char.unwrap_or(0).saturating_sub(1);
 
-        let start_offset = Point::new(row, 0).to_offset(snapshot);
-        const MAX_BYTES_IN_UTF_8: u32 = 4;
-        let max_end_offset = snapshot
-            .clip_point(
-                Point::new(row, character * MAX_BYTES_IN_UTF_8 + 1),
-                Bias::Right,
-            )
-            .to_offset(snapshot);
-
-        let mut chars_to_iterate = character;
-        let mut end_offset = start_offset;
-        'outer: for text_chunk in snapshot.text_for_range(start_offset..max_end_offset) {
-            let mut offset_increment = 0;
-            for c in text_chunk.chars() {
-                if chars_to_iterate == 0 {
-                    end_offset += offset_increment;
-                    break 'outer;
-                } else {
-                    chars_to_iterate -= 1;
-                    offset_increment += c.len_utf8();
-                }
-            }
-            end_offset += offset_increment;
-        }
-        Some(snapshot.anchor_before(snapshot.clip_offset(end_offset, Bias::Left)))
+        let target_multi_buffer_row = MultiBufferRow(row);
+        let (buffer_snapshot, target_in_buffer) = snapshot.point_to_buffer_point(Point::new(
+            target_multi_buffer_row.min(snapshot.max_row()).0,
+            0,
+        ))?;
+        let target_point =
+            buffer_snapshot.point_from_external_input(target_in_buffer.row, character);
+        Some(snapshot.anchor_before(target_point))
     }
 
     fn relative_line_from_query(&self, cx: &App) -> Option<i32> {
@@ -378,7 +362,7 @@ mod tests {
     use serde_json::json;
     use std::{num::NonZeroU32, sync::Arc, time::Duration};
     use util::{path, rel_path::rel_path};
-    use workspace::{AppState, Workspace};
+    use workspace::{AppState, MultiWorkspace, Workspace};
 
     #[gpui::test]
     async fn test_go_to_line_view_row_highlights(cx: &mut TestAppContext) {
@@ -407,8 +391,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -504,8 +489,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -589,8 +575,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -667,8 +654,9 @@ mod tests {
         .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
             let cursor_position = cx.new(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
@@ -843,8 +831,9 @@ mod tests {
             .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -900,8 +889,9 @@ mod tests {
             .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
@@ -955,8 +945,9 @@ mod tests {
             .await;
 
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let worktree_id = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()

@@ -15,20 +15,20 @@ use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity
 use itertools::Itertools;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
-    language_settings::language_settings,
+    language_settings::LanguageSettings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
 use paths::{debug_task_file_name, task_file_name};
 use settings::{InvalidSettingsError, parse_json_with_comments};
 use task::{
-    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskId, TaskTemplate,
+    DebugScenario, ResolvedTask, SharedTaskContext, TaskContext, TaskHook, TaskId, TaskTemplate,
     TaskTemplates, TaskVariables, VariableName,
 };
 use text::{BufferId, Point, ToPoint};
 use util::{NumericPrefixWithSuffix, ResultExt as _, post_inc, rel_path::RelPath};
 use worktree::WorktreeId;
 
-use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
+use crate::{git_store::GitStore, task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
 #[derive(Clone, Debug, Default)]
 pub struct DebugScenarioContext {
@@ -84,10 +84,20 @@ impl<T: InventoryContents> InventoryFor<T> {
         &self,
         worktree: WorktreeId,
     ) -> impl '_ + Iterator<Item = (TaskSourceKind, T)> {
-        self.worktree
-            .get(&worktree)
+        let worktree_dirs = self.worktree.get(&worktree);
+        let has_zed_dir = worktree_dirs
+            .map(|dirs| {
+                dirs.keys()
+                    .any(|dir| dir.file_name().is_some_and(|name| name == ".zed"))
+            })
+            .unwrap_or(false);
+
+        worktree_dirs
             .into_iter()
             .flatten()
+            .filter(move |(directory, _)| {
+                !(has_zed_dir && directory.file_name().is_some_and(|name| name == ".vscode"))
+            })
             .flat_map(|(directory, templates)| {
                 templates.iter().map(move |template| (directory, template))
             })
@@ -302,17 +312,15 @@ impl Inventory {
         let last_scheduled_scenarios = self.last_scheduled_scenarios.iter().cloned().collect();
 
         let adapter = task_contexts.location().and_then(|location| {
-            let (file, language) = {
-                let buffer = location.buffer.read(cx);
-                (buffer.file(), buffer.language())
-            };
-            let language_name = language.as_ref().map(|l| l.name());
-            let adapter = language_settings(language_name, file, cx)
+            let buffer = location.buffer.read(cx);
+            let adapter = LanguageSettings::for_buffer(&buffer, cx)
                 .debuggers
                 .first()
                 .map(SharedString::from)
                 .or_else(|| {
-                    language.and_then(|l| l.config().debuggers.first().map(SharedString::from))
+                    buffer
+                        .language()
+                        .and_then(|l| l.config().debuggers.first().map(SharedString::from))
                 });
             adapter.map(|adapter| (adapter, DapRegistry::global(cx).locators()))
         });
@@ -350,19 +358,18 @@ impl Inventory {
         label: &str,
         cx: &App,
     ) -> Task<Option<TaskTemplate>> {
-        let (buffer_worktree_id, file, language) = buffer
+        let (buffer_worktree_id, language) = buffer
+            .as_ref()
             .map(|buffer| {
                 let buffer = buffer.read(cx);
-                let file = buffer.file().cloned();
                 (
-                    file.as_ref().map(|file| file.worktree_id(cx)),
-                    file,
+                    buffer.file().as_ref().map(|file| file.worktree_id(cx)),
                     buffer.language().cloned(),
                 )
             })
-            .unwrap_or((None, None, None));
+            .unwrap_or((None, None));
 
-        let tasks = self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx);
+        let tasks = self.list_tasks(buffer, language, worktree_id.or(buffer_worktree_id), cx);
         let label = label.to_owned();
         cx.background_spawn(async move {
             tasks
@@ -378,7 +385,7 @@ impl Inventory {
     /// and global tasks last. No specific order inside source kinds groups.
     pub fn list_tasks(
         &self,
-        file: Option<Arc<dyn File>>,
+        buffer: Option<Entity<Buffer>>,
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
         cx: &App,
@@ -394,14 +401,18 @@ impl Inventory {
         });
         let language_tasks = language
             .filter(|language| {
-                language_settings(Some(language.name()), file.as_ref(), cx)
-                    .tasks
-                    .enabled
+                LanguageSettings::resolve(
+                    buffer.as_ref().map(|b| b.read(cx)),
+                    Some(&language.name()),
+                    cx,
+                )
+                .tasks
+                .enabled
             })
             .and_then(|language| {
                 language
                     .context_provider()
-                    .map(|provider| provider.associated_tasks(file, cx))
+                    .map(|provider| provider.associated_tasks(buffer, cx))
             });
         cx.background_spawn(async move {
             if let Some(t) = language_tasks {
@@ -435,7 +446,18 @@ impl Inventory {
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
-        let file = location.and_then(|location| location.buffer.read(cx).file().cloned());
+        let buffer = location.map(|location| location.buffer.clone());
+
+        let worktrees_with_zed_tasks: HashSet<WorktreeId> = self
+            .templates_from_settings
+            .worktree
+            .iter()
+            .filter(|(_, dirs)| {
+                dirs.keys()
+                    .any(|dir| dir.file_name().is_some_and(|name| name == ".zed"))
+            })
+            .map(|(id, _)| *id)
+            .collect();
 
         let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;
@@ -446,6 +468,14 @@ impl Inventory {
             .filter(|(task_kind, _)| {
                 if matches!(task_kind, TaskSourceKind::Language { .. }) {
                     Some(task_kind) == task_source_kind.as_ref()
+                } else if let TaskSourceKind::Worktree {
+                    id,
+                    directory_in_worktree: dir,
+                    ..
+                } = task_kind
+                {
+                    !(worktrees_with_zed_tasks.contains(id)
+                        && dir.file_name().is_some_and(|name| name == ".vscode"))
                 } else {
                     true
                 }
@@ -478,14 +508,18 @@ impl Inventory {
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
         let associated_tasks = language
             .filter(|language| {
-                language_settings(Some(language.name()), file.as_ref(), cx)
-                    .tasks
-                    .enabled
+                LanguageSettings::resolve(
+                    buffer.as_ref().map(|b| b.read(cx)),
+                    Some(&language.name()),
+                    cx,
+                )
+                .tasks
+                .enabled
             })
             .and_then(|language| {
                 language
                     .context_provider()
-                    .map(|provider| provider.associated_tasks(file, cx))
+                    .map(|provider| provider.associated_tasks(buffer, cx))
             });
         let worktree_tasks = worktree
             .into_iter()
@@ -608,6 +642,19 @@ impl Inventory {
     /// A similar may still resurface in `used_and_current_resolved_tasks` when its [`TaskTemplate`] is resolved again.
     pub fn delete_previously_used(&mut self, id: &TaskId) {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
+    }
+
+    /// Returns all task templates (worktree and global) that have at least one
+    /// hook in the provided set.
+    pub fn templates_with_hooks(
+        &self,
+        hooks: &HashSet<TaskHook>,
+        worktree: WorktreeId,
+    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
+        self.worktree_templates_from_settings(worktree)
+            .chain(self.global_templates_from_settings())
+            .filter(|(_, template)| !template.hooks.is_disjoint(hooks))
+            .collect()
     }
 
     fn global_templates_from_settings(
@@ -884,11 +931,15 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 /// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
 pub struct BasicContextProvider {
     worktree_store: Entity<WorktreeStore>,
+    git_store: Entity<GitStore>,
 }
 
 impl BasicContextProvider {
-    pub fn new(worktree_store: Entity<WorktreeStore>) -> Self {
-        Self { worktree_store }
+    pub fn new(worktree_store: Entity<WorktreeStore>, git_store: Entity<GitStore>) -> Self {
+        Self {
+            worktree_store,
+            git_store,
+        }
     }
 }
 
@@ -968,6 +1019,19 @@ impl ContextProvider for BasicContextProvider {
             }
         }
 
+        if let Some(worktree_id) = location.buffer.read(cx).file().map(|f| f.worktree_id(cx)) {
+            if let Some(path) = self
+                .git_store
+                .read(cx)
+                .original_repo_path_for_worktree(worktree_id, cx)
+            {
+                task_variables.insert(
+                    VariableName::MainGitWorktree,
+                    path.to_string_lossy().into_owned(),
+                );
+            }
+        }
+
         if let Some(current_file) = current_file {
             let path = current_file.abs_path(cx);
             if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
@@ -983,6 +1047,10 @@ impl ContextProvider for BasicContextProvider {
             }
 
             task_variables.insert(VariableName::File, path.to_string_lossy().into_owned());
+        }
+
+        if let Some(language) = buffer.language() {
+            task_variables.insert(VariableName::Language, language.name().to_string());
         }
 
         Task::ready(Ok(task_variables))
@@ -1003,7 +1071,7 @@ impl ContextProviderWithTasks {
 }
 
 impl ContextProvider for ContextProviderWithTasks {
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Entity<Buffer>>, _: &App) -> Task<Option<TaskTemplates>> {
         Task::ready(Some(self.templates.clone()))
     }
 }

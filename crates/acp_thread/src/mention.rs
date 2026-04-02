@@ -32,10 +32,6 @@ pub enum MentionUri {
         id: acp::SessionId,
         name: String,
     },
-    TextThread {
-        path: PathBuf,
-        name: String,
-    },
     Rule {
         id: PromptId,
         name: String,
@@ -56,6 +52,12 @@ pub enum MentionUri {
     },
     TerminalSelection {
         line_count: u32,
+    },
+    GitDiff {
+        base_ref: String,
+    },
+    MergeConflict {
+        file_path: String,
     },
 }
 
@@ -131,12 +133,6 @@ impl MentionUri {
                         id: acp::SessionId::new(thread_id),
                         name,
                     })
-                } else if let Some(path) = path.strip_prefix("/agent/text-thread/") {
-                    let name = single_query_param(&url, "name")?.context("Missing thread name")?;
-                    Ok(Self::TextThread {
-                        path: path.into(),
-                        name,
-                    })
                 } else if let Some(rule_id) = path.strip_prefix("/agent/rule/") {
                     let name = single_query_param(&url, "name")?.context("Missing rule name")?;
                     let rule_id = UserPromptId(rule_id.parse()?);
@@ -208,6 +204,13 @@ impl MentionUri {
                         .parse::<u32>()
                         .unwrap_or(0);
                     Ok(Self::TerminalSelection { line_count })
+                } else if path.starts_with("/agent/git-diff") {
+                    let base_ref =
+                        single_query_param(&url, "base")?.unwrap_or_else(|| "main".to_string());
+                    Ok(Self::GitDiff { base_ref })
+                } else if path.starts_with("/agent/merge-conflict") {
+                    let file_path = single_query_param(&url, "path")?.unwrap_or_default();
+                    Ok(Self::MergeConflict { file_path })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -227,7 +230,6 @@ impl MentionUri {
             MentionUri::PastedImage => "Image".to_string(),
             MentionUri::Symbol { name, .. } => name.clone(),
             MentionUri::Thread { name, .. } => name.clone(),
-            MentionUri::TextThread { name, .. } => name.clone(),
             MentionUri::Rule { name, .. } => name.clone(),
             MentionUri::Diagnostics { .. } => "Diagnostics".to_string(),
             MentionUri::TerminalSelection { line_count } => {
@@ -237,12 +239,55 @@ impl MentionUri {
                     format!("Terminal ({} lines)", line_count)
                 }
             }
+            MentionUri::GitDiff { base_ref } => format!("Branch Diff ({})", base_ref),
+            MentionUri::MergeConflict { file_path } => {
+                let name = Path::new(file_path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                format!("Merge Conflict ({name})")
+            }
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
                 ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
+        }
+    }
+
+    pub fn tooltip_text(&self) -> Option<SharedString> {
+        match self {
+            MentionUri::File { abs_path } | MentionUri::Directory { abs_path } => {
+                Some(abs_path.to_string_lossy().into_owned().into())
+            }
+            MentionUri::Symbol {
+                abs_path,
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    abs_path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            MentionUri::Selection {
+                abs_path: Some(path),
+                line_range,
+                ..
+            } => Some(
+                format!(
+                    "{}:{}-{}",
+                    path.display(),
+                    line_range.start(),
+                    line_range.end()
+                )
+                .into(),
+            ),
+            _ => None,
         }
     }
 
@@ -256,12 +301,13 @@ impl MentionUri {
                 .unwrap_or_else(|| IconName::Folder.path().into()),
             MentionUri::Symbol { .. } => IconName::Code.path().into(),
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
-            MentionUri::TextThread { .. } => IconName::Thread.path().into(),
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
             MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
+            MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
+            MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
         }
     }
 
@@ -323,15 +369,6 @@ impl MentionUri {
                 url.query_pairs_mut().append_pair("name", name);
                 url
             }
-            MentionUri::TextThread { path, name } => {
-                let mut url = Url::parse("zed:///").unwrap();
-                url.set_path(&format!(
-                    "/agent/text-thread/{}",
-                    path.to_string_lossy().trim_start_matches('/')
-                ));
-                url.query_pairs_mut().append_pair("name", name);
-                url
-            }
             MentionUri::Rule { name, id } => {
                 let mut url = Url::parse("zed:///").unwrap();
                 url.set_path(&format!("/agent/rule/{id}"));
@@ -358,6 +395,16 @@ impl MentionUri {
                 let mut url = Url::parse("zed:///agent/terminal-selection").unwrap();
                 url.query_pairs_mut()
                     .append_pair("lines", &line_count.to_string());
+                url
+            }
+            MentionUri::GitDiff { base_ref } => {
+                let mut url = Url::parse("zed:///agent/git-diff").unwrap();
+                url.query_pairs_mut().append_pair("base", base_ref);
+                url
+            }
+            MentionUri::MergeConflict { file_path } => {
+                let mut url = Url::parse("zed:///agent/merge-conflict").unwrap();
+                url.query_pairs_mut().append_pair("path", file_path);
                 url
             }
         }

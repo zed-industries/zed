@@ -10,13 +10,81 @@ use std::{
     sync::{Arc, LazyLock},
 };
 
+#[cfg(target_os = "macos")]
+const EMOJI_FONT_FAMILIES: &[&str] = &["Apple Color Emoji", ".AppleColorEmojiUI"];
+
+#[cfg(target_os = "windows")]
+const EMOJI_FONT_FAMILIES: &[&str] = &["Segoe UI Emoji", "Segoe UI Symbol"];
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+const EMOJI_FONT_FAMILIES: &[&str] = &[
+    "Noto Color Emoji",
+    "Emoji One",
+    "Twitter Color Emoji",
+    "JoyPixels",
+];
+
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "linux",
+    target_os = "freebsd",
+)))]
+const EMOJI_FONT_FAMILIES: &[&str] = &[];
+
+fn is_emoji_presentation(c: char) -> bool {
+    static EMOJI_PRESENTATION_REGEX: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new("\\p{Emoji_Presentation}").unwrap());
+    let mut buf = [0u8; 4];
+    EMOJI_PRESENTATION_REGEX.is_match(c.encode_utf8(&mut buf))
+}
+
+fn font_has_char(db: &usvg::fontdb::Database, id: usvg::fontdb::ID, ch: char) -> bool {
+    db.with_face_data(id, |font_data, face_index| {
+        ttf_parser::Face::parse(font_data, face_index)
+            .ok()
+            .and_then(|face| face.glyph_index(ch))
+            .is_some()
+    })
+    .unwrap_or(false)
+}
+
+fn select_emoji_font(
+    ch: char,
+    fonts: &[usvg::fontdb::ID],
+    db: &usvg::fontdb::Database,
+    families: &[&str],
+) -> Option<usvg::fontdb::ID> {
+    for family_name in families {
+        let query = usvg::fontdb::Query {
+            families: &[usvg::fontdb::Family::Name(family_name)],
+            weight: usvg::fontdb::Weight(400),
+            stretch: usvg::fontdb::Stretch::Normal,
+            style: usvg::fontdb::Style::Normal,
+        };
+
+        let Some(id) = db.query(&query) else {
+            continue;
+        };
+
+        if fonts.contains(&id) || !font_has_char(db, id, ch) {
+            continue;
+        }
+
+        return Some(id);
+    }
+
+    None
+}
+
 /// When rendering SVGs, we render them at twice the size to get a higher-quality result.
 pub const SMOOTH_SVG_SCALE_FACTOR: f32 = 2.;
 
 #[derive(Clone, PartialEq, Hash, Eq)]
-pub(crate) struct RenderSvgParams {
-    pub(crate) path: SharedString,
-    pub(crate) size: Size<DevicePixels>,
+#[expect(missing_docs)]
+pub struct RenderSvgParams {
+    pub path: SharedString,
+    pub size: Size<DevicePixels>,
 }
 
 #[derive(Clone)]
@@ -51,10 +119,23 @@ impl SvgRenderer {
                 default_font_resolver(font, db)
             },
         );
+        let default_fallback_selection = usvg::FontResolver::default_fallback_selector();
+        let fallback_selection = Box::new(
+            move |ch: char, fonts: &[usvg::fontdb::ID], db: &mut Arc<usvg::fontdb::Database>| {
+                if is_emoji_presentation(ch) {
+                    if let Some(id) = select_emoji_font(ch, fonts, db.as_ref(), EMOJI_FONT_FAMILIES)
+                    {
+                        return Some(id);
+                    }
+                }
+
+                default_fallback_selection(ch, fonts, db)
+            },
+        );
         let options = usvg::Options {
             font_resolver: usvg::FontResolver {
                 select_font: font_resolver,
-                select_fallback: usvg::FontResolver::default_fallback_selector(),
+                select_fallback: fallback_selection,
             },
             ..Default::default()
         };
@@ -69,7 +150,6 @@ impl SvgRenderer {
         &self,
         bytes: &[u8],
         scale_factor: f32,
-        to_brga: bool,
     ) -> Result<Arc<RenderImage>, usvg::Error> {
         self.render_pixmap(
             bytes,
@@ -80,10 +160,8 @@ impl SvgRenderer {
                 image::ImageBuffer::from_raw(pixmap.width(), pixmap.height(), pixmap.take())
                     .unwrap();
 
-            if to_brga {
-                for pixel in buffer.chunks_exact_mut(4) {
-                    swap_rgba_pa_to_bgra(pixel);
-                }
+            for pixel in buffer.chunks_exact_mut(4) {
+                swap_rgba_pa_to_bgra(pixel);
             }
 
             let mut image = RenderImage::new(SmallVec::from_const([Frame::new(buffer)]));
@@ -145,5 +223,75 @@ impl SvgRenderer {
         resvg::render(&tree, transform, &mut pixmap.as_mut());
 
         Ok(pixmap)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const IBM_PLEX_REGULAR: &[u8] =
+        include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+    const LILEX_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
+
+    #[test]
+    fn test_is_emoji_presentation() {
+        let cases = [
+            ("a", false),
+            ("Z", false),
+            ("1", false),
+            ("#", false),
+            ("*", false),
+            ("漢", false),
+            ("中", false),
+            ("カ", false),
+            ("©", false),
+            ("♥", false),
+            ("😀", true),
+            ("✅", true),
+            ("🇺🇸", true),
+            // SVG fallback is not cluster-aware yet
+            ("©️", false),
+            ("♥️", false),
+            ("1️⃣", false),
+        ];
+        for (s, expected) in cases {
+            assert_eq!(
+                is_emoji_presentation(s.chars().next().unwrap()),
+                expected,
+                "for char {:?}",
+                s
+            );
+        }
+    }
+
+    #[test]
+    fn test_select_emoji_font_skips_family_without_glyph() {
+        let mut db = usvg::fontdb::Database::new();
+
+        db.load_font_data(IBM_PLEX_REGULAR.to_vec());
+        db.load_font_data(LILEX_REGULAR.to_vec());
+
+        let ibm_plex_sans = db
+            .query(&usvg::fontdb::Query {
+                families: &[usvg::fontdb::Family::Name("IBM Plex Sans")],
+                weight: usvg::fontdb::Weight(400),
+                stretch: usvg::fontdb::Stretch::Normal,
+                style: usvg::fontdb::Style::Normal,
+            })
+            .unwrap();
+        let lilex = db
+            .query(&usvg::fontdb::Query {
+                families: &[usvg::fontdb::Family::Name("Lilex")],
+                weight: usvg::fontdb::Weight(400),
+                stretch: usvg::fontdb::Stretch::Normal,
+                style: usvg::fontdb::Style::Normal,
+            })
+            .unwrap();
+        let selected = select_emoji_font('│', &[], &db, &["IBM Plex Sans", "Lilex"]).unwrap();
+
+        assert_eq!(selected, lilex);
+        assert!(!font_has_char(&db, ibm_plex_sans, '│'));
+        assert!(font_has_char(&db, selected, '│'));
     }
 }

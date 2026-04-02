@@ -20,27 +20,9 @@ pub struct Model {
     pub supports_thinking: Option<bool>,
 }
 
-fn get_max_tokens(name: &str) -> u64 {
-    /// Default context length for unknown models.
+fn get_max_tokens(_name: &str) -> u64 {
     const DEFAULT_TOKENS: u64 = 4096;
-    /// Magic number. Lets many Ollama models work with ~16GB of ram.
-    /// Models that support context beyond 16k such as codestral (32k) or devstral (128k) will be clamped down to 16k
-    const MAXIMUM_TOKENS: u64 = 16384;
-
-    match name.split(':').next().unwrap() {
-        "granite-code" | "phi" | "tinyllama" => 2048,
-        "llama2" | "stablelm2" | "vicuna" | "yi" => 4096,
-        "aya" | "codegemma" | "gemma" | "gemma2" | "llama3" | "starcoder" => 8192,
-        "codellama" | "starcoder2" => 16384,
-        "codestral" | "dolphin-mixtral" | "llava" | "magistral" | "mistral" | "mixstral"
-        | "qwen2" | "qwen2.5-coder" => 32768,
-        "cogito" | "command-r" | "deepseek-coder-v2" | "deepseek-r1" | "deepseek-v3"
-        | "devstral" | "gemma3" | "gpt-oss" | "granite3.3" | "llama3.1" | "llama3.2"
-        | "llama3.3" | "mistral-nemo" | "phi3" | "phi3.5" | "phi4" | "qwen3" | "yi-coder" => 128000,
-        "qwen3-coder" => 256000,
-        _ => DEFAULT_TOKENS,
-    }
-    .clamp(1, MAXIMUM_TOKENS)
+    DEFAULT_TOKENS
 }
 
 impl Model {
@@ -104,9 +86,7 @@ pub enum ChatMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OllamaToolCall {
-    // TODO: Remove `Option` after most users have updated to Ollama v0.12.10,
-    // which was released on the 4th of November 2025
-    pub id: Option<String>,
+    pub id: String,
     pub function: OllamaFunctionCall,
 }
 
@@ -143,10 +123,15 @@ pub struct ChatRequest {
 // https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
 #[derive(Serialize, Default, Debug)]
 pub struct ChatOptions {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub num_ctx: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub num_predict: Option<isize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f32>,
 }
 
@@ -483,56 +468,6 @@ mod tests {
         }
     }
 
-    // Backwards compatibility with Ollama versions prior to v0.12.10 November 2025
-    // This test is a copy of `parse_tool_call()` with the `id` field omitted.
-    #[test]
-    fn parse_tool_call_pre_0_12_10() {
-        let response = serde_json::json!({
-            "model": "llama3.2:3b",
-            "created_at": "2025-04-28T20:02:02.140489Z",
-            "message": {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "weather",
-                            "arguments": {
-                                "city": "london",
-                            }
-                        }
-                    }
-                ]
-            },
-            "done_reason": "stop",
-            "done": true,
-            "total_duration": 2758629166u64,
-            "load_duration": 1770059875,
-            "prompt_eval_count": 147,
-            "prompt_eval_duration": 684637583,
-            "eval_count": 16,
-            "eval_duration": 302561917,
-        });
-
-        let result: ChatResponseDelta = serde_json::from_value(response).unwrap();
-        match result.message {
-            ChatMessage::Assistant {
-                content,
-                tool_calls: Some(tool_calls),
-                images: _,
-                thinking,
-            } => {
-                assert!(content.is_empty());
-                assert!(thinking.is_none());
-
-                // When the `Option` around `id` is removed, this test should complain
-                // and be subsequently deleted in favor of `parse_tool_call()`
-                assert!(tool_calls.first().is_some_and(|call| call.id.is_none()))
-            }
-            _ => panic!("Deserialized wrong role"),
-        }
-    }
-
     #[test]
     fn parse_show_model() {
         let response = serde_json::json!({
@@ -657,5 +592,97 @@ mod tests {
         let message_images = parsed["messages"][0]["images"].as_array().unwrap();
         assert_eq!(message_images.len(), 1);
         assert_eq!(message_images[0].as_str().unwrap(), base64_image);
+    }
+
+    #[test]
+    fn test_chat_options_serialization() {
+        // When stop is None, it should not appear in JSON at all
+        // This allows Ollama to use the model's default stop tokens
+        let options_no_stop = ChatOptions {
+            num_ctx: Some(4096),
+            stop: None,
+            temperature: Some(0.7),
+            ..Default::default()
+        };
+        let serialized = serde_json::to_string(&options_no_stop).unwrap();
+        assert!(
+            !serialized.contains("stop"),
+            "stop should not be in JSON when None"
+        );
+        assert!(serialized.contains("num_ctx"));
+        assert!(serialized.contains("temperature"));
+
+        // When stop has values, they should be serialized
+        let options_with_stop = ChatOptions {
+            stop: Some(vec!["<|eot_id|>".to_string()]),
+            ..Default::default()
+        };
+        let serialized = serde_json::to_string(&options_with_stop).unwrap();
+        assert!(serialized.contains("stop"));
+        assert!(serialized.contains("<|eot_id|>"));
+
+        // All None options should result in empty object
+        let options_all_none = ChatOptions::default();
+        let serialized = serde_json::to_string(&options_all_none).unwrap();
+        assert_eq!(serialized, "{}");
+    }
+
+    #[test]
+    fn test_chat_request_with_stop_tokens() {
+        let request = ChatRequest {
+            model: "rnj-1:8b".to_string(),
+            messages: vec![ChatMessage::User {
+                content: "Hello".to_string(),
+                images: None,
+            }],
+            stream: true,
+            keep_alive: KeepAlive::default(),
+            options: Some(ChatOptions {
+                stop: Some(vec!["<|eot_id|>".to_string(), "<|end|>".to_string()]),
+                ..Default::default()
+            }),
+            think: None,
+            tools: vec![],
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        let stop = parsed["options"]["stop"].as_array().unwrap();
+        assert_eq!(stop.len(), 2);
+        assert_eq!(stop[0].as_str().unwrap(), "<|eot_id|>");
+        assert_eq!(stop[1].as_str().unwrap(), "<|end|>");
+    }
+
+    #[test]
+    fn test_chat_request_without_stop_tokens_omits_field() {
+        // This tests the fix for issue #47798
+        // When no stop tokens are provided, the field should be omitted
+        // so Ollama uses the model's default stop tokens from Modelfile
+        let request = ChatRequest {
+            model: "rnj-1:8b".to_string(),
+            messages: vec![ChatMessage::User {
+                content: "Hello".to_string(),
+                images: None,
+            }],
+            stream: true,
+            keep_alive: KeepAlive::default(),
+            options: Some(ChatOptions {
+                num_ctx: Some(4096),
+                stop: None, // No stop tokens - should be omitted from JSON
+                ..Default::default()
+            }),
+            think: None,
+            tools: vec![],
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+
+        // The key check: "stop" should not appear in the serialized JSON
+        assert!(
+            !serialized.contains("\"stop\""),
+            "stop field should be omitted when None, got: {}",
+            serialized
+        );
     }
 }
