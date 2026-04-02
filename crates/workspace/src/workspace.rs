@@ -3731,8 +3731,17 @@ impl Workspace {
     }
 
     pub fn most_recent_active_path(&self, cx: &App) -> Option<PathBuf> {
+        let preview_paths: HashSet<ProjectPath> = self
+            .panes
+            .iter()
+            .filter_map(|pane| pane.read(cx).preview_item()?.project_path(cx))
+            .collect();
+
         self.recent_navigation_history_iter(cx)
             .filter_map(|(path, abs_path)| {
+                if preview_paths.contains(&path) {
+                    return None;
+                }
                 let worktree = self
                     .project
                     .read(cx)
@@ -14829,5 +14838,74 @@ mod tests {
                 "Both panels should still be in the right dock"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_most_recent_active_path_skips_preview_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "src": { "main.rs": "" },
+                ".venv": { "lib": { "dep.py": "" } },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let item_main = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new_in_worktree(
+                1001,
+                "src/main.rs",
+                worktree_id,
+                cx,
+            )])
+        });
+        let item_dep = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new_in_worktree(
+                1002,
+                ".venv/lib/dep.py",
+                worktree_id,
+                cx,
+            )])
+        });
+
+        // Only item_main → it's the active item → most_recent_active_path returns its path
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_main.clone()), None, true, window, cx);
+        });
+        let path = workspace.read_with(cx, |workspace, cx| workspace.most_recent_active_path(cx));
+        assert_eq!(path, Some(PathBuf::from(path!("/project/src/main.rs"))));
+
+        // dep.py is now the active item and is a preview tab → should be skipped.
+        // Since main.rs is no longer active and has no abs_path in navigation history
+        // (TestItems don't register real project entries), we fall through to None.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item_dep.clone()), None, true, window, cx);
+        });
+        pane.update(cx, |pane, cx| {
+            pane.set_preview_item_id(Some(item_dep.item_id()), cx);
+        });
+        let path = workspace.read_with(cx, |workspace, cx| workspace.most_recent_active_path(cx));
+        assert_eq!(path, None);
+
+        // Unpreview dep.py (user double-clicked to keep the tab) → now it should be used
+        pane.update(cx, |pane, cx| {
+            pane.set_preview_item_id(None, cx);
+        });
+        let path = workspace.read_with(cx, |workspace, cx| workspace.most_recent_active_path(cx));
+        assert_eq!(
+            path,
+            Some(PathBuf::from(path!("/project/.venv/lib/dep.py")))
+        );
     }
 }
