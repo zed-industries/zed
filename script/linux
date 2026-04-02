@@ -35,6 +35,7 @@ if [[ -n $apt ]]; then
     libwayland-dev
     libx11-xcb-dev
     libxkbcommon-x11-dev
+    libdav1d-dev
     libzstd-dev
     make
     cmake
@@ -102,6 +103,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     clang
     cmake
     alsa-lib-devel
+    dav1d-devel
     fontconfig-devel
     glib2-devel
     libva-devel
@@ -168,6 +170,7 @@ if [[ -n $zyp ]]; then
     alsa-devel
     clang
     cmake
+    dav1d-devel
     fontconfig-devel
     gcc
     libva-devel
@@ -207,6 +210,7 @@ if [[ -n $pacman ]]; then
     musl
     cmake
     alsa-lib
+    dav1d
     fontconfig
     glib2
     libva
@@ -241,6 +245,7 @@ if [[ -n $xbps ]]; then
     elfutils-devel
     gcc
     alsa-lib-devel
+    dav1d-devel
     fontconfig-devel
     glib-devel
     libva-devel
@@ -267,6 +272,7 @@ if [[ -n $emerge ]]; then
   deps=(
     app-arch/zstd
     app-misc/jq
+    media-libs/dav1d
     dev-libs/glib
     dev-libs/openssl
     dev-libs/wayland

@@ -23,6 +23,7 @@
   alsa-lib,
   cmake,
   curl,
+  dav1d,
   fontconfig,
   freetype,
   git,
@@ -164,6 +165,7 @@ let
 
       buildInputs = [
         curl
+        dav1d
         fontconfig
         freetype
         # TODO: need staticlib of this for linking the musl remote server.
