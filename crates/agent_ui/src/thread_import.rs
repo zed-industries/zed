@@ -17,7 +17,7 @@ use ui::{
     prelude::*,
 };
 use util::ResultExt;
-use workspace::{ModalView, MultiWorkspace, Workspace};
+use workspace::{ModalView, MultiWorkspace, PathList, Workspace};
 
 use crate::{
     Agent, AgentPanel,
@@ -500,6 +500,7 @@ fn collect_importable_threads(
                 updated_at: session.updated_at.unwrap_or_else(|| Utc::now()),
                 created_at: session.created_at,
                 folder_paths,
+                main_worktree_paths: PathList::default(),
                 archived: true,
             });
         }

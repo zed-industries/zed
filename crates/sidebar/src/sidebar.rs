@@ -900,6 +900,46 @@ impl Sidebar {
                     }
                 }
 
+                // Load threads from main worktrees when a workspace in this
+                // group is itself a linked worktree checkout.
+                let main_repo_queries: Vec<PathList> = group
+                    .workspaces
+                    .iter()
+                    .flat_map(|ws| root_repository_snapshots(ws, cx))
+                    .filter(|snapshot| snapshot.is_linked_worktree())
+                    .map(|snapshot| {
+                        PathList::new(std::slice::from_ref(&snapshot.original_repo_abs_path))
+                    })
+                    .collect();
+
+                for main_repo_path_list in main_repo_queries {
+                    for row in thread_store
+                        .read(cx)
+                        .entries_for_path(&main_repo_path_list)
+                        .cloned()
+                    {
+                        if !seen_session_ids.insert(row.session_id.clone()) {
+                            continue;
+                        }
+                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
+                        let worktrees =
+                            worktree_info_from_thread_paths(&row.folder_paths, &project_groups);
+                        threads.push(ThreadEntry {
+                            metadata: row,
+                            icon,
+                            icon_from_external_svg,
+                            status: AgentThreadStatus::default(),
+                            workspace: ThreadEntryWorkspace::Closed(main_repo_path_list.clone()),
+                            is_live: false,
+                            is_background: false,
+                            is_title_generating: false,
+                            highlight_positions: Vec::new(),
+                            worktrees,
+                            diff_stats: DiffStats::default(),
+                        });
+                    }
+                }
+
                 // Build a lookup from live_infos and compute running/waiting
                 // counts in a single pass.
                 let mut live_info_by_session: HashMap<&acp::SessionId, &ActiveThreadInfo> =
