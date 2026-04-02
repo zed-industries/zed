@@ -3335,9 +3335,8 @@ fn render_tree_branch(
 ) -> impl IntoElement {
     let rem_size = window.rem_size();
     let line_height = window.text_style().line_height_in_pixels(rem_size);
-    let width = rem_size * 1.5;
     let thickness = px(1.);
-    let color = cx.theme().colors().text;
+    let color = cx.theme().colors().icon_disabled;
 
     canvas(
         |_, _, _| {},
@@ -3367,8 +3366,8 @@ fn render_tree_branch(
             ));
         },
     )
-    .w(width)
-    .h(line_height)
+    .w(rem_size)
+    .h(line_height - px(2.))
 }
 
 fn render_participant_name_and_handle(user: &User) -> impl IntoElement {
