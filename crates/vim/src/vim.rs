@@ -956,7 +956,9 @@ impl Vim {
                     Mode::Replace => vim.paste_replace(window, cx),
                     Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                         vim.selected_register.replace('+');
-                        vim.paste(&VimPaste::default(), window, cx);
+                        let mut action = VimPaste::default();
+                        action.preserve_clipboard = true;
+                        vim.paste(&action, window, cx);
                     }
                     _ => {
                         vim.update_editor(cx, |_, editor, cx| editor.paste(&Paste, window, cx));
