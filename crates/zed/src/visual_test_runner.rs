@@ -109,7 +109,7 @@ use {
     image::RgbaImage,
     project::{AgentId, Project},
     project_panel::ProjectPanel,
-    settings::{NotifyWhenAgentWaiting, Settings as _},
+    settings::{NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings as _},
     settings_ui::SettingsWindow,
     std::{
         any::Any,
@@ -231,7 +231,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         agent_settings::AgentSettings::override_global(
             agent_settings::AgentSettings {
                 notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-                play_sound_when_agent_done: false,
+                play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
                 ..agent_settings::AgentSettings::get_global(cx).clone()
             },
             cx,

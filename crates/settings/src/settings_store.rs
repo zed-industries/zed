@@ -1440,9 +1440,7 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::DefaultSettings { message }
             | InvalidSettingsError::Tasks { message, .. }
             | InvalidSettingsError::Editorconfig { message, .. }
-            | InvalidSettingsError::Debug { message, .. } => {
-                write!(f, "{message}")
-            }
+            | InvalidSettingsError::Debug { message, .. } => write!(f, "{message}"),
         }
     }
 }

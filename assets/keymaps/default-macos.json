@@ -1188,6 +1188,8 @@
     "bindings": {
       "cmd-k": "recent_projects::ToggleActionsMenu",
       "cmd-shift-a": "workspace::AddFolderToProject",
+      "shift-backspace": "recent_projects::RemoveSelected",
+      "cmd-shift-enter": "recent_projects::AddToWorkspace",
     },
   },
   {

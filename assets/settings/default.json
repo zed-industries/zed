@@ -1102,11 +1102,14 @@
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
     "notify_when_agent_waiting": "primary_screen",
-    // Whether to play a sound when the agent has either completed
+    // When to play a sound when the agent has either completed
     // its response, or needs user input.
-
-    // Default: false
-    "play_sound_when_agent_done": false,
+    // "never" - Never play the sound
+    // "when_hidden" - Only play the sound when the agent panel is not visible
+    // "always" - Always play the sound
+    //
+    // Default: never
+    "play_sound_when_agent_done": "never",
     // Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
     //
     // Default: true
@@ -1117,8 +1120,8 @@
     "expand_terminal_card": true,
     // How thinking blocks should be displayed by default in the agent panel.
     //
-    // Default: automatic
-    "thinking_display": "automatic",
+    // Default: auto
+    "thinking_display": "auto",
     // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     //

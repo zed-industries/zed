@@ -389,7 +389,7 @@ impl PickerDelegate for RulePickerDelegate {
                                 }))
                         }))
                         .when(!prompt_id.is_built_in(), |this| {
-                            this.end_hover_slot(
+                            this.end_slot_on_hover(
                                 h_flex()
                                     .child(
                                         IconButton::new("delete-rule", IconName::Trash)

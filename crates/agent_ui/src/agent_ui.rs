@@ -674,7 +674,9 @@ mod tests {
     use feature_flags::FeatureFlagAppExt;
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
-    use settings::{DockPosition, NotifyWhenAgentWaiting, Settings, SettingsStore};
+    use settings::{
+        DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
+    };
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
@@ -705,7 +707,7 @@ mod tests {
             default_profile: AgentProfileId::default(),
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
-            play_sound_when_agent_done: false,
+            play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
             single_file_review: false,
             model_parameters: vec![],
             enable_feedback: false,

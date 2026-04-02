@@ -119,7 +119,8 @@ fn update_sha_in_extensions(publish_job: &NamedJob) -> NamedJob {
     let extensions_repo = RepositoryTarget::new("zed-industries", &["extensions"]);
     let (generate_token, generated_token) =
         generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
-            .for_repository(extensions_repo);
+            .for_repository(extensions_repo)
+            .into();
 
     fn checkout_extensions_repo(token: &StepOutput) -> Step<Use> {
         named::uses(
