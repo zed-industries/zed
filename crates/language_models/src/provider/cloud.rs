@@ -35,9 +35,9 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         let llm_api_token = self.llm_api_token.clone();
         let organization_id = self.organization_id.lock().clone();
         Box::pin(async move {
-            Ok(client
+            client
                 .acquire_llm_token(&llm_api_token, organization_id)
-                .await?)
+                .await
         })
     }
 
@@ -46,9 +46,9 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         let llm_api_token = self.llm_api_token.clone();
         let organization_id = self.organization_id.lock().clone();
         Box::pin(async move {
-            Ok(client
+            client
                 .refresh_llm_token(&llm_api_token, organization_id)
-                .await?)
+                .await
         })
     }
 }

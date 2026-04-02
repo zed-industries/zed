@@ -22,7 +22,6 @@ base64.workspace = true
 bedrock = { workspace = true, features = ["schemars"] }
 client.workspace = true
 cloud_api_types.workspace = true
-cloud_llm_client.workspace = true
 collections.workspace = true
 component.workspace = true
 convert_case.workspace = true
@@ -69,4 +68,3 @@ x_ai = { workspace = true, features = ["schemars"] }
 [dev-dependencies]
 language_model = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
-

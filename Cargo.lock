@@ -9550,7 +9550,6 @@ dependencies = [
  "bedrock",
  "client",
  "cloud_api_types",
- "cloud_llm_client",
  "collections",
  "component",
  "convert_case 0.8.0",
