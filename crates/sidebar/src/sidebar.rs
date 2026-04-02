@@ -1359,11 +1359,11 @@ impl Sidebar {
 
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
-                .color(Color::Muted)
+                .when(!is_active, |this| this.color(Color::Muted))
                 .into_any_element()
         } else {
             HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
-                .color(Color::Muted)
+                .when(!is_active, |this| this.color(Color::Muted))
                 .into_any_element()
         };
 
