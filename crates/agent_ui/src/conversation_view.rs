@@ -34,7 +34,7 @@ use gpui::{
     list, point, pulsating_between,
 };
 use language::Buffer;
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
@@ -113,6 +113,19 @@ pub(crate) enum ThreadError {
     PaymentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
+    RateLimitExceeded {
+        provider: SharedString,
+    },
+    ServerOverloaded {
+        provider: SharedString,
+    },
+    PromptTooLarge,
+    NoApiKey {
+        provider: SharedString,
+    },
+    StreamError {
+        provider: SharedString,
+    },
     Other {
         message: SharedString,
         acp_error_code: Option<SharedString>,
@@ -127,6 +140,35 @@ impl From<anyhow::Error> for ThreadError {
             && acp_error.code == acp::ErrorCode::AuthRequired
         {
             Self::AuthenticationRequired(acp_error.message.clone().into())
+        } else if let Some(lm_error) = error.downcast_ref::<LanguageModelCompletionError>() {
+            use LanguageModelCompletionError::*;
+            match lm_error {
+                RateLimitExceeded { provider, .. } => Self::RateLimitExceeded {
+                    provider: provider.to_string().into(),
+                },
+                ServerOverloaded { provider, .. } | ApiInternalServerError { provider, .. } => {
+                    Self::ServerOverloaded {
+                        provider: provider.to_string().into(),
+                    }
+                }
+                PromptTooLarge { .. } => Self::PromptTooLarge,
+                NoApiKey { provider } => Self::NoApiKey {
+                    provider: provider.to_string().into(),
+                },
+                StreamEndedUnexpectedly { provider }
+                | ApiReadResponseError { provider, .. }
+                | DeserializeResponse { provider, .. }
+                | HttpSend { provider, .. } => Self::StreamError {
+                    provider: provider.to_string().into(),
+                },
+                _ => {
+                    let message: SharedString = format!("{:#}", error).into();
+                    Self::Other {
+                        message,
+                        acp_error_code: None,
+                    }
+                }
+            }
         } else {
             let message: SharedString = format!("{:#}", error).into();
 

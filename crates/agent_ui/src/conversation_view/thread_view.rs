@@ -1265,6 +1265,31 @@ impl ThreadView {
                 ThreadError::AuthenticationRequired(message) => {
                     ("authentication_required", None, message.clone())
                 }
+                ThreadError::RateLimitExceeded { provider } => (
+                    "rate_limit_exceeded",
+                    None,
+                    format!("{provider}'s rate limit was reached.").into(),
+                ),
+                ThreadError::ServerOverloaded { provider } => (
+                    "server_overloaded",
+                    None,
+                    format!("{provider}'s servers are temporarily unavailable.").into(),
+                ),
+                ThreadError::PromptTooLarge => (
+                    "prompt_too_large",
+                    None,
+                    "Context too large for the model's context window.".into(),
+                ),
+                ThreadError::NoApiKey { provider } => (
+                    "no_api_key",
+                    None,
+                    format!("No API key configured for {provider}.").into(),
+                ),
+                ThreadError::StreamError { provider } => (
+                    "stream_error",
+                    None,
+                    format!("Connection to {provider}'s API was interrupted.").into(),
+                ),
                 ThreadError::Other {
                     acp_error_code,
                     message,
@@ -8082,6 +8107,17 @@ impl ThreadView {
                 self.render_authentication_required_error(error.clone(), cx)
             }
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::RateLimitExceeded { provider } => {
+                self.render_rate_limit_error(provider.clone(), cx)
+            }
+            ThreadError::ServerOverloaded { provider } => {
+                self.render_server_overloaded_error(provider.clone(), cx)
+            }
+            ThreadError::PromptTooLarge => self.render_prompt_too_large_error(cx),
+            ThreadError::NoApiKey { provider } => {
+                self.render_no_api_key_error(provider.clone(), cx)
+            }
+            ThreadError::StreamError { provider } => self.render_stream_error(provider.clone(), cx),
         };
 
         Some(div().child(content))
@@ -8140,6 +8176,125 @@ impl ThreadView {
                     .child(self.create_copy_button(ERROR_MESSAGE)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_rate_limit_error(&self, provider: SharedString, cx: &mut Context<Self>) -> Callout {
+        let can_resume = self.thread.read(cx).can_retry(cx);
+        let message = format!(
+            "{provider}'s rate limit was reached. Zed will retry automatically. \
+            You can also wait a moment and try again."
+        );
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Rate Limit Reached")
+            .description(message.clone())
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(can_resume, |this| this.child(self.retry_button(cx)))
+                    .child(self.create_copy_button(&message)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_server_overloaded_error(
+        &self,
+        provider: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let can_resume = self.thread.read(cx).can_retry(cx);
+        let message = format!(
+            "{provider}'s servers are temporarily unavailable. Zed will retry automatically. \
+            If the problem persists, check the provider's status page."
+        );
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Provider Unavailable")
+            .description(message.clone())
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(can_resume, |this| this.child(self.retry_button(cx)))
+                    .child(self.create_copy_button(&message)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {
+        const MESSAGE: &str = "This conversation is too long for the model's context window. \
+            Start a new thread or remove some attached files to continue.";
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Context Too Large")
+            .description(MESSAGE)
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.new_thread_button(cx))
+                    .child(self.create_copy_button(MESSAGE)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_no_api_key_error(&self, provider: SharedString, cx: &mut Context<Self>) -> Callout {
+        let message = format!(
+            "No API key is configured for {provider}. \
+            Add your key via the Agent Panel settings to continue."
+        );
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("API Key Missing")
+            .description(message.clone())
+            .actions_slot(self.create_copy_button(&message))
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_stream_error(&self, provider: SharedString, cx: &mut Context<Self>) -> Callout {
+        let can_resume = self.thread.read(cx).can_retry(cx);
+        let message = format!(
+            "The connection to {provider}'s API was interrupted. Zed will retry automatically. \
+            If the problem persists, check your network connection."
+        );
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Connection Interrupted")
+            .description(message.clone())
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(can_resume, |this| this.child(self.retry_button(cx)))
+                    .child(self.create_copy_button(&message)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn retry_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("retry", "Retry")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.retry_generation(cx);
+            }))
+    }
+
+    fn new_thread_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("new_thread", "New Thread")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(NewThread.boxed_clone(), cx);
+            }))
     }
 
     fn upgrade_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
