@@ -3145,62 +3145,85 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_escape() {
-        assert_eq!(Markdown::escape("hello `world`"), "hello \\`world\\`");
-        assert_eq!(
-            Markdown::escape("hello\n    cool world"),
-            "hello\n\n\u{00A0}\u{00A0}\u{00A0}\u{00A0}cool world"
-        );
-
-        // Leading whitespace on the first line is replaced with non-breaking
-        // spaces to preserve indentation without triggering code blocks.
-        assert_eq!(
-            Markdown::escape("    | { a: string }"),
-            "\u{00A0}\u{00A0}\u{00A0}\u{00A0}\\| \\{ a\\: string \\}"
-        );
-        assert_eq!(Markdown::escape("    hello"), "\u{00A0}\u{00A0}\u{00A0}\u{00A0}hello");
-
-        // Tabs are also replaced with non-breaking spaces.
-        assert_eq!(
-            Markdown::escape("hello\n\t\tindented"),
-            "hello\n\n\u{00A0}\u{00A0}indented"
-        );
-
-        // Multi-line diagnostic with leading whitespace on each line.
-        assert_eq!(
-            Markdown::escape("    | { a: string }\n    | { b: number }"),
-            "\u{00A0}\u{00A0}\u{00A0}\u{00A0}\\| \\{ a\\: string \\}\n\n\u{00A0}\u{00A0}\u{00A0}\u{00A0}\\| \\{ b\\: number \\}"
-        );
-
-        // No escaping needed for plain text.
-        assert_eq!(Markdown::escape("hello world"), "hello world");
+    fn nbsp(n: usize) -> String {
+        "\u{00A0}".repeat(n)
     }
 
-    #[gpui::test]
-    fn test_escape_rendering(cx: &mut TestAppContext) {
-        // Simulate a luau-lsp diagnostic message with punctuation.
-        // Backslash escapes added by Markdown::escape should be consumed
-        // by the markdown parser and NOT appear in the rendered output.
-        let diagnostic_message = "'{ a: string } | { b: number }'";
-        let escaped = Markdown::escape(diagnostic_message);
-        let rendered = render_markdown(&escaped, cx);
-        let total_len = rendered
-            .lines
-            .iter()
-            .map(|l| {
-                l.source_mappings
-                    .last()
-                    .map_or(0, |m| m.rendered_index + 1)
-            })
-            .max()
-            .unwrap_or(0);
-        let full_text = rendered.text_for_range(0..total_len);
-        assert!(
-            !full_text.contains('\\'),
-            "Rendered text should not contain visible backslash escapes, got: {:?}",
-            full_text
+    #[test]
+    fn test_escape_plain_text() {
+        assert_eq!(Markdown::escape("hello world"), "hello world");
+        assert_eq!(Markdown::escape(""), "");
+        assert_eq!(Markdown::escape("café ☕ naïve"), "café ☕ naïve");
+    }
+
+    #[test]
+    fn test_escape_punctuation() {
+        assert_eq!(Markdown::escape("hello `world`"), r"hello \`world\`");
+        assert_eq!(Markdown::escape("a|b"), r"a\|b");
+    }
+
+    #[test]
+    fn test_escape_leading_spaces() {
+        assert_eq!(Markdown::escape("    hello"), [&nbsp(4), "hello"].concat());
+        assert_eq!(
+            Markdown::escape("    | { a: string }"),
+            [&nbsp(4), r"\| \{ a\: string \}"].concat()
         );
+        assert_eq!(
+            Markdown::escape("  first\n  second"),
+            [&nbsp(2), "first\n\n", &nbsp(2), "second"].concat()
+        );
+        assert_eq!(Markdown::escape("hello   world"), "hello   world");
+    }
+
+    #[test]
+    fn test_escape_leading_tabs() {
+        assert_eq!(Markdown::escape("\thello"), [&nbsp(4), "hello"].concat());
+        assert_eq!(
+            Markdown::escape("hello\n\t\tindented"),
+            ["hello\n\n", &nbsp(8), "indented"].concat()
+        );
+        assert_eq!(
+            Markdown::escape(" \t hello"),
+            [&nbsp(1 + 4 + 1), "hello"].concat()
+        );
+        assert_eq!(Markdown::escape("hello\tworld"), "hello\tworld");
+    }
+
+    #[test]
+    fn test_escape_newlines() {
+        assert_eq!(Markdown::escape("a\nb"), "a\n\nb");
+        assert_eq!(Markdown::escape("a\n\nb"), "a\n\n\n\nb");
+        assert_eq!(Markdown::escape("\nhello"), "\n\nhello");
+    }
+
+    #[test]
+    fn test_escape_multiline_diagnostic() {
+        assert_eq!(
+            Markdown::escape("    | { a: string }\n    | { b: number }"),
+            [
+                &nbsp(4),
+                r"\| \{ a\: string \}",
+                "\n\n",
+                &nbsp(4),
+                r"\| \{ b\: number \}",
+            ]
+            .concat()
+        );
+    }
+
+    fn has_code_block(markdown: &str) -> bool {
+        let (events, _, _) = parse_markdown(markdown);
+        events
+            .iter()
+            .any(|(_, event)| matches!(event, MarkdownEvent::Start(MarkdownTag::CodeBlock { .. })))
+    }
+
+    #[test]
+    fn test_escape_prevents_code_block() {
+        let diagnostic = "    | { a: string }";
+        assert!(has_code_block(diagnostic));
+        assert!(!has_code_block(&Markdown::escape(diagnostic)));
     }
 
     #[track_caller]
