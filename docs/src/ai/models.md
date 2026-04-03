@@ -93,6 +93,10 @@ A context window is the maximum span of text and code an LLM can consider at onc
 | GPT-5 nano        | OpenAI    | 400k                      |
 | Gemini 3.1 Pro    | Google    | 200k                      |
 | Gemini 3 Flash    | Google    | 200k                      |
+| Grok 4            | X.ai      | 256k                      |
+| Grok 4 Fast       | X.ai      | 2M                        |
+| Grok 4 (Non-Reasoning) | X.ai | 2M                        |
+| Grok Code Fast 1  | X.ai      | 256k                      |
 
 > Context window limits for hosted Gemini 3.1 Pro/3 Pro/Flash may increase in future releases.
 
