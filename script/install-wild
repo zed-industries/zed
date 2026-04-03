@@ -4,17 +4,39 @@
 
 set -euo pipefail
 
-WILD_VERSION="${WILD_VERSION:-${1:-0.6.0}}"
 if [ "$(uname -s)" != "Linux" ]; then
     echo "Error: This script is intended for Linux systems only."
     exit 1
-elif [ -z "$WILD_VERSION" ]; then
-    echo "Usage: $0 [version]"
-    exit 1
-elif command -v wild >/dev/null 2>&1 && wild --version | grep -Fq "$WILD_VERSION" ; then
-    echo "Warning: existing wild $WILD_VERSION found at $(command -v wild). Skipping installation."
+fi
+
+WILD_REPO="${WILD_REPO:-https://github.com/davidlattimore/wild}"
+
+if [ -n "${WILD_VERSION:-${1:-}}" ]; then
+    WILD_VERSION="${WILD_VERSION:-$1}"
+else
+    echo "Fetching latest wild release..."
+    WILD_VERSION="$(curl -fsSL "https://api.github.com/repos/davidlattimore/wild/releases/latest" \
+        | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    if [ -z "$WILD_VERSION" ]; then
+        echo "Error: Could not determine latest version from GitHub."
+        exit 1
+    fi
+fi
+
+if command -v wild >/dev/null 2>&1 && wild --version | grep -Fq "$WILD_VERSION" ; then
+    echo "wild $WILD_VERSION is already installed at $(command -v wild). Skipping."
     exit 0
 fi
+
+echo "This will install wild $WILD_VERSION to /usr/local/bin."
+if command -v wild >/dev/null 2>&1; then
+    echo "  Current version: $(wild --version 2>/dev/null || echo 'unknown')"
+fi
+printf "Continue? [Y/n] "
+read -r answer
+case "$answer" in
+    [nN]|[nN][oO]) echo "Aborted."; exit 0 ;;
+esac
 
 if [ "$(whoami)" = root ]; then SUDO=; else SUDO="$(command -v sudo || command -v doas || true)"; fi
 
