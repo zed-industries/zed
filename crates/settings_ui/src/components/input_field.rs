@@ -1,11 +1,10 @@
 use std::rc::Rc;
 
-use editor::{Editor, EditorEvent};
-use gpui::{AnyElement, ElementId, Entity, Focusable, ReadGlobal as _, TextStyleRefinement};
-use settings::{Settings as _, SettingsStore};
+use editor::Editor;
+use gpui::{AnyElement, ElementId, Focusable, TextStyleRefinement};
+use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{Tooltip, prelude::*, rems};
-use workspace::ItemHandle;
 
 #[derive(IntoElement)]
 pub struct SettingsInputField {
@@ -20,7 +19,6 @@ pub struct SettingsInputField {
     clear_on_confirm: bool,
     action_slot: Option<AnyElement>,
     color: Option<Color>,
-    // settings_file_has_updated: bool,
 }
 
 impl SettingsInputField {
@@ -111,7 +109,7 @@ impl RenderOnce for SettingsInputField {
             ..Default::default()
         };
 
-        // let cached_data: Entity<Option<gpui::Task>> = window.use_state(cx, |window, cx| None);
+        let first_render_initial_text = window.use_state(cx, |_, _| self.initial_text.clone());
 
         let editor = if let Some(id) = self.id {
             window.use_keyed_state(id, cx, {
@@ -120,10 +118,8 @@ impl RenderOnce for SettingsInputField {
                 let mut confirm = self.confirm.clone();
 
                 move |window, cx| {
-                    dbg!("id editor: {}", &initial_text);
                     let mut editor = Editor::single_line(window, cx);
                     let editor_focus_handle = editor.focus_handle(cx);
-                    dbg!(&initial_text);
                     if let Some(text) = initial_text {
                         editor.set_text(text, window, cx);
                     }
@@ -133,7 +129,7 @@ impl RenderOnce for SettingsInputField {
                             &editor_focus_handle,
                             window,
                             move |editor, _, window, cx| {
-                                let text = Some(dbg!(editor.text(cx)));
+                                let text = Some(editor.text(cx));
                                 confirm(text, window, cx);
                             },
                         )
@@ -152,44 +148,19 @@ impl RenderOnce for SettingsInputField {
                 let initial_text = self.initial_text.clone();
                 let placeholder = self.placeholder;
                 let mut confirm = self.confirm.clone();
-                let mut confirm2 = self.confirm.clone();
 
                 move |window, cx| {
-                    log::info!("none id editor: {:?}", &initial_text);
                     let mut editor = Editor::single_line(window, cx);
                     let editor_focus_handle = editor.focus_handle(cx);
                     if let Some(text) = initial_text {
-                        log::info!("setting text");
                         editor.set_text(text, window, cx);
                     }
 
-                    cx.subscribe_in(
-                        &cx.entity(),
-                        window,
-                        move |editor, test, event: &EditorEvent, window, cx| match event {
-                            EditorEvent::Edited { .. } => {
-                                log::info!("EditorEvent::Edited: {} {:?}", editor.text(cx), test);
-                            }
-                            // EditorEvent::Blurred => {
-                            //     if let Some(confirm) = confirm.take() {
-                            //         log::info!("EditorEvent::Blurred {:?}", editor.text(cx));
-                            //         let text = Some(editor.text(cx));
-                            //         confirm(text, window, cx);
-                            //     }
-                            // }
-                            event2 => {
-                                log::info!("{:?}", event2);
-                            }
-                        },
-                    )
-                    .detach();
-
-                    if let Some(confirm) = confirm2.take() {
+                    if let Some(confirm) = confirm.take() {
                         cx.on_focus_out(
                             &editor_focus_handle,
                             window,
                             move |editor, _, window, cx| {
-                                log::info!("on_focus_out handler {:?}", editor.text(cx));
                                 let text = Some(editor.text(cx));
                                 confirm(text, window, cx);
                             },
@@ -198,7 +169,6 @@ impl RenderOnce for SettingsInputField {
                     }
 
                     if let Some(placeholder) = placeholder {
-                        log::info!("placeholder {}", placeholder);
                         editor.set_placeholder_text(placeholder, window, cx);
                     }
                     editor.set_text_style_refinement(styles);
@@ -211,11 +181,11 @@ impl RenderOnce for SettingsInputField {
         // re-renders but use_keyed_state returns the cached editor with stale text.
         // Reconcile with the expected initial_text when the editor is not focused,
         // so we don't clobber what the user is actively typing.
-        if let Some(initial_text) = &self.initial_text {
-            log::warn!("Setting initial_text {}", initial_text);
-            let current_text = editor.read(cx).text(cx);
-            log::warn!("{} -- {}", current_text, initial_text);
-            if current_text != *initial_text && !editor.read(cx).is_focused(window) {
+        if let Some(initial_text) = &self.initial_text
+            && let Some(first_initial) = first_render_initial_text.read(cx)
+        {
+            if initial_text != first_initial && !editor.read(cx).is_focused(window) {
+                *first_render_initial_text.as_mut(cx) = self.initial_text.clone();
                 let weak_editor = editor.downgrade();
                 let initial_text = initial_text.clone();
 
