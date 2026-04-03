@@ -2064,7 +2064,11 @@ impl Element for MarkdownElement {
                 MarkdownEvent::TaskListMarker(_) => {
                     // handled inside the `MarkdownTag::Item` case
                 }
-                _ => log::debug!("unsupported markdown event {:?}", event),
+                MarkdownEvent::FootnoteReference(label) => {
+                    builder.push_text_style(self.style.link.clone());
+                    builder.push_text(&format!("[{label}]"), range.clone());
+                    builder.pop_text_style();
+                }
             }
         }
         if self.style.code_block_overflow_x_scroll {
