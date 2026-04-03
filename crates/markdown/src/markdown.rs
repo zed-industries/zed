@@ -3208,8 +3208,9 @@ mod tests {
     }
 
     fn has_code_block(markdown: &str) -> bool {
-        let (events, _, _) = parse_markdown(markdown);
-        events
+        let parsed_data = parse_markdown_with_options(markdown, false);
+        parsed_data
+            .events
             .iter()
             .any(|(_, event)| matches!(event, MarkdownEvent::Start(MarkdownTag::CodeBlock { .. })))
     }
