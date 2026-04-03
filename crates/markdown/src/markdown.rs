@@ -314,6 +314,78 @@ actions!(
     ]
 );
 
+enum EscapeAction {
+    PassThrough,
+    Nbsp(usize),
+    DoubleNewline,
+    PrefixBackslash,
+}
+
+impl EscapeAction {
+    fn output_len(&self) -> usize {
+        match self {
+            Self::PassThrough => 1,
+            Self::Nbsp(count) => count * '\u{00A0}'.len_utf8(),
+            Self::DoubleNewline => 2,
+            Self::PrefixBackslash => 2,
+        }
+    }
+
+    fn write_to(&self, c: char, output: &mut String) {
+        match self {
+            Self::PassThrough => output.push(c),
+            Self::Nbsp(count) => {
+                for _ in 0..*count {
+                    output.push('\u{00A0}');
+                }
+            }
+            Self::DoubleNewline => {
+                output.push('\n');
+                output.push('\n');
+            }
+            Self::PrefixBackslash => {
+                // '\\' is a single backslash in Rust, e.g. '|' -> '\|'
+                output.push('\\');
+                output.push(c);
+            }
+        }
+    }
+}
+
+// Valid to operate on raw bytes since multi-byte UTF-8
+// sequences never contain ASCII-range bytes.
+struct MarkdownEscaper {
+    in_leading_whitespace: bool,
+}
+
+impl MarkdownEscaper {
+    const TAB_SIZE: usize = 4;
+
+    fn new() -> Self {
+        Self {
+            in_leading_whitespace: true,
+        }
+    }
+
+    fn next(&mut self, byte: u8) -> EscapeAction {
+        let action = if self.in_leading_whitespace && byte == b'\t' {
+            EscapeAction::Nbsp(Self::TAB_SIZE)
+        } else if self.in_leading_whitespace && byte == b' ' {
+            EscapeAction::Nbsp(1)
+        } else if byte == b'\n' {
+            EscapeAction::DoubleNewline
+        } else if byte.is_ascii_punctuation() {
+            EscapeAction::PrefixBackslash
+        } else {
+            EscapeAction::PassThrough
+        };
+
+        self.in_leading_whitespace =
+            byte == b'\n' || (self.in_leading_whitespace && (byte == b' ' || byte == b'\t'));
+        action
+    }
+}
+
 impl Markdown {
     pub fn new(
         source: SharedString,
@@ -477,33 +549,26 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<'_, str> {
-        // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
-        let has_leading_whitespace =
-            s.starts_with(' ') || s.starts_with('\t') || s.contains("\n ") || s.contains("\n\t");
-        let count = s
-            .bytes()
-            .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
-            .count();
-        if count > 0 || has_leading_whitespace {
-            let mut output = String::with_capacity(s.len() + count);
-            let mut is_newline = true;
-            for c in s.chars() {
-                if is_newline && (c == ' ' || c == '\t') {
-                    output.push('\u{00A0}');
-                    continue;
-                }
-                is_newline = c == '\n';
-                if c == '\n' {
-                    output.push('\n')
-                } else if c.is_ascii_punctuation() {
-                    output.push('\\')
-                }
-                output.push(c)
-            }
-            output.into()
-        } else {
-            s.into()
+        let output_len: usize = {
+            let mut escaper = MarkdownEscaper::new();
+            s.bytes().map(|byte| escaper.next(byte).output_len()).sum()
+        };
+
+        if output_len == s.len() {
+            return s.into();
         }
+
+        let mut escaper = MarkdownEscaper::new();
+        let mut output = String::with_capacity(output_len);
+        for c in s.chars() {
+            escaper.next(c as u8).write_to(c, &mut output);
+        }
+        debug_assert_eq!(
+            output.len(),
+            output_len,
+            "pre-computed output length drifted from actual output"
+        );
+        output.into()
     }
 
     pub fn selected_text(&self) -> Option<String> {
