@@ -592,7 +592,7 @@ pub enum MarkdownEvent {
     /// A reference to a footnote with given label, which may or may not be defined
     /// by an event with a `Tag::FootnoteDefinition` tag. Definitions and references to them may
     /// occur in any order.
-    FootnoteReference,
+    FootnoteReference(SharedString),
     /// A soft line break.
     SoftBreak,
     /// A hard line break.
