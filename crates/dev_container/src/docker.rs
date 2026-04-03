@@ -35,6 +35,7 @@ pub(crate) struct DockerInspect {
 pub(crate) struct DockerConfigLabels {
     #[serde(
         rename = "devcontainer.metadata",
+        default,
         deserialize_with = "deserialize_metadata"
     )]
     pub(crate) metadata: Option<Vec<HashMap<String, serde_json_lenient::Value>>>,
@@ -99,6 +100,7 @@ pub(crate) struct DockerComposeService {
     pub(crate) build: Option<DockerComposeServiceBuild>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) privileged: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) volumes: Vec<MountDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) env_file: Option<Vec<String>>,
@@ -118,6 +120,7 @@ pub(crate) struct DockerComposeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
     pub(crate) services: HashMap<String, DockerComposeService>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub(crate) volumes: HashMap<String, DockerComposeVolume>,
 }
 
@@ -417,8 +420,8 @@ mod test {
         command_json::deserialize_json_output,
         devcontainer_json::MountDefinition,
         docker::{
-            Docker, DockerComposeConfig, DockerComposeService, DockerComposeVolume, DockerInspect,
-            DockerPs, get_remote_dir_from_config,
+            Docker, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
+            DockerComposeVolume, DockerInspect, DockerPs, get_remote_dir_from_config,
         },
     };
 
@@ -774,6 +777,39 @@ mod test {
     }
 
     #[test]
+    fn should_deserialize_docker_inspect_without_devcontainer_metadata() {
+        let given_config = r#"
+    {
+      "Id": "sha256:plain-image",
+      "Config": {
+        "User": "",
+        "Env": [
+          "PATH=/usr/local/bin:/usr/bin:/bin"
+        ],
+        "Labels": {
+          "org.opencontainers.image.ref.name": "rust",
+          "org.opencontainers.image.version": "1.91.1-bookworm"
+        }
+      },
+      "Mounts": [],
+      "State": {
+        "Running": false
+      }
+    }
+                "#;
+
+        let config = serde_json_lenient::from_str::<DockerInspect>(given_config).unwrap();
+
+        assert_eq!(config.id, "sha256:plain-image");
+        assert_eq!(config.config.labels.metadata, None);
+        assert_eq!(config.config.image_user, Some(String::new()));
+        assert_eq!(
+            config.config.env,
+            vec!["PATH=/usr/local/bin:/usr/bin:/bin".to_string()]
+        );
+    }
+
+    #[test]
     fn should_deserialize_docker_compose_config() {
         let given_config = r#"
     {
@@ -891,6 +927,86 @@ mod test {
                     name: "devcontainer_postgres-data".to_string(),
                 },
             )]),
+        };
+
+        assert_eq!(docker_compose_config, expected_config);
+    }
+
+    #[test]
+    fn should_deserialize_docker_compose_config_without_top_level_volumes() {
+        let given_config = r#"
+    {
+        "name": "sample-devcontainer",
+        "services": {
+            "dev": {
+                "build": {
+                    "context": "/workspace/project",
+                    "dockerfile": "docker/Dockerfile",
+                    "args": {
+                        "WORKDIR": "/opt/"
+                    },
+                    "target": "dev"
+                },
+                "command": null,
+                "entrypoint": null,
+                "environment": {
+                    "HOME": "/home/user"
+                },
+                "stdin_open": true,
+                "tty": true,
+                "volumes": [
+                    {
+                        "type": "bind",
+                        "source": "/workspace/project",
+                        "target": "/opt",
+                        "bind": {}
+                    },
+                    {
+                        "type": "bind",
+                        "source": "/workspace/project/tmp/home/dev",
+                        "target": "/home/user",
+                        "bind": {}
+                    }
+                ],
+                "working_dir": "/opt/"
+            }
+        }
+    }
+                "#;
+
+        let docker_compose_config: DockerComposeConfig =
+            serde_json_lenient::from_str(given_config).unwrap();
+
+        let expected_config = DockerComposeConfig {
+            name: Some("sample-devcontainer".to_string()),
+            services: HashMap::from([(
+                "dev".to_string(),
+                DockerComposeService {
+                    volumes: vec![
+                        MountDefinition {
+                            mount_type: Some("bind".to_string()),
+                            source: "/workspace/project".to_string(),
+                            target: "/opt".to_string(),
+                        },
+                        MountDefinition {
+                            mount_type: Some("bind".to_string()),
+                            source: "/workspace/project/tmp/home/dev".to_string(),
+                            target: "/home/user".to_string(),
+                        },
+                    ],
+                    build: Some(DockerComposeServiceBuild {
+                        context: Some("/workspace/project".to_string()),
+                        dockerfile: Some("docker/Dockerfile".to_string()),
+                        args: Some(HashMap::from([(
+                            "WORKDIR".to_string(),
+                            "/opt/".to_string(),
+                        )])),
+                        additional_contexts: None,
+                    }),
+                    ..Default::default()
+                },
+            )]),
+            volumes: HashMap::new(),
         };
 
         assert_eq!(docker_compose_config, expected_config);

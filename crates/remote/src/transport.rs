@@ -182,6 +182,77 @@ fn handle_rpc_messages_over_child_process_stdio(
 }
 
 #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
+fn remote_server_source_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("remote crate should live two levels below the workspace root")
+        .to_path_buf()
+}
+
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
+fn remote_server_binary_path(
+    workspace_root: &std::path::Path,
+    triple: &str,
+    platform: &crate::RemotePlatform,
+    compressed: bool,
+) -> std::path::PathBuf {
+    let binary_path = workspace_root
+        .join("target")
+        .join("remote_server")
+        .join(triple)
+        .join("debug")
+        .join("remote_server")
+        .with_extension(if platform.os.is_windows() { "exe" } else { "" });
+
+    if compressed {
+        binary_path.with_extension(if platform.os.is_windows() {
+            "zip"
+        } else {
+            "gz"
+        })
+    } else {
+        binary_path
+    }
+}
+
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
+async fn active_rustup_toolchain(
+    rustup_path: &std::path::Path,
+    workspace_root: &std::path::Path,
+) -> Result<String> {
+    use util::command::new_command;
+
+    let output = new_command(rustup_path)
+        .current_dir(workspace_root)
+        .args(["show", "active-toolchain"])
+        .output()
+        .await?;
+    anyhow::ensure!(
+        output.status.success(),
+        "Failed to determine active rustup toolchain: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let toolchain = stdout
+        .split_whitespace()
+        .next()
+        .context("rustup show active-toolchain returned no toolchain")?;
+    Ok(toolchain.to_string())
+}
+
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
+fn rustup_toolchain_cargo_command(
+    rustup_path: &std::path::Path,
+    active_toolchain: &str,
+) -> util::command::Command {
+    let mut command = util::command::new_command(rustup_path);
+    command.args(["run", active_toolchain, "cargo"]);
+    command
+}
+
+#[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
 async fn build_remote_server_from_source(
     platform: &crate::RemotePlatform,
     delegate: &dyn crate::RemoteClientDelegate,
@@ -189,7 +260,6 @@ async fn build_remote_server_from_source(
     cx: &mut AsyncApp,
 ) -> Result<Option<std::path::PathBuf>> {
     use std::env::VarError;
-    use std::path::Path;
     use util::command::{Command, Stdio, new_command};
 
     if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
@@ -267,14 +337,20 @@ async fn build_remote_server_from_source(
         rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
     }
 
+    let workspace_root = remote_server_source_root();
+    let rustup = which("rustup", cx)
+        .await?
+        .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
+    let active_toolchain = active_rustup_toolchain(&rustup, &workspace_root).await?;
+
     if platform.arch.as_str() == std::env::consts::ARCH
         && platform.os.as_str() == std::env::consts::OS
     {
         delegate.set_status(Some("Building remote server binary from source"), cx);
         log::info!("building remote server binary from source");
         run_cmd(
-            new_command("cargo")
-                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+            rustup_toolchain_cargo_command(&rustup, &active_toolchain)
+                .current_dir(&workspace_root)
                 .args([
                     "build",
                     "--package",
@@ -298,17 +374,28 @@ async fn build_remote_server_from_source(
             });
         }
 
-        let rustup = which("rustup", cx)
-            .await?
-            .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
         delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
         log::info!("adding rustup target");
-        run_cmd(new_command(rustup).args(["target", "add"]).arg(&triple)).await?;
+        run_cmd(
+            new_command(&rustup)
+                .current_dir(&workspace_root)
+                .args(["target", "add"])
+                .args(["--toolchain", &active_toolchain])
+                .arg(&triple),
+        )
+        .await?;
 
         if which("cargo-zigbuild", cx).await?.is_none() {
             delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
             log::info!("installing cargo-zigbuild");
-            run_cmd(new_command("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
+            run_cmd(
+                rustup_toolchain_cargo_command(&rustup, &active_toolchain).args([
+                    "install",
+                    "--locked",
+                    "cargo-zigbuild",
+                ]),
+            )
+            .await?;
         }
 
         delegate.set_status(
@@ -319,7 +406,8 @@ async fn build_remote_server_from_source(
         );
         log::info!("building remote binary from source for {triple} with Zig");
         run_cmd(
-            new_command("cargo")
+            rustup_toolchain_cargo_command(&rustup, &active_toolchain)
+                .current_dir(&workspace_root)
                 .args([
                     "zigbuild",
                     "--package",
@@ -335,12 +423,7 @@ async fn build_remote_server_from_source(
         )
         .await?;
     };
-    let bin_path = Path::new("target")
-        .join("remote_server")
-        .join(&triple)
-        .join("debug")
-        .join("remote_server")
-        .with_extension(if platform.os.is_windows() { "exe" } else { "" });
+    let bin_path = remote_server_binary_path(&workspace_root, &triple, platform, false);
 
     let path = if !build_remote_server.contains("nocompress") {
         delegate.set_status(Some("Compressing binary"), cx);
@@ -371,7 +454,7 @@ async fn build_remote_server_from_source(
             zip_path
         };
 
-        std::env::current_dir()?.join(archive_path)
+        archive_path
     } else {
         bin_path
     };
@@ -401,6 +484,7 @@ async fn which(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn test_parse_platform() {
@@ -464,5 +548,35 @@ mod tests {
         );
         assert_eq!(parse_shell("", "sh"), "sh");
         assert_eq!(parse_shell("\n", "sh"), "sh");
+    }
+
+    #[cfg(any(debug_assertions, feature = "build-remote-server-binary"))]
+    #[test]
+    fn test_remote_server_binary_path_uses_workspace_root() {
+        let workspace_root = Path::new("/workspace/zed");
+        let triple = "aarch64-unknown-linux-musl";
+        let platform = RemotePlatform {
+            os: RemoteOs::Linux,
+            arch: RemoteArch::Aarch64,
+        };
+
+        assert_eq!(
+            remote_server_binary_path(workspace_root, triple, &platform, false),
+            Path::new("/workspace/zed")
+                .join("target")
+                .join("remote_server")
+                .join(triple)
+                .join("debug")
+                .join("remote_server")
+        );
+        assert_eq!(
+            remote_server_binary_path(workspace_root, triple, &platform, true),
+            Path::new("/workspace/zed")
+                .join("target")
+                .join("remote_server")
+                .join(triple)
+                .join("debug")
+                .join("remote_server.gz")
+        );
     }
 }
