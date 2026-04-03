@@ -65,11 +65,6 @@ pub struct AmazonBedrockSettingsContent {
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
     pub allow_global: Option<bool>,
-    /// Allow supported Anthropic models to automatically scale to the 1M token extended
-    /// context window when a conversation approaches the standard 200K limit. When enabled,
-    /// requests are first attempted at the standard context size; if the input exceeds it,
-    /// the request is transparently retried with the extended context beta header.
-    pub allow_extended_context: Option<bool>,
 }
 
 #[with_fallible_options]

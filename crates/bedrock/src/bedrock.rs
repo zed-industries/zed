@@ -38,14 +38,7 @@ pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError> {
-    send_request(&client, request).await
-}
-
-async fn send_request(
-    client: &bedrock::Client,
-    request: Request,
-) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError> {
-    let mut response = bedrock::Client::converse_stream(client)
+    let mut response = bedrock::Client::converse_stream(&client)
         .model_id(request.model.clone())
         .set_messages(request.messages.into());
 
@@ -72,7 +65,7 @@ async fn send_request(
         _ => {}
     }
 
-    if request.allow_extended_context {
+    if request.use_extended_context {
         additional_fields.insert(
             "anthropic_beta".to_string(),
             Document::Array(vec![Document::String(CONTEXT_1M_BETA_HEADER.to_string())]),
@@ -107,7 +100,15 @@ async fn send_request(
             let err = ctx.into_err();
             match &err {
                 ConverseStreamError::ValidationException(e) => {
-                    BedrockError::Validation(e.message().unwrap_or("validation error").to_string())
+                    let msg = e.message().unwrap_or("validation error");
+                    if msg.to_lowercase().contains("too long")
+                        || msg.to_lowercase().contains("exceeds")
+                        || msg.to_lowercase().contains("maximum")
+                    {
+                        BedrockError::Retry(msg.to_string())
+                    } else {
+                        BedrockError::Validation(msg.to_string())
+                    }
                 }
                 ConverseStreamError::ThrottlingException(_) => BedrockError::RateLimited,
                 ConverseStreamError::ServiceUnavailableException(_)
@@ -205,6 +206,7 @@ pub struct Request {
     pub model: String,
     pub max_tokens: u64,
     pub messages: Vec<BedrockMessage>,
+    pub use_extended_context: bool,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,
     pub system: Option<String>,
@@ -213,7 +215,6 @@ pub struct Request {
     pub temperature: Option<f32>,
     pub top_k: Option<u32>,
     pub top_p: Option<f32>,
-    pub allow_extended_context: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -225,6 +226,8 @@ pub struct Metadata {
 pub enum BedrockError {
     #[error("{0}")]
     Validation(String),
+    #[error("retry with extended context")]
+    Retry(String),
     #[error("rate limited")]
     RateLimited,
     #[error("service unavailable")]
