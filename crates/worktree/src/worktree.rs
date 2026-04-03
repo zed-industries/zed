@@ -369,6 +369,7 @@ struct UpdateObservationState {
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
+    UpdatedRootRepoCommonDir,
     DeletedEntry(ProjectEntryId),
     /// The worktree root itself has been deleted (for single-file worktrees)
     Deleted,
@@ -570,6 +571,7 @@ impl Worktree {
                     this.update(cx, |this, cx| {
                         let mut entries_changed = false;
                         let this = this.as_remote_mut().unwrap();
+                        let old_root_repo_common_dir = this.snapshot.root_repo_common_dir.clone();
                         {
                             let mut lock = this.background_snapshot.lock();
                             this.snapshot = lock.0.clone();
@@ -584,6 +586,9 @@ impl Worktree {
 
                         if entries_changed {
                             cx.emit(Event::UpdatedEntries(Arc::default()));
+                        }
+                        if this.snapshot.root_repo_common_dir != old_root_repo_common_dir {
+                            cx.emit(Event::UpdatedRootRepoCommonDir);
                         }
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
@@ -1189,6 +1194,13 @@ impl LocalWorktree {
         cx: &mut Context<Worktree>,
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &mut new_snapshot);
+
+        new_snapshot.root_repo_common_dir = new_snapshot
+            .local_repo_for_work_directory_path(RelPath::empty())
+            .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
+
+        let root_repo_common_dir_changed =
+            self.snapshot.root_repo_common_dir != new_snapshot.root_repo_common_dir;
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
@@ -1203,6 +1215,9 @@ impl LocalWorktree {
         }
         if !repo_changes.is_empty() {
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
+        }
+        if root_repo_common_dir_changed {
+            cx.emit(Event::UpdatedRootRepoCommonDir);
         }
 
         while let Some((scan_id, _)) = self.snapshot_subscriptions.front() {
