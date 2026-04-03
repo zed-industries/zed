@@ -1115,6 +1115,33 @@ mod tests {
     }
 
     #[test]
+    fn test_footnotes() {
+        assert_eq!(
+            parse_markdown_with_options(
+                "Text with a footnote[^1] and some more text.\n\n[^1]: This is the footnote content.",
+                false
+            )
+            .events,
+            vec![
+                (0..45, RootStart),
+                (0..45, Start(Paragraph)),
+                (0..20, Text),
+                (20..24, FootnoteReference("1".into())),
+                (24..44, Text),
+                (0..45, End(MarkdownTagEnd::Paragraph)),
+                (0..45, RootEnd(0)),
+                (46..81, RootStart),
+                (46..81, Start(FootnoteDefinition("1".into()))),
+                (52..81, Start(Paragraph)),
+                (52..81, Text),
+                (52..81, End(MarkdownTagEnd::Paragraph)),
+                (46..81, End(MarkdownTagEnd::FootnoteDefinition)),
+                (46..81, RootEnd(1)),
+            ]
+        );
+    }
+
+    #[test]
     fn test_links_split_across_fragments() {
         // This test verifies that links split across multiple text fragments due to escaping or other issues
         // are correctly detected and processed
