@@ -499,8 +499,11 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::InlineHtml(_) => {
                 state.push_event(range, MarkdownEvent::InlineHtml)
             }
-            pulldown_cmark::Event::FootnoteReference(_) => {
-                state.push_event(range, MarkdownEvent::FootnoteReference)
+            pulldown_cmark::Event::FootnoteReference(label) => {
+                state.push_event(
+                    range,
+                    MarkdownEvent::FootnoteReference(SharedString::from(label.to_string())),
+                )
             }
             pulldown_cmark::Event::SoftBreak => state.push_event(range, MarkdownEvent::SoftBreak),
             pulldown_cmark::Event::HardBreak => state.push_event(range, MarkdownEvent::HardBreak),
