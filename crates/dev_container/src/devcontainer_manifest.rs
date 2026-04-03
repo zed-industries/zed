@@ -3752,6 +3752,77 @@ ENV DOCKER_BUILDKIT=1
 
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
+    async fn test_update_uid_uses_compose_service_image_without_features(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+
+        let given_devcontainer_contents = r#"
+        {
+          "name": "Rust and PostgreSQL",
+          "dockerComposeFile": "docker-compose.image.yml",
+          "service": "app",
+          "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}"
+        }
+        "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose.image.yml"),
+                r#"
+version: '3.8'
+
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/rust:2-1-bookworm
+    volumes:
+      - ../..:/workspaces:cached
+    command: sleep infinity
+    network_mode: service:db
+
+  db:
+    image: postgres:14.1
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let docker_commands = test_dependencies
+            .command_runner
+            .commands_by_program("docker");
+
+        let update_uid_build_command = docker_commands.iter().find(|c| {
+            c.args.first().is_some_and(|a| a == "build")
+                && c.args.iter().any(|arg| arg.contains("updateUID.Dockerfile"))
+        });
+
+        assert!(update_uid_build_command.is_some());
+
+        let update_uid_build_command = update_uid_build_command.unwrap();
+        assert!(update_uid_build_command
+            .args
+            .windows(2)
+            .any(|window| {
+                window[0] == "--build-arg"
+                    && window[1]
+                        == "BASE_IMAGE=mcr.microsoft.com/devcontainers/rust:2-1-bookworm"
+            }));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose_and_podman(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         env_logger::try_init().ok();
@@ -4385,11 +4456,14 @@ chmod +x ./install.sh
             &self,
             config_files: &Vec<PathBuf>,
         ) -> Result<Option<DockerComposeConfig>, DevContainerError> {
-            if config_files.len() == 1
-                && config_files.get(0)
-                    == Some(&PathBuf::from(
-                        "/path/to/local/project/.devcontainer/docker-compose.yml",
-                    ))
+            if config_files.len() != 1 {
+                return Err(DevContainerError::DockerNotAvailable);
+            }
+
+            if config_files.get(0)
+                == Some(&PathBuf::from(
+                    "/path/to/local/project/.devcontainer/docker-compose.yml",
+                ))
             {
                 return Ok(Some(DockerComposeConfig {
                     name: None,
@@ -4432,6 +4506,43 @@ chmod +x ./install.sh
                     )]),
                 }));
             }
+
+            if config_files.get(0)
+                == Some(&PathBuf::from(
+                    "/path/to/local/project/.devcontainer/docker-compose.image.yml",
+                ))
+            {
+                return Ok(Some(DockerComposeConfig {
+                    name: None,
+                    services: HashMap::from([
+                        (
+                            "app".to_string(),
+                            DockerComposeService {
+                                image: Some(
+                                    "mcr.microsoft.com/devcontainers/rust:2-1-bookworm"
+                                        .to_string(),
+                                ),
+                                volumes: vec![MountDefinition {
+                                    source: "../..".to_string(),
+                                    target: "/workspaces".to_string(),
+                                    mount_type: Some("bind".to_string()),
+                                }],
+                                network_mode: Some("service:db".to_string()),
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            "db".to_string(),
+                            DockerComposeService {
+                                image: Some("postgres:14.1".to_string()),
+                                ..Default::default()
+                            },
+                        ),
+                    ]),
+                    volumes: HashMap::new(),
+                }));
+            }
+
             Err(DevContainerError::DockerNotAvailable)
         }
         async fn docker_compose_build(
