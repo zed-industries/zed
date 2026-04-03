@@ -2728,6 +2728,9 @@ impl Thread {
         let request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.prompt_id.to_string()),
+            previous_input_tokens: self
+                .latest_request_token_usage()
+                .map(|usage| usage.input_tokens),
             intent: Some(completion_intent),
             messages,
             tools,

@@ -1094,6 +1094,7 @@ fn into_copilot_responses(
     let LanguageModelRequest {
         thread_id: _,
         prompt_id: _,
+        previous_input_tokens: _,
         intent: _,
         messages,
         tools,

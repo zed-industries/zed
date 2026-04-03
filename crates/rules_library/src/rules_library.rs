@@ -1085,6 +1085,7 @@ impl RulesLibrary {
                                 LanguageModelRequest {
                                     thread_id: None,
                                     prompt_id: None,
+                                    previous_input_tokens: None,
                                     intent: None,
                                     messages: vec![LanguageModelRequestMessage {
                                         role: Role::System,

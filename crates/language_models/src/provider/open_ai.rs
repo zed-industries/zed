@@ -580,6 +580,7 @@ pub fn into_open_ai_response(
     let LanguageModelRequest {
         thread_id,
         prompt_id: _,
+        previous_input_tokens: _,
         intent: _,
         messages,
         tools,
@@ -1513,6 +1514,7 @@ mod tests {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            previous_input_tokens: None,
             intent: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
@@ -1621,6 +1623,7 @@ mod tests {
         let request = LanguageModelRequest {
             thread_id: Some("thread-123".into()),
             prompt_id: None,
+            previous_input_tokens: None,
             intent: None,
             messages: vec![
                 LanguageModelRequestMessage {

@@ -700,6 +700,7 @@ impl EditAgent {
         let request = LanguageModelRequest {
             thread_id: conversation.thread_id,
             prompt_id: conversation.prompt_id,
+            previous_input_tokens: conversation.previous_input_tokens,
             intent: Some(intent),
             messages: conversation.messages,
             tool_choice,

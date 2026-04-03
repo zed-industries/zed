@@ -461,6 +461,7 @@ pub enum CompletionIntent {
 pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
     pub prompt_id: Option<String>,
+    pub previous_input_tokens: Option<u64>,
     pub intent: Option<CompletionIntent>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,

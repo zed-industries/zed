@@ -540,6 +540,7 @@ impl CodegenAlternative {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                previous_input_tokens: None,
                 intent: Some(CompletionIntent::InlineAssist),
                 tools,
                 tool_choice,
@@ -620,6 +621,7 @@ impl CodegenAlternative {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                previous_input_tokens: None,
                 intent: Some(CompletionIntent::InlineAssist),
                 tools: Vec::new(),
                 tool_choice: None,
