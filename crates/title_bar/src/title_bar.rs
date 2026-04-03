@@ -179,7 +179,7 @@ impl Render for TitleBar {
         let title_bar_settings = *TitleBarSettings::get_global(cx);
         let button_layout = title_bar_settings.button_layout;
 
-        let show_menus = show_menus(cx);
+        let show_menus = show_menus(window, cx);
 
         let mut children = Vec::new();
 
@@ -215,7 +215,7 @@ impl Render for TitleBar {
                             self.application_menu.clone().filter(|_| !show_menus),
                             |title_bar, menu| {
                                 render_project_items &=
-                                    !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
+                                    !menu.update(cx, |menu, cx| menu.all_menus_shown(window, cx));
                                 title_bar.child(menu)
                             },
                         )

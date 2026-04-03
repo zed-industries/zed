@@ -264,21 +264,23 @@ impl ApplicationMenu {
         cx.defer_in(window, move |_, window, cx| next_handle.show(window, cx));
     }
 
-    pub fn all_menus_shown(&self, cx: &mut Context<Self>) -> bool {
-        show_menus(cx)
+    pub fn all_menus_shown(&self, window: &Window, cx: &App) -> bool {
+        show_menus(window, cx)
             || self.entries.iter().any(|entry| entry.handle.is_deployed())
             || self.pending_menu_open.is_some()
     }
 }
 
-pub(crate) fn show_menus(cx: &mut App) -> bool {
-    TitleBarSettings::get_global(cx).show_menus
+pub(crate) fn show_menus(window: &Window, cx: &App) -> bool {
+    let title_bar_settings = TitleBarSettings::get_global(cx);
+    title_bar_settings.show_menus
         && (cfg!(not(target_os = "macos")) || option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some())
+        && window.window_bounds().get_bounds().size.width > px(600.0)
 }
 
 impl Render for ApplicationMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let all_menus_shown = self.all_menus_shown(cx);
+        let all_menus_shown = self.all_menus_shown(window, cx);
 
         if let Some(pending_menu_open) = self.pending_menu_open.take()
             && let Some(entry) = self
