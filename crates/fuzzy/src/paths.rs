@@ -10,6 +10,7 @@ use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::{
     CharBag,
+    char_bag::simple_lowercase,
     matcher::{MatchCandidate, Matcher},
 };
 
@@ -94,7 +95,7 @@ pub fn match_fixed_path_set(
     max_results: usize,
     path_style: PathStyle,
 ) -> Vec<PathMatch> {
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+    let lowercase_query = query.chars().map(simple_lowercase).collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
