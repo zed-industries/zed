@@ -249,6 +249,7 @@ pub struct Markdown {
     source: SharedString,
     selection: Selection,
     pressed_link: Option<RenderedLink>,
+    pressed_footnote_ref: Option<RenderedFootnoteRef>,
     autoscroll_request: Option<usize>,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
@@ -419,6 +420,7 @@ impl Markdown {
             source,
             selection: Selection::default(),
             pressed_link: None,
+            pressed_footnote_ref: None,
             autoscroll_request: None,
             active_root_block: None,
             should_reparse: false,
@@ -2065,6 +2067,7 @@ impl Element for MarkdownElement {
                     // handled inside the `MarkdownTag::Item` case
                 }
                 MarkdownEvent::FootnoteReference(label) => {
+                    builder.push_footnote_ref(label.clone(), range.clone());
                     builder.push_text_style(self.style.link.clone());
                     builder.push_text(&format!("[{label}]"), range.clone());
                     builder.pop_text_style();
@@ -2501,6 +2504,13 @@ impl MarkdownElementBuilder {
         });
     }
 
+    fn push_footnote_ref(&mut self, label: SharedString, source_range: Range<usize>) {
+        self.rendered_footnote_refs.push(RenderedFootnoteRef {
+            source_range,
+            label,
+        });
+    }
+
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
@@ -2618,6 +2628,7 @@ impl MarkdownElementBuilder {
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
+                footnote_refs: self.rendered_footnote_refs.into(),
             },
         }
     }
@@ -2732,12 +2743,19 @@ pub struct RenderedMarkdown {
 struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
+    footnote_refs: Rc<[RenderedFootnoteRef]>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
     destination_url: SharedString,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct RenderedFootnoteRef {
+    source_range: Range<usize>,
+    label: SharedString,
 }
 
 impl RenderedText {
@@ -2891,6 +2909,16 @@ impl RenderedText {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
+    }
+
+    fn footnote_ref_for_position(
+        &self,
+        position: Point<Pixels>,
+    ) -> Option<&RenderedFootnoteRef> {
+        let source_index = self.source_index_for_position(position).ok()?;
+        self.footnote_refs
+            .iter()
+            .find(|fref| fref.source_range.contains(&source_index))
     }
 }
 
