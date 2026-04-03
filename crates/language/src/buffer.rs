@@ -1571,16 +1571,22 @@ impl Buffer {
 
             let target_encoding = force_encoding.unwrap_or(current_encoding);
 
+            let bytes = load_bytes_task.await?;
+
+            // reject binary content on reload, matching the check in decode_file_text
+            let check_len = bytes.len().min(8000);
+            if bytes[..check_len].contains(&0) {
+                anyhow::bail!("Binary files are not supported");
+            }
+
             let is_unicode = target_encoding == encoding_rs::UTF_8
                 || target_encoding == encoding_rs::UTF_16LE
                 || target_encoding == encoding_rs::UTF_16BE;
 
             let (new_text, has_bom, encoding_used) = if force_encoding.is_some() && !is_unicode {
-                let bytes = load_bytes_task.await?;
                 let (cow, _had_errors) = target_encoding.decode_without_bom_handling(&bytes);
                 (cow.into_owned(), false, target_encoding)
             } else {
-                let bytes = load_bytes_task.await?;
                 let (cow, used_enc, _had_errors) = target_encoding.decode(&bytes);
 
                 let actual_has_bom = if used_enc == encoding_rs::UTF_8 {
