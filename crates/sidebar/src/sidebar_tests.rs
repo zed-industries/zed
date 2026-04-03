@@ -5236,9 +5236,6 @@ mod property_test {
                 .push(workspace.clone());
         }
 
-        let canonicalizer =
-            crate::project_group_builder::WorktreeCanonicalizer::from_workspaces(&workspaces, cx);
-
         for group_key in mw.project_group_keys() {
             let path_list = group_key.path_list().clone();
             if path_list.paths().is_empty() {
@@ -5283,13 +5280,13 @@ mod property_test {
 
             for workspace in group_workspaces {
                 for snapshot in root_repository_snapshots(workspace, cx) {
+                    let repo_path_list =
+                        PathList::new(&[snapshot.original_repo_abs_path.to_path_buf()]);
+                    if repo_path_list != path_list {
+                        continue;
+                    }
                     for linked_worktree in snapshot.linked_worktrees() {
                         if covered_paths.contains(&*linked_worktree.path) {
-                            continue;
-                        }
-                        let canonical_path = canonicalizer.canonicalize_path(&linked_worktree.path);
-                        let canonical_path_list = PathList::new(&[canonical_path.to_path_buf()]);
-                        if canonical_path_list != path_list {
                             continue;
                         }
                         let worktree_path_list =

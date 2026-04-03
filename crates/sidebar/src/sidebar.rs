@@ -56,10 +56,6 @@ use zed_actions::agents_sidebar::{FocusSidebarFilter, ToggleThreadSwitcher};
 
 use crate::thread_switcher::{ThreadSwitcher, ThreadSwitcherEntry, ThreadSwitcherEvent};
 
-use crate::project_group_builder::WorktreeCanonicalizer;
-
-mod project_group_builder;
-
 #[cfg(test)]
 mod sidebar_tests;
 
@@ -311,27 +307,32 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 
 /// Derives worktree display info from a thread's stored path list.
 ///
-/// For each path in the thread's `folder_paths` that canonicalizes to a
-/// different path (i.e. it's a git worktree), produces a [`WorktreeInfo`]
-/// with the short worktree name and full path.
+/// For each path in the thread's `folder_paths` that is not one of the
+/// group's main paths (i.e. it's a git linked worktree), produces a
+/// [`WorktreeInfo`] with the short worktree name and full path.
 fn worktree_info_from_thread_paths(
     folder_paths: &PathList,
-    canonicalizer: &WorktreeCanonicalizer,
+    group_key: &project::ProjectGroupKey,
 ) -> Vec<WorktreeInfo> {
+    let main_paths = group_key.path_list().paths();
     folder_paths
         .paths()
         .iter()
         .filter_map(|path| {
-            let canonical = canonicalizer.canonicalize_path(path);
-            if canonical != path.as_path() {
-                Some(WorktreeInfo {
-                    name: linked_worktree_short_name(canonical, path).unwrap_or_default(),
-                    full_path: SharedString::from(path.display().to_string()),
-                    highlight_positions: Vec::new(),
-                })
-            } else {
-                None
+            if main_paths.iter().any(|mp| mp.as_path() == path.as_path()) {
+                return None;
             }
+            // Find the main path whose file name matches this linked
+            // worktree's file name, falling back to the first main path.
+            let main_path = main_paths
+                .iter()
+                .find(|mp| mp.file_name() == path.file_name())
+                .or(main_paths.first())?;
+            Some(WorktreeInfo {
+                name: linked_worktree_short_name(main_path, path).unwrap_or_default(),
+                full_path: SharedString::from(path.display().to_string()),
+                highlight_positions: Vec::new(),
+            })
         })
         .collect()
 }
@@ -797,10 +798,6 @@ impl Sidebar {
                 .push(workspace.clone());
         }
 
-        // Build directory canonicalizer for worktree chip display. This maps
-        // linked worktree paths back to their main repository path.
-        let canonicalizer = WorktreeCanonicalizer::from_workspaces(&workspaces, cx);
-
         let has_open_projects = workspaces
             .iter()
             .any(|ws| !workspace_path_list(ws, cx).paths().is_empty());
@@ -885,25 +882,25 @@ impl Sidebar {
                 };
 
                 // Build a ThreadEntry from a metadata row.
-                let make_thread_entry =
-                    |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
-                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        let worktrees =
-                            worktree_info_from_thread_paths(&row.folder_paths, &canonicalizer);
-                        ThreadEntry {
-                            metadata: row,
-                            icon,
-                            icon_from_external_svg,
-                            status: AgentThreadStatus::default(),
-                            workspace,
-                            is_live: false,
-                            is_background: false,
-                            is_title_generating: false,
-                            highlight_positions: Vec::new(),
-                            worktrees,
-                            diff_stats: DiffStats::default(),
-                        }
-                    };
+                let make_thread_entry = |row: ThreadMetadata,
+                                         workspace: ThreadEntryWorkspace|
+                 -> ThreadEntry {
+                    let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
+                    let worktrees = worktree_info_from_thread_paths(&row.folder_paths, group_key);
+                    ThreadEntry {
+                        metadata: row,
+                        icon,
+                        icon_from_external_svg,
+                        status: AgentThreadStatus::default(),
+                        workspace,
+                        is_live: false,
+                        is_background: false,
+                        is_title_generating: false,
+                        highlight_positions: Vec::new(),
+                        worktrees,
+                        diff_stats: DiffStats::default(),
+                    }
+                };
 
                 // === Main code path: one query per group via main_worktree_paths ===
                 // The main_worktree_paths column is set on all new threads and
@@ -967,17 +964,19 @@ impl Sidebar {
                 // workspace.
                 for workspace in group_workspaces {
                     for snapshot in root_repository_snapshots(workspace, cx) {
+                        // Only query linked worktrees from repos whose main
+                        // path, as a single-path PathList, matches the group
+                        // exactly. This prevents a repo in a multi-root
+                        // workspace from leaking its linked worktrees into
+                        // the multi-root group.
+                        let repo_path_list =
+                            PathList::new(&[snapshot.original_repo_abs_path.to_path_buf()]);
+                        if repo_path_list != path_list {
+                            continue;
+                        }
+
                         for linked_worktree in snapshot.linked_worktrees() {
                             if covered_paths.contains(&*linked_worktree.path) {
-                                continue;
-                            }
-                            // Only query linked worktrees whose canonical
-                            // (main repo) PathList matches this group exactly.
-                            let canonical_path =
-                                canonicalizer.canonicalize_path(&linked_worktree.path);
-                            let canonical_path_list =
-                                PathList::new(&[canonical_path.to_path_buf()]);
-                            if canonical_path_list != path_list {
                                 continue;
                             }
                             let worktree_path_list =
@@ -1013,8 +1012,7 @@ impl Sidebar {
                             .next()
                             .is_some();
                     if !has_threads {
-                        let worktrees =
-                            worktree_info_from_thread_paths(&ws_path_list, &canonicalizer);
+                        let worktrees = worktree_info_from_thread_paths(&ws_path_list, group_key);
                         threadless_workspaces.push((workspace.clone(), worktrees));
                     }
                 }
@@ -1168,7 +1166,7 @@ impl Sidebar {
                         if let Some(ActiveEntry::Draft(draft_ws)) = &self.active_entry {
                             let ws_path_list = workspace_path_list(draft_ws, cx);
                             let worktrees =
-                                worktree_info_from_thread_paths(&ws_path_list, &canonicalizer);
+                                worktree_info_from_thread_paths(&ws_path_list, group_key);
                             entries.push(ListEntry::NewThread {
                                 key: group_key.clone(),
                                 workspace: draft_ws.clone(),
