@@ -51,6 +51,10 @@ zed_actions.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+remote = { workspace = true, features = ["test-support"] }
+release_channel.workspace = true
+rpc = { workspace = true, features = ["test-support"] }
+semver.workspace = true
 terminal = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 
