@@ -769,6 +769,17 @@ impl ProjectSearchView {
         }
     }
 
+    fn set_search_option_enabled(
+        &mut self,
+        option: SearchOptions,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if self.search_options.contains(option) != enabled {
+            self.toggle_search_option(option, cx);
+        }
+    }
+
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut Context<Self>) {
         self.search_options.toggle(option);
         ActiveSettings::update_global(cx, |settings, cx| {
@@ -1172,6 +1183,11 @@ impl ProjectSearchView {
             let query = editor.query_suggestion(window, cx);
             if query.is_empty() { None } else { Some(query) }
         });
+        let has_explicit_search_configuration = action.query.is_some()
+            || action.regex
+            || action.case_sensitive
+            || action.whole_word
+            || action.include_ignored;
 
         let search = if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
@@ -1203,21 +1219,19 @@ impl ProjectSearchView {
 
         search.update(cx, |search, cx| {
             search.replace_enabled |= action.replace_enabled;
-            if action.regex && !search.search_options.contains(SearchOptions::REGEX) {
-                search.toggle_search_option(SearchOptions::REGEX, cx);
-            }
-            if action.case_sensitive
-                && !search.search_options.contains(SearchOptions::CASE_SENSITIVE)
-            {
-                search.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
-            }
-            if action.whole_word && !search.search_options.contains(SearchOptions::WHOLE_WORD) {
-                search.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
-            }
-            if action.include_ignored
-                && !search.search_options.contains(SearchOptions::INCLUDE_IGNORED)
-            {
-                search.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
+            if has_explicit_search_configuration {
+                search.set_search_option_enabled(SearchOptions::REGEX, action.regex, cx);
+                search.set_search_option_enabled(
+                    SearchOptions::CASE_SENSITIVE,
+                    action.case_sensitive,
+                    cx,
+                );
+                search.set_search_option_enabled(SearchOptions::WHOLE_WORD, action.whole_word, cx);
+                search.set_search_option_enabled(
+                    SearchOptions::INCLUDE_IGNORED,
+                    action.include_ignored,
+                    cx,
+                );
             }
             let query = action
                 .query
