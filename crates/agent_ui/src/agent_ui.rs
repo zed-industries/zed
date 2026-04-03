@@ -40,7 +40,7 @@ use std::sync::Arc;
 
 use ::ui::IconName;
 use agent_client_protocol as acp;
-use agent_settings::{AgentProfileId, AgentSettings};
+use agent_settings::{AgentProfileId, AgentSettings, PanelLayout};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use fs::Fs;
@@ -56,7 +56,7 @@ use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{DockPosition, DockSide, LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 use workspace::Workspace;
 
@@ -485,30 +485,11 @@ pub fn init(
     // TODO: remove this field when we're ready remove the feature flag
     maybe_backfill_editor_layout(fs, is_new_install, false, cx);
 
-    cx.observe_flag::<AgentV2FeatureFlag, _>(|is_enabled, cx| {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_default_settings(cx, |defaults| {
-                if is_enabled {
-                    defaults.agent.get_or_insert_default().dock = Some(DockPosition::Left);
-                    defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Right);
-                    defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Right);
-                    defaults.collaboration_panel.get_or_insert_default().dock =
-                        Some(DockPosition::Right);
-                    defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Right);
-                    defaults.notification_panel.get_or_insert_default().button = Some(false);
-                } else {
-                    defaults.agent.get_or_insert_default().dock = Some(DockPosition::Right);
-                    defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Left);
-                    defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Left);
-                    defaults.collaboration_panel.get_or_insert_default().dock =
-                        Some(DockPosition::Left);
-                    defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Left);
-                    defaults.notification_panel.get_or_insert_default().button = Some(true);
-                }
-            });
+    SettingsStore::update_global(cx, |store, cx| {
+        store.update_default_settings(cx, |defaults| {
+            PanelLayout::AGENT.write_to(defaults);
         });
-    })
-    .detach();
+    });
 }
 
 fn maybe_backfill_editor_layout(

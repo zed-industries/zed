@@ -35,7 +35,7 @@ pub struct PanelLayout {
 }
 
 impl PanelLayout {
-    const AGENT: Self = Self {
+    pub const AGENT: Self = Self {
         agent_dock: Some(DockPosition::Left),
         project_panel_dock: Some(DockSide::Right),
         outline_panel_dock: Some(DockSide::Right),
@@ -44,7 +44,7 @@ impl PanelLayout {
         notification_panel_button: Some(false),
     };
 
-    const EDITOR: Self = Self {
+    pub const EDITOR: Self = Self {
         agent_dock: Some(DockPosition::Right),
         project_panel_dock: Some(DockSide::Left),
         outline_panel_dock: Some(DockSide::Left),
@@ -72,7 +72,7 @@ impl PanelLayout {
         }
     }
 
-    fn write_to(&self, settings: &mut SettingsContent) {
+    pub fn write_to(&self, settings: &mut SettingsContent) {
         settings.agent.get_or_insert_default().dock = self.agent_dock;
         settings.project_panel.get_or_insert_default().dock = self.project_panel_dock;
         settings.outline_panel.get_or_insert_default().dock = self.outline_panel_dock;
