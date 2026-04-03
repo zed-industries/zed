@@ -316,12 +316,6 @@ actions!(
     ]
 );
 
-impl DeploySearch {
-    pub fn find() -> Self {
-        Self::default()
-    }
-}
-
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub enum Event {
@@ -4186,10 +4180,7 @@ fn default_render_tab_bar_buttons(
                         menu.action("New File", NewFile.boxed_clone())
                             .action("Open File", ToggleFileFinder::default().boxed_clone())
                             .separator()
-                            .action(
-                                "Search Project",
-                                DeploySearch::find().boxed_clone(),
-                            )
+                            .action("Search Project", DeploySearch::default().boxed_clone())
                             .action("Search Symbols", ToggleProjectSymbols.boxed_clone())
                             .separator()
                             .action("New Terminal", NewTerminal::default().boxed_clone())

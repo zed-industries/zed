@@ -1153,7 +1153,7 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::existing_or_new_search(workspace, None, &DeploySearch::find(), window, cx)
+        Self::existing_or_new_search(workspace, None, &DeploySearch::default(), window, cx)
     }
 
     fn existing_or_new_search(
@@ -3122,7 +3122,7 @@ pub mod tests {
 
             ProjectSearchView::deploy_search(
                 workspace,
-                &workspace::DeploySearch::find(),
+                &workspace::DeploySearch::default(),
                 window,
                 cx,
             )
@@ -3273,7 +3273,7 @@ pub mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             ProjectSearchView::deploy_search(
                 workspace,
-                &workspace::DeploySearch::find(),
+                &workspace::DeploySearch::default(),
                 window,
                 cx,
             )
@@ -3346,7 +3346,7 @@ pub mod tests {
 
             ProjectSearchView::deploy_search(
                 workspace,
-                &workspace::DeploySearch::find(),
+                &workspace::DeploySearch::default(),
                 window,
                 cx,
             )
@@ -4581,7 +4581,7 @@ pub mod tests {
         });
 
         // Deploy a new search
-        cx.dispatch_action(DeploySearch::find());
+        cx.dispatch_action(DeploySearch::default());
 
         // Both panes should now have a project search in them
         workspace.update_in(cx, |workspace, window, cx| {
@@ -4606,7 +4606,7 @@ pub mod tests {
             .unwrap();
 
         // Deploy a new search
-        cx.dispatch_action(DeploySearch::find());
+        cx.dispatch_action(DeploySearch::default());
 
         // The project search view should now be focused in the second pane
         // And the number of items should be unchanged.
@@ -4844,7 +4844,7 @@ pub mod tests {
             assert!(workspace.has_active_modal(window, cx));
         });
 
-        cx.dispatch_action(DeploySearch::find());
+        cx.dispatch_action(DeploySearch::default());
 
         workspace.update_in(cx, |workspace, window, cx| {
             assert!(!workspace.has_active_modal(window, cx));
