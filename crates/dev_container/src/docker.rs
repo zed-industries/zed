@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use util::command::Command;
 
 use crate::{
@@ -31,7 +31,7 @@ pub(crate) struct DockerInspect {
     pub(crate) state: Option<DockerState>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 pub(crate) struct DockerConfigLabels {
     #[serde(
         default,
@@ -39,12 +39,6 @@ pub(crate) struct DockerConfigLabels {
         deserialize_with = "deserialize_metadata"
     )]
     pub(crate) metadata: Option<Vec<HashMap<String, serde_json_lenient::Value>>>,
-}
-
-impl Default for DockerConfigLabels {
-    fn default() -> Self {
-        Self { metadata: None }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -385,8 +379,7 @@ where
         where
             A: de::SeqAccess<'de>,
         {
-            let values =
-                Vec::<String>::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
+            let values = Vec::<String>::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
             Ok(Some(values))
         }
 
@@ -394,9 +387,8 @@ where
         where
             M: de::MapAccess<'de>,
         {
-            let entries = HashMap::<String, String>::deserialize(
-                de::value::MapAccessDeserializer::new(map),
-            )?;
+            let entries =
+                HashMap::<String, String>::deserialize(de::value::MapAccessDeserializer::new(map))?;
             let labels = entries
                 .into_iter()
                 .map(|(k, v)| format!("{k}={v}"))
@@ -426,8 +418,7 @@ fn deserialize_nullable_labels<'de, D>(deserializer: D) -> Result<DockerConfigLa
 where
     D: Deserializer<'de>,
 {
-    Option::<DockerConfigLabels>::deserialize(deserializer)
-        .map(|opt| opt.unwrap_or_default())
+    Option::<DockerConfigLabels>::deserialize(deserializer).map(|opt| opt.unwrap_or_default())
 }
 
 fn deserialize_metadata<'de, D>(
