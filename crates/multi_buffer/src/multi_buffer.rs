@@ -4751,7 +4751,6 @@ impl MultiBufferSnapshot {
         let start = MBD::from_summary(&start.text);
 
         let excerpt_start_position = ExcerptDimension(start);
-        dbg!(&target, start, item);
         if self.diff_transforms.is_empty() {
             if let Some(excerpt) = item {
                 if !excerpt.contains(anchor, self) {
@@ -7438,7 +7437,6 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
                     if anchor.text_anchor.buffer_id != snapshot.remote_id() {
                         Ordering::Greater
                     } else if let Some(max_anchor) = cursor_location.max_anchor {
-                        dbg!(&max_anchor, &anchor.text_anchor);
                         debug_assert_eq!(max_anchor.buffer_id, snapshot.remote_id());
                         anchor.text_anchor().cmp(&max_anchor, snapshot)
                     } else {
