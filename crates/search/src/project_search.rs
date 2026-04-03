@@ -1184,7 +1184,6 @@ impl ProjectSearchView {
             if query.is_empty() { None } else { Some(query) }
         });
 
-
         let search = if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
@@ -1219,11 +1218,7 @@ impl ProjectSearchView {
                 search.set_search_option_enabled(SearchOptions::REGEX, regex, cx);
             }
             if let Some(case_sensitive) = action.case_sensitive {
-                search.set_search_option_enabled(
-                    SearchOptions::CASE_SENSITIVE,
-                    case_sensitive,
-                    cx,
-                );
+                search.set_search_option_enabled(SearchOptions::CASE_SENSITIVE, case_sensitive, cx);
             }
             if let Some(whole_word) = action.whole_word {
                 search.set_search_option_enabled(SearchOptions::WHOLE_WORD, whole_word, cx);
@@ -5255,7 +5250,7 @@ pub mod tests {
             );
         });
 
-        // Redeploy with only regex — unspecified options should be preserved.
+        // Redeploy with only regex - unspecified options should be preserved.
         cx.dispatch_action(menu::Cancel);
         workspace.update_in(cx, |workspace, window, cx| {
             ProjectSearchView::deploy_search(
@@ -5316,6 +5311,28 @@ pub mod tests {
                 search_view.search_options,
                 SearchOptions::REGEX,
                 "Explicit Some(false) should turn off options"
+            );
+        });
+
+        // Redeploy with an empty query - should not overwrite the existing query.
+        cx.dispatch_action(menu::Cancel);
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    query: Some("".into()),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
+
+        search_view.update_in(cx, |search_view, _window, cx| {
+            let query_text = search_view.query_editor.read(cx).text(cx);
+            assert_eq!(
+                query_text, "Test_Query",
+                "Empty query string should not overwrite the existing query"
             );
         });
     }
@@ -5391,7 +5408,7 @@ pub mod tests {
             assert_eq!(query_text, "lowercase_query");
         });
 
-        // Now deploy with an uppercase query — smartcase should enable case sensitivity.
+        // Now deploy with an uppercase query - smartcase should enable case sensitivity.
         workspace.update_in(cx, |workspace, window, cx| {
             ProjectSearchView::deploy_search(
                 workspace,
