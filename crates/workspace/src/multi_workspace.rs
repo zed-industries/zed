@@ -443,10 +443,12 @@ impl MultiWorkspace {
     ) {
         let project = workspace.read(cx).project().clone();
         cx.subscribe_in(&project, window, {
-            let workspace = workspace.clone();
+            let workspace = workspace.downgrade();
             move |this, _project, event, _window, cx| match event {
                 project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
-                    this.add_project_group_key(workspace.read(cx).project_group_key(cx));
+                    if let Some(workspace) = workspace.upgrade() {
+                        this.add_project_group_key(workspace.read(cx).project_group_key(cx));
+                    }
                 }
                 _ => {}
             }
