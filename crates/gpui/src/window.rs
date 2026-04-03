@@ -3334,14 +3334,46 @@ impl Window {
 
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
+        let rounded_bounds = self.round_bounds_to_device_pixels(quad.bounds);
+        let rounded_borders = self.round_edges_to_device_pixels(quad.border_widths);
+
+        // Temporary: detect when a bordered quad's device-pixel bounds are non-integer.
+        // This would cause fuzzy borders because the shader anti-aliases at sub-pixel edges.
+        if quad.border_widths.top.0 != 0.0
+            || quad.border_widths.right.0 != 0.0
+            || quad.border_widths.bottom.0 != 0.0
+            || quad.border_widths.left.0 != 0.0
+        {
+            let bx = rounded_bounds.origin.x.0;
+            let by = rounded_bounds.origin.y.0;
+            let bw = rounded_bounds.size.width.0;
+            let bh = rounded_bounds.size.height.0;
+            if bx.fract() != 0.0 || by.fract() != 0.0 || bw.fract() != 0.0 || bh.fract() != 0.0 {
+                eprintln!(
+                    "NON-INTEGER BORDERED QUAD: dev_bounds=({bx:.3}, {by:.3}, {bw:.3}, {bh:.3}) \
+                     logical=({:.4}, {:.4}, {:.4}, {:.4}) \
+                     borders=({:.1}, {:.1}, {:.1}, {:.1}) sf={}",
+                    quad.bounds.origin.x.0,
+                    quad.bounds.origin.y.0,
+                    quad.bounds.size.width.0,
+                    quad.bounds.size.height.0,
+                    rounded_borders.top.0,
+                    rounded_borders.right.0,
+                    rounded_borders.bottom.0,
+                    rounded_borders.left.0,
+                    self.scale_factor(),
+                );
+            }
+        }
+
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
-            bounds: self.round_bounds_to_device_pixels(quad.bounds),
+            bounds: rounded_bounds,
             content_mask: self.outset_content_mask_to_device_pixels(content_mask),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
-            border_widths: self.round_edges_to_device_pixels(quad.border_widths),
+            border_widths: rounded_borders,
             border_style: quad.border_style,
         });
     }
@@ -3495,8 +3527,10 @@ impl Window {
                 // part — the glyph raster already contains the sub-pixel shift.
                 // Y uses round because there is no Y subpixel variant (y: 0),
                 // so rounding gives the most accurate integer placement.
-                origin: point(glyph_origin.x.floor(), ScaledPixels(round_half_toward_zero(glyph_origin.y.0)))
-                    + raster_bounds.origin.map(Into::into),
+                origin: point(
+                    glyph_origin.x.floor(),
+                    ScaledPixels(round_half_toward_zero(glyph_origin.y.0)),
+                ) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
@@ -3682,8 +3716,10 @@ impl Window {
             let bounds = Bounds {
                 // See comment in paint_glyph: floor for X (subpixel variant),
                 // round for Y (no subpixel variant).
-                origin: point(glyph_origin.x.floor(), ScaledPixels(round_half_toward_zero(glyph_origin.y.0)))
-                    + raster_bounds.origin.map(Into::into),
+                origin: point(
+                    glyph_origin.x.floor(),
+                    ScaledPixels(round_half_toward_zero(glyph_origin.y.0)),
+                ) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
