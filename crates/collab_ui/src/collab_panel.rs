@@ -479,6 +479,7 @@ impl CollabPanel {
                 .ok()
                 .flatten()
                 .is_some();
+
             panel.update(cx, |panel, _cx| {
                 panel.filter_occupied_channels = filter_occupied_channels;
             });
