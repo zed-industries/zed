@@ -970,4 +970,128 @@ mod test {
 
         assert_eq!(docker_compose_config, expected_config);
     }
+
+    #[test]
+    fn should_deserialize_compose_labels_as_map() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "app": {
+                    "image": "node:22-alpine",
+                    "volumes": [],
+                    "labels": {
+                        "com.example.test": "value",
+                        "another.label": "another-value"
+                    }
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        let service = config.services.get("app").unwrap();
+        let mut labels = service.labels.clone().unwrap();
+        labels.sort();
+        assert_eq!(
+            labels,
+            vec![
+                "another.label=another-value".to_string(),
+                "com.example.test=value".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn should_deserialize_compose_labels_as_array() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "app": {
+                    "image": "node:22-alpine",
+                    "volumes": [],
+                    "labels": ["com.example.test=value"]
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        let service = config.services.get("app").unwrap();
+        assert_eq!(
+            service.labels,
+            Some(vec!["com.example.test=value".to_string()])
+        );
+    }
+
+    #[test]
+    fn should_deserialize_compose_without_volumes() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "app": {
+                    "image": "node:22-alpine",
+                    "volumes": []
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        assert!(config.volumes.is_empty());
+    }
+
+    #[test]
+    fn should_deserialize_inspect_without_labels() {
+        let given_config = r#"
+        {
+            "Id": "sha256:abc123",
+            "Config": {
+                "Env": ["PATH=/usr/bin"],
+                "Cmd": ["node"],
+                "WorkingDir": "/"
+            }
+        }
+        "#;
+
+        let inspect: DockerInspect = serde_json_lenient::from_str(given_config).unwrap();
+        assert!(inspect.config.labels.metadata.is_none());
+        assert!(inspect.config.image_user.is_none());
+    }
+
+    #[test]
+    fn should_deserialize_inspect_with_null_labels() {
+        let given_config = r#"
+        {
+            "Id": "sha256:abc123",
+            "Config": {
+                "Labels": null,
+                "Env": ["PATH=/usr/bin"]
+            }
+        }
+        "#;
+
+        let inspect: DockerInspect = serde_json_lenient::from_str(given_config).unwrap();
+        assert!(inspect.config.labels.metadata.is_none());
+    }
+
+    #[test]
+    fn should_deserialize_inspect_with_labels_but_no_metadata() {
+        let given_config = r#"
+        {
+            "Id": "sha256:abc123",
+            "Config": {
+                "Labels": {
+                    "com.example.test": "value"
+                },
+                "Env": ["PATH=/usr/bin"]
+            }
+        }
+        "#;
+
+        let inspect: DockerInspect = serde_json_lenient::from_str(given_config).unwrap();
+        assert!(inspect.config.labels.metadata.is_none());
+    }
 }
