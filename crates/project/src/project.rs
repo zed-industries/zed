@@ -6049,11 +6049,7 @@ impl ProjectGroupKey {
     /// Creates a new `ProjectGroupKey` with the given path list.
     ///
     /// The path list should point to the git main worktree paths for a project.
-    ///
-    /// This should be used only in a few places to make sure we can ensure the
-    /// main worktree path invariant. Namely, this should only be called from
-    /// [`Workspace`].
-    pub(crate) fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
+    pub fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
         Self { paths, host }
     }
 

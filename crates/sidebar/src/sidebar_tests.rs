@@ -193,11 +193,11 @@ fn visible_entries_as_strings(
                 match entry {
                     ListEntry::ProjectHeader {
                         label,
-                        path_list,
+                        key,
                         highlight_positions: _,
                         ..
                     } => {
-                        let icon = if sidebar.collapsed_groups.contains(path_list) {
+                        let icon = if sidebar.collapsed_groups.contains(key.path_list()) {
                             ">"
                         } else {
                             "v"
@@ -685,9 +685,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
         s.contents.entries = vec![
             // Expanded project header
             ListEntry::ProjectHeader {
-                path_list: expanded_path.clone(),
+                key: project::ProjectGroupKey::new(None, expanded_path.clone()),
                 label: "expanded-project".into(),
-                workspace: workspace.clone(),
                 highlight_positions: Vec::new(),
                 has_running_threads: false,
                 waiting_thread_count: 0,
@@ -809,14 +808,13 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             }),
             // View More entry
             ListEntry::ViewMore {
-                path_list: expanded_path.clone(),
+                key: project::ProjectGroupKey::new(None, expanded_path.clone()),
                 is_fully_expanded: false,
             },
             // Collapsed project header
             ListEntry::ProjectHeader {
-                path_list: collapsed_path.clone(),
+                key: project::ProjectGroupKey::new(None, collapsed_path.clone()),
                 label: "collapsed-project".into(),
-                workspace: workspace.clone(),
                 highlight_positions: Vec::new(),
                 has_running_threads: false,
                 waiting_thread_count: 0,
@@ -2287,9 +2285,11 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // The workspace path_list is now [project-a, project-b]. The active
     // thread's metadata was re-saved with the new paths by the agent panel's
     // project subscription, so it stays visible under the updated group.
+    // The old [project-a] group persists in the sidebar (empty) because
+    // project_group_keys is append-only.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project-a, project-b]", "  Hello *",]
+        vec!["v [project-a]", "v [project-a, project-b]", "  Hello *",]
     );
 
     // The "New Thread" button must still be clickable (not stuck in
@@ -4788,7 +4788,6 @@ async fn test_linked_worktree_workspace_shows_main_worktree_threads(cx: &mut Tes
 
 mod property_test {
     use super::*;
-    use gpui::EntityId;
 
     struct UnopenedWorktree {
         path: String,
@@ -5147,7 +5146,7 @@ mod property_test {
                 .entries
                 .iter()
                 .filter_map(|entry| match entry {
-                    ListEntry::ProjectHeader { path_list, .. } => Some(path_list.clone()),
+                    ListEntry::ProjectHeader { key, .. } => Some(key.path_list().clone()),
                     _ => None,
                 })
                 .collect();
@@ -5173,31 +5172,32 @@ mod property_test {
             anyhow::bail!("sidebar should still have an associated multi-workspace");
         };
 
-        let workspaces = multi_workspace.read(cx).workspaces().to_vec();
+        let mw = multi_workspace.read(cx);
 
-        // Workspaces with no root paths are not shown because the
-        // sidebar skips empty path lists. All other workspaces should
-        // appear — either via a Thread entry or a NewThread entry for
-        // threadless workspaces.
-        let expected_workspaces: HashSet<EntityId> = workspaces
-            .iter()
-            .filter(|ws| !workspace_path_list(ws, cx).paths().is_empty())
-            .map(|ws| ws.entity_id())
+        // Every project group key in the multi-workspace that has a
+        // non-empty path list should appear as a ProjectHeader in the
+        // sidebar.
+        let expected_keys: HashSet<&project::ProjectGroupKey> = mw
+            .project_group_keys()
+            .filter(|k| !k.path_list().paths().is_empty())
             .collect();
 
-        let sidebar_workspaces: HashSet<EntityId> = sidebar
+        let sidebar_keys: HashSet<&project::ProjectGroupKey> = sidebar
             .contents
             .entries
             .iter()
-            .filter_map(|entry| entry.workspace().map(|ws| ws.entity_id()))
+            .filter_map(|entry| match entry {
+                ListEntry::ProjectHeader { key, .. } => Some(key),
+                _ => None,
+            })
             .collect();
 
-        let missing = &expected_workspaces - &sidebar_workspaces;
-        let stray = &sidebar_workspaces - &expected_workspaces;
+        let missing = &expected_keys - &sidebar_keys;
+        let stray = &sidebar_keys - &expected_keys;
 
         anyhow::ensure!(
             missing.is_empty() && stray.is_empty(),
-            "sidebar workspaces don't match multi-workspace.\n\
+            "sidebar project groups don't match multi-workspace.\n\
              Only in multi-workspace (missing): {:?}\n\
              Only in sidebar (stray): {:?}",
             missing,
@@ -5249,11 +5249,8 @@ mod property_test {
                 .get(group_key)
                 .map(|ws| ws.as_slice())
                 .unwrap_or_default();
-            if group_workspaces.is_empty() {
-                continue;
-            }
 
-            // Main code path queries.
+            // Main code path queries (run for all groups, even without workspaces).
             for metadata in thread_store
                 .read(cx)
                 .entries_for_main_worktree_path(&path_list)
