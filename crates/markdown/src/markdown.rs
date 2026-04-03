@@ -3230,7 +3230,7 @@ mod tests {
             "a\n\nb",
             "\nhello",
             "    | { a: string }\n    | { b: number }",
-            "caf\u{00e9} \u{2615} na\u{00ef}ve",
+            "café ☕ naïve"
         ];
         for input in cases {
             let mut escaper = MarkdownEscaper::new();
