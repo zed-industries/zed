@@ -56,6 +56,17 @@ impl Connection {
                     ORDER BY step
                     "})?(domain)?;
 
+            if completed_migrations.len() > migrations.len() {
+                anyhow::bail!(formatdoc! {"
+                    Database has newer migrations for {domain}
+
+                    Completed steps in database: {}
+                    Steps supported by this build: {}
+
+                    This profile was likely opened by a newer version of Zed.
+                    Please upgrade Zed or use a separate profile.", completed_migrations.len(), migrations.len()});
+            }
+
             let mut store_completed_migration = self
                 .exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
 
@@ -343,6 +354,32 @@ mod test {
 
         // Verify new migration returns error when run
         assert!(second_migration_result.is_err())
+    }
+
+    #[test]
+    fn newer_database_version_fails() {
+        let connection = Connection::open_memory(Some("newer_database_version_fails"));
+
+        connection
+            .migrate(
+                "test migration",
+                &[
+                    "CREATE TABLE test (col INTEGER)",
+                    "CREATE TABLE test2 (col INTEGER)",
+                ],
+                &mut disallow_migration_change,
+            )
+            .unwrap();
+
+        let error = connection
+            .migrate(
+                "test migration",
+                &["CREATE TABLE test (col INTEGER)"],
+                &mut disallow_migration_change,
+            )
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("Database has newer migrations for test migration"));
     }
 
     #[test]

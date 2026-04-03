@@ -138,6 +138,8 @@ const FALLBACK_DB_NAME: &str = "FALLBACK_MEMORY_DB";
 const DB_FILE_NAME: &str = "db.sqlite";
 
 pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
+pub static ALL_FILE_DB_IS_FROM_NEWER_VERSION: LazyLock<AtomicBool> =
+    LazyLock::new(|| AtomicBool::new(false));
 
 /// Open or create a database at the given directory path.
 /// This will retry a couple times if there are failures. If opening fails once, the db directory
@@ -147,6 +149,9 @@ pub async fn open_db<M: Migrator + 'static>(db_dir: &Path, scope: &str) -> Threa
     if *ZED_STATELESS {
         return open_fallback_db::<M>().await;
     }
+
+    ALL_FILE_DB_FAILED.store(false, Ordering::Release);
+    ALL_FILE_DB_IS_FROM_NEWER_VERSION.store(false, Ordering::Release);
 
     let main_db_dir = db_dir.join(format!("0-{}", scope));
 
@@ -173,12 +178,19 @@ pub async fn open_db<M: Migrator + 'static>(db_dir: &Path, scope: &str) -> Threa
 
 async fn open_main_db<M: Migrator>(db_path: &Path) -> Option<ThreadSafeConnection> {
     log::trace!("Opening database {}", db_path.display());
-    ThreadSafeConnection::builder::<M>(db_path.to_string_lossy().as_ref(), true)
+    let result = ThreadSafeConnection::builder::<M>(db_path.to_string_lossy().as_ref(), true)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
         .build()
-        .await
-        .log_err()
+        .await;
+
+    let opened_by_newer_version = result
+        .as_ref()
+        .err()
+        .is_some_and(is_forward_compatibility_error);
+    ALL_FILE_DB_IS_FROM_NEWER_VERSION.store(opened_by_newer_version, Ordering::Release);
+
+    result.log_err()
 }
 
 async fn open_fallback_db<M: Migrator>() -> ThreadSafeConnection {
@@ -205,6 +217,10 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection {
         .build()
         .await
         .unwrap()
+}
+
+fn is_forward_compatibility_error(error: &anyhow::Error) -> bool {
+    format!("{error:#}").contains("Database has newer migrations for")
 }
 
 /// Implements a basic DB wrapper for a given domain
@@ -396,5 +412,54 @@ mod tests {
         for guard in guards.into_iter() {
             assert!(guard.join().is_ok());
         }
+    }
+
+    #[gpui::test]
+    async fn test_newer_database_version_uses_fallback(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+
+        enum NewerDB {}
+
+        impl Domain for NewerDB {
+            const NAME: &str = "db_tests";
+            const MIGRATIONS: &[&str] = &[
+                sql!(CREATE TABLE test(value);),
+                sql!(CREATE TABLE test2(value);),
+            ];
+        }
+
+        enum OlderDB {}
+
+        impl Domain for OlderDB {
+            const NAME: &str = "db_tests";
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test(value);)];
+        }
+
+        let tempdir = tempfile::Builder::new()
+            .prefix("DbTests")
+            .tempdir()
+            .unwrap();
+        {
+            let newer_db = open_db::<NewerDB>(
+                tempdir.path(),
+                release_channel::ReleaseChannel::Dev.dev_name(),
+            )
+            .await;
+            assert!(newer_db.persistent());
+        }
+
+        let older_db = open_db::<OlderDB>(
+            tempdir.path(),
+            release_channel::ReleaseChannel::Dev.dev_name(),
+        )
+        .await;
+
+        assert!(!older_db.persistent());
+        assert!(
+            older_db.select_row::<usize>("SELECT * FROM test").unwrap()()
+                .unwrap()
+                .is_none()
+        );
+        assert!(older_db.select_row::<usize>("SELECT * FROM test2").is_err());
     }
 }
