@@ -38,7 +38,14 @@ pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError> {
-    let mut response = bedrock::Client::converse_stream(&client)
+    send_request(&client, request).await
+}
+
+async fn send_request(
+    client: &bedrock::Client,
+    request: Request,
+) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError> {
+    let mut response = bedrock::Client::converse_stream(client)
         .model_id(request.model.clone())
         .set_messages(request.messages.into());
 
@@ -183,7 +190,7 @@ pub fn value_to_aws_document(value: &Value) -> Document {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Thinking {
     Enabled {
         budget_tokens: Option<u64>,
@@ -193,7 +200,7 @@ pub enum Thinking {
     },
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Request {
     pub model: String,
     pub max_tokens: u64,
@@ -209,7 +216,7 @@ pub struct Request {
     pub allow_extended_context: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Metadata {
     pub user_id: Option<String>,
 }

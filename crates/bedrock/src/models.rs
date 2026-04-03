@@ -453,14 +453,18 @@ impl Model {
     }
 
     pub fn supports_extended_context(&self) -> bool {
-        matches!(
-            self,
+        self.extended_context_token_count().is_some()
+    }
+
+    pub fn extended_context_token_count(&self) -> Option<u64> {
+        match self {
             Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeSonnet4_6
-        )
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeSonnet4_6 => Some(1_000_000),
+            _ => None,
+        }
     }
 
     pub fn supports_caching(&self) -> bool {
