@@ -534,6 +534,19 @@ impl Markdown {
         cx.refresh_windows();
     }
 
+    fn footnote_definition_content_start(&self, label: &SharedString) -> Option<usize> {
+        let mut inside_target_def = false;
+        self.parsed_markdown.events.iter().find_map(|(range, event)| {
+            if inside_target_def && matches!(event, MarkdownEvent::Text) {
+                return Some(range.start);
+            }
+            if let MarkdownEvent::Start(MarkdownTag::FootnoteDefinition(def_label)) = event {
+                inside_target_def = *def_label == *label;
+            }
+            None
+        })
+    }
+
     pub fn set_active_root_for_source_index(
         &mut self,
         source_index: Option<usize>,
@@ -1342,7 +1355,9 @@ impl MarkdownElement {
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
-                        if let Some(link) = rendered_text.link_for_position(event.position) {
+                        if let Some(footnote_ref) = rendered_text.footnote_ref_for_position(event.position) {
+                            markdown.pressed_footnote_ref = Some(footnote_ref.clone());
+                        } else if let Some(link) = rendered_text.link_for_position(event.position) {
                             markdown.pressed_link = Some(link.clone());
                         } else {
                             let source_index =
@@ -1434,7 +1449,17 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
-                    if let Some(pressed_link) = markdown.pressed_link.take()
+                    if let Some(pressed_footnote_ref) = markdown.pressed_footnote_ref.take()
+                        && Some(&pressed_footnote_ref)
+                            == rendered_text.footnote_ref_for_position(event.position)
+                    {
+                        if let Some(source_index) = markdown
+                            .footnote_definition_content_start(&pressed_footnote_ref.label)
+                        {
+                            markdown.autoscroll_request = Some(source_index);
+                            cx.notify();
+                        }
+                    } else if let Some(pressed_link) = markdown.pressed_link.take()
                         && Some(&pressed_link) == rendered_text.link_for_position(event.position)
                     {
                         if let Some(open_url) = on_open_url.as_ref() {
