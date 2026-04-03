@@ -1818,6 +1818,20 @@ impl Element for MarkdownElement {
                                 builder.push_text_style(style)
                             }
                         }
+                        MarkdownTag::FootnoteDefinition(label) => {
+                            if !builder.rendered_footnote_separator {
+                                builder.rendered_footnote_separator = true;
+                                builder.push_div(
+                                    div()
+                                        .border_t_1()
+                                        .mt_2()
+                                        .border_color(self.style.rule_color),
+                                    range,
+                                    markdown_end,
+                                );
+                                builder.pop_div();
+                            }
+                        }
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
                             builder.table.start(alignments.clone());
@@ -2272,6 +2286,7 @@ struct MarkdownElementBuilder {
     rendered_links: Vec<RenderedLink>,
     current_source_index: usize,
     html_comment: bool,
+    rendered_footnote_separator: bool,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -2308,6 +2323,7 @@ impl MarkdownElementBuilder {
             rendered_links: Vec::new(),
             current_source_index: 0,
             html_comment: false,
+            rendered_footnote_separator: false,
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
