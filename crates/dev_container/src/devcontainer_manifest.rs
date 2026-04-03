@@ -20,7 +20,8 @@ use crate::{
     },
     docker::{
         Docker, DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
-        DockerComposeVolume, DockerInspect, DockerPs, get_remote_dir_from_config,
+        DockerComposeServicePort, DockerComposeVolume, DockerInspect, DockerPs,
+        get_remote_dir_from_config,
     },
     features::{DevContainerFeatureJson, FeatureManifest, parse_oci_feature_ref},
     get_oci_token,
@@ -1137,18 +1138,30 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 // If the main service uses a different service's network bridge, append to that service's ports instead
                 if let Some(network_service_name) = network_mode_service {
                     if let Some(service) = service_declarations.get_mut(network_service_name) {
-                        service.ports.push(format!("{port}:{port}"));
+                        service.ports.push(DockerComposeServicePort {
+                            target: port.clone(),
+                            published: port.clone(),
+                            ..Default::default()
+                        });
                     } else {
                         service_declarations.insert(
                             network_service_name.to_string(),
                             DockerComposeService {
-                                ports: vec![format!("{port}:{port}")],
+                                ports: vec![DockerComposeServicePort {
+                                    target: port.clone(),
+                                    published: port.clone(),
+                                    ..Default::default()
+                                }],
                                 ..Default::default()
                             },
                         );
                     }
                 } else {
-                    main_service.ports.push(format!("{port}:{port}"));
+                    main_service.ports.push(DockerComposeServicePort {
+                        target: port.clone(),
+                        published: port.clone(),
+                        ..Default::default()
+                    });
                 }
             }
             let other_service_ports: Vec<(&str, &str)> = forward_ports
@@ -1171,12 +1184,20 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 .collect();
             for (service_name, port) in other_service_ports {
                 if let Some(service) = service_declarations.get_mut(service_name) {
-                    service.ports.push(format!("{port}:{port}"));
+                    service.ports.push(DockerComposeServicePort {
+                        target: port.to_string(),
+                        published: port.to_string(),
+                        ..Default::default()
+                    });
                 } else {
                     service_declarations.insert(
                         service_name.to_string(),
                         DockerComposeService {
-                            ports: vec![format!("{port}:{port}")],
+                            ports: vec![DockerComposeServicePort {
+                                target: port.to_string(),
+                                published: port.to_string(),
+                                ..Default::default()
+                            }],
                             ..Default::default()
                         },
                     );
@@ -1186,18 +1207,30 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         if let Some(port) = &self.dev_container().app_port {
             if let Some(network_service_name) = network_mode_service {
                 if let Some(service) = service_declarations.get_mut(network_service_name) {
-                    service.ports.push(format!("{port}:{port}"));
+                    service.ports.push(DockerComposeServicePort {
+                        target: port.clone(),
+                        published: port.clone(),
+                        ..Default::default()
+                    });
                 } else {
                     service_declarations.insert(
                         network_service_name.to_string(),
                         DockerComposeService {
-                            ports: vec![format!("{port}:{port}")],
+                            ports: vec![DockerComposeServicePort {
+                                target: port.clone(),
+                                published: port.clone(),
+                                ..Default::default()
+                            }],
                             ..Default::default()
                         },
                     );
                 }
             } else {
-                main_service.ports.push(format!("{port}:{port}"));
+                main_service.ports.push(DockerComposeServicePort {
+                    target: port.clone(),
+                    published: port.clone(),
+                    ..Default::default()
+                });
             }
         }
 
@@ -3278,6 +3311,8 @@ chmod +x ./install.sh
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose(cx: &mut TestAppContext) {
+        use crate::docker::DockerComposeServicePort;
+
         cx.executor().allow_parking();
         env_logger::try_init().ok();
         let given_devcontainer_contents = r#"
@@ -3540,10 +3575,26 @@ ENV DOCKER_BUILDKIT=1
                     "db".to_string(),
                     DockerComposeService {
                         ports: vec![
-                            "8083:8083".to_string(),
-                            "5432:5432".to_string(),
-                            "1234:1234".to_string(),
-                            "8084:8084".to_string()
+                            DockerComposeServicePort {
+                                target: "8083".to_string(),
+                                published: "8083".to_string(),
+                                ..Default::default()
+                            },
+                            DockerComposeServicePort {
+                                target: "5432".to_string(),
+                                published: "5432".to_string(),
+                                ..Default::default()
+                            },
+                            DockerComposeServicePort {
+                                target: "1234".to_string(),
+                                published: "1234".to_string(),
+                                ..Default::default()
+                            },
+                            DockerComposeServicePort {
+                                target: "8084".to_string(),
+                                published: "8084".to_string(),
+                                ..Default::default()
+                            },
                         ],
                         ..Default::default()
                     },

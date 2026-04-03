@@ -87,6 +87,43 @@ pub(crate) struct DockerComposeServiceBuild {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+pub(crate) struct DockerComposeServicePort {
+    #[serde(deserialize_with = "deserialize_string_or_int")]
+    pub(crate) target: String,
+    #[serde(deserialize_with = "deserialize_string_or_int")]
+    pub(crate) published: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) host_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) app_protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
+}
+
+fn deserialize_string_or_int<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInt {
+        String(String),
+        Int(u32),
+    }
+
+    match StringOrInt::deserialize(deserializer)? {
+        StringOrInt::String(s) => Ok(s),
+        StringOrInt::Int(b) => Ok(b.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 pub(crate) struct DockerComposeService {
     pub(crate) image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -109,7 +146,7 @@ pub(crate) struct DockerComposeService {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) env_file: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) ports: Vec<String>,
+    pub(crate) ports: Vec<DockerComposeServicePort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) network_mode: Option<String>,
 }
@@ -491,8 +528,8 @@ mod test {
         command_json::deserialize_json_output,
         devcontainer_json::MountDefinition,
         docker::{
-            Docker, DockerComposeConfig, DockerComposeService, DockerComposeVolume, DockerInspect,
-            DockerPs, get_remote_dir_from_config,
+            Docker, DockerComposeConfig, DockerComposeService, DockerComposeServicePort,
+            DockerComposeVolume, DockerInspect, DockerPs, get_remote_dir_from_config,
         },
     };
 
@@ -879,6 +916,22 @@ mod test {
                 "POSTGRES_PORT": "5432",
                 "POSTGRES_USER": "postgres"
                 },
+                "ports": [
+                    {
+                        "target": "5443",
+                        "published": "5442"
+                    },
+                    {
+                        "name": "custom port",
+                        "protocol": "udp",
+                        "host_ip": "127.0.0.1",
+                        "app_protocol": "http",
+                        "mode": "host",
+                        "target": "8081",
+                        "published": "8083"
+
+                    }
+                ],
                 "image": "mcr.microsoft.com/devcontainers/rust:2-1-bookworm",
                 "network_mode": "service:db",
                 "volumes": [
@@ -943,6 +996,23 @@ mod test {
                             target: "/workspaces".to_string(),
                         }],
                         network_mode: Some("service:db".to_string()),
+
+                        ports: vec![
+                            DockerComposeServicePort {
+                                target: "5443".to_string(),
+                                published: "5442".to_string(),
+                                ..Default::default()
+                            },
+                            DockerComposeServicePort {
+                                target: "8081".to_string(),
+                                published: "8083".to_string(),
+                                mode: Some("host".to_string()),
+                                protocol: Some("udp".to_string()),
+                                host_ip: Some("127.0.0.1".to_string()),
+                                app_protocol: Some("http".to_string()),
+                                name: Some("custom port".to_string()),
+                            },
+                        ],
                         ..Default::default()
                     },
                 ),
