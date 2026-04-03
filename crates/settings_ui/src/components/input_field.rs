@@ -124,7 +124,11 @@ impl RenderOnce for SettingsInputField {
                         editor.set_text(text, window, cx);
                     }
 
-                    if let Some(confirm) = confirm.take() {
+                    if let Some(confirm) = confirm.take()
+                        && !self.display_confirm_button
+                        && !self.display_clear_button
+                        && !self.clear_on_confirm
+                    {
                         cx.on_focus_out(
                             &editor_focus_handle,
                             window,
@@ -156,7 +160,11 @@ impl RenderOnce for SettingsInputField {
                         editor.set_text(text, window, cx);
                     }
 
-                    if let Some(confirm) = confirm.take() {
+                    if let Some(confirm) = confirm.take()
+                        && !self.display_confirm_button
+                        && !self.display_clear_button
+                        && !self.clear_on_confirm
+                    {
                         cx.on_focus_out(
                             &editor_focus_handle,
                             window,
