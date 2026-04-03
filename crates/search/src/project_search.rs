@@ -5163,13 +5163,13 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            path!("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
         let workspace = window
             .read_with(cx, |mw, _| mw.workspace().clone())
@@ -5211,9 +5211,7 @@ pub mod tests {
 
         search_view.update_in(cx, |search_view, _window, cx| {
             assert!(
-                search_view
-                    .search_options
-                    .contains(SearchOptions::REGEX),
+                search_view.search_options.contains(SearchOptions::REGEX),
                 "Regex option should be enabled"
             );
             assert!(
