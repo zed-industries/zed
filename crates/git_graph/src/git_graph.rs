@@ -2536,16 +2536,36 @@ impl Render for GitGraph {
             self.search_state.state = QueryState::Empty;
             self.search(query, cx);
         }
-        let (commit_count, is_loading) = match self.graph_data.max_commit_count {
-            AllCommitCount::Loaded(count) => (count, true),
+        let (commit_count, is_loading, graph_error) = match self.graph_data.max_commit_count {
+            AllCommitCount::Loaded(count) => {
+                let (is_loading, error) = if let Some(repository) = self.get_repository(cx) {
+                    repository.update(cx, |repository, cx| {
+                        let GraphDataResponse {
+                            commits: _,
+                            is_loading,
+                            error,
+                        } = repository.graph_data(
+                            self.log_source.clone(),
+                            self.log_order,
+                            0..usize::MAX,
+                            cx,
+                        );
+                        (is_loading, error)
+                    })
+                } else {
+                    (false, None)
+                };
+
+                (count, is_loading, error)
+            }
             AllCommitCount::NotLoaded => {
-                let (commit_count, is_loading) = if let Some(repository) = self.get_repository(cx) {
+                let (commit_count, is_loading, error) = if let Some(repository) = self.get_repository(cx) {
                     repository.update(cx, |repository, cx| {
                         // Start loading the graph data if we haven't started already
                         let GraphDataResponse {
                             commits,
                             is_loading,
-                            error: _,
+                            error,
                         } = repository.graph_data(
                             self.log_source.clone(),
                             self.log_order,
@@ -2555,21 +2575,23 @@ impl Render for GitGraph {
                         self.graph_data.add_commits(&commits);
                         let graph_viewport_width = self.graph_viewport_width(window, cx);
                         self.clamp_horizontal_scroll_offset(graph_viewport_width);
-                        (commits.len(), is_loading)
+                        (commits.len(), is_loading, error)
                     })
                 } else {
-                    (0, false)
+                    (0, false, None)
                 };
 
-                (commit_count, is_loading)
+                (commit_count, is_loading, error)
             }
         };
 
         let content = if commit_count == 0 {
-            let message = if is_loading {
-                "Loading"
+            let message: SharedString = if is_loading {
+                "Loading".into()
+            } else if let Some(error) = graph_error {
+                error
             } else {
-                "No commits found"
+                "No commits found".into()
             };
             let label = Label::new(message)
                 .color(Color::Muted)

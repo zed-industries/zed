@@ -2690,6 +2690,7 @@ impl GitRepository for RealGitRepository {
                 log_order.as_arg(),
                 log_source.get_arg()?,
             ]);
+            command.stdin(Stdio::null());
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
 
@@ -2716,7 +2717,9 @@ impl GitRepository for RealGitRepository {
                     break;
                 }
 
-                let line = line_buffer.trim_end_matches('\n').to_string();
+                let line = line_buffer
+                    .trim_end_matches(|c| c == '\n' || c == '\r')
+                    .to_string();
                 lines.push(line);
 
                 if lines.len() >= GRAPH_CHUNK_SIZE {
@@ -2758,6 +2761,7 @@ impl GitRepository for RealGitRepository {
             args.push(search_args.query.as_str());
 
             let mut command = git.build_command(&args);
+            command.stdin(Stdio::null());
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
 
@@ -2775,7 +2779,7 @@ impl GitRepository for RealGitRepository {
                     break;
                 }
 
-                let sha = line_buffer.trim_end_matches('\n');
+                let sha = line_buffer.trim_end_matches(|c| c == '\n' || c == '\r');
 
                 if let Ok(oid) = Oid::from_str(sha)
                     && request_tx.send(oid).await.is_err()
@@ -2905,6 +2909,7 @@ fn parse_initial_graph_output<'a>(
     lines
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
+            let line = line.trim_end_matches('\r');
             // Format: "SHA\x00PARENT1 PARENT2...\x00REF1, REF2, ..."
             let mut parts = line.split('\x00');
 
@@ -3865,6 +3870,23 @@ mod tests {
             }),
         };
         assert_eq!(upstream.branch_name(), Some("feature/git-pull-request"));
+    }
+
+    #[test]
+    fn test_parse_initial_graph_output_handles_crlf() {
+        let line = "0123456789012345678901234567890123456789\x00abcdefabcdefabcdefabcdefabcdefabcdefabcd\x00HEAD -> main\r";
+        let commits = parse_initial_graph_output([line].into_iter());
+
+        assert_eq!(commits.len(), 1);
+        let commit = &commits[0];
+        assert_eq!(commit.sha.to_string(), "0123456789012345678901234567890123456789");
+        assert_eq!(commit.parents.len(), 1);
+        assert_eq!(
+            commit.parents[0].to_string(),
+            "abcdefabcdefabcdefabcdefabcdefabcdefabcd"
+        );
+        assert_eq!(commit.ref_names.len(), 1);
+        assert_eq!(commit.ref_names[0].as_ref(), "HEAD -> main");
     }
 
     #[test]
