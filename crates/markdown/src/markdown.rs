@@ -563,11 +563,6 @@ impl Markdown {
         for c in s.chars() {
             escaper.next(c as u8).write_to(c, &mut output);
         }
-        debug_assert_eq!(
-            output.len(),
-            output_len,
-            "pre-computed output length drifted from actual output"
-        );
         output.into()
     }
 
@@ -3217,6 +3212,38 @@ mod tests {
         events
             .iter()
             .any(|(_, event)| matches!(event, MarkdownEvent::Start(MarkdownTag::CodeBlock { .. })))
+    }
+
+    #[test]
+    fn test_escape_output_len_matches_precomputed() {
+        let cases = [
+            "",
+            "hello world",
+            "hello `world`",
+            "    hello",
+            "    | { a: string }",
+            "\thello",
+            "hello\n\t\tindented",
+            " \t hello",
+            "hello\tworld",
+            "a\nb",
+            "a\n\nb",
+            "\nhello",
+            "    | { a: string }\n    | { b: number }",
+            "caf\u{00e9} \u{2615} na\u{00ef}ve",
+        ];
+        for input in cases {
+            let mut escaper = MarkdownEscaper::new();
+            let precomputed: usize = input.bytes().map(|b| escaper.next(b).output_len()).sum();
+
+            let mut escaper = MarkdownEscaper::new();
+            let mut output = String::new();
+            for c in input.chars() {
+                escaper.next(c as u8).write_to(c, &mut output);
+            }
+
+            assert_eq!(precomputed, output.len(), "length mismatch for {:?}", input);
+        }
     }
 
     #[test]
