@@ -474,6 +474,7 @@ impl MultiWorkspace {
         self.project_group_keys.iter()
     }
 
+    /// Returns the project groups, ordered by most recently added.
     pub fn project_groups(
         &self,
         cx: &App,
@@ -481,6 +482,7 @@ impl MultiWorkspace {
         let mut groups = self
             .project_group_keys
             .iter()
+            .rev()
             .map(|key| (key.clone(), Vec::new()))
             .collect::<Vec<_>>();
         for workspace in &self.workspaces {

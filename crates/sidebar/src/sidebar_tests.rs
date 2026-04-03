@@ -2287,7 +2287,11 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // project_group_keys is append-only.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project-a]", "v [project-a, project-b]", "  Hello *",]
+        vec![
+            "v [project-a, project-b]", //
+            "  Hello *",
+            "v [project-a]",
+        ]
     );
 
     // The "New Thread" button must still be clickable (not stuck in
@@ -4207,10 +4211,10 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
         vec![
-            "v [project]",
-            "  Worktree Thread {wt-feature-a}",
             "v [other, project]",
             "  [+ New Thread]",
+            "v [project]",
+            "  Worktree Thread {wt-feature-a}",
         ]
     );
 }
