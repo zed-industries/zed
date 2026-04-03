@@ -857,19 +857,6 @@ impl Sidebar {
                         .map(|ws| (workspace_path_list(ws, cx), ws))
                         .collect();
 
-                // Collect root paths of all open workspaces in the group so
-                // we can skip redundant legacy linked-worktree queries for
-                // paths that already have an open workspace.
-                let covered_paths: HashSet<std::path::PathBuf> = group_workspaces
-                    .iter()
-                    .flat_map(|ws| {
-                        ws.read(cx)
-                            .root_paths(cx)
-                            .into_iter()
-                            .map(|p| p.to_path_buf())
-                    })
-                    .collect();
-
                 // Resolve a ThreadEntryWorkspace for a thread row. If any open
                 // workspace's root paths match the thread's folder_paths, use
                 // Open; otherwise use Closed.
@@ -917,9 +904,10 @@ impl Sidebar {
                     threads.push(make_thread_entry(row, workspace));
                 }
 
-                // Also query by folder_paths matching the group's canonical
-                // paths. Threads opened directly in the main worktree will
-                // have their folder_paths equal to the group's path_list.
+                // Legacy threads did not have `main_worktree_paths` populated, so they
+                // must be queried by their `folder_paths`.
+
+                // Load any legacy threads for the main worktrees of this project group.
                 for row in thread_store.read(cx).entries_for_path(&path_list).cloned() {
                     if !seen_session_ids.insert(row.session_id.clone()) {
                         continue;
@@ -928,24 +916,23 @@ impl Sidebar {
                     threads.push(make_thread_entry(row, workspace));
                 }
 
-                // === Legacy: load old threads from linked worktrees by folder_paths ===
-                // Old threads stored the linked worktree path as folder_paths
-                // without setting main_worktree_paths. We discover linked
-                // worktree paths from git repositories loaded in the group's
-                // workspaces.
-
-                // First, query by each workspace's own root paths when they
-                // differ from the group's canonical path_list (i.e., when a
-                // workspace is a linked worktree checkout). This doesn't
-                // depend on git repo loading state.
+                // Load any legacy threads for any single linked wortree of this project group.
+                let mut linked_worktree_paths = HashSet::new();
                 for workspace in group_workspaces {
-                    let ws_path_list = workspace_path_list(workspace, cx);
-                    if ws_path_list == path_list {
+                    if workspace.read(cx).visible_worktrees(cx).count() != 1 {
                         continue;
                     }
+                    for snapshot in root_repository_snapshots(workspace, cx) {
+                        for linked_worktree in snapshot.linked_worktrees() {
+                            linked_worktree_paths.insert(linked_worktree.path.clone());
+                        }
+                    }
+                }
+                for path in linked_worktree_paths {
+                    let worktree_path_list = PathList::new(std::slice::from_ref(&path));
                     for row in thread_store
                         .read(cx)
-                        .entries_for_path(&ws_path_list)
+                        .entries_for_path(&worktree_path_list)
                         .cloned()
                     {
                         if !seen_session_ids.insert(row.session_id.clone()) {
@@ -953,47 +940,8 @@ impl Sidebar {
                         }
                         threads.push(make_thread_entry(
                             row,
-                            ThreadEntryWorkspace::Open(workspace.clone()),
+                            ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
                         ));
-                    }
-                }
-
-                // Then, query linked worktree paths discovered from git
-                // repositories for worktrees that don't have an open
-                // workspace.
-                for workspace in group_workspaces {
-                    for snapshot in root_repository_snapshots(workspace, cx) {
-                        // Only query linked worktrees from repos whose main
-                        // path, as a single-path PathList, matches the group
-                        // exactly. This prevents a repo in a multi-root
-                        // workspace from leaking its linked worktrees into
-                        // the multi-root group.
-                        let repo_path_list =
-                            PathList::new(&[snapshot.original_repo_abs_path.to_path_buf()]);
-                        if repo_path_list != path_list {
-                            continue;
-                        }
-
-                        for linked_worktree in snapshot.linked_worktrees() {
-                            if covered_paths.contains(&*linked_worktree.path) {
-                                continue;
-                            }
-                            let worktree_path_list =
-                                PathList::new(std::slice::from_ref(&linked_worktree.path));
-                            for row in thread_store
-                                .read(cx)
-                                .entries_for_path(&worktree_path_list)
-                                .cloned()
-                            {
-                                if !seen_session_ids.insert(row.session_id.clone()) {
-                                    continue;
-                                }
-                                threads.push(make_thread_entry(
-                                    row,
-                                    ThreadEntryWorkspace::Closed(worktree_path_list.clone()),
-                                ));
-                            }
-                        }
                     }
                 }
 
