@@ -436,6 +436,14 @@ fn ensure_thread_subscription(
     let thread_id_for_sub = thread_id.to_string();
     mark_persistent_subscription(thread_id.to_string());
 
+    // Track the request_id that was active when the current turn started.
+    // Used by the Stopped handler to flush with the correct request_id,
+    // even if a follow-up/interrupt message has already updated the global
+    // THREAD_REQUEST_MAP to the next turn's request_id.
+    let turn_request_id: std::cell::RefCell<String> = std::cell::RefCell::new(
+        crate::get_thread_request_id(thread_id).unwrap_or_default()
+    );
+
     cx.subscribe(thread_entity, move |thread_entity, event, cx| {
         match event {
             AcpThreadEvent::NewEntry => {
@@ -465,6 +473,12 @@ fn ensure_thread_subscription(
                     };
                     let rid = crate::get_thread_request_id(&thread_id_for_sub)
                         .unwrap_or_default();
+                    // Snapshot the request_id when the first assistant entry of a turn appears.
+                    // This ensures the Stopped flush uses the turn's own request_id, not a
+                    // later follow-up's.
+                    if role == "assistant" {
+                        *turn_request_id.borrow_mut() = rid.clone();
+                    }
                     let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
                         acp_thread_id: thread_id_for_sub.clone(),
                         message_id: latest_idx.to_string(),
@@ -517,9 +531,19 @@ fn ensure_thread_subscription(
                 // content is safe: the Go accumulator uses overwrite semantics for known message_ids.
                 let thread = thread_entity.read(cx);
                 let entries = thread.entries();
-                let rid = crate::get_thread_request_id(&thread_id_for_sub)
-                    .unwrap_or_default();
-                for (idx, entry) in entries.iter().enumerate() {
+                // Use the request_id captured when this turn started, NOT the current
+                // global request_id. If a follow-up/interrupt message arrived before
+                // Stopped fires, the global ID already points to the next turn.
+                let rid = turn_request_id.borrow().clone();
+
+                // Find the start of the current turn: the entry AFTER the last UserMessage.
+                // Only flush entries from the current turn — sending old entries would cause
+                // them to leak into the current interaction's response_entries on the Go side.
+                let turn_start = entries.iter().enumerate().rev()
+                    .find_map(|(i, e)| matches!(e, acp_thread::AgentThreadEntry::UserMessage(_)).then_some(i + 1))
+                    .unwrap_or(0);
+
+                for (idx, entry) in entries.iter().enumerate().skip(turn_start) {
                     match entry {
                         acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
                             let content = msg.content_only(cx);
@@ -559,16 +583,16 @@ fn ensure_thread_subscription(
                     }
                 }
 
-                let rid = crate::get_thread_request_id(&thread_id_for_sub)
-                    .unwrap_or_default();
+                // Use the turn's captured request_id for message_completed too
+                let completed_rid = turn_request_id.borrow().clone();
                 eprintln!(
                     "📤 [THREAD_SERVICE] Stopped event: sending message_completed for thread {} (request_id={})",
-                    thread_id_for_sub, rid
+                    thread_id_for_sub, completed_rid
                 );
                 let _ = crate::send_websocket_event(SyncEvent::MessageCompleted {
                     acp_thread_id: thread_id_for_sub.clone(),
                     message_id: "0".to_string(),
-                    request_id: rid,
+                    request_id: completed_rid,
                 });
             }
             _ => {}
