@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use util::command::Command;
 
 use crate::{
@@ -34,15 +34,23 @@ pub(crate) struct DockerInspect {
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 pub(crate) struct DockerConfigLabels {
     #[serde(
+        default,
         rename = "devcontainer.metadata",
         deserialize_with = "deserialize_metadata"
     )]
     pub(crate) metadata: Option<Vec<HashMap<String, serde_json_lenient::Value>>>,
 }
 
+impl Default for DockerConfigLabels {
+    fn default() -> Self {
+        Self { metadata: None }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerInspectConfig {
+    #[serde(default, deserialize_with = "deserialize_nullable_labels")]
     pub(crate) labels: DockerConfigLabels,
     #[serde(rename = "User")]
     pub(crate) image_user: Option<String>,
@@ -93,7 +101,11 @@ pub(crate) struct DockerComposeService {
     pub(crate) cap_add: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) security_opt: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_labels"
+    )]
     pub(crate) labels: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) build: Option<DockerComposeServiceBuild>,
@@ -118,6 +130,7 @@ pub(crate) struct DockerComposeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
     pub(crate) services: HashMap<String, DockerComposeService>,
+    #[serde(default)]
     pub(crate) volumes: HashMap<String, DockerComposeVolume>,
 }
 
@@ -353,6 +366,68 @@ pub(crate) trait DockerClient {
     /// This operates as an escape hatch for more custom uses of the docker API.
     /// See DevContainerManifest::create_docker_build as an example
     fn docker_cli(&self) -> String;
+}
+
+fn deserialize_labels<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct LabelsVisitor;
+
+    impl<'de> de::Visitor<'de> for LabelsVisitor {
+        type Value = Option<Vec<String>>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a sequence of strings or a map of string key-value pairs")
+        }
+
+        fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let values =
+                Vec::<String>::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
+            Ok(Some(values))
+        }
+
+        fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+        where
+            M: de::MapAccess<'de>,
+        {
+            let entries = HashMap::<String, String>::deserialize(
+                de::value::MapAccessDeserializer::new(map),
+            )?;
+            let labels = entries
+                .into_iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect();
+            Ok(Some(labels))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(LabelsVisitor)
+}
+
+fn deserialize_nullable_labels<'de, D>(deserializer: D) -> Result<DockerConfigLabels, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<DockerConfigLabels>::deserialize(deserializer)
+        .map(|opt| opt.unwrap_or_default())
 }
 
 fn deserialize_metadata<'de, D>(

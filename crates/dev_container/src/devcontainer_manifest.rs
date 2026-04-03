@@ -2292,23 +2292,21 @@ fn get_remote_user_from_config(
     {
         return Ok(user.clone());
     }
-    let Some(metadata) = &docker_config.config.labels.metadata else {
-        log::error!("Could not locate metadata");
-        return Err(DevContainerError::ContainerNotValid(
-            docker_config.id.clone(),
-        ));
-    };
-    for metadatum in metadata {
-        if let Some(remote_user) = metadatum.get("remoteUser") {
-            if let Some(remote_user_str) = remote_user.as_str() {
-                return Ok(remote_user_str.to_string());
+    if let Some(metadata) = &docker_config.config.labels.metadata {
+        for metadatum in metadata {
+            if let Some(remote_user) = metadatum.get("remoteUser") {
+                if let Some(remote_user_str) = remote_user.as_str() {
+                    return Ok(remote_user_str.to_string());
+                }
             }
         }
     }
-    log::error!("Could not locate the remote user");
-    Err(DevContainerError::ContainerNotValid(
-        docker_config.id.clone(),
-    ))
+    if let Some(image_user) = &docker_config.config.image_user {
+        if !image_user.is_empty() {
+            return Ok(image_user.to_string());
+        }
+    }
+    Ok("root".to_string())
 }
 
 // This should come from spec - see the docs
@@ -2332,7 +2330,7 @@ fn get_container_user_from_config(
         return Ok(image_user.to_string());
     }
 
-    Err(DevContainerError::DevContainerParseFailed)
+    Ok("root".to_string())
 }
 
 #[cfg(test)]
