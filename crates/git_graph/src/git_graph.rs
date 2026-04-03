@@ -25,7 +25,7 @@ use project::git_store::{
 };
 use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive,
+    ToggleCaseSensitive, buffer_search,
 };
 use settings::Settings;
 use smallvec::{SmallVec, smallvec};
@@ -275,6 +275,8 @@ actions!(
     [
         /// Opens the commit view for the selected commit.
         OpenCommitView,
+        /// Focuses the search field.
+        FocusSearch,
     ]
 );
 
@@ -833,8 +835,8 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn lane_center_x(bounds: Bounds<Pixels>, lane: f32, horizontal_scroll_offset: Pixels) -> Pixels {
-    bounds.origin.x + LEFT_PADDING + lane * LANE_WIDTH + LANE_WIDTH / 2.0 - horizontal_scroll_offset
+fn lane_center_x(bounds: Bounds<Pixels>, lane: f32) -> Pixels {
+    bounds.origin.x + LEFT_PADDING + lane * LANE_WIDTH + LANE_WIDTH / 2.0
 }
 
 fn to_row_center(
@@ -902,7 +904,6 @@ pub struct GitGraph {
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
-    horizontal_scroll_offset: Pixels,
     selected_entry_idx: Option<usize>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -978,14 +979,6 @@ impl GitGraph {
             .read(cx)
             .preview_column_width(0, window)
             .unwrap_or_else(|| self.graph_canvas_content_width())
-    }
-
-    fn clamp_horizontal_scroll_offset(&mut self, graph_viewport_width: Pixels) {
-        let max_horizontal_scroll =
-            (self.graph_canvas_content_width() - graph_viewport_width).max(px(0.));
-        self.horizontal_scroll_offset = self
-            .horizontal_scroll_offset
-            .clamp(px(0.), max_horizontal_scroll);
     }
 
     pub fn new(
@@ -1074,7 +1067,6 @@ impl GitGraph {
             row_height,
             table_interaction_state,
             column_widths,
-            horizontal_scroll_offset: px(0.),
             selected_entry_idx: None,
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
@@ -2139,7 +2131,6 @@ impl GitGraph {
 
         let first_visible_row = (scroll_offset_y / row_height).floor() as usize;
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
-        let horizontal_scroll_offset = self.horizontal_scroll_offset;
 
         let graph_viewport_width = self.graph_viewport_width(window, cx);
         let graph_width = if self.graph_canvas_content_width() > graph_viewport_width {
@@ -2214,8 +2205,7 @@ impl GitGraph {
                             bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
                                 - vertical_scroll_offset;
 
-                        let commit_x =
-                            lane_center_x(bounds, row.lane as f32, horizontal_scroll_offset);
+                        let commit_x = lane_center_x(bounds, row.lane as f32);
 
                         draw_commit_circle(commit_x, row_y_center, row_color, window);
                     }
@@ -2227,8 +2217,7 @@ impl GitGraph {
                             continue;
                         };
 
-                        let line_x =
-                            lane_center_x(bounds, start_column as f32, horizontal_scroll_offset);
+                        let line_x = lane_center_x(bounds, start_column as f32);
 
                         let start_row = line.full_interval.start as i32 - first_visible_row as i32;
 
@@ -2273,11 +2262,7 @@ impl GitGraph {
                                     on_row,
                                     curve_kind,
                                 } => {
-                                    let mut to_column = lane_center_x(
-                                        bounds,
-                                        *to_column as f32,
-                                        horizontal_scroll_offset,
-                                    );
+                                    let mut to_column = lane_center_x(bounds, *to_column as f32);
 
                                     let mut to_row = to_row_center(
                                         *on_row - first_visible_row,
@@ -2470,25 +2455,8 @@ impl GitGraph {
         let new_y = (current_offset.y + delta.y).clamp(max_vertical_scroll, px(0.));
         let new_offset = Point::new(current_offset.x, new_y);
 
-        let graph_viewport_width = self.graph_viewport_width(window, cx);
-        let max_horizontal_scroll =
-            (self.graph_canvas_content_width() - graph_viewport_width).max(px(0.));
-
-        let new_horizontal_offset =
-            (self.horizontal_scroll_offset - delta.x).clamp(px(0.), max_horizontal_scroll);
-
-        let vertical_changed = new_offset != current_offset;
-        let horizontal_changed = new_horizontal_offset != self.horizontal_scroll_offset;
-
-        if vertical_changed {
+        if new_offset != current_offset {
             table_state.set_scroll_offset(new_offset);
-        }
-
-        if horizontal_changed {
-            self.horizontal_scroll_offset = new_horizontal_offset;
-        }
-
-        if vertical_changed || horizontal_changed {
             cx.notify();
         }
     }
@@ -2553,8 +2521,6 @@ impl Render for GitGraph {
                             cx,
                         );
                         self.graph_data.add_commits(&commits);
-                        let graph_viewport_width = self.graph_viewport_width(window, cx);
-                        self.clamp_horizontal_scroll_offset(graph_viewport_width);
                         (commits.len(), is_loading)
                     })
                 } else {
@@ -2600,8 +2566,6 @@ impl Render for GitGraph {
             let table_fraction =
                 description_fraction + date_fraction + author_fraction + commit_fraction;
             let table_width_config = self.table_column_width_config(window, cx);
-            let graph_viewport_width = self.graph_viewport_width(window, cx);
-            self.clamp_horizontal_scroll_offset(graph_viewport_width);
 
             h_flex()
                 .size_full()
@@ -2806,6 +2770,11 @@ impl Render for GitGraph {
                 this.open_selected_commit_view(window, cx);
             }))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                this.search_state
+                    .editor
+                    .update(cx, |editor, cx| editor.focus_handle(cx).focus(window, cx));
+            }))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
@@ -2836,6 +2805,10 @@ impl Render for GitGraph {
                         .child(menu.clone()),
                 )
                 .with_priority(1)
+            }))
+            .on_action(cx.listener(|_, _: &buffer_search::Deploy, window, cx| {
+                window.dispatch_action(Box::new(FocusSearch), cx);
+                cx.stop_propagation();
             }))
     }
 }
