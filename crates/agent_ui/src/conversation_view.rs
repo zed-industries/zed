@@ -1,8 +1,9 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentSessionInfo, AgentThreadEntry, AssistantMessage,
-    AssistantMessageChunk, AuthRequired, LoadError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
-    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AssistantMessageChunk, AuthRequired, LoadError, MaxOutputTokensError, MentionUri,
+    PermissionOptionChoice, PermissionOptions, PermissionPattern, RetryStatus,
+    SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
@@ -126,6 +127,14 @@ pub(crate) enum ThreadError {
     StreamError {
         provider: SharedString,
     },
+    InvalidApiKey {
+        provider: SharedString,
+    },
+    PermissionDenied {
+        provider: SharedString,
+    },
+    RequestFailed,
+    MaxOutputTokens,
     Other {
         message: SharedString,
         acp_error_code: Option<SharedString>,
@@ -134,7 +143,9 @@ pub(crate) enum ThreadError {
 
 impl From<anyhow::Error> for ThreadError {
     fn from(error: anyhow::Error) -> Self {
-        if error.is::<language_model::PaymentRequiredError>() {
+        if error.is::<MaxOutputTokensError>() {
+            Self::MaxOutputTokens
+        } else if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
@@ -161,6 +172,13 @@ impl From<anyhow::Error> for ThreadError {
                 | HttpSend { provider, .. } => Self::StreamError {
                     provider: provider.to_string().into(),
                 },
+                AuthenticationError { provider, .. } => Self::InvalidApiKey {
+                    provider: provider.to_string().into(),
+                },
+                PermissionError { provider, .. } => Self::PermissionDenied {
+                    provider: provider.to_string().into(),
+                },
+                UpstreamProviderError { .. } => Self::RequestFailed,
                 _ => {
                     let message: SharedString = format!("{:#}", error).into();
                     Self::Other {

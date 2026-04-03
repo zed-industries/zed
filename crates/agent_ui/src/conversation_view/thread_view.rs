@@ -1290,6 +1290,29 @@ impl ThreadView {
                     None,
                     format!("Connection to {provider}'s API was interrupted.").into(),
                 ),
+                ThreadError::InvalidApiKey { provider } => (
+                    "invalid_api_key",
+                    None,
+                    format!("Invalid or expired API key for {provider}.").into(),
+                ),
+                ThreadError::PermissionDenied { provider } => (
+                    "permission_denied",
+                    None,
+                    format!(
+                        "{provider}'s API rejected the request due to insufficient permissions."
+                    )
+                    .into(),
+                ),
+                ThreadError::RequestFailed => (
+                    "request_failed",
+                    None,
+                    "Request could not be completed after multiple attempts.".into(),
+                ),
+                ThreadError::MaxOutputTokens => (
+                    "max_output_tokens",
+                    None,
+                    "Model reached its maximum output length.".into(),
+                ),
                 ThreadError::Other {
                     acp_error_code,
                     message,
@@ -8118,6 +8141,14 @@ impl ThreadView {
                 self.render_no_api_key_error(provider.clone(), cx)
             }
             ThreadError::StreamError { provider } => self.render_stream_error(provider.clone(), cx),
+            ThreadError::InvalidApiKey { provider } => {
+                self.render_invalid_api_key_error(provider.clone(), cx)
+            }
+            ThreadError::PermissionDenied { provider } => {
+                self.render_permission_denied_error(provider.clone(), cx)
+            }
+            ThreadError::RequestFailed => self.render_request_failed_error(cx),
+            ThreadError::MaxOutputTokens => self.render_max_output_tokens_error(cx),
         };
 
         Some(div().child(content))
@@ -8274,6 +8305,73 @@ impl ThreadView {
                     .gap_0p5()
                     .when(can_resume, |this| this.child(self.retry_button(cx)))
                     .child(self.create_copy_button(&message)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_invalid_api_key_error(
+        &self,
+        provider: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let message = format!(
+            "The API key for {provider} is invalid or has expired. \
+            Update your key via the Agent Panel settings to continue."
+        );
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Invalid API Key")
+            .description(message)
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_permission_denied_error(
+        &self,
+        provider: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let message = format!(
+            "{provider}'s API rejected the request due to insufficient permissions. \
+            Check that your API key has access to this model."
+        );
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Permission Denied")
+            .description(message)
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_request_failed_error(&self, cx: &mut Context<Self>) -> Callout {
+        let can_resume = self.thread.read(cx).can_retry(cx);
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Request Failed")
+            .description(
+                "The request could not be completed after multiple attempts. \
+                Try again in a moment.",
+            )
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .when(can_resume, |this| this.child(self.retry_button(cx))),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_max_output_tokens_error(&self, cx: &mut Context<Self>) -> Callout {
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Output Limit Reached")
+            .description(
+                "The model stopped because it reached its maximum output length. \
+                You can ask it to continue where it left off.",
             )
             .dismiss_action(self.dismiss_error_button(cx))
     }
