@@ -5516,6 +5516,33 @@ mod tests {
     }
 
     #[test]
+    fn test_parsed_output_to_patch_round_trips_through_udiff_application() {
+        let excerpt = "before ctx\nctx start\neditable old\nctx end\nafter ctx\n";
+        let context_start = excerpt.find("ctx start").unwrap();
+        let context_end = excerpt.find("after ctx").unwrap();
+        let editable_start = excerpt.find("editable old").unwrap();
+        let editable_end = editable_start + "editable old\n".len();
+        let input = make_input_with_context_range(
+            excerpt,
+            editable_start..editable_end,
+            context_start..context_end,
+            editable_start,
+        );
+
+        let parsed = parse_zeta2_model_output(
+            "editable new\n>>>>>>> UPDATED\n",
+            ZetaFormat::V0131GitMergeMarkersPrefix,
+            &input,
+        )
+        .unwrap();
+        let expected = apply_edit(excerpt, &parsed);
+        let patch = parsed_output_to_patch(&input, parsed).unwrap();
+        let patched = udiff::apply_diff_to_string(&patch, excerpt).unwrap();
+
+        assert_eq!(patched, expected);
+    }
+
+    #[test]
     fn test_special_tokens_not_triggered_by_comment_separator() {
         // Regression test for https://github.com/zed-industries/zed/issues/52489
         let excerpt = "fn main() {\n    // =======\n    println!(\"hello\");\n}\n";
