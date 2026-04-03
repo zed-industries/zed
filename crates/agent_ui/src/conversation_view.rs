@@ -162,53 +162,6 @@ impl ProfileProvider for Entity<agent::Thread> {
 }
 
 /// No-op AgentConnection for headless threads created by thread_service.
-/// These threads are driven entirely by the WebSocket sync system, not by
-/// user interaction through the ACP connection.
-#[cfg(feature = "external_websocket_sync")]
-struct HeadlessConnection;
-
-#[cfg(feature = "external_websocket_sync")]
-impl AgentConnection for HeadlessConnection {
-    fn agent_id(&self) -> project::AgentId {
-        project::AgentId("headless".into())
-    }
-
-    fn telemetry_id(&self) -> SharedString {
-        "headless".into()
-    }
-
-    fn new_session(
-        self: Rc<Self>,
-        _project: Entity<Project>,
-        _work_dirs: util::path_list::PathList,
-        _cx: &mut gpui::App,
-    ) -> Task<Result<Entity<AcpThread>>> {
-        Task::ready(Err(anyhow!("headless connection cannot create sessions")))
-    }
-
-    fn auth_methods(&self) -> &[acp::AuthMethod] {
-        &[]
-    }
-
-    fn authenticate(&self, _method: acp::AuthMethodId, _cx: &mut gpui::App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
-    }
-
-    fn prompt(
-        &self,
-        _user_message_id: Option<UserMessageId>,
-        _params: acp::PromptRequest,
-        _cx: &mut gpui::App,
-    ) -> Task<Result<acp::PromptResponse>> {
-        Task::ready(Err(anyhow!("headless connection cannot prompt")))
-    }
-
-    fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut gpui::App) {}
-
-    fn into_any(self: Rc<Self>) -> Rc<dyn std::any::Any> {
-        self
-    }
-}
 
 #[derive(Default)]
 pub(crate) struct Conversation {
@@ -725,8 +678,43 @@ impl ConversationView {
             cx.observe(&action_log, |_, _, cx| cx.notify()),
         ];
 
-        // Create a no-op connection for headless threads
-        let connection: Rc<dyn AgentConnection> = Rc::new(HeadlessConnection);
+        let connection = thread.read(cx).connection().clone();
+        let session_id = thread.read(cx).session_id().clone();
+
+        let config_options_provider = connection.session_config_options(&session_id, cx);
+        let config_options_view;
+        let mode_selector;
+        let model_selector;
+        if let Some(config_options) = config_options_provider {
+            let fs = project.read(cx).fs().clone();
+            config_options_view = Some(cx.new(|cx| {
+                ConfigOptionsView::new(config_options, agent.clone(), fs, window, cx)
+            }));
+            model_selector = None;
+            mode_selector = None;
+        } else {
+            config_options_view = None;
+            model_selector = connection.model_selector(&session_id).map(|selector| {
+                let fs = project.read(cx).fs().clone();
+                cx.new(|cx| {
+                    ModelSelectorPopover::new(
+                        selector,
+                        agent.clone(),
+                        fs,
+                        PopoverMenuHandle::default(),
+                        cx.focus_handle(),
+                        window,
+                        cx,
+                    )
+                })
+            });
+            mode_selector = connection
+                .session_modes(&session_id, cx)
+                .map(|session_modes| {
+                    let fs = project.read(cx).fs().clone();
+                    cx.new(|_cx| ModeSelector::new(session_modes, agent.clone(), fs))
+                });
+        }
 
         let weak = cx.weak_entity();
         let agent_icon = agent.logo();
@@ -747,9 +735,9 @@ impl ConversationView {
                 display_name,
                 workspace.clone(),
                 entry_view_state,
-                None, // config_options_view
-                None, // mode_selector
-                None, // model_selector
+                config_options_view,
+                mode_selector,
+                model_selector,
                 None, // profile_selector
                 list_state,
                 session_capabilities,
