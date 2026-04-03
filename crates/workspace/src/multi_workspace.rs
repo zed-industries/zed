@@ -474,6 +474,24 @@ impl MultiWorkspace {
         self.project_group_keys.iter()
     }
 
+    pub fn project_groups(
+        &self,
+        cx: &App,
+    ) -> impl Iterator<Item = (ProjectGroupKey, Vec<Entity<Workspace>>)> {
+        let mut groups = self
+            .project_group_keys
+            .iter()
+            .map(|key| (key.clone(), Vec::new()))
+            .collect::<Vec<_>>();
+        for workspace in &self.workspaces {
+            let key = workspace.read(cx).project_group_key(cx);
+            if let Some((_, workspaces)) = groups.iter_mut().find(|(k, _)| k == &key) {
+                workspaces.push(workspace.clone());
+            }
+        }
+        groups.into_iter()
+    }
+
     pub fn workspace(&self) -> &Entity<Workspace> {
         &self.workspaces[self.active_workspace_index]
     }

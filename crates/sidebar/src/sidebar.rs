@@ -786,18 +786,6 @@ impl Sidebar {
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
 
-        // Build workspace-to-group-key mapping so we know which workspaces
-        // belong to each project group.
-        let mut workspaces_by_group: HashMap<ProjectGroupKey, Vec<Entity<Workspace>>> =
-            HashMap::default();
-        for workspace in &workspaces {
-            let key = workspace.read(cx).project_group_key(cx);
-            workspaces_by_group
-                .entry(key)
-                .or_default()
-                .push(workspace.clone());
-        }
-
         let has_open_projects = workspaces
             .iter()
             .any(|ws| !workspace_path_list(ws, cx).paths().is_empty());
@@ -814,16 +802,11 @@ impl Sidebar {
             (icon, icon_from_external_svg)
         };
 
-        for group_key in mw.project_group_keys() {
+        for (group_key, group_workspaces) in mw.project_groups(cx) {
             let path_list = group_key.path_list().clone();
             if path_list.paths().is_empty() {
                 continue;
             }
-
-            let group_workspaces = workspaces_by_group
-                .get(group_key)
-                .map(|ws| ws.as_slice())
-                .unwrap_or_default();
 
             let label = group_key.display_name();
 
@@ -872,7 +855,7 @@ impl Sidebar {
                                          workspace: ThreadEntryWorkspace|
                  -> ThreadEntry {
                     let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                    let worktrees = worktree_info_from_thread_paths(&row.folder_paths, group_key);
+                    let worktrees = worktree_info_from_thread_paths(&row.folder_paths, &group_key);
                     ThreadEntry {
                         metadata: row,
                         icon,
@@ -918,7 +901,7 @@ impl Sidebar {
 
                 // Load any legacy threads for any single linked wortree of this project group.
                 let mut linked_worktree_paths = HashSet::new();
-                for workspace in group_workspaces {
+                for workspace in &group_workspaces {
                     if workspace.read(cx).visible_worktrees(cx).count() != 1 {
                         continue;
                     }
@@ -1079,7 +1062,7 @@ impl Sidebar {
                 if is_draft_for_group {
                     if let Some(ActiveEntry::Draft(draft_ws)) = &self.active_entry {
                         let ws_path_list = workspace_path_list(draft_ws, cx);
-                        let worktrees = worktree_info_from_thread_paths(&ws_path_list, group_key);
+                        let worktrees = worktree_info_from_thread_paths(&ws_path_list, &group_key);
                         entries.push(ListEntry::DraftThread { worktrees });
                     }
                 }
@@ -1094,7 +1077,7 @@ impl Sidebar {
                     && active_workspace.as_ref().is_some_and(|active_ws| {
                         let ws_path_list = workspace_path_list(active_ws, cx);
                         let has_linked_worktrees =
-                            !worktree_info_from_thread_paths(&ws_path_list, group_key).is_empty();
+                            !worktree_info_from_thread_paths(&ws_path_list, &group_key).is_empty();
                         if !has_linked_worktrees {
                             return false;
                         }
@@ -1121,7 +1104,7 @@ impl Sidebar {
                             .map(|ws| {
                                 worktree_info_from_thread_paths(
                                     &workspace_path_list(ws, cx),
-                                    group_key,
+                                    &group_key,
                                 )
                             })
                             .unwrap_or_default()

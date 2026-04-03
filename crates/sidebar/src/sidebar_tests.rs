@@ -4939,10 +4939,7 @@ mod property_test {
         match operation {
             Operation::SaveThread { workspace_index } => {
                 let project = multi_workspace.read_with(cx, |mw, cx| {
-                    mw.workspaces()[workspace_index]
-                        .read(cx)
-                        .project()
-                        .clone()
+                    mw.workspaces()[workspace_index].read(cx).project().clone()
                 });
                 save_thread_to_path(state, &project, cx);
             }
