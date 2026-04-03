@@ -1831,6 +1831,24 @@ impl Element for MarkdownElement {
                                 );
                                 builder.pop_div();
                             }
+                            builder.push_div(
+                                div()
+                                    .pt_1()
+                                    .mb_1()
+                                    .line_height(rems(1.3))
+                                    .text_size(rems(0.85))
+                                    .h_flex()
+                                    .items_start()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_size(rems(0.85))
+                                            .child(format!("{}.", label)),
+                                    ),
+                                range,
+                                markdown_end,
+                            );
+                            builder.push_div(div().flex_1().w_0(), range, markdown_end);
                         }
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
@@ -1986,6 +2004,10 @@ impl Element for MarkdownElement {
                         builder.replace_pending_checkbox(range);
                         builder.pop_div();
                         builder.table.end_cell();
+                    }
+                    MarkdownTagEnd::FootnoteDefinition => {
+                        builder.pop_div();
+                        builder.pop_div();
                     }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
