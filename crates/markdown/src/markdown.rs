@@ -1302,14 +1302,18 @@ impl MarkdownElement {
             return;
         }
 
-        let is_hovering_link = hitbox.is_hovered(window)
+        let is_hovering_link = rendered_text
+            .link_for_position(window.mouse_position())
+            .is_some();
+        let is_hovering_footnote_ref = rendered_text
+            .footnote_ref_for_position(window.mouse_position())
+            .is_some();
+        let is_hovering_clickable = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
-            && rendered_text
-                .link_for_position(window.mouse_position())
-                .is_some();
+            && (is_hovering_link || is_hovering_footnote_ref);
 
         if !self.style.prevent_mouse_interaction {
-            if is_hovering_link {
+            if is_hovering_clickable {
                 window.set_cursor_style(CursorStyle::PointingHand, hitbox);
             } else {
                 window.set_cursor_style(CursorStyle::IBeam, hitbox);
@@ -1400,7 +1404,7 @@ impl MarkdownElement {
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
-            let was_hovering_link = is_hovering_link;
+            let was_hovering_clickable = is_hovering_clickable;
             move |markdown, event: &MouseMoveEvent, phase, window, cx| {
                 if phase.capture() {
                     return;
@@ -1416,9 +1420,11 @@ impl MarkdownElement {
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
-                    let is_hovering_link = hitbox.is_hovered(window)
-                        && rendered_text.link_for_position(event.position).is_some();
-                    if is_hovering_link != was_hovering_link {
+                    let is_hovering_link = rendered_text.link_for_position(event.position).is_some();
+                    let is_hovering_footnote_ref = rendered_text.footnote_ref_for_position(event.position).is_some();
+                    let is_hovering_clickable = hitbox.is_hovered(window)
+                        && (is_hovering_link || is_hovering_footnote_ref);
+                    if is_hovering_clickable != was_hovering_clickable {
                         cx.notify();
                     }
                 }
@@ -2313,6 +2319,7 @@ struct MarkdownElementBuilder {
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
+    rendered_footnote_refs: Vec<RenderedFootnoteRef>,
     current_source_index: usize,
     html_comment: bool,
     rendered_footnote_separator: bool,
@@ -2350,6 +2357,7 @@ impl MarkdownElementBuilder {
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
+            rendered_footnote_refs: Vec::new(),
             current_source_index: 0,
             html_comment: false,
             rendered_footnote_separator: false,
