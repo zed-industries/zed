@@ -1052,7 +1052,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         network_mode_service: Option<&str>,
         resources: DockerBuildResources,
     ) -> Result<DockerComposeConfig, DevContainerError> {
-        let mut runtime_labels = vec![];
+        let mut runtime_labels = HashMap::new();
 
         if let Some(metadata) = &resources.image.config.labels.metadata {
             let serialized_metadata = serde_json_lenient::to_string(metadata).map_err(|e| {
@@ -1060,14 +1060,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 DevContainerError::ContainerNotValid(resources.image.id.clone())
             })?;
 
-            runtime_labels.push(format!(
-                "{}={}",
-                "devcontainer.metadata", serialized_metadata
-            ));
+            runtime_labels.insert("devcontainer.metadata".to_string(), serialized_metadata);
         }
 
         for (k, v) in self.identifying_labels() {
-            runtime_labels.push(format!("{}={}", k, v));
+            runtime_labels.insert(k.to_string(), v.to_string());
         }
 
         let config_volumes: HashMap<String, DockerComposeVolume> = resources
@@ -3524,11 +3521,11 @@ ENV DOCKER_BUILDKIT=1
                         cap_add: Some(vec!["SYS_PTRACE".to_string()]),
                         security_opt: Some(vec!["seccomp=unconfined".to_string()]),
                         privileged: Some(true),
-                        labels: Some(vec![
-                            "devcontainer.metadata=[{\"remoteUser\":\"vscode\"}]".to_string(),
-                            "devcontainer.local_folder=/path/to/local/project".to_string(),
-                            "devcontainer.config_file=/path/to/local/project/.devcontainer/devcontainer.json".to_string()
-                        ]),
+                        labels: Some(HashMap::from([
+                            ("devcontainer.metadata".to_string(), "[{\"remoteUser\":\"vscode\"}]".to_string()),
+                            ("devcontainer.local_folder".to_string(), "/path/to/local/project".to_string()),
+                            ("devcontainer.config_file".to_string(), "/path/to/local/project/.devcontainer/devcontainer.json".to_string())
+                        ])),
                         volumes: vec![
                             MountDefinition {
                                 source: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),

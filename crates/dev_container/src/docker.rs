@@ -100,7 +100,7 @@ pub(crate) struct DockerComposeService {
         default,
         deserialize_with = "deserialize_labels"
     )]
-    pub(crate) labels: Option<Vec<String>>,
+    pub(crate) labels: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) build: Option<DockerComposeServiceBuild>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -362,14 +362,14 @@ pub(crate) trait DockerClient {
     fn docker_cli(&self) -> String;
 }
 
-fn deserialize_labels<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+fn deserialize_labels<'de, D>(deserializer: D) -> Result<Option<HashMap<String, String>>, D::Error>
 where
     D: Deserializer<'de>,
 {
     struct LabelsVisitor;
 
     impl<'de> de::Visitor<'de> for LabelsVisitor {
-        type Value = Option<Vec<String>>;
+        type Value = Option<HashMap<String, String>>;
 
         fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
             formatter.write_str("a sequence of strings or a map of string key-value pairs")
@@ -380,20 +380,28 @@ where
             A: de::SeqAccess<'de>,
         {
             let values = Vec::<String>::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
-            Ok(Some(values))
+
+            Ok(Some(
+                values
+                    .iter()
+                    .filter_map(|v| {
+                        let parts: Vec<&str> = v.split("=").collect();
+                        if parts.len() != 2 {
+                            None
+                        } else {
+                            Some((parts[0].to_string(), parts[1].to_string()))
+                        }
+                    })
+                    .collect(),
+            ))
         }
 
         fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
         where
             M: de::MapAccess<'de>,
         {
-            let entries =
-                HashMap::<String, String>::deserialize(de::value::MapAccessDeserializer::new(map))?;
-            let labels = entries
-                .into_iter()
-                .map(|(k, v)| format!("{k}={v}"))
-                .collect();
-            Ok(Some(labels))
+            HashMap::<String, String>::deserialize(de::value::MapAccessDeserializer::new(map))
+                .map(|v| Some(v))
         }
 
         fn visit_none<E>(self) -> Result<Self::Value, E>
@@ -982,14 +990,13 @@ mod test {
 
         let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
         let service = config.services.get("app").unwrap();
-        let mut labels = service.labels.clone().unwrap();
-        labels.sort();
+        let labels = service.labels.clone().unwrap();
         assert_eq!(
             labels,
-            vec![
-                "another.label=another-value".to_string(),
-                "com.example.test=value".to_string(),
-            ]
+            HashMap::from([
+                ("another.label".to_string(), "another-value".to_string()),
+                ("com.example.test".to_string(), "value".to_string())
+            ])
         );
     }
 
@@ -1012,7 +1019,10 @@ mod test {
         let service = config.services.get("app").unwrap();
         assert_eq!(
             service.labels,
-            Some(vec!["com.example.test=value".to_string()])
+            Some(HashMap::from([(
+                "com.example.test".to_string(),
+                "value".to_string()
+            )]))
         );
     }
 
