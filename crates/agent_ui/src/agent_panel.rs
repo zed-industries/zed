@@ -673,6 +673,7 @@ pub struct AgentPanel {
     onboarding: Entity<AgentPanelOnboarding>,
     selected_agent: Agent,
     start_thread_in: StartThreadIn,
+    worktree_branch_name_editor: Entity<Editor>,
     worktree_creation_status: Option<WorktreeCreationStatus>,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
@@ -961,6 +962,12 @@ impl AgentPanel {
                 _ => {}
             });
 
+        let worktree_branch_name_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("branch name…", window, cx);
+            editor
+        });
+
         let mut panel = Self {
             workspace_id,
             active_view,
@@ -990,6 +997,7 @@ impl AgentPanel {
             thread_store,
             selected_agent: Agent::default(),
             start_thread_in: StartThreadIn::default(),
+            worktree_branch_name_editor,
             worktree_creation_status: None,
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
@@ -1088,7 +1096,7 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.reset_start_thread_in_to_default(cx);
+        self.reset_start_thread_in_to_default(window, cx);
         self.external_thread(None, None, None, None, None, true, window, cx);
     }
 
@@ -1969,6 +1977,14 @@ impl AgentPanel {
             }
         };
         self.start_thread_in = new_target;
+        if matches!(new_target, StartThreadIn::NewWorktree) {
+            let mut rng = rand::rng();
+            if let Some(name) = crate::branch_names::generate_branch_name(&[], &mut rng) {
+                self.worktree_branch_name_editor.update(cx, |editor, cx| {
+                    editor.set_text(&*name, window, cx);
+                });
+            }
+        }
         if let Some(thread) = self.active_thread_view(cx) {
             thread.update(cx, |thread, cx| thread.focus_handle(cx).focus(window, cx));
         }
@@ -1984,7 +2000,11 @@ impl AgentPanel {
         self.set_start_thread_in(&next, window, cx);
     }
 
-    fn reset_start_thread_in_to_default(&mut self, cx: &mut Context<Self>) {
+    fn reset_start_thread_in_to_default(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         use settings::{NewThreadLocation, Settings};
         let default = AgentSettings::get_global(cx).new_thread_location;
         let start_thread_in = match default {
@@ -1999,6 +2019,14 @@ impl AgentPanel {
         };
         if self.start_thread_in != start_thread_in {
             self.start_thread_in = start_thread_in;
+            if matches!(start_thread_in, StartThreadIn::NewWorktree) {
+                let mut rng = rand::rng();
+                if let Some(name) = crate::branch_names::generate_branch_name(&[], &mut rng) {
+                    self.worktree_branch_name_editor.update(cx, |editor, cx| {
+                        editor.set_text(&*name, window, cx);
+                    });
+                }
+            }
             self.serialize(cx);
             cx.notify();
         }
@@ -2052,7 +2080,7 @@ impl AgentPanel {
     }
 
     pub fn new_agent_thread(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
-        self.reset_start_thread_in_to_default(cx);
+        self.reset_start_thread_in_to_default(window, cx);
         self.new_agent_thread_inner(agent, true, window, cx);
     }
 
@@ -2490,21 +2518,37 @@ impl AgentPanel {
 
             let existing_branch_refs: Vec<&str> =
                 existing_branches.iter().map(|s| s.as_str()).collect();
-            let mut rng = rand::rng();
-            let branch_name =
-                match crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng) {
-                    Some(name) => name,
-                    None => {
-                        this.update_in(cx, |this, window, cx| {
-                            this.set_worktree_creation_error(
-                                "Failed to generate a unique branch name".into(),
-                                window,
-                                cx,
-                            );
-                        })?;
-                        return anyhow::Ok(());
-                    }
-                };
+
+            let branch_name = this.update_in(cx, |this, _window, cx| {
+                let name = this
+                    .worktree_branch_name_editor
+                    .read(cx)
+                    .text(cx)
+                    .to_string();
+                let name = name.trim().to_string();
+                if name.is_empty() {
+                    let mut rng = rand::rng();
+                    crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng)
+                        .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))
+                } else if existing_branch_refs.contains(&name.as_str()) {
+                    Err(anyhow!(
+                        "Branch '{}' already exists. Choose a different name.",
+                        name
+                    ))
+                } else {
+                    Ok(name)
+                }
+            })?;
+
+            let branch_name = match branch_name {
+                Ok(name) => name,
+                Err(err) => {
+                    this.update_in(cx, |this, window, cx| {
+                        this.set_worktree_creation_error(err.to_string().into(), window, cx);
+                    })?;
+                    return anyhow::Ok(());
+                }
+            };
 
             let (creation_infos, path_remapping) = match this.update_in(cx, |_this, _window, cx| {
                 Self::start_worktree_creations(
@@ -3144,7 +3188,11 @@ impl AgentPanel {
         !self.project.read(cx).repositories(cx).is_empty()
     }
 
-    fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_start_thread_in_selector(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         use settings::{NewThreadLocation, Settings};
 
         let focus_handle = self.focus_handle(cx);
@@ -3182,7 +3230,7 @@ impl AgentPanel {
             }
         };
 
-        PopoverMenu::new("thread-target-selector")
+        let popover_menu = PopoverMenu::new("thread-target-selector")
             .trigger_with_tooltip(trigger_button, {
                 move |_window, cx| {
                     Tooltip::for_action_in(
@@ -3281,6 +3329,19 @@ impl AgentPanel {
             .offset(gpui::Point {
                 x: px(1.0),
                 y: px(1.0),
+            });
+
+        let branch_name_visible = self.start_thread_in == StartThreadIn::NewWorktree;
+
+        h_flex()
+            .gap_1()
+            .child(popover_menu)
+            .when(branch_name_visible, |this| {
+                this.child(
+                    div()
+                        .w(px(140.))
+                        .child(self.worktree_branch_name_editor.clone()),
+                )
             })
     }
 
@@ -3616,7 +3677,7 @@ impl AgentPanel {
                         .child(agent_selector_menu)
                         .when(
                             has_visible_worktrees && self.project_has_git_repository(cx),
-                            |this| this.child(self.render_start_thread_in_selector(cx)),
+                            |this| this.child(self.render_start_thread_in_selector(window, cx)),
                         ),
                 )
                 .child(
@@ -5962,5 +6023,504 @@ mod tests {
                 "a thread should have been created"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_branch_name_editor_prefilled_on_switch_to_new_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Initially LocalProject — editor should be empty.
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(*panel.start_thread_in(), StartThreadIn::LocalProject);
+            let text = panel.worktree_branch_name_editor.read(cx).text(cx);
+            assert!(
+                text.is_empty(),
+                "branch name editor should be empty when target is LocalProject, got: {text}"
+            );
+        });
+
+        // Switch to NewWorktree — editor should be pre-filled.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, window, cx);
+        });
+
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(*panel.start_thread_in(), StartThreadIn::NewWorktree);
+            let text = panel.worktree_branch_name_editor.read(cx).text(cx);
+            assert!(
+                !text.is_empty(),
+                "branch name editor should be pre-filled when switching to NewWorktree"
+            );
+            assert!(
+                text.contains('-'),
+                "pre-filled name should be adjective-noun format, got: {text}"
+            );
+        });
+
+        // Switch back to LocalProject — editor text is retained (not cleared)
+        // but the editor is hidden, so the value doesn't matter.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(&StartThreadIn::LocalProject, window, cx);
+        });
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(*panel.start_thread_in(), StartThreadIn::LocalProject);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_name_editor_custom_name_used_in_worktree_creation(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let app_state = workspace::AppState::test(cx);
+            workspace::init(app_state.clone(), cx);
+            app_state
+        });
+
+        let fs = app_state.fs.as_fake();
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let project = Project::test(app_state.fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        cx.update(|cx| {
+            cx.observe_new(
+                |workspace: &mut Workspace,
+                 window: Option<&mut Window>,
+                 cx: &mut Context<Workspace>| {
+                    if let Some(window) = window {
+                        let project = workspace.project().clone();
+                        let text_thread_store =
+                            cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+                        let panel = cx.new(|cx| {
+                            AgentPanel::new(workspace, text_thread_store, None, window, cx)
+                        });
+                        workspace.add_panel(panel, window, cx);
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Switch to NewWorktree and set a custom branch name.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, window, cx);
+            panel
+                .worktree_branch_name_editor
+                .update(cx, |editor, cx| {
+                    editor.set_text("my-custom-branch", window, cx);
+                });
+        });
+
+        // Open a thread so there's an active view.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Trigger worktree creation.
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from custom branch test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_creation_requested(content, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // The worktree should have been created. Check that a new workspace
+        // exists (indicating the worktree was set up).
+        multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                assert!(
+                    multi_workspace.workspaces().len() > 1,
+                    "expected a new workspace from worktree creation, found {}",
+                    multi_workspace.workspaces().len(),
+                );
+            })
+            .unwrap();
+
+        // Verify the branch name contains our custom name by checking the
+        // worktree paths. The FakeFs should have created the worktree at a
+        // path containing "my-custom-branch".
+        let has_custom_branch = multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace.workspaces().iter().any(|ws| {
+                    ws.read(cx).root_paths(cx).iter().any(|path| {
+                        path.to_string_lossy().contains("my-custom-branch")
+                    })
+                })
+            })
+            .unwrap();
+
+        assert!(
+            has_custom_branch,
+            "a workspace root path should contain the custom branch name 'my-custom-branch'"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_branch_name_editor_duplicate_name_rejected(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        // "main" is the current branch. The FakeFs reports it as the only
+        // branch in the repository, so we use "main" as the duplicate name.
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Switch to NewWorktree and set the branch name to "main" which
+        // already exists.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, window, cx);
+            panel
+                .worktree_branch_name_editor
+                .update(cx, |editor, cx| {
+                    editor.set_text("main", window, cx);
+                });
+        });
+
+        // Open a thread.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Trigger worktree creation with the duplicate name.
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from duplicate branch test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_creation_requested(content, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Should have an error status, not a new workspace.
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                matches!(
+                    panel.worktree_creation_status,
+                    Some(WorktreeCreationStatus::Error(_))
+                ),
+                "duplicate branch name should produce a worktree creation error, got: {:?}",
+                panel.worktree_creation_status,
+            );
+        });
+
+        // No new workspace should have been created.
+        multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                assert_eq!(
+                    multi_workspace.workspaces().len(),
+                    1,
+                    "no new workspace should be created when branch name is a duplicate"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_branch_name_editor_applies_to_all_repos_in_multi_project(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let app_state = workspace::AppState::test(cx);
+            workspace::init(app_state.clone(), cx);
+            app_state
+        });
+
+        let fs = app_state.fs.as_fake();
+
+        // Create two independent git repositories in the same workspace.
+        fs.insert_tree(
+            "/repo-alpha",
+            json!({
+                ".git": {},
+                "src": { "lib.rs": "pub fn alpha() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/repo-alpha/.git"), Some("main"));
+
+        fs.insert_tree(
+            "/repo-beta",
+            json!({
+                ".git": {},
+                "src": { "lib.rs": "pub fn beta() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/repo-beta/.git"), Some("main"));
+
+        let project = Project::test(
+            app_state.fs.clone(),
+            [Path::new("/repo-alpha"), Path::new("/repo-beta")],
+            cx,
+        )
+        .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        cx.update(|cx| {
+            cx.observe_new(
+                |workspace: &mut Workspace,
+                 window: Option<&mut Window>,
+                 cx: &mut Context<Workspace>| {
+                    if let Some(window) = window {
+                        let project = workspace.project().clone();
+                        let text_thread_store =
+                            cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+                        let panel = cx.new(|cx| {
+                            AgentPanel::new(workspace, text_thread_store, None, window, cx)
+                        });
+                        workspace.add_panel(panel, window, cx);
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let text_thread_store = cx.new(|cx| TextThreadStore::fake(project.clone(), cx));
+            let panel =
+                cx.new(|cx| AgentPanel::new(workspace, text_thread_store, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Switch to NewWorktree and set a custom branch name.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(&StartThreadIn::NewWorktree, window, cx);
+            panel
+                .worktree_branch_name_editor
+                .update(cx, |editor, cx| {
+                    editor.set_text("shared-feature", window, cx);
+                });
+        });
+
+        // Open a thread so there's an active view.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Trigger worktree creation.
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from multi-repo test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_creation_requested(content, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // A new workspace should have been created.
+        let workspace_count = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspaces().len()
+            })
+            .unwrap();
+
+        assert!(
+            workspace_count > 1,
+            "expected a new workspace from worktree creation, found {workspace_count}",
+        );
+
+        // Both repos should have worktrees with "shared-feature" in the path.
+        let root_paths: Vec<String> = multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                multi_workspace
+                    .workspaces()
+                    .iter()
+                    .filter(|ws| ws.entity_id() != workspace.entity_id())
+                    .flat_map(|ws| {
+                        ws.read(cx)
+                            .root_paths(cx)
+                            .into_iter()
+                            .map(|p| p.to_string_lossy().to_string())
+                    })
+                    .collect()
+            })
+            .unwrap();
+
+        let alpha_worktree = root_paths
+            .iter()
+            .any(|p| p.contains("shared-feature") && p.contains("repo-alpha"));
+        let beta_worktree = root_paths
+            .iter()
+            .any(|p| p.contains("shared-feature") && p.contains("repo-beta"));
+
+        assert!(
+            alpha_worktree,
+            "repo-alpha should have a worktree with 'shared-feature' in the path, got: {root_paths:?}"
+        );
+        assert!(
+            beta_worktree,
+            "repo-beta should have a worktree with 'shared-feature' in the path, got: {root_paths:?}"
+        );
     }
 }
