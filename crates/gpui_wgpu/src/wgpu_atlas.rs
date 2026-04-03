@@ -115,6 +115,8 @@ impl PlatformAtlas for WgpuAtlas {
         if let Some(mut texture) = texture_slot.take() {
             texture.decrement_ref_count();
             if texture.is_unreferenced() {
+                lock.pending_uploads
+                    .retain(|upload| upload.id != texture.id);
                 lock.storage[id.kind]
                     .free_list
                     .push(texture.id.index as usize);
@@ -228,7 +230,9 @@ impl WgpuAtlasState {
 
     fn flush_uploads(&mut self) {
         for upload in self.pending_uploads.drain(..) {
-            let texture = &self.storage[upload.id];
+            let Some(texture) = self.storage.get(upload.id) else {
+                continue;
+            };
             let bytes_per_pixel = texture.bytes_per_pixel();
 
             self.queue.write_texture(
@@ -283,6 +287,15 @@ impl ops::IndexMut<AtlasTextureKind> for WgpuAtlasStorage {
             AtlasTextureKind::Subpixel => &mut self.subpixel_textures,
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
         }
+    }
+}
+
+impl WgpuAtlasStorage {
+    fn get(&self, id: AtlasTextureId) -> Option<&WgpuAtlasTexture> {
+        self[id.kind]
+            .textures
+            .get(id.index as usize)
+            .and_then(|t| t.as_ref())
     }
 }
 
