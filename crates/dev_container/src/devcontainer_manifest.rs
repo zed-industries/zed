@@ -1002,8 +1002,17 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             return Err(DevContainerError::DevContainerParseFailed);
         };
 
+        let has_features = dev_container
+            .features
+            .as_ref()
+            .is_some_and(|features| !features.is_empty());
+        let base_image_name = if has_features {
+            features_build_info.image_tag.as_str()
+        } else {
+            main_service.image.as_deref().unwrap_or(&features_build_info.image_tag)
+        };
         let built_service_image = self
-            .update_remote_user_uid(built_service_image, Some(&features_build_info.image_tag))
+            .update_remote_user_uid(built_service_image, Some(base_image_name))
             .await?;
 
         let resources = self.build_merged_resources(built_service_image)?;
@@ -1365,13 +1374,15 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             .map(|t| t.to_string())
             .unwrap_or_else(|| format!("{}-uid", features_build_info.image_tag));
 
+        let base_image = override_tag.unwrap_or(&image.id);
+
         let mut command = Command::new(self.docker_client.docker_cli());
         command.args(["build"]);
         command.args(["-f", &dockerfile_path.display().to_string()]);
         command.args(["-t", &updated_image_tag]);
         command.args([
             "--build-arg",
-            &format!("BASE_IMAGE={}", features_build_info.image_tag),
+            &format!("BASE_IMAGE={}", base_image),
         ]);
         command.args(["--build-arg", &format!("REMOTE_USER={}", remote_user)]);
         command.args(["--build-arg", &format!("NEW_UID={}", host_uid)]);
