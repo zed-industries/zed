@@ -38,7 +38,7 @@ impl Hash for PathList {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedPathList {
     pub paths: String,
     pub order: String,

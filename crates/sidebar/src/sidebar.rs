@@ -3829,6 +3829,15 @@ pub fn dump_workspace_info(
         .map(|mw| mw.read(cx).active_workspace_index());
 
     writeln!(output, "MultiWorkspace: {} workspace(s)", workspaces.len()).ok();
+
+    if let Some(mw) = &multi_workspace {
+        let keys: Vec<_> = mw.read(cx).project_group_keys().cloned().collect();
+        writeln!(output, "Project group keys ({}):", keys.len()).ok();
+        for key in keys {
+            writeln!(output, "  - {key:?}").ok();
+        }
+    }
+
     if let Some(index) = active_index {
         writeln!(output, "Active workspace index: {index}").ok();
     }

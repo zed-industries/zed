@@ -9,45 +9,13 @@
 //! lookup and mapping.
 
 use collections::{HashMap, HashSet, vecmap::VecMap};
+use gpui::{App, Entity};
+use project::ProjectGroupKey;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-
-use gpui::{App, Entity};
-use ui::SharedString;
 use workspace::{MultiWorkspace, PathList, Workspace};
-
-/// Identifies a project group by a set of paths the workspaces in this group
-/// have.
-///
-/// Paths are mapped to their main worktree path first so we can group
-/// workspaces by main repos.
-#[derive(PartialEq, Eq, Hash, Clone)]
-pub struct ProjectGroupName {
-    path_list: PathList,
-}
-
-impl ProjectGroupName {
-    pub fn display_name(&self) -> SharedString {
-        let mut names = Vec::with_capacity(self.path_list.paths().len());
-        for abs_path in self.path_list.paths() {
-            if let Some(name) = abs_path.file_name() {
-                names.push(name.to_string_lossy().to_string());
-            }
-        }
-        if names.is_empty() {
-            // TODO: Can we do something better in this case?
-            "Empty Workspace".into()
-        } else {
-            names.join(", ").into()
-        }
-    }
-
-    pub fn path_list(&self) -> &PathList {
-        &self.path_list
-    }
-}
 
 #[derive(Default)]
 pub struct ProjectGroup {
@@ -88,7 +56,7 @@ impl ProjectGroup {
 pub struct ProjectGroupBuilder {
     /// Maps git repositories' work_directory_abs_path to their original_repo_abs_path
     directory_mappings: HashMap<PathBuf, PathBuf>,
-    project_groups: VecMap<ProjectGroupName, ProjectGroup>,
+    project_groups: VecMap<ProjectGroupKey, ProjectGroup>,
 }
 
 impl ProjectGroupBuilder {
@@ -111,7 +79,7 @@ impl ProjectGroupBuilder {
         // Second pass: group each workspace using canonical paths derived
         // from the full set of mappings.
         for workspace in mw.workspaces() {
-            let group_name = builder.canonical_workspace_paths(workspace, cx);
+            let group_name = workspace.read(cx).project_group_key(cx);
             builder
                 .project_group_entry(&group_name)
                 .add_workspace(workspace, cx);
@@ -119,7 +87,7 @@ impl ProjectGroupBuilder {
         builder
     }
 
-    fn project_group_entry(&mut self, name: &ProjectGroupName) -> &mut ProjectGroup {
+    fn project_group_entry(&mut self, name: &ProjectGroupKey) -> &mut ProjectGroup {
         self.project_groups.entry_ref(name).or_insert_default()
     }
 
@@ -147,23 +115,6 @@ impl ProjectGroupBuilder {
             for worktree in snapshot.linked_worktrees.iter() {
                 self.add_mapping(&worktree.path, &snapshot.original_repo_abs_path);
             }
-        }
-    }
-
-    /// Derives the canonical group name for a workspace by canonicalizing
-    /// each of its root paths using the builder's directory mappings.
-    fn canonical_workspace_paths(
-        &self,
-        workspace: &Entity<Workspace>,
-        cx: &App,
-    ) -> ProjectGroupName {
-        let root_paths = workspace.read(cx).root_paths(cx);
-        let paths: Vec<_> = root_paths
-            .iter()
-            .map(|p| self.canonicalize_path(p).to_path_buf())
-            .collect();
-        ProjectGroupName {
-            path_list: PathList::new(&paths),
         }
     }
 
@@ -203,7 +154,7 @@ impl ProjectGroupBuilder {
         PathList::new(&paths)
     }
 
-    pub fn groups(&self) -> impl Iterator<Item = (&ProjectGroupName, &ProjectGroup)> {
+    pub fn groups(&self) -> impl Iterator<Item = (&ProjectGroupKey, &ProjectGroup)> {
         self.project_groups.iter()
     }
 }

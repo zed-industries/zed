@@ -2349,6 +2349,22 @@ impl Project {
             .find(|tree| tree.read(cx).root_name() == root_name)
     }
 
+    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
+        let roots = self
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let snapshot = worktree.read(cx).snapshot();
+                snapshot
+                    .root_repo_common_dir()
+                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
+                    .unwrap_or(snapshot.abs_path().to_path_buf())
+            })
+            .collect::<Vec<_>>();
+        let host = self.remote_connection_options(cx);
+        let path_list = PathList::new(&roots);
+        ProjectGroupKey::new(host, path_list)
+    }
+
     #[inline]
     pub fn worktree_root_names<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
@@ -6015,6 +6031,53 @@ impl Project {
             .map_or(false, |worktree| {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
+    }
+}
+
+/// Identifies a project group by a set of paths the workspaces in this group
+/// have.
+///
+/// Paths are mapped to their main worktree path first so we can group
+/// workspaces by main repos.
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct ProjectGroupKey {
+    paths: PathList,
+    host: Option<RemoteConnectionOptions>,
+}
+
+impl ProjectGroupKey {
+    /// Creates a new `ProjectGroupKey` with the given path list.
+    ///
+    /// The path list should point to the git main worktree paths for a project.
+    ///
+    /// This should be used only in a few places to make sure we can ensure the
+    /// main worktree path invariant. Namely, this should only be called from
+    /// [`Workspace`].
+    pub(crate) fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
+        Self { paths, host }
+    }
+
+    pub fn display_name(&self) -> SharedString {
+        let mut names = Vec::with_capacity(self.paths.paths().len());
+        for abs_path in self.paths.paths() {
+            if let Some(name) = abs_path.file_name() {
+                names.push(name.to_string_lossy().to_string());
+            }
+        }
+        if names.is_empty() {
+            // TODO: Can we do something better in this case?
+            "Empty Workspace".into()
+        } else {
+            names.join(", ").into()
+        }
+    }
+
+    pub fn path_list(&self) -> &PathList {
+        &self.paths
+    }
+
+    pub fn host(&self) -> Option<RemoteConnectionOptions> {
+        self.host.clone()
     }
 }
 

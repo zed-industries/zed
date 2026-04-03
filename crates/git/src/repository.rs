@@ -3879,7 +3879,10 @@ mod tests {
 
         assert_eq!(commits.len(), 1);
         let commit = &commits[0];
-        assert_eq!(commit.sha.to_string(), "0123456789012345678901234567890123456789");
+        assert_eq!(
+            commit.sha.to_string(),
+            "0123456789012345678901234567890123456789"
+        );
         assert_eq!(commit.parents.len(), 1);
         assert_eq!(
             commit.parents[0].to_string(),

@@ -5,9 +5,9 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
-use project::DisableAiSettings;
 #[cfg(any(test, feature = "test-support"))]
 use project::Project;
+use project::{DisableAiSettings, ProjectGroupKey};
 use settings::Settings;
 pub use settings::SidebarSide;
 use std::future::Future;
@@ -26,6 +26,7 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
     Panel, Workspace, WorkspaceId, client_side_decorations,
+    persistence::model::MultiWorkspaceState,
 };
 
 actions!(
@@ -222,6 +223,7 @@ pub struct MultiWorkspace {
     window_id: WindowId,
     workspaces: Vec<Entity<Workspace>>,
     active_workspace_index: usize,
+    project_group_keys: Vec<ProjectGroupKey>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
@@ -269,6 +271,7 @@ impl MultiWorkspace {
         });
         Self {
             window_id: window.window_handle().window_id(),
+            project_group_keys: vec![workspace.read(cx).project_group_key(cx)],
             workspaces: vec![workspace],
             active_workspace_index: 0,
             sidebar: None,
@@ -438,12 +441,37 @@ impl MultiWorkspace {
         window: &Window,
         cx: &mut Context<Self>,
     ) {
+        let project = workspace.read(cx).project().clone();
+        cx.subscribe_in(&project, window, {
+            let workspace = workspace.downgrade();
+            move |this, _project, event, _window, cx| match event {
+                project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                    if let Some(workspace) = workspace.upgrade() {
+                        this.add_project_group_key(workspace.read(cx).project_group_key(cx));
+                    }
+                }
+                _ => {}
+            }
+        })
+        .detach();
+
         cx.subscribe_in(workspace, window, |this, workspace, event, window, cx| {
             if let WorkspaceEvent::Activate = event {
                 this.activate(workspace.clone(), window, cx);
             }
         })
         .detach();
+    }
+
+    pub fn add_project_group_key(&mut self, project_group_key: ProjectGroupKey) {
+        if self.project_group_keys.contains(&project_group_key) {
+            return;
+        }
+        self.project_group_keys.push(project_group_key);
+    }
+
+    pub fn project_group_keys(&self) -> impl Iterator<Item = &ProjectGroupKey> {
+        self.project_group_keys.iter()
     }
 
     pub fn workspace(&self) -> &Entity<Workspace> {
@@ -492,48 +520,6 @@ impl MultiWorkspace {
         cx.notify();
     }
 
-    /// Replaces the currently active workspace with a new one. If the
-    /// workspace is already in the list, this just switches to it.
-    pub fn replace(
-        &mut self,
-        workspace: Entity<Workspace>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.multi_workspace_enabled(cx) {
-            self.set_single_workspace(workspace, cx);
-            return;
-        }
-
-        if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
-            let changed = self.active_workspace_index != index;
-            self.active_workspace_index = index;
-            if changed {
-                cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
-                self.serialize(cx);
-            }
-            cx.notify();
-            return;
-        }
-
-        let old_workspace = std::mem::replace(
-            &mut self.workspaces[self.active_workspace_index],
-            workspace.clone(),
-        );
-
-        let old_entity_id = old_workspace.entity_id();
-        self.detach_workspace(&old_workspace, cx);
-
-        Self::subscribe_to_workspace(&workspace, window, cx);
-        self.sync_sidebar_to_workspace(&workspace, cx);
-
-        cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(old_entity_id));
-        cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
-        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
-        self.serialize(cx);
-        cx.notify();
-    }
-
     fn set_single_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
         self.workspaces[0] = workspace;
         self.active_workspace_index = 0;
@@ -553,12 +539,16 @@ impl MultiWorkspace {
         if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
             index
         } else {
+            let project_group_key = workspace.read(cx).project().read(cx).project_group_key(cx);
+
             Self::subscribe_to_workspace(&workspace, window, cx);
             self.sync_sidebar_to_workspace(&workspace, cx);
             let weak_self = cx.weak_entity();
             workspace.update(cx, |workspace, cx| {
                 workspace.set_multi_workspace(weak_self, cx);
             });
+
+            self.add_project_group_key(project_group_key);
             self.workspaces.push(workspace.clone());
             cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
             cx.notify();
@@ -625,8 +615,13 @@ impl MultiWorkspace {
         self._serialize_task = Some(cx.spawn(async move |this, cx| {
             let Some((window_id, state)) = this
                 .read_with(cx, |this, cx| {
-                    let state = crate::persistence::model::MultiWorkspaceState {
+                    let state = MultiWorkspaceState {
                         active_workspace_id: this.workspace().read(cx).database_id(),
+                        project_group_keys: this
+                            .project_group_keys()
+                            .cloned()
+                            .map(Into::into)
+                            .collect::<Vec<_>>(),
                         sidebar_open: this.sidebar_open,
                         sidebar_state: this.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
                     };
@@ -894,6 +889,7 @@ impl MultiWorkspace {
         });
     }
 
+    // TODO: Move group to a new window?
     fn move_active_workspace_to_new_window(
         &mut self,
         _: &MoveWorkspaceToNewWindow,
@@ -913,12 +909,11 @@ impl MultiWorkspace {
     ) -> Task<Result<Entity<Workspace>>> {
         let workspace = self.workspace().clone();
 
-        let needs_close_prompt =
-            open_mode == OpenMode::Replace || !self.multi_workspace_enabled(cx);
+        let needs_close_prompt = !self.multi_workspace_enabled(cx);
         let open_mode = if self.multi_workspace_enabled(cx) {
             open_mode
         } else {
-            OpenMode::Replace
+            OpenMode::Activate
         };
 
         if needs_close_prompt {
