@@ -1475,7 +1475,7 @@ impl ConversationView {
                     .agent_server_store
                     .read(cx)
                     .agent_display_name(&self.agent.agent_id())
-                    .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
+                    .unwrap_or_else(|| self.agent.agent_id().0.clone());
 
                 if let Some(active) = self.active_thread() {
                     let new_placeholder =

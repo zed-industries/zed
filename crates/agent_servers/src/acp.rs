@@ -325,7 +325,7 @@ impl AcpConnection {
             // Use the one the agent provides if we have one
             .map(|info| info.name.into())
             // Otherwise, just use the name
-            .unwrap_or_else(|| agent_id.0.to_string().into());
+            .unwrap_or_else(|| agent_id.0.clone());
 
         let session_list = if response
             .agent_capabilities

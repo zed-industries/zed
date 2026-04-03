@@ -344,7 +344,7 @@ impl GroupedModels {
                 continue;
             }
             entries.push(LanguageModelPickerEntry::Separator(
-                models[0].model.provider_name().0.to_string().into(),
+                models[0].model.provider_name().0.clone(),
             ));
             for info in models {
                 entries.push(LanguageModelPickerEntry::Model(info.clone()));
