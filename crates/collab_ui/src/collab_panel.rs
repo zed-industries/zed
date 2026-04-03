@@ -247,7 +247,9 @@ pub struct CollabPanel {
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     channel_clipboard: Option<ChannelMoveClipboard>,
-    pending_serialization: Task<Option<()>>,
+    pending_panel_serialization: Task<Option<()>>,
+    pending_favorites_serialization: Task<Option<()>>,
+    pending_filter_serialization: Task<Option<()>>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     list_state: ListState,
     filter_editor: Entity<Editor>,
@@ -381,7 +383,9 @@ impl CollabPanel {
                 focus_handle: cx.focus_handle(),
                 channel_clipboard: None,
                 fs: workspace.app_state().fs.clone(),
-                pending_serialization: Task::ready(None),
+                pending_panel_serialization: Task::ready(None),
+                pending_favorites_serialization: Task::ready(None),
+                pending_filter_serialization: Task::ready(None),
                 context_menu: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
                 channel_name_editor,
@@ -537,7 +541,7 @@ impl CollabPanel {
         };
 
         let kvp = KeyValueStore::global(cx);
-        self.pending_serialization = cx.background_spawn(
+        self.pending_panel_serialization = cx.background_spawn(
             async move {
                 kvp.write_kvp(
                     serialization_key,
@@ -1990,7 +1994,7 @@ impl CollabPanel {
     fn persist_filter_occupied_channels(&mut self, cx: &mut Context<Self>) {
         let is_enabled = self.filter_occupied_channels;
         let kvp_store = KeyValueStore::global(cx);
-        self.pending_serialization = cx.background_spawn(
+        self.pending_filter_serialization = cx.background_spawn(
             async move {
                 if is_enabled {
                     kvp_store
@@ -2016,7 +2020,7 @@ impl CollabPanel {
             .map(|id| id.0)
             .collect();
         let kvp_store = KeyValueStore::global(cx);
-        self.pending_serialization = cx.background_spawn(
+        self.pending_favorites_serialization = cx.background_spawn(
             async move {
                 let json = serde_json::to_string(&favorite_ids)?;
                 kvp_store
