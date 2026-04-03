@@ -5222,33 +5222,85 @@ mod property_test {
             .collect();
 
         let mut metadata_thread_ids: HashSet<acp::SessionId> = HashSet::default();
+
+        // Query using the same approach as the sidebar: iterate project
+        // group keys, then do main + legacy queries per group.
+        let mw = multi_workspace.read(cx);
+        let mut workspaces_by_group: HashMap<project::ProjectGroupKey, Vec<Entity<Workspace>>> =
+            HashMap::default();
         for workspace in &workspaces {
-            let path_list = workspace_path_list(workspace, cx);
+            let key = workspace.read(cx).project_group_key(cx);
+            workspaces_by_group
+                .entry(key)
+                .or_default()
+                .push(workspace.clone());
+        }
+
+        let canonicalizer =
+            crate::project_group_builder::WorktreeCanonicalizer::from_workspaces(&workspaces, cx);
+
+        for group_key in mw.project_group_keys() {
+            let path_list = group_key.path_list().clone();
             if path_list.paths().is_empty() {
                 continue;
+            }
+
+            let group_workspaces = workspaces_by_group
+                .get(group_key)
+                .map(|ws| ws.as_slice())
+                .unwrap_or_default();
+            if group_workspaces.is_empty() {
+                continue;
+            }
+
+            // Main code path queries.
+            for metadata in thread_store
+                .read(cx)
+                .entries_for_main_worktree_path(&path_list)
+            {
+                metadata_thread_ids.insert(metadata.session_id.clone());
             }
             for metadata in thread_store.read(cx).entries_for_path(&path_list) {
                 metadata_thread_ids.insert(metadata.session_id.clone());
             }
-            for snapshot in root_repository_snapshots(workspace, cx) {
-                for linked_worktree in snapshot.linked_worktrees() {
-                    let worktree_path_list =
-                        PathList::new(std::slice::from_ref(&linked_worktree.path));
-                    for metadata in thread_store.read(cx).entries_for_path(&worktree_path_list) {
+
+            // Legacy: per-workspace queries for different root paths.
+            let covered_paths: HashSet<std::path::PathBuf> = group_workspaces
+                .iter()
+                .flat_map(|ws| {
+                    ws.read(cx)
+                        .root_paths(cx)
+                        .into_iter()
+                        .map(|p| p.to_path_buf())
+                })
+                .collect();
+
+            for workspace in group_workspaces {
+                let ws_path_list = workspace_path_list(workspace, cx);
+                if ws_path_list != path_list {
+                    for metadata in thread_store.read(cx).entries_for_path(&ws_path_list) {
                         metadata_thread_ids.insert(metadata.session_id.clone());
                     }
                 }
-                if snapshot.is_linked_worktree() {
-                    let main_path_list =
-                        PathList::new(std::slice::from_ref(&snapshot.original_repo_abs_path));
-                    for metadata in thread_store.read(cx).entries_for_path(&main_path_list) {
-                        metadata_thread_ids.insert(metadata.session_id.clone());
-                    }
-                    for metadata in thread_store
-                        .read(cx)
-                        .entries_for_main_worktree_path(&main_path_list)
-                    {
-                        metadata_thread_ids.insert(metadata.session_id.clone());
+            }
+
+            for workspace in group_workspaces {
+                for snapshot in root_repository_snapshots(workspace, cx) {
+                    for linked_worktree in snapshot.linked_worktrees() {
+                        if covered_paths.contains(&*linked_worktree.path) {
+                            continue;
+                        }
+                        let canonical_path = canonicalizer.canonicalize_path(&linked_worktree.path);
+                        let canonical_path_list = PathList::new(&[canonical_path.to_path_buf()]);
+                        if canonical_path_list != path_list {
+                            continue;
+                        }
+                        let worktree_path_list =
+                            PathList::new(std::slice::from_ref(&linked_worktree.path));
+                        for metadata in thread_store.read(cx).entries_for_path(&worktree_path_list)
+                        {
+                            metadata_thread_ids.insert(metadata.session_id.clone());
+                        }
                     }
                 }
             }
