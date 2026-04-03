@@ -1183,11 +1183,7 @@ impl ProjectSearchView {
             let query = editor.query_suggestion(window, cx);
             if query.is_empty() { None } else { Some(query) }
         });
-        let has_explicit_search_configuration = action.query.is_some()
-            || action.regex
-            || action.case_sensitive
-            || action.whole_word
-            || action.include_ignored;
+
 
         let search = if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
@@ -1219,17 +1215,23 @@ impl ProjectSearchView {
 
         search.update(cx, |search, cx| {
             search.replace_enabled |= action.replace_enabled;
-            if has_explicit_search_configuration {
-                search.set_search_option_enabled(SearchOptions::REGEX, action.regex, cx);
+            if let Some(regex) = action.regex {
+                search.set_search_option_enabled(SearchOptions::REGEX, regex, cx);
+            }
+            if let Some(case_sensitive) = action.case_sensitive {
                 search.set_search_option_enabled(
                     SearchOptions::CASE_SENSITIVE,
-                    action.case_sensitive,
+                    case_sensitive,
                     cx,
                 );
-                search.set_search_option_enabled(SearchOptions::WHOLE_WORD, action.whole_word, cx);
+            }
+            if let Some(whole_word) = action.whole_word {
+                search.set_search_option_enabled(SearchOptions::WHOLE_WORD, whole_word, cx);
+            }
+            if let Some(include_ignored) = action.include_ignored {
                 search.set_search_option_enabled(
                     SearchOptions::INCLUDE_IGNORED,
-                    action.include_ignored,
+                    include_ignored,
                     cx,
                 );
             }
@@ -5172,7 +5174,7 @@ pub mod tests {
     }
 
     #[gpui::test]
-    async fn test_deploy_search_with_options(cx: &mut TestAppContext) {
+    async fn test_deploy_search_applies_and_resets_options(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -5200,11 +5202,11 @@ pub mod tests {
             ProjectSearchView::deploy_search(
                 workspace,
                 &workspace::DeploySearch {
-                    regex: true,
-                    case_sensitive: true,
-                    whole_word: true,
-                    include_ignored: true,
-                    query: Some("test_query".into()),
+                    regex: Some(true),
+                    case_sensitive: Some(true),
+                    whole_word: Some(true),
+                    include_ignored: Some(true),
+                    query: Some("Test_Query".into()),
                     ..Default::default()
                 },
                 window,
@@ -5248,60 +5250,18 @@ pub mod tests {
             );
             let query_text = search_view.query_editor.read(cx).text(cx);
             assert_eq!(
-                query_text, "test_query",
+                query_text, "Test_Query",
                 "Query should be set from the action"
             );
         });
-    }
 
-    #[gpui::test]
-    async fn test_deploy_search_with_options_resets_existing_search_options(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            path!("/dir"),
-            json!({
-                "one.rs": "const ONE: usize = 1;",
-            }),
-        )
-        .await;
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
-        let workspace = window
-            .read_with(cx, |mw, _| mw.workspace().clone())
-            .unwrap();
-        let cx = &mut VisualTestContext::from_window(window.into(), cx);
-        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
-
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace.panes()[0].update(cx, |pane, cx| {
-                pane.toolbar()
-                    .update(cx, |toolbar, cx| toolbar.add_item(search_bar, window, cx))
-            });
-
-            ProjectSearchView::deploy_search(
-                workspace,
-                &workspace::DeploySearch {
-                    regex: true,
-                    case_sensitive: true,
-                    whole_word: true,
-                    include_ignored: true,
-                    ..Default::default()
-                },
-                window,
-                cx,
-            )
-        });
-
+        // Redeploy with only regex — unspecified options should be preserved.
         cx.dispatch_action(menu::Cancel);
         workspace.update_in(cx, |workspace, window, cx| {
             ProjectSearchView::deploy_search(
                 workspace,
                 &workspace::DeploySearch {
-                    regex: true,
+                    regex: Some(true),
                     ..Default::default()
                 },
                 window,
@@ -5309,22 +5269,53 @@ pub mod tests {
             )
         });
 
-        let search_view = cx
-            .read(|cx| {
-                workspace
-                    .read(cx)
-                    .active_pane()
-                    .read(cx)
-                    .active_item()
-                    .and_then(|item| item.downcast::<ProjectSearchView>())
-            })
-            .expect("Search view should be active after redeploy");
+        search_view.update_in(cx, |search_view, _window, _cx| {
+            assert!(
+                search_view.search_options.contains(SearchOptions::REGEX),
+                "Regex should still be enabled"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::CASE_SENSITIVE),
+                "Case sensitive should be preserved from previous deploy"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::WHOLE_WORD),
+                "Whole word should be preserved from previous deploy"
+            );
+            assert!(
+                search_view
+                    .search_options
+                    .contains(SearchOptions::INCLUDE_IGNORED),
+                "Include ignored should be preserved from previous deploy"
+            );
+        });
+
+        // Redeploy explicitly turning off options.
+        cx.dispatch_action(menu::Cancel);
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::deploy_search(
+                workspace,
+                &workspace::DeploySearch {
+                    regex: Some(true),
+                    case_sensitive: Some(false),
+                    whole_word: Some(false),
+                    include_ignored: Some(false),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+        });
 
         search_view.update_in(cx, |search_view, _window, _cx| {
             assert_eq!(
                 search_view.search_options,
                 SearchOptions::REGEX,
-                "Redeploy should reset the search options to match the action"
+                "Explicit Some(false) should turn off options"
             );
         });
     }
@@ -5366,7 +5357,7 @@ pub mod tests {
             ProjectSearchView::deploy_search(
                 workspace,
                 &workspace::DeploySearch {
-                    case_sensitive: true,
+                    case_sensitive: Some(true),
                     query: Some("lowercase_query".into()),
                     ..Default::default()
                 },

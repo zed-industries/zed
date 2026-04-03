@@ -198,13 +198,13 @@ pub struct DeploySearch {
     #[serde(default)]
     pub query: Option<String>,
     #[serde(default)]
-    pub regex: bool,
+    pub regex: Option<bool>,
     #[serde(default)]
-    pub case_sensitive: bool,
+    pub case_sensitive: Option<bool>,
     #[serde(default)]
-    pub whole_word: bool,
+    pub whole_word: Option<bool>,
     #[serde(default)]
-    pub include_ignored: bool,
+    pub include_ignored: Option<bool>,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema, Default)]
