@@ -1,9 +1,7 @@
-use std::sync::LazyLock;
-
 use gpui::{
-    AnyWindowHandle, AppContext, Context, FocusHandle, Focusable, StatefulInteractiveElement, Task,
+    AnyWindowHandle, AppContext as _, Context, FocusHandle, Focusable, Global,
+    StatefulInteractiveElement, Task,
 };
-use parking_lot::Mutex;
 
 use crate::workspace_settings;
 
@@ -12,11 +10,10 @@ struct FfmState {
     // The window and element to be focused
     handles: Option<(AnyWindowHandle, FocusHandle)>,
     // The debounced task which will do the focusing
-    debounce_task: Option<Task<()>>,
+    _debounce_task: Option<Task<()>>,
 }
 
-// Global focus-follows-mouse state.
-static FFM_STATE: LazyLock<Mutex<FfmState>> = LazyLock::new(Default::default);
+impl Global for FfmState {}
 
 pub trait FocusFollowsMouse<E: Focusable>: StatefulInteractiveElement {
     fn focus_follows_mouse(
@@ -30,18 +27,25 @@ pub trait FocusFollowsMouse<E: Focusable>: StatefulInteractiveElement {
                     let window_handle = window.window_handle();
                     let focus_handle = this.focus_handle(cx);
 
-                    let mut state = FFM_STATE.lock();
+                    let state = cx.try_global::<FfmState>();
 
-                    // Set the window/element to be focused to the most recent hovered element.
-                    state.handles.replace((window_handle, focus_handle));
+                    // Only replace the target if the new handle doesn't contain the existing one.
+                    // This ensures that hovering over a parent (e.g., Dock) doesn't override
+                    // a more specific child target (e.g., a Pane inside the Dock).
+                    let should_replace = state
+                        .and_then(|s| s.handles.as_ref())
+                        .map(|(_, existing)| !focus_handle.contains(existing, window))
+                        .unwrap_or(true);
 
-                    // Start a task to focus the most recent target after the debounce period
-                    state
-                        .debounce_task
-                        .replace(cx.spawn(async move |_this, cx| {
-                            cx.background_executor().timer(settings.debounce).await;
+                    if !should_replace {
+                        return;
+                    }
 
-                            let mut state = FFM_STATE.lock();
+                    let debounce_task = cx.spawn(async move |_this, cx| {
+                        cx.background_executor().timer(settings.debounce).await;
+
+                        cx.update(|cx| {
+                            let state = cx.default_global::<FfmState>();
                             let Some((window, focus)) = state.handles.take() else {
                                 return;
                             };
@@ -49,7 +53,13 @@ pub trait FocusFollowsMouse<E: Focusable>: StatefulInteractiveElement {
                             let _ = cx.update_window(window, move |_view, window, cx| {
                                 window.focus(&focus, cx);
                             });
-                        }));
+                        });
+                    });
+
+                    cx.set_global(FfmState {
+                        handles: Some((window_handle, focus_handle)),
+                        _debounce_task: Some(debounce_task),
+                    });
                 }
             }))
         } else {
