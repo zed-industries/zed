@@ -44,6 +44,9 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
 
+const FILTER_OCCUPIED_CHANNELS_KEY: &str = "filter_occupied_channels";
+const FAVORITE_CHANNELS_KEY: &str = "favorite_channels";
+
 actions!(
     collab_panel,
     [
@@ -475,7 +478,7 @@ impl CollabPanel {
             }
 
             let filter_occupied_channels = KeyValueStore::global(cx)
-                .read_kvp("filter_occupied_channels")
+                .read_kvp(FILTER_OCCUPIED_CHANNELS_KEY)
                 .ok()
                 .flatten()
                 .is_some();
@@ -485,7 +488,7 @@ impl CollabPanel {
             });
 
             let favorites: Vec<ChannelId> = KeyValueStore::global(cx)
-                .read_kvp("favorite_channels")
+                .read_kvp(FAVORITE_CHANNELS_KEY)
                 .ok()
                 .flatten()
                 .and_then(|json| serde_json::from_str::<Vec<u64>>(&json).ok())
@@ -1987,11 +1990,11 @@ impl CollabPanel {
             async move {
                 if is_enabled {
                     kvp_store
-                        .write_kvp("filter_occupied_channels".to_string(), "1".to_string())
+                        .write_kvp(FILTER_OCCUPIED_CHANNELS_KEY.to_string(), "1".to_string())
                         .await?;
                 } else {
                     kvp_store
-                        .delete_kvp("filter_occupied_channels".to_string())
+                        .delete_kvp(FILTER_OCCUPIED_CHANNELS_KEY.to_string())
                         .await?;
                 }
                 anyhow::Ok(())
@@ -2013,7 +2016,7 @@ impl CollabPanel {
             async move {
                 let json = serde_json::to_string(&favorite_ids)?;
                 kvp_store
-                    .write_kvp("favorite_channels".to_string(), json)
+                    .write_kvp(FAVORITE_CHANNELS_KEY.to_string(), json)
                     .await?;
                 anyhow::Ok(())
             }
