@@ -483,8 +483,12 @@ impl CollabPanel {
                 .flatten()
                 .is_some();
 
-            panel.update(cx, |panel, _cx| {
+            panel.update(cx, |panel, cx| {
                 panel.filter_occupied_channels = filter_occupied_channels;
+
+                if filter_occupied_channels {
+                    panel.update_entries(false, cx);
+                }
             });
 
             let favorites: Vec<ChannelId> = KeyValueStore::global(cx)
