@@ -354,3 +354,70 @@ impl WgpuAtlasTexture {
         self.live_atlas_keys == 0
     }
 }
+
+#[cfg(all(test, not(target_family = "wasm")))]
+mod tests {
+    use super::*;
+    use gpui::{ImageId, RenderImageParams};
+    use pollster::block_on;
+    use std::sync::Arc;
+
+    fn test_device_and_queue() -> anyhow::Result<(Arc<wgpu::Device>, Arc<wgpu::Queue>)> {
+        block_on(async {
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::all(),
+                flags: wgpu::InstanceFlags::default(),
+                backend_options: wgpu::BackendOptions::default(),
+                memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+                display: None,
+            });
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::LowPower,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                })
+                .await
+                .map_err(|error| anyhow::anyhow!("failed to request adapter: {error}"))?;
+            let (device, queue) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("wgpu_atlas_test_device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_defaults()
+                        .using_resolution(adapter.limits())
+                        .using_alignment(adapter.limits()),
+                    memory_hints: wgpu::MemoryHints::MemoryUsage,
+                    trace: wgpu::Trace::Off,
+                    experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                })
+                .await
+                .map_err(|error| anyhow::anyhow!("failed to request device: {error}"))?;
+            Ok((Arc::new(device), Arc::new(queue)))
+        })
+    }
+
+    #[test]
+    fn before_frame_skips_uploads_for_removed_texture() -> anyhow::Result<()> {
+        let (device, queue) = test_device_and_queue()?;
+
+        let atlas = WgpuAtlas::new(device, queue);
+        let key = AtlasKey::Image(RenderImageParams {
+            image_id: ImageId(1),
+            frame_index: 0,
+        });
+        let size = Size {
+            width: DevicePixels(1),
+            height: DevicePixels(1),
+        };
+        let mut build = || Ok(Some((size, Cow::Owned(vec![0, 0, 0, 255]))));
+
+        // Regression test: before the fix, this panicked in flush_uploads
+        atlas
+            .get_or_insert_with(&key, &mut build)?
+            .expect("tile should be created");
+        atlas.remove(&key);
+        atlas.before_frame();
+
+        Ok(())
+    }
+}
