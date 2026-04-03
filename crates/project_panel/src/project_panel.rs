@@ -640,6 +640,10 @@ fn get_item_color(is_sticky: bool, cx: &App) -> ItemColors {
     }
 }
 
+fn code_span(name: &str) -> String {
+    format!("`{}`", name)
+}
+
 impl ProjectPanel {
     fn new(
         workspace: &mut Workspace,
@@ -2350,7 +2354,7 @@ impl ProjectPanel {
             let file_name = entry.path.file_name()?.to_string();
 
             let answer = if !action.skip_prompt {
-                let prompt = format!("Discard changes to {}?", file_name);
+                let prompt = format!("Discard changes to {}?", code_span(&file_name));
                 Some(window.prompt(PromptLevel::Info, &prompt, None, &["Restore", "Cancel"], cx))
             } else {
                 None
@@ -4541,7 +4545,7 @@ impl ProjectPanel {
                             "already exists in the destination folder. ",
                             "Do you want to replace it?"
                         ),
-                        filename
+                        code_span(filename)
                     );
                     let answer = cx
                         .update(|window, cx| {
