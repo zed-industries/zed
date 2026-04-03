@@ -45,7 +45,7 @@ pub(crate) struct SshRemoteConnection {
     _temp_dir: TempDir,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SshConnectionHost {
     IpAddr(IpAddr),
     Hostname(String),
@@ -102,7 +102,7 @@ fn bracket_ipv6(host: &str) -> String {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SshConnectionOptions {
     pub host: SshConnectionHost,
     pub username: Option<String>,

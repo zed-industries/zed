@@ -1273,7 +1273,7 @@ impl ConnectionPool {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),

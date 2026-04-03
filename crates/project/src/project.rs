@@ -6075,6 +6075,10 @@ impl ProjectGroupKey {
     pub fn path_list(&self) -> &PathList {
         &self.paths
     }
+
+    pub fn host(&self) -> Option<RemoteConnectionOptions> {
+        self.host.clone()
+    }
 }
 
 pub struct PathMatchCandidateSet {

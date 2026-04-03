@@ -26,6 +26,7 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
     Panel, Workspace, WorkspaceId, client_side_decorations,
+    persistence::model::MultiWorkspaceState,
 };
 
 actions!(
@@ -612,8 +613,13 @@ impl MultiWorkspace {
         self._serialize_task = Some(cx.spawn(async move |this, cx| {
             let Some((window_id, state)) = this
                 .read_with(cx, |this, cx| {
-                    let state = crate::persistence::model::MultiWorkspaceState {
+                    let state = MultiWorkspaceState {
                         active_workspace_id: this.workspace().read(cx).database_id(),
+                        project_group_keys: this
+                            .project_group_keys()
+                            .cloned()
+                            .map(Into::into)
+                            .collect::<Vec<_>>(),
                         sidebar_open: this.sidebar_open,
                         sidebar_state: this.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
                     };
