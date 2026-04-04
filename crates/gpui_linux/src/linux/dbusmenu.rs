@@ -31,6 +31,9 @@ pub fn setup_global_menu_sources<D: 'static, T: GlobalMenuState + 'static>(
             let client = client.clone();
             move |action| {
                 if let Some(client) = client.upgrade() {
+                    // Take the callback out before invoking it to avoid holding a
+                    // borrow_mut across the call, which would panic if the callback
+                    // re-enters client state (e.g. dispatching actions that read it).
                     let mut callback = {
                         let mut state = client.borrow_mut();
                         state.linux_common().callbacks.app_menu_action.take()
@@ -51,6 +54,8 @@ pub fn setup_global_menu_sources<D: 'static, T: GlobalMenuState + 'static>(
             let client = client.clone();
             move |request| {
                 if let Some(client) = client.upgrade() {
+                    // Same take-and-restore pattern as the action handler above:
+                    // callbacks are extracted before use to avoid reentrancy panics.
                     let (dbus_menu_server, mut validate_app_menu_command, mut will_open_app_menu) = {
                         let mut state = client.borrow_mut();
                         let common = state.linux_common();
@@ -647,6 +652,8 @@ impl DBusMenuServer {
             return Ok(false);
         }
 
+        // D-Bus about_to_show is synchronous — the menu host blocks until we reply.
+        // 50ms keeps the menu responsive; on timeout we return false (no updates).
         match responded_rx.recv_timeout(Duration::from_millis(50)) {
             Ok(response) => Ok(!response.updated_ids.is_empty()),
             Err(_) => {
@@ -1071,6 +1078,9 @@ fn icon_name_for_os_action(action: OsAction) -> Option<&'static str> {
 fn dbus_shortcut_for_action(action: &dyn Action, keymap: &Keymap) -> Option<OwnedValue> {
     static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
 
+    // Build a synthetic context matching the typical focus stack
+    // (Workspace > Pane > Editor) so keybinding lookups resolve the same
+    // shortcuts a user would see in the editor.
     let contexts = DEFAULT_CONTEXT.get_or_init(|| {
         let mut workspace_context = KeyContext::new_with_defaults();
         workspace_context.add("Workspace");

@@ -313,6 +313,9 @@ pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
 
 impl Drop for X11Client {
     fn drop(&mut self) {
+        // Only shut down the D-Bus menu server when the last clone drops,
+        // because `X11Client` is cheaply cloned via `Rc` and earlier drops
+        // must not tear down the shared server.
         if Rc::strong_count(&self.0) > 1 {
             return;
         }
