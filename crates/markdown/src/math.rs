@@ -252,7 +252,44 @@ fn render_math_expression(source: &str, _display: bool) -> Result<RenderedMath, 
     let mut backend = GpuiMathBackend::new(dims.width, dims.height, dims.depth, 1.0);
     renderer.render(&layout, &mut backend);
 
-    Ok(backend.into_rendered())
+    let mut rendered = backend.into_rendered();
+
+    // Compute actual bounding box from rendered paths and rects,
+    // since the layout dimensions may underestimate for matrices/large delimiters
+    let mut min_x: f32 = 0.0;
+    let mut min_y: f32 = 0.0;
+    let mut max_x: f32 = rendered.size.width.as_f32();
+    let mut max_y: f32 = rendered.size.height.as_f32();
+    for (path, _) in &rendered.paths {
+        let b = &path.bounds;
+        min_x = min_x.min(b.origin.x.as_f32());
+        min_y = min_y.min(b.origin.y.as_f32());
+        max_x = max_x.max((b.origin.x + b.size.width).as_f32());
+        max_y = max_y.max((b.origin.y + b.size.height).as_f32());
+    }
+    for (rect, _) in &rendered.rects {
+        min_x = min_x.min(rect.origin.x.as_f32());
+        min_y = min_y.min(rect.origin.y.as_f32());
+        max_x = max_x.max((rect.origin.x + rect.size.width).as_f32());
+        max_y = max_y.max((rect.origin.y + rect.size.height).as_f32());
+    }
+
+    // Offset all paths/rects so the bounding box starts at (0, 0)
+    let offset_x = -min_x;
+    let offset_y = -min_y;
+    if offset_x != 0.0 || offset_y != 0.0 {
+        let off = point(px(offset_x), px(offset_y));
+        for (path, _) in &mut rendered.paths {
+            *path = scale_and_offset_path(path, 1.0, off);
+        }
+        for (rect, _) in &mut rendered.rects {
+            rect.origin.x = rect.origin.x + px(offset_x);
+            rect.origin.y = rect.origin.y + px(offset_y);
+        }
+    }
+
+    rendered.size = size(px(max_x - min_x), px(max_y - min_y));
+    Ok(rendered)
 }
 
 impl MathState {
