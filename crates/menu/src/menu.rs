@@ -26,6 +26,10 @@ actions!(
         SelectFirst,
         /// Selects the last item in the menu.
         SelectLast,
+        /// Selects the item one page back in the menu.
+        SelectPrevPage,
+        /// Selects the item one page ahead in the menu.
+        SelectNextPage,
         /// Enters a submenu (navigates to child menu).
         SelectChild,
         /// Exits a submenu (navigates to parent menu).
