@@ -40,7 +40,7 @@ use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cell::{Cell, RefCell},
-    cmp, env,
+    cmp,
     fmt::{Debug, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -48,7 +48,7 @@ use std::{
     ops::{DerefMut, Range},
     rc::Rc,
     sync::{
-        Arc, OnceLock, Weak,
+        Arc, Weak,
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
     time::Duration,
@@ -744,6 +744,12 @@ pub(crate) struct DeferredDraw {
     paint_range: Range<PaintIndex>,
 }
 
+#[derive(Clone, Copy)]
+struct LayoutRoundingContext {
+    raw_bounds: Bounds<Pixels>,
+    scene_bounds: Bounds<Pixels>,
+}
+
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
@@ -929,6 +935,7 @@ pub struct Window {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
+    layout_rounding_stack: Vec<LayoutRoundingContext>,
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
@@ -1430,6 +1437,7 @@ impl Window {
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
+            layout_rounding_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
@@ -2164,7 +2172,7 @@ impl Window {
 
     /// The line height associated with the current text style.
     pub fn line_height(&self) -> Pixels {
-        self.round_to_nearest_device_pixel(self.text_style().line_height_in_pixels(self.rem_size()))
+        self.text_style().line_height_in_pixels(self.rem_size())
     }
 
     /// Rounds a logical size or coordinate to the nearest device pixel for this window.
@@ -2191,51 +2199,6 @@ impl Window {
         )
     }
 
-    fn debug_rounding_filters() -> &'static Option<Vec<String>> {
-        static DEBUG_ROUNDING_FILTERS: OnceLock<Option<Vec<String>>> = OnceLock::new();
-
-        DEBUG_ROUNDING_FILTERS.get_or_init(|| {
-            let enabled = env::var("GPUI_DEBUG_ROUNDING")
-                .map(|value| !value.is_empty() && value != "0")
-                .unwrap_or(false);
-            if !enabled {
-                return None;
-            }
-
-            Some(
-                env::var("GPUI_DEBUG_ROUNDING_FILTER")
-                    .ok()
-                    .map(|value| {
-                        value
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                            .map(ToOwned::to_owned)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            )
-        })
-    }
-
-    fn debug_rounding_global_id(&self) -> Option<GlobalElementId> {
-        let filters = Self::debug_rounding_filters().as_ref()?;
-        if self.element_id_stack.is_empty() {
-            return None;
-        }
-
-        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
-        if filters.is_empty() {
-            return Some(global_id);
-        }
-
-        let global_id_string = global_id.to_string();
-        filters
-            .iter()
-            .any(|filter| global_id_string.contains(filter))
-            .then_some(global_id)
-    }
-
     #[inline]
     fn bounds_from_device_edges(
         &self,
@@ -2252,27 +2215,84 @@ impl Window {
         )
     }
 
-    /// Converts logical-pixel bounds to device-pixel bounds by rounding origin
-    /// and size independently. This preserves consistent sizes: elements with
-    /// the same logical size always produce the same device-pixel size.
-    ///
-    /// Gap-free abutment between layout siblings is handled upstream by
-    /// Taffy's cumulative edge-based rounding post-pass. For elements
-    /// positioned by Taffy, the values arriving here are already on the
-    /// device-pixel grid and this rounding is effectively a no-op.
     #[inline]
-    fn round_bounds_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+    fn round_bounds_edges_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
-        Bounds {
-            origin: point(
-                ScaledPixels(round_half_toward_zero(bounds.origin.x.0 * scale_factor)),
-                ScaledPixels(round_half_toward_zero(bounds.origin.y.0 * scale_factor)),
-            ),
-            size: size(
-                self.round_length_to_device_pixels(bounds.size.width),
-                self.round_length_to_device_pixels(bounds.size.height),
-            ),
+        self.bounds_from_device_edges(
+            round_half_toward_zero(bounds.left().0 * scale_factor),
+            round_half_toward_zero(bounds.top().0 * scale_factor),
+            round_half_toward_zero(bounds.right().0 * scale_factor),
+            round_half_toward_zero(bounds.bottom().0 * scale_factor),
+        )
+    }
+
+    #[inline]
+    fn round_bounds_edges_to_logical_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        self.round_bounds_edges_to_device_pixels(bounds)
+            .map(|value| Pixels(value.0 / self.scale_factor()))
+    }
+
+    #[inline]
+    pub(crate) fn snapped_element_offset(&self) -> Point<Pixels> {
+        self.round_point_to_device_pixels(self.element_offset())
+    }
+
+    #[inline]
+    pub(crate) fn raw_layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
+        let scale_factor = self.scale_factor();
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .layout_bounds(layout_id, scale_factor)
+            .map(Into::into)
+    }
+
+    fn map_layout_bounds_to_scene(&self, raw_bounds: Bounds<Pixels>) -> Bounds<Pixels> {
+        let Some(parent_context) = self.layout_rounding_stack.last().copied() else {
+            return raw_bounds;
+        };
+
+        let delta = parent_context.scene_bounds.origin - parent_context.raw_bounds.origin;
+        let mut left = raw_bounds.left() + delta.x;
+        let mut top = raw_bounds.top() + delta.y;
+        let mut right = raw_bounds.right() + delta.x;
+        let mut bottom = raw_bounds.bottom() + delta.y;
+
+        let parent_raw = parent_context.raw_bounds;
+        let parent_scene = parent_context.scene_bounds;
+        const EDGE_EPSILON: f32 = 0.001;
+        let shares_edge = |a: Pixels, b: Pixels| (a.0 - b.0).abs() <= EDGE_EPSILON;
+
+        if shares_edge(raw_bounds.left(), parent_raw.left()) {
+            left = parent_scene.left();
         }
+        if shares_edge(raw_bounds.top(), parent_raw.top()) {
+            top = parent_scene.top();
+        }
+        if shares_edge(raw_bounds.right(), parent_raw.right()) {
+            right = parent_scene.right();
+        }
+        if shares_edge(raw_bounds.bottom(), parent_raw.bottom()) {
+            bottom = parent_scene.bottom();
+        }
+
+        Bounds::from_corners(point(left, top), point(right.max(left), bottom.max(top)))
+    }
+
+    #[inline]
+    pub(crate) fn with_layout_rounding_context<R>(
+        &mut self,
+        raw_bounds: Bounds<Pixels>,
+        scene_bounds: Bounds<Pixels>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.layout_rounding_stack.push(LayoutRoundingContext {
+            raw_bounds,
+            scene_bounds: self.round_bounds_edges_to_logical_pixels(scene_bounds),
+        });
+        let result = f(self);
+        self.layout_rounding_stack.pop();
+        result
     }
 
     #[inline]
@@ -2950,7 +2970,7 @@ impl Window {
             return f(self);
         };
 
-        let abs_offset = self.round_point_to_device_pixels(self.element_offset() + offset);
+        let abs_offset = self.element_offset() + offset;
         self.with_absolute_element_offset(abs_offset, f)
     }
 
@@ -2963,8 +2983,7 @@ impl Window {
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.invalidator.debug_assert_prepaint();
-        self.element_offset_stack
-            .push(self.round_point_to_device_pixels(offset));
+        self.element_offset_stack.push(offset);
         let result = f(self);
         self.element_offset_stack.pop();
         result
@@ -3374,111 +3393,13 @@ impl Window {
     /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
     /// where the circular arcs meet. This will not display well when combined with dashed borders.
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
-    fn debug_border_quads() -> bool {
-        static DEBUG: OnceLock<bool> = OnceLock::new();
-        *DEBUG.get_or_init(|| {
-            env::var("GPUI_DEBUG_BORDER_QUADS")
-                .map(|v| !v.is_empty() && v != "0")
-                .unwrap_or(false)
-        })
-    }
-
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
-        let rounded_bounds = self.round_bounds_to_device_pixels(quad.bounds);
+        let rounded_bounds = self.round_bounds_edges_to_device_pixels(quad.bounds);
         let rounded_borders = self.round_edges_to_device_pixels(quad.border_widths);
-
-        if Self::debug_border_quads() && quad.border_widths.left.0 > 0.0 {
-            let sf = self.scale_factor();
-            let mask = self.outset_content_mask_to_device_pixels(content_mask.clone());
-            eprintln!(
-                "BORDER_QUAD left logical_x={:.4} logical_w={:.4} \
-                 dev_x={:.0} dev_w={:.0} dev_right={:.0} \
-                 border_logical={:.4} border_dev={:.0} \
-                 mask_left={:.0} mask_right={:.0} sf={sf}",
-                quad.bounds.origin.x.0,
-                quad.bounds.size.width.0,
-                rounded_bounds.origin.x.0,
-                rounded_bounds.size.width.0,
-                rounded_bounds.origin.x.0 + rounded_bounds.size.width.0,
-                quad.border_widths.left.0,
-                rounded_borders.left.0,
-                mask.bounds.origin.x.0,
-                mask.bounds.origin.x.0 + mask.bounds.size.width.0,
-            );
-        } else if Self::debug_border_quads()
-            && quad.border_widths.left.0 == 0.0
-            && !quad.background.is_transparent()
-            && rounded_bounds.size.width.0 > 100.0
-            && rounded_bounds.size.height.0 > 100.0
-        {
-            // Log large background quads so we can see where the center content ends.
-            eprintln!(
-                "BG_QUAD      logical_x={:.4} logical_w={:.4} \
-                 dev_x={:.0} dev_w={:.0} dev_right={:.0}",
-                quad.bounds.origin.x.0,
-                quad.bounds.size.width.0,
-                rounded_bounds.origin.x.0,
-                rounded_bounds.size.width.0,
-                rounded_bounds.origin.x.0 + rounded_bounds.size.width.0,
-            );
-        }
-
-        if let Some(global_id) = self.debug_rounding_global_id() {
-            eprintln!(
-                "ROUNDING quad id={global_id} logical=({:.3}, {:.3}) size=({:.3}, {:.3}) \
-                 dev=({:.0}, {:.0}) size=({:.0}, {:.0}) borders_logical=({:.3}, {:.3}, {:.3}, {:.3}) \
-                 borders_dev=({:.0}, {:.0}, {:.0}, {:.0})",
-                quad.bounds.origin.x.0,
-                quad.bounds.origin.y.0,
-                quad.bounds.size.width.0,
-                quad.bounds.size.height.0,
-                rounded_bounds.origin.x.0,
-                rounded_bounds.origin.y.0,
-                rounded_bounds.size.width.0,
-                rounded_bounds.size.height.0,
-                quad.border_widths.top.0,
-                quad.border_widths.right.0,
-                quad.border_widths.bottom.0,
-                quad.border_widths.left.0,
-                rounded_borders.top.0,
-                rounded_borders.right.0,
-                rounded_borders.bottom.0,
-                rounded_borders.left.0,
-            );
-        }
-
-        // Temporary: detect when a bordered quad's device-pixel bounds are non-integer.
-        // This would cause fuzzy borders because the shader anti-aliases at sub-pixel edges.
-        if quad.border_widths.top.0 != 0.0
-            || quad.border_widths.right.0 != 0.0
-            || quad.border_widths.bottom.0 != 0.0
-            || quad.border_widths.left.0 != 0.0
-        {
-            let bx = rounded_bounds.origin.x.0;
-            let by = rounded_bounds.origin.y.0;
-            let bw = rounded_bounds.size.width.0;
-            let bh = rounded_bounds.size.height.0;
-            if bx.fract() != 0.0 || by.fract() != 0.0 || bw.fract() != 0.0 || bh.fract() != 0.0 {
-                eprintln!(
-                    "NON-INTEGER BORDERED QUAD: dev_bounds=({bx:.3}, {by:.3}, {bw:.3}, {bh:.3}) \
-                     logical=({:.4}, {:.4}, {:.4}, {:.4}) \
-                     borders=({:.1}, {:.1}, {:.1}, {:.1}) sf={}",
-                    quad.bounds.origin.x.0,
-                    quad.bounds.origin.y.0,
-                    quad.bounds.size.width.0,
-                    quad.bounds.size.height.0,
-                    rounded_borders.top.0,
-                    rounded_borders.right.0,
-                    rounded_borders.bottom.0,
-                    rounded_borders.left.0,
-                    self.scale_factor(),
-                );
-            }
-        }
 
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
@@ -3648,27 +3569,6 @@ impl Window {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
-
-            if let Some(global_id) = self.debug_rounding_global_id() {
-                eprintln!(
-                    "ROUNDING glyph id={global_id} glyph={:?} logical_origin=({:.3}, {:.3}) \
-                     scaled_origin=({:.3}, {:.3}) subpixel=({}, {}) raster_origin=({}, {}) \
-                     sprite_origin=({:.0}, {:.0}) sprite_size=({:.0}, {:.0})",
-                    glyph_id,
-                    origin.x.0,
-                    origin.y.0,
-                    glyph_origin.x.0,
-                    glyph_origin.y.0,
-                    subpixel_variant.x,
-                    subpixel_variant.y,
-                    raster_bounds.origin.x.0,
-                    raster_bounds.origin.y.0,
-                    bounds.origin.x.0,
-                    bounds.origin.y.0,
-                    bounds.size.width.0,
-                    bounds.size.height.0,
-                );
-            }
 
             if subpixel_rendering {
                 self.next_frame.scene.insert_primitive(SubpixelSprite {
@@ -3889,9 +3789,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let logical_bounds = bounds;
-
-        let bounds = self.round_bounds_to_device_pixels(bounds);
+        let bounds = self.round_bounds_edges_to_device_pixels(bounds);
         let params = RenderSvgParams {
             path,
             size: bounds.size.map(|pixels| {
@@ -3926,26 +3824,6 @@ impl Window {
         let final_bounds = svg_bounds
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
-
-        if let Some(global_id) = self.debug_rounding_global_id() {
-            eprintln!(
-                "ROUNDING svg id={global_id} path={} logical=({:.3}, {:.3}) size=({:.3}, {:.3}) \
-                 rounded=({:.0}, {:.0}) size=({:.0}, {:.0}) sprite=({:.0}, {:.0}) size=({:.0}, {:.0})",
-                params.path,
-                logical_bounds.origin.x.0,
-                logical_bounds.origin.y.0,
-                logical_bounds.size.width.0,
-                logical_bounds.size.height.0,
-                bounds.origin.x.0,
-                bounds.origin.y.0,
-                bounds.size.width.0,
-                bounds.size.height.0,
-                final_bounds.origin.x.0,
-                final_bounds.origin.y.0,
-                final_bounds.size.width.0,
-                final_bounds.size.height.0,
-            );
-        }
 
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
@@ -4018,7 +3896,7 @@ impl Window {
 
         self.invalidator.debug_assert_paint();
 
-        let bounds = self.round_bounds_to_device_pixels(bounds);
+        let bounds = self.round_bounds_edges_to_device_pixels(bounds);
         let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
@@ -4117,14 +3995,9 @@ impl Window {
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         self.invalidator.debug_assert_prepaint();
 
-        let scale_factor = self.scale_factor();
-        let mut bounds = self
-            .layout_engine
-            .as_mut()
-            .unwrap()
-            .layout_bounds(layout_id, scale_factor)
-            .map(Into::into);
-        bounds.origin += self.element_offset();
+        let raw_bounds = self.raw_layout_bounds(layout_id);
+        let mut bounds = self.map_layout_bounds_to_scene(raw_bounds);
+        bounds.origin += self.snapped_element_offset();
         bounds
     }
 

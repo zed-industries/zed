@@ -430,16 +430,21 @@ impl<E: Element> Drawable<E> {
                     debug_assert_eq!(&*global_id.as_ref().unwrap().0, &*window.element_id_stack);
                 }
 
+                let raw_bounds = window.raw_layout_bounds(layout_id);
                 let bounds = window.layout_bounds(layout_id);
+                let mut scene_bounds = bounds;
+                scene_bounds.origin -= window.snapped_element_offset();
                 let node_id = window.next_frame.dispatch_tree.push_node();
-                let prepaint = self.element.prepaint(
-                    global_id.as_ref(),
-                    inspector_id.as_ref(),
-                    bounds,
-                    &mut request_layout,
-                    window,
-                    cx,
-                );
+                let prepaint = window.with_layout_rounding_context(raw_bounds, scene_bounds, |window| {
+                    self.element.prepaint(
+                        global_id.as_ref(),
+                        inspector_id.as_ref(),
+                        bounds,
+                        &mut request_layout,
+                        window,
+                        cx,
+                    )
+                });
                 window.next_frame.dispatch_tree.pop_node();
 
                 if global_id.is_some() {
