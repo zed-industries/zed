@@ -52,10 +52,23 @@ For a release build:
 cargo run --release
 ```
 
+if you need **dev container**:
+
+```sh
+cargo run --release --features remote/build-remote-server-binary
+```
+
 And to run the tests:
 
 ```sh
 cargo test --workspace
+```
+
+or Install it locally:
+
+```sh
+cargo install --path crates/zed --features remote/build-remote-server-binary
+cargo build --path crates/zed --release --features remote/build-remote-server-binary
 ```
 
 ## Visual Regression Tests
