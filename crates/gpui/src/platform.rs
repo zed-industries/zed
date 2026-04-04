@@ -2203,6 +2203,15 @@ mod image_tests {
     use std::sync::Arc;
 
     #[test]
+    fn test_avif_mime_type() {
+        assert_eq!(ImageFormat::Avif.mime_type(), "image/avif");
+        assert_eq!(
+            ImageFormat::from_mime_type("image/avif"),
+            Some(ImageFormat::Avif)
+        );
+    }
+
+    #[test]
     fn test_svg_image_to_image_data_converts_to_bgra() {
         let image = Image::from_bytes(
             ImageFormat::Svg,

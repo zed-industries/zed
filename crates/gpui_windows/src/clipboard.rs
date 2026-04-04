@@ -303,7 +303,6 @@ fn convert_dib_to_bmp(dib: &[u8]) -> Option<Vec<u8>> {
     Some(bmp)
 }
 
-<<<<<<< HEAD
 fn log_unsupported_clipboard_formats() {
     let count = unsafe { CountClipboardFormats() };
     let mut format = 0;

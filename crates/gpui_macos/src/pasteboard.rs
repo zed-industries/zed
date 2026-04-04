@@ -339,9 +339,9 @@ mod tests {
     use cocoa::{
         appkit::{NSFilenamesPboardType, NSPasteboard, NSPasteboardTypeString},
         base::{id, nil},
-        foundation::{NSArray, NSData},
+        foundation::{NSArray, NSData, NSString},
     };
-    use std::ffi::c_void;
+    use std::ffi::{CStr, c_void};
 
     use gpui::{ClipboardEntry, ClipboardItem, ClipboardString, ImageFormat};
 
@@ -526,5 +526,14 @@ mod tests {
             }
             other => panic!("expected Image, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_avif_ut_type() {
+        let avif_type: UTType = ImageFormat::Avif.into();
+        assert_eq!(
+            unsafe { CStr::from_ptr(NSString::UTF8String(avif_type.0)) }.to_string_lossy(),
+            "public.avif"
+        );
     }
 }
