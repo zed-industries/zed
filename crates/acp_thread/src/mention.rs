@@ -157,9 +157,8 @@ impl MentionUri {
                         include_warnings,
                     })
                 } else if path.starts_with("/agent/pasted-image") {
-                    let fallback = "Image".to_string();
-                    let name = single_query_param(&url, "name")?.unwrap_or_else(|| fallback);
-
+                    let name =
+                        single_query_param(&url, "name")?.unwrap_or_else(|| "Image".to_string());
                     Ok(Self::PastedImage { name })
                 } else if path.starts_with("/agent/untitled-buffer") {
                     let fragment = url
