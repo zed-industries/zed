@@ -2392,19 +2392,47 @@ impl ConversationView {
             return;
         }
 
+        let Some(root_thread) = self.root_thread(cx) else {
+            return;
+        };
+        let root_thread = root_thread.read(cx).thread.read(cx);
+        let root_session_id = root_thread.session_id().clone();
+        let root_work_dirs = root_thread.work_dirs().cloned();
+        let root_title = root_thread.title();
+
         // TODO: Change this once we have title summarization for external agents.
         let title = self.agent.agent_id().0;
 
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
                 if let Some(primary) = cx.primary_display() {
-                    self.pop_up(icon, caption.into(), title, window, primary, cx);
+                    self.pop_up(
+                        icon,
+                        caption.into(),
+                        title,
+                        root_session_id,
+                        root_work_dirs,
+                        root_title,
+                        window,
+                        primary,
+                        cx,
+                    );
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
                 let caption = caption.into();
                 for screen in cx.displays() {
-                    self.pop_up(icon, caption.clone(), title.clone(), window, screen, cx);
+                    self.pop_up(
+                        icon,
+                        caption.clone(),
+                        title.clone(),
+                        root_session_id.clone(),
+                        root_work_dirs.clone(),
+                        root_title.clone(),
+                        window,
+                        screen,
+                        cx,
+                    );
                 }
             }
             NotifyWhenAgentWaiting::Never => {
@@ -2418,6 +2446,9 @@ impl ConversationView {
         icon: IconName,
         caption: SharedString,
         title: SharedString,
+        root_session_id: acp::SessionId,
+        root_work_dirs: Option<PathList>,
+        root_title: Option<SharedString>,
         window: &mut Window,
         screen: Rc<dyn PlatformDisplay>,
         cx: &mut Context<Self>,
@@ -2447,7 +2478,7 @@ impl ConversationView {
                 .entry(screen_window)
                 .or_insert_with(Vec::new)
                 .push(cx.subscribe_in(&pop_up, window, {
-                    |this, _, event, window, cx| match event {
+                    move |this, _, event, window, cx| match event {
                         AgentNotificationEvent::Accepted => {
                             let Some(handle) = window.window_handle().downcast::<MultiWorkspace>()
                             else {
@@ -2457,6 +2488,10 @@ impl ConversationView {
                             cx.activate(true);
 
                             let workspace_handle = this.workspace.clone();
+                            let agent = this.connection_key.clone();
+                            let root_session_id = root_session_id.clone();
+                            let root_work_dirs = root_work_dirs.clone();
+                            let root_title = root_title.clone();
 
                             cx.defer(move |cx| {
                                 handle
@@ -2465,6 +2500,22 @@ impl ConversationView {
                                         if let Some(workspace) = workspace_handle.upgrade() {
                                             multi_workspace.activate(workspace.clone(), window, cx);
                                             workspace.update(cx, |workspace, cx| {
+                                                workspace.reveal_panel::<AgentPanel>(window, cx);
+                                                if let Some(panel) =
+                                                    workspace.panel::<AgentPanel>(cx)
+                                                {
+                                                    panel.update(cx, |panel, cx| {
+                                                        panel.load_agent_thread(
+                                                            agent.clone(),
+                                                            root_session_id.clone(),
+                                                            root_work_dirs.clone(),
+                                                            root_title.clone(),
+                                                            true,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
                                                 workspace.focus_panel::<AgentPanel>(window, cx);
                                             });
                                         }
