@@ -31,7 +31,7 @@ pub(crate) struct DockerInspect {
     pub(crate) state: Option<DockerState>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 pub(crate) struct DockerConfigLabels {
     #[serde(
         rename = "devcontainer.metadata",
@@ -44,6 +44,7 @@ pub(crate) struct DockerConfigLabels {
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerInspectConfig {
+    #[serde(default)]
     pub(crate) labels: DockerConfigLabels,
     #[serde(rename = "User")]
     pub(crate) image_user: Option<String>,
@@ -806,6 +807,66 @@ mod test {
         assert_eq!(
             config.config.env,
             vec!["PATH=/usr/local/bin:/usr/bin:/bin".to_string()]
+        );
+    }
+
+    #[test]
+    fn should_deserialize_docker_inspect_without_labels() {
+        let given_config = r#"
+    {
+      "Id": "sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a",
+      "RepoTags": [
+        "debian:bookworm-slim"
+      ],
+      "Comment": "debuerreotype 0.17",
+      "Created": "2026-03-16T00:00:00Z",
+      "Config": {
+        "Env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ],
+        "Cmd": [
+          "bash"
+        ]
+      },
+      "Architecture": "arm64",
+      "Variant": "v8",
+      "Os": "linux",
+      "Size": 28126134,
+      "RootFS": {
+        "Type": "layers",
+        "Layers": [
+          "sha256:6ef58325ba0a417962b349e6810a7177443d67fed7462c1d19da22af8b7197e0"
+        ]
+      },
+      "Metadata": {
+        "LastTagTime": "2026-04-04T17:20:41.064173713Z"
+      },
+      "Descriptor": {
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "digest": "sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a",
+        "size": 8560
+      },
+      "Identity": {
+        "Pull": [
+          {
+            "Repository": "docker.io/library/debian"
+          }
+        ]
+      }
+    }
+                "#;
+
+        let config = serde_json_lenient::from_str::<DockerInspect>(given_config).unwrap();
+
+        assert_eq!(
+            config.id,
+            "sha256:f06537653ac770703bc45b4b113475bd402f451e85223f0f2837acbf89ab020a"
+        );
+        assert_eq!(config.config.labels.metadata, None);
+        assert_eq!(config.config.image_user, None);
+        assert_eq!(
+            config.config.env,
+            vec!["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string()]
         );
     }
 
