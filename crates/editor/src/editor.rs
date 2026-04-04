@@ -253,6 +253,7 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 pub const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+pub const FORMAT_SELECTIONS_AVAILABILITY_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1216,6 +1217,8 @@ pub struct Editor {
     quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_complete: bool,
+    format_selections_available: bool,
+    format_selections_availability_task: Task<()>,
     document_highlights_task: Option<Task<()>>,
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
@@ -2146,6 +2149,9 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
+                    project::Event::LanguageServerAdded(..) => {
+                        editor.refresh_format_selections_availability(false, cx);
+                    }
                     project::Event::RefreshCodeLens => {
                         // we always query lens with actions, without storing them, always refreshing them
                     }
@@ -2179,6 +2185,7 @@ impl Editor {
                         editor.register_visible_buffers(cx);
                         editor.invalidate_semantic_tokens(None);
                         editor.refresh_runnables(None, window, cx);
+                        editor.refresh_format_selections_availability(false, cx);
                         editor.update_lsp_data(None, window, cx);
                         editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
                     }
@@ -2209,6 +2216,7 @@ impl Editor {
                         if editor.buffer().read(cx).buffer(buffer_id).is_some() {
                             editor.register_buffer(buffer_id, cx);
                             editor.refresh_runnables(Some(buffer_id), window, cx);
+                            editor.refresh_format_selections_availability(false, cx);
                             editor.update_lsp_data(Some(buffer_id), window, cx);
                             editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                             refresh_linked_ranges(editor, window, cx);
@@ -2271,6 +2279,11 @@ impl Editor {
                                 cx,
                             );
                         }
+                    }
+
+                    project::Event::DisconnectedFromHost
+                    | project::Event::DisconnectedFromRemote { .. } => {
+                        editor.refresh_format_selections_availability(false, cx);
                     }
 
                     _ => {}
@@ -2458,6 +2471,8 @@ impl Editor {
             quick_selection_highlight_task: None,
             debounced_selection_highlight_task: None,
             debounced_selection_highlight_complete: false,
+            format_selections_available: false,
+            format_selections_availability_task: Task::ready(()),
             document_highlights_task: None,
             linked_editing_range_task: None,
             pending_rename: None,
@@ -2754,6 +2769,8 @@ impl Editor {
             }
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
         }
+
+        editor.refresh_format_selections_availability(false, cx);
 
         editor
     }
@@ -3681,6 +3698,7 @@ impl Editor {
         }
 
         let selection_anchors = self.selections.disjoint_anchors_arc();
+        self.refresh_format_selections_availability(true, cx);
 
         if self.focus_handle.is_focused(window) && self.leader_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
@@ -19591,6 +19609,66 @@ impl Editor {
         self.pending_rename.as_ref()
     }
 
+    fn enable_format_selections(&self) -> bool {
+        self.format_selections_available
+    }
+
+    fn can_format_selections(&self, cx: &App) -> bool {
+        if !self.mode.is_full() {
+            return false;
+        }
+
+        let Some(project) = &self.project else {
+            return false;
+        };
+
+        let selected_buffers = {
+            let multi_buffer = self.buffer.read(cx);
+            let snapshot = multi_buffer.snapshot(cx);
+            let selected_buffer_ids = self
+                .selections
+                .disjoint_anchors_arc()
+                .iter()
+                .filter(|selection| selection.start != selection.end)
+                .flat_map(|selection| snapshot.buffer_ids_for_range(selection.range()))
+                .collect::<HashSet<_>>();
+
+            selected_buffer_ids
+                .into_iter()
+                .filter_map(|buffer_id| multi_buffer.buffer(buffer_id))
+                .collect::<Vec<_>>()
+        };
+
+        if selected_buffers.is_empty() {
+            return false;
+        }
+
+        let project = project.read(cx);
+        selected_buffers
+            .into_iter()
+            .any(|buffer| project.supports_range_formatting(&buffer, cx))
+    }
+
+    fn refresh_format_selections_availability(&mut self, debounce: bool, cx: &mut Context<Self>) {
+        self.format_selections_availability_task = cx.spawn(async move |editor, cx| {
+            if debounce {
+                cx.background_executor()
+                    .timer(FORMAT_SELECTIONS_AVAILABILITY_DEBOUNCE_TIMEOUT)
+                    .await;
+            }
+
+            editor
+                .update(cx, |editor, cx| {
+                    let is_available = editor.can_format_selections(cx);
+                    if editor.format_selections_available != is_available {
+                        editor.format_selections_available = is_available;
+                        cx.notify();
+                    }
+                })
+                .ok();
+        });
+    }
+
     fn format(
         &mut self,
         _: &Format,
@@ -19619,6 +19697,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if !self.can_format_selections(cx) {
+            return None;
+        }
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
         let project = match &self.project {
@@ -24487,6 +24569,7 @@ impl Editor {
                 ranges,
                 path_key,
             } => {
+                self.refresh_format_selections_availability(false, cx);
                 self.refresh_document_highlights(cx);
                 let buffer_id = buffer.read(cx).remote_id();
                 if self.buffer.read(cx).diff_for(buffer_id).is_none()
@@ -24517,6 +24600,7 @@ impl Editor {
                 });
             }
             multi_buffer::Event::BuffersRemoved { removed_buffer_ids } => {
+                self.refresh_format_selections_availability(false, cx);
                 if let Some(inlay_hints) = &mut self.inlay_hints {
                     inlay_hints.remove_inlay_chunk_data(removed_buffer_ids);
                 }
@@ -24563,6 +24647,7 @@ impl Editor {
                 self.refresh_runnables(None, window, cx);
             }
             multi_buffer::Event::LanguageChanged(buffer_id, is_fresh_language) => {
+                self.refresh_format_selections_availability(false, cx);
                 if !is_fresh_language {
                     self.registered_buffers.remove(&buffer_id);
                 }
@@ -24699,6 +24784,7 @@ impl Editor {
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
         self.refresh_edit_prediction(true, false, window, cx);
+        self.refresh_format_selections_availability(false, cx);
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
