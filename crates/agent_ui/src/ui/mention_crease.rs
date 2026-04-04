@@ -11,7 +11,8 @@ use rope::Point;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
-use workspace::{OpenOptions, Workspace};
+use util::ResultExt as _;
+use workspace::{OpenOptions, Workspace, open_url_with_browser_settings};
 
 use crate::Agent;
 
@@ -182,7 +183,7 @@ fn open_mention_uri(
             open_rule(workspace, id, window, cx);
         }
         MentionUri::Fetch { url } => {
-            cx.open_url(url.as_str());
+            open_url_with_browser_settings(url.as_str(), cx).log_err();
         }
         MentionUri::PastedImage
         | MentionUri::Selection { abs_path: None, .. }

@@ -4,6 +4,8 @@ use ai_onboarding::{AgentPanelOnboardingCard, PlanDefinitions};
 use client::zed_urls;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Divider, Tooltip, prelude::*};
+use util::ResultExt as _;
+use workspace::open_url_with_browser_settings;
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct EndTrialUpsell {
@@ -38,7 +40,8 @@ impl RenderOnce for EndTrialUpsell {
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click(move |_, _window, cx| {
                         telemetry::event!("Upgrade To Pro Clicked", state = "end-of-trial");
-                        cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                        open_url_with_browser_settings(&zed_urls::upgrade_to_zed_pro_url(cx), cx)
+                            .log_err();
                     }),
             );
 

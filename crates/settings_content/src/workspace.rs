@@ -122,6 +122,10 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// The browser to use when opening URLs.
+    ///
+    /// Default: system (uses the system's default browser)
+    pub browser: Option<BrowserSettings>,
 }
 
 #[with_fallible_options]
@@ -824,6 +828,46 @@ pub struct ProjectPanelScrollbarSettingsContent {
 )]
 pub struct ProjectPanelIndentGuidesSettings {
     pub show: Option<ShowIndentGuides>,
+}
+
+/// Configuration for the browser to use when opening URLs.
+///
+/// Can be:
+/// - "system" to use the system default browser
+/// - A path to a browser executable (e.g., "/usr/bin/firefox")
+/// - An object with "program" and optional "args" fields
+///
+/// Examples:
+/// ```json
+/// { "browser": "system" }
+/// { "browser": "/Applications/Firefox.app/Contents/MacOS/firefox" }
+/// { "browser": { "program": "firefox", "args": ["--private-window"] } }
+/// ```
+#[derive(
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BrowserSettings {
+    /// Use the system's default browser
+    #[default]
+    System,
+    /// Use a specific browser program with no arguments
+    Program(String),
+    /// Use a specific browser program with arguments
+    WithArguments {
+        /// The browser program to run
+        program: String,
+        /// The arguments to pass to the browser (the URL will be appended)
+        args: Vec<String>,
+    },
 }
 
 /// Controls how semantic tokens from language servers are used for syntax highlighting.

@@ -147,8 +147,8 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings,
-    WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, BrowserSettings, RestoreOnStartupBehavior,
+    StatusBarSettings, TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
@@ -10523,6 +10523,38 @@ fn load_legacy_panel_size(
         .detach_and_log_err(cx);
 
     Some(size)
+}
+
+/// Opens a URL respecting the user's browser settings.
+///
+/// Uses the `browser` setting from workspace settings to determine
+/// how to open URLs:
+/// - `"system"` — the OS default browser via `cx.open_url()`
+/// - A program name/path — via the `open` crate's `open::with()`
+/// - `{ "program": "…", "args": ["…"] }` — via `std::process::Command`
+pub fn open_url_with_browser_settings(url: &str, cx: &App) -> anyhow::Result<()> {
+    use settings::BrowserSettings;
+
+    let browser_settings = WorkspaceSettings::get_global(cx).browser.clone();
+
+    match browser_settings {
+        BrowserSettings::System => {
+            cx.open_url(url);
+            Ok(())
+        }
+        BrowserSettings::Program(program) => open::with(url, &program)
+            .map_err(|e| anyhow::anyhow!("Failed to open URL with '{}': {}", program, e)),
+        BrowserSettings::WithArguments { program, args } => {
+            std::process::Command::new(&program)
+                .args(&args)
+                .arg(url)
+                .spawn()
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to open URL with '{}': {}", program, e)
+                })?;
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]

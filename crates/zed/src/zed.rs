@@ -791,8 +791,9 @@ fn register_actions(
             // Parse and validate the URL to ensure it's properly formatted
             match url::Url::parse(&action.url) {
                 Ok(parsed_url) => {
-                    // Use the parsed URL's string representation which is properly escaped
-                    cx.open_url(parsed_url.as_str());
+                    if let Err(e) = workspace::open_url_with_browser_settings(parsed_url.as_str(), cx) {
+                        workspace.show_error(&e, cx);
+                    }
                 }
                 Err(e) => {
                     workspace.show_error(

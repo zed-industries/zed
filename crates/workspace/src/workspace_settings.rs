@@ -4,7 +4,7 @@ use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::{
-    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
+    AutosaveSetting, BottomDockLayout, BrowserSettings, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
     RestoreOnStartupBehavior, Settings,
 };
@@ -35,6 +35,7 @@ pub struct WorkspaceSettings {
     pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
+    pub browser: BrowserSettings,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
@@ -113,6 +114,7 @@ impl Settings for WorkspaceSettings {
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
+            browser: workspace.browser.clone().unwrap_or_default(),
         }
     }
 }

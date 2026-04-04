@@ -15,7 +15,7 @@ use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
 use ui::{ButtonLike, SplitButton, SplitButtonStyle, Tab};
-use workspace::SERIALIZATION_THROTTLE_TIME;
+use workspace::{SERIALIZATION_THROTTLE_TIME, open_url_with_browser_settings};
 
 use super::*;
 
@@ -8106,7 +8106,8 @@ impl ThreadView {
             .on_click(cx.listener({
                 move |this, _, _, cx| {
                     this.clear_thread_error(cx);
-                    cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx));
+                    open_url_with_browser_settings(&zed_urls::upgrade_to_zed_pro_url(cx), cx)
+                        .log_err();
                 }
             }))
     }
@@ -8823,7 +8824,7 @@ pub(crate) fn open_link(
     cx: &mut App,
 ) {
     let Some(workspace) = workspace.upgrade() else {
-        cx.open_url(&url);
+        open_url_with_browser_settings(&url, cx).log_err();
         return;
     };
 
@@ -8913,7 +8914,7 @@ pub(crate) fn open_link(
                 )
             }
             MentionUri::Fetch { url } => {
-                cx.open_url(url.as_str());
+                open_url_with_browser_settings(url.as_str(), cx).log_err();
             }
             MentionUri::Diagnostics { .. } => {}
             MentionUri::TerminalSelection { .. } => {}
@@ -8921,6 +8922,6 @@ pub(crate) fn open_link(
             MentionUri::MergeConflict { .. } => {}
         })
     } else {
-        cx.open_url(&url);
+        open_url_with_browser_settings(&url, cx).log_err();
     }
 }

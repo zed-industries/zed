@@ -28,7 +28,7 @@ use ui::{
     WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
-use workspace::{ModalView, Workspace};
+use workspace::{ModalView, Workspace, open_url_with_browser_settings};
 
 use crate::AddContextServer;
 
@@ -841,7 +841,9 @@ impl ConfigureContextServerModal {
                             })
                             .on_click({
                                 let repository_url = repository_url.clone();
-                                move |_, _, cx| cx.open_url(&repository_url)
+                                move |_, _, cx| {
+                                    open_url_with_browser_settings(&repository_url, cx).log_err();
+                                }
                             }),
                     )
                 } else {

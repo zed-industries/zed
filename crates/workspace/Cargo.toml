@@ -48,6 +48,7 @@ log.workspace = true
 menu.workspace = true
 markdown.workspace = true
 node_runtime.workspace = true
+open.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true

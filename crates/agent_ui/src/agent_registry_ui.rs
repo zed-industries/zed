@@ -17,9 +17,11 @@ use ui::{
     ButtonStyle, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
     ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,
 };
+use util::ResultExt as _;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
+    open_url_with_browser_settings,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -399,7 +401,7 @@ impl AgentRegistryPage {
                 )
             })
             .on_click(move |_, _, cx| {
-                cx.open_url(&repository_for_click);
+                open_url_with_browser_settings(&repository_for_click, cx).log_err();
             })
         });
 
@@ -415,7 +417,7 @@ impl AgentRegistryPage {
                 Tooltip::with_meta("Visit Agent Website", None, website.clone(), cx)
             })
             .on_click(move |_, _, cx| {
-                cx.open_url(&website_for_click);
+                open_url_with_browser_settings(&website_for_click, cx).log_err();
             })
         });
 
@@ -565,7 +567,7 @@ impl Render for AgentRegistryPage {
                                             .color(Color::Muted),
                                     )
                                     .on_click(move |_, _, cx| {
-                                        cx.open_url(&zed_urls::acp_registry_blog(cx))
+                                        open_url_with_browser_settings(&zed_urls::acp_registry_blog(cx), cx).log_err();
                                     }),
                             ),
                     )

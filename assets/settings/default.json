@@ -194,6 +194,15 @@
   //
   // Default: "client"
   "window_decorations": "client",
+  // The browser to use when opening URLs.
+  // Can be:
+  //   - "system" to use the system default browser
+  //   - A path to a browser executable (e.g., "/usr/bin/firefox")
+  //   - An object with "program" and optional "args" fields:
+  //     { "program": "firefox", "args": ["--private-window"] }
+  //
+  // Default: "system"
+  "browser": "system",
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
