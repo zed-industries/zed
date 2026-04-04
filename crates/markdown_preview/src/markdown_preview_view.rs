@@ -22,7 +22,7 @@ use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
 use util::normalize_path;
-use workspace::item::{Item, ItemHandle};
+use workspace::item::{Item, ItemBufferKind, ItemHandle};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
@@ -783,6 +783,10 @@ impl Item for MarkdownPreviewView {
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
+    fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+        ItemBufferKind::Singleton
+    }
+
     fn as_searchable(
         &self,
         handle: &Entity<Self>,
@@ -832,6 +836,7 @@ impl SearchableItem for MarkdownPreviewView {
             regex: true,
             replacement: false,
             selection: false,
+            select_all: false,
             find_in_results: false,
         }
     }
