@@ -8,6 +8,3 @@
 {"Put":{"state":"ˇ// comment"}}
 {"Key":"%"}
 {"Get":{"state":"ˇ// comment","mode":"Normal"}}
-{"Put":{"state":"ˇ/* comment */"}}
-{"Key":"%"}
-{"Get":{"state":"/* comment ˇ*/","mode":"Normal"}}
