@@ -2325,22 +2325,31 @@ impl ConversationView {
         self.show_notification(caption, icon, window, cx);
     }
 
-    fn agent_panel_visible(&self, multi_workspace: &Entity<MultiWorkspace>, cx: &App) -> bool {
+    fn is_visible(&self, multi_workspace: &Entity<MultiWorkspace>, cx: &Context<Self>) -> bool {
         let Some(workspace) = self.workspace.upgrade() else {
             return false;
         };
 
-        multi_workspace.read(cx).workspace() == &workspace && AgentPanel::is_visible(&workspace, cx)
+        multi_workspace.read(cx).workspace() == &workspace
+            && AgentPanel::is_visible(&workspace, cx)
+            && multi_workspace
+                .read(cx)
+                .workspace()
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .map_or(false, |p| {
+                    p.read(cx).active_conversation_view().map(|c| c.entity_id())
+                        == Some(cx.entity_id())
+                })
     }
 
-    fn agent_status_visible(&self, window: &Window, cx: &App) -> bool {
+    fn agent_status_visible(&self, window: &Window, cx: &Context<Self>) -> bool {
         if !window.is_window_active() {
             return false;
         }
 
         if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-            multi_workspace.read(cx).sidebar_open()
-                || self.agent_panel_visible(&multi_workspace, cx)
+            self.is_visible(&multi_workspace, cx)
         } else {
             self.workspace
                 .upgrade()
@@ -2348,11 +2357,11 @@ impl ConversationView {
         }
     }
 
-    fn play_notification_sound(&self, window: &Window, cx: &mut App) {
+    fn play_notification_sound(&self, window: &Window, cx: &mut Context<Self>) {
         let settings = AgentSettings::get_global(cx);
         let _visible = window.is_window_active()
             && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
-                self.agent_panel_visible(&mw, cx)
+                self.is_visible(&mw, cx)
             } else {
                 self.workspace
                     .upgrade()
