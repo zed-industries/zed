@@ -436,7 +436,12 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 state.push_event(range, MarkdownEvent::TaskListMarker(checked))
             }
-            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
+            pulldown_cmark::Event::InlineMath(text) => {
+                state.push_event(range, MarkdownEvent::InlineMath(text.to_string()))
+            }
+            pulldown_cmark::Event::DisplayMath(text) => {
+                state.push_event(range, MarkdownEvent::DisplayMath(text.to_string()))
+            }
         }
     }
 
@@ -519,6 +524,10 @@ pub enum MarkdownEvent {
     Rule,
     /// A task list marker, rendered as a checkbox in HTML. Contains a true when it is checked.
     TaskListMarker(bool),
+    /// An inline math expression (e.g. `$x^2$`). Contains the LaTeX source.
+    InlineMath(String),
+    /// A display math expression (e.g. `$$E = mc^2$$`). Contains the LaTeX source.
+    DisplayMath(String),
     /// Start of a root-level block (a top-level structural element like a paragraph, heading, list, etc.).
     RootStart,
     /// End of a root-level block. Contains the root block index.

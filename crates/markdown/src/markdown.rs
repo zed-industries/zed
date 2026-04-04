@@ -1,4 +1,5 @@
 pub mod html;
+mod math;
 mod mermaid;
 pub mod parser;
 mod path_range;
@@ -11,6 +12,7 @@ use gpui::UnderlineStyle;
 use language::LanguageName;
 
 use log::Level;
+use math::{MathState, render_display_math, render_inline_math};
 use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
 };
@@ -257,6 +259,7 @@ pub struct Markdown {
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
+    math_state: MathState,
     mermaid_state: MermaidState,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
@@ -424,6 +427,7 @@ impl Markdown {
             language_registry,
             fallback_code_block_language,
             options,
+            math_state: MathState::default(),
             mermaid_state: MermaidState::default(),
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
@@ -608,6 +612,7 @@ impl Markdown {
             };
             self.active_root_block = None;
             self.images_by_source_offset.clear();
+            self.math_state.clear();
             self.mermaid_state.clear();
             cx.notify();
             cx.refresh_windows();
@@ -733,6 +738,10 @@ impl Markdown {
                     block_index >= this.parsed_markdown.root_block_starts.len()
                 }) {
                     this.active_root_block = None;
+                }
+                {
+                    let parsed_markdown = this.parsed_markdown.clone();
+                    this.math_state.update(&parsed_markdown, cx);
                 }
                 if this.options.render_mermaid_diagrams {
                     let parsed_markdown = this.parsed_markdown.clone();
@@ -1403,7 +1412,7 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state, math_state) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
@@ -1411,6 +1420,7 @@ impl Element for MarkdownElement {
                 markdown.active_root_block,
                 markdown.options.render_mermaid_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.math_state.clone(),
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -1881,6 +1891,24 @@ impl Element for MarkdownElement {
                 MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
                 MarkdownEvent::TaskListMarker(_) => {
                     // handled inside the `MarkdownTag::Item` case
+                }
+                MarkdownEvent::DisplayMath(source) => {
+                    let text_color = self.style.base_text_style.color;
+                    builder.push_sourced_element(
+                        range.clone(),
+                        render_display_math(source, &math_state, &self.style, text_color),
+                    );
+                }
+                MarkdownEvent::InlineMath(source) => {
+                    let text_color = self.style.base_text_style.color;
+                    builder.modify_current_div(|div| {
+                        div.child(render_inline_math(
+                            source,
+                            &math_state,
+                            &self.style,
+                            text_color,
+                        ))
+                    });
                 }
                 _ => log::debug!("unsupported markdown event {:?}", event),
             }

@@ -407,6 +407,7 @@ remote = { path = "crates/remote" }
 remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
+rex = { git = "https://github.com/lnay/ReX", branch = "personal", features = ["ttfparser-fontparser"] }
 reqwest_client = { path = "crates/reqwest_client" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
@@ -716,6 +717,7 @@ take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
 tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "2570c4387a8505fb8f1d3f3557454b474f1e8271" }
+ttf-parser = "0.25"
 time = { version = "0.3", features = [
     "macros",
     "parsing",
