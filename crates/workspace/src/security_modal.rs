@@ -63,7 +63,7 @@ impl ModalView for SecurityModal {
 }
 
 impl Render for SecurityModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.restricted_paths.is_empty() {
             self.dismiss(cx);
             return v_flex().into_any_element();
@@ -76,6 +76,39 @@ impl Render for SecurityModal {
         };
 
         let trust_label = self.build_trust_label();
+        let restricted_project_entries = self
+            .restricted_paths
+            .values()
+            .filter_map(|restricted_path| {
+                let abs_path = if restricted_path.is_file {
+                    restricted_path.abs_path.parent()
+                } else {
+                    Some(restricted_path.abs_path.as_ref())
+                }?;
+                let label = match &restricted_path.host {
+                    Some(remote_host) => match &remote_host.user_name {
+                        Some(user_name) => format!(
+                            "{} ({}@{})",
+                            self.shorten_path(abs_path).display(),
+                            user_name,
+                            remote_host.host_identifier
+                        ),
+                        None => format!(
+                            "{} ({})",
+                            self.shorten_path(abs_path).display(),
+                            remote_host.host_identifier
+                        ),
+                    },
+                    None => self.shorten_path(abs_path).display().to_string(),
+                };
+                Some(
+                    h_flex()
+                        .pl(IconSize::default().rems() + rems(0.5))
+                        .child(Label::new(label).color(Color::Muted))
+                        .into_any_element(),
+                )
+            })
+            .collect::<Vec<_>>();
 
         AlertModal::new("security-modal")
             .width(rems(40.))
@@ -102,72 +135,67 @@ impl Render for SecurityModal {
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(Label::new(header_label)),
                     )
-                    .children(self.restricted_paths.values().filter_map(|restricted_path| {
-                        let abs_path = if restricted_path.is_file {
-                            restricted_path.abs_path.parent()
-                        } else {
-                            Some(restricted_path.abs_path.as_ref())
-                        }?;
-                        let label = match &restricted_path.host {
-                            Some(remote_host) => match &remote_host.user_name {
-                                Some(user_name) => format!(
-                                    "{} ({}@{})",
-                                    self.shorten_path(abs_path).display(),
-                                    user_name,
-                                    remote_host.host_identifier
-                                ),
-                                None => format!(
-                                    "{} ({})",
-                                    self.shorten_path(abs_path).display(),
-                                    remote_host.host_identifier
-                                ),
-                            },
-                            None => self.shorten_path(abs_path).display().to_string(),
-                        };
-                        Some(h_flex()
-                            .pl(IconSize::default().rems() + rems(0.5))
-                            .child(Label::new(label).color(Color::Muted)))
-                    })),
+                    .child(
+                        div()
+                            .id("security-modal-project-list")
+                            .max_h(vh(0.4, window))
+                            .overflow_y_scroll()
+                            .child(v_flex().children(restricted_project_entries)),
+                    ),
             )
             .child(
-                v_flex()
-                    .gap_2()
+                div()
+                    .id("security-modal-body")
+                    .max_h(vh(0.3, window))
+                    .overflow_y_scroll()
                     .child(
                         v_flex()
+                            .gap_2()
                             .child(
-                                Label::new(
-                                    "Untrusted projects are opened in Restricted Mode to protect your system.",
-                                )
-                                .color(Color::Muted),
+                                v_flex()
+                                    .child(
+                                        Label::new(
+                                            "Untrusted projects are opened in Restricted Mode to protect your system.",
+                                        )
+                                        .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(
+                                            "Review .zed/settings.json for any extensions or commands configured by this project.",
+                                        )
+                                        .color(Color::Muted),
+                                    ),
                             )
                             .child(
-                                Label::new(
-                                    "Review .zed/settings.json for any extensions or commands configured by this project.",
+                                v_flex()
+                                    .child(
+                                        Label::new("Restricted Mode prevents:").color(Color::Muted),
+                                    )
+                                    .child(ListBulletItem::new(
+                                        "Project settings from being applied",
+                                    ))
+                                    .child(ListBulletItem::new("Language servers from running"))
+                                    .child(ListBulletItem::new(
+                                        "MCP Server integrations from installing",
+                                    )),
+                            )
+                            .when_some(trust_label, |this, trust_label| {
+                                this.child(
+                                    Checkbox::new(
+                                        "trust-parents",
+                                        ToggleState::from(self.trust_parents),
+                                    )
+                                    .label(trust_label)
+                                    .on_click(cx.listener(
+                                        |security_modal, state: &ToggleState, _, cx| {
+                                            security_modal.trust_parents = state.selected();
+                                            cx.notify();
+                                            cx.stop_propagation();
+                                        },
+                                    )),
                                 )
-                                .color(Color::Muted),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .child(Label::new("Restricted Mode prevents:").color(Color::Muted))
-                            .child(ListBulletItem::new("Project settings from being applied"))
-                            .child(ListBulletItem::new("Language servers from running"))
-                            .child(ListBulletItem::new("MCP Server integrations from installing")),
-                    )
-                    .map(|this| match trust_label {
-                        Some(trust_label) => this.child(
-                            Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
-                                .label(trust_label)
-                                .on_click(cx.listener(
-                                    |security_modal, state: &ToggleState, _, cx| {
-                                        security_modal.trust_parents = state.selected();
-                                        cx.notify();
-                                        cx.stop_propagation();
-                                    },
-                                )),
-                        ),
-                        None => this,
-                    }),
+                            }),
+                    ),
             )
             .footer(
                 h_flex()
