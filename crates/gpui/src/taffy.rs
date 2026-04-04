@@ -4,7 +4,7 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use stacksafe::{StackSafe, stacksafe};
-use std::{fmt::Debug, ops::Range};
+use std::{env, fmt::Debug, ops::Range, sync::OnceLock};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -30,6 +30,8 @@ struct NodeContext {
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
+    /// Unrounded absolute origin in device pixels for each node.
+    absolute_origins: FxHashMap<LayoutId, Point<f32>>,
     /// Rounded absolute origin in device pixels for each node.
     /// Children derive their position from their parent's rounded origin,
     /// ensuring they shift together when the parent's position changes.
@@ -40,6 +42,12 @@ pub struct TaffyLayoutEngine {
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum LayoutRoundingMode {
+    Hierarchical,
+    Absolute,
+}
+
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
         let mut taffy = TaffyTree::new();
@@ -47,6 +55,7 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
+            absolute_origins: FxHashMap::default(),
             rounded_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
@@ -56,8 +65,27 @@ impl TaffyLayoutEngine {
     pub fn clear(&mut self) {
         self.taffy.clear();
         self.absolute_layout_bounds.clear();
+        self.absolute_origins.clear();
         self.rounded_origins.clear();
         self.computed_layouts.clear();
+    }
+
+    fn rounding_mode() -> LayoutRoundingMode {
+        static ROUNDING_MODE: OnceLock<LayoutRoundingMode> = OnceLock::new();
+
+        *ROUNDING_MODE.get_or_init(|| match env::var("GPUI_LAYOUT_ROUNDING_MODE") {
+            Ok(value) if value.eq_ignore_ascii_case("absolute") => LayoutRoundingMode::Absolute,
+            _ => LayoutRoundingMode::Hierarchical,
+        })
+    }
+
+    fn debug_layout_diff() -> bool {
+        static DEBUG: OnceLock<bool> = OnceLock::new();
+        *DEBUG.get_or_init(|| {
+            env::var("GPUI_DEBUG_LAYOUT_DIFF")
+                .map(|v| !v.is_empty() && v != "0")
+                .unwrap_or(false)
+        })
     }
 
     pub fn request_layout(
@@ -250,44 +278,45 @@ impl TaffyLayoutEngine {
         // rounding — GPUI reconstructs absolute positions through parents,
         // which breaks the cumulative invariant.
         //
-        // Instead we do cumulative-edge rounding using the parent's ROUNDED
-        // origin as the accumulation base:
-        //   cumulative = parent_rounded_origin + unrounded_child_loc
-        //   left  = round(cumulative)
-        //   right = round(cumulative + size)
-        //   width = right - left
-        //
-        // Because parent_rounded_origin is always an integer (sum of rounded
-        // values), shifting it by 1dp shifts all children's cumulative values
-        // by 1dp — an integer shift doesn't change any rounding decisions.
-        //
-        // This gives us:
-        //  - Gap-free sibling abutment (cumulative-edge math)
-        //  - Parent-child coherence (children shift with parent)
-        //  - Correct content-area fill (edges naturally match parent's extent)
-        //  - Stable sizes (integer base shifts don't change fractional rounding)
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
         let loc_x = layout.location.x;
         let loc_y = layout.location.y;
         let size_w = layout.size.width;
         let size_h = layout.size.height;
 
-        // Get parent's rounded origin in device pixels.
-        let parent_origin_dev = if let Some(parent_id) = self.taffy.parent(id.0) {
-            self.layout_bounds(parent_id.into(), scale_factor);
-            self.rounded_origins
-                .get(&LayoutId::from(parent_id))
-                .copied()
-                .unwrap_or_default()
-        } else {
-            Point::default()
+        let (parent_absolute_origin_dev, parent_rounded_origin_dev) =
+            if let Some(parent_id) = self.taffy.parent(id.0) {
+                self.layout_bounds(parent_id.into(), scale_factor);
+                (
+                    self.absolute_origins
+                        .get(&LayoutId::from(parent_id))
+                        .copied()
+                        .unwrap_or_default(),
+                    self.rounded_origins
+                        .get(&LayoutId::from(parent_id))
+                        .copied()
+                        .unwrap_or_default(),
+                )
+            } else {
+                (Point::default(), Point::default())
+            };
+
+        let absolute_origin_dev = point(
+            parent_absolute_origin_dev.x + loc_x,
+            parent_absolute_origin_dev.y + loc_y,
+        );
+        self.absolute_origins.insert(id, absolute_origin_dev);
+
+        let cumulative_origin_dev = match Self::rounding_mode() {
+            LayoutRoundingMode::Hierarchical => point(
+                parent_rounded_origin_dev.x + loc_x,
+                parent_rounded_origin_dev.y + loc_y,
+            ),
+            LayoutRoundingMode::Absolute => absolute_origin_dev,
         };
 
-        // Cumulative position in device pixels: rounded parent origin + unrounded
-        // child offset. This preserves the fractional part from the child's
-        // position within the parent, enabling cumulative-edge rounding.
-        let cum_x = parent_origin_dev.x + loc_x;
-        let cum_y = parent_origin_dev.y + loc_y;
+        let cum_x = cumulative_origin_dev.x;
+        let cum_y = cumulative_origin_dev.y;
 
         let left = round_half_toward_zero(cum_x);
         let top = round_half_toward_zero(cum_y);
@@ -304,6 +333,69 @@ impl TaffyLayoutEngine {
                 Pixels((bottom - top) / scale_factor),
             ),
         };
+
+        if Self::debug_layout_diff() {
+            let abs_left = round_half_toward_zero(absolute_origin_dev.x);
+            let abs_top = round_half_toward_zero(absolute_origin_dev.y);
+            let abs_right = round_half_toward_zero(absolute_origin_dev.x + size_w);
+            let abs_bottom = round_half_toward_zero(absolute_origin_dev.y + size_h);
+
+            let hier_w = right - left;
+            let abs_w = abs_right - abs_left;
+            let hier_h = bottom - top;
+            let abs_h = abs_bottom - abs_top;
+
+            // Log every node with its raw taffy values so we can see
+            // the full picture.
+            let differs = left != abs_left || top != abs_top || hier_w != abs_w || hier_h != abs_h;
+
+            let style = self.taffy.style(id.into()).expect(EXPECT_MESSAGE);
+            let has_border = !style.border.left.into_raw().is_zero()
+                || !style.border.right.into_raw().is_zero()
+                || !style.border.top.into_raw().is_zero()
+                || !style.border.bottom.into_raw().is_zero();
+
+            if differs || has_border {
+                let depth = {
+                    let mut d = 0u32;
+                    let mut cur = id.0;
+                    while let Some(p) = self.taffy.parent(cur) {
+                        d += 1;
+                        cur = p;
+                    }
+                    d
+                };
+
+                let mark = if differs { "DIFF" } else { "    " };
+                let bord = if has_border { "B" } else { " " };
+                eprintln!(
+                    "LAYOUT {mark}{bord} d={depth} id={:?} \
+                     loc=({:.2},{:.2}) size=({:.2},{:.2}) \
+                     cum=({:.2},{:.2}) hier→({:.0},{:.0}) size({:.0},{:.0}) \
+                     abs→({:.0},{:.0}) size({:.0},{:.0}) \
+                     p_rnd=({:.0},{:.0}) p_abs=({:.2},{:.2})",
+                    id,
+                    loc_x,
+                    loc_y,
+                    size_w,
+                    size_h,
+                    cum_x,
+                    cum_y,
+                    left,
+                    top,
+                    hier_w,
+                    hier_h,
+                    abs_left,
+                    abs_top,
+                    abs_w,
+                    abs_h,
+                    parent_rounded_origin_dev.x,
+                    parent_rounded_origin_dev.y,
+                    parent_absolute_origin_dev.x,
+                    parent_absolute_origin_dev.y,
+                );
+            }
+        }
 
         self.absolute_layout_bounds.insert(id, bounds);
         bounds

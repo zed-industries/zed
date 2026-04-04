@@ -40,7 +40,7 @@ use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cell::{Cell, RefCell},
-    cmp,
+    cmp, env,
     fmt::{Debug, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -48,7 +48,7 @@ use std::{
     ops::{DerefMut, Range},
     rc::Rc,
     sync::{
-        Arc, Weak,
+        Arc, OnceLock, Weak,
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
     time::Duration,
@@ -2191,6 +2191,51 @@ impl Window {
         )
     }
 
+    fn debug_rounding_filters() -> &'static Option<Vec<String>> {
+        static DEBUG_ROUNDING_FILTERS: OnceLock<Option<Vec<String>>> = OnceLock::new();
+
+        DEBUG_ROUNDING_FILTERS.get_or_init(|| {
+            let enabled = env::var("GPUI_DEBUG_ROUNDING")
+                .map(|value| !value.is_empty() && value != "0")
+                .unwrap_or(false);
+            if !enabled {
+                return None;
+            }
+
+            Some(
+                env::var("GPUI_DEBUG_ROUNDING_FILTER")
+                    .ok()
+                    .map(|value| {
+                        value
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(ToOwned::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            )
+        })
+    }
+
+    fn debug_rounding_global_id(&self) -> Option<GlobalElementId> {
+        let filters = Self::debug_rounding_filters().as_ref()?;
+        if self.element_id_stack.is_empty() {
+            return None;
+        }
+
+        let global_id = GlobalElementId(Arc::from(&*self.element_id_stack));
+        if filters.is_empty() {
+            return Some(global_id);
+        }
+
+        let global_id_string = global_id.to_string();
+        filters
+            .iter()
+            .any(|filter| global_id_string.contains(filter))
+            .then_some(global_id)
+    }
+
     #[inline]
     fn bounds_from_device_edges(
         &self,
@@ -3329,6 +3374,15 @@ impl Window {
     /// Note that the `quad.corner_radii` are allowed to exceed the bounds, creating sharp corners
     /// where the circular arcs meet. This will not display well when combined with dashed borders.
     /// Use `Corners::clamp_radii_for_quad_size` if the radii should fit within the bounds.
+    fn debug_border_quads() -> bool {
+        static DEBUG: OnceLock<bool> = OnceLock::new();
+        *DEBUG.get_or_init(|| {
+            env::var("GPUI_DEBUG_BORDER_QUADS")
+                .map(|v| !v.is_empty() && v != "0")
+                .unwrap_or(false)
+        })
+    }
+
     pub fn paint_quad(&mut self, quad: PaintQuad) {
         self.invalidator.debug_assert_paint();
 
@@ -3336,6 +3390,66 @@ impl Window {
         let opacity = self.element_opacity();
         let rounded_bounds = self.round_bounds_to_device_pixels(quad.bounds);
         let rounded_borders = self.round_edges_to_device_pixels(quad.border_widths);
+
+        if Self::debug_border_quads() && quad.border_widths.left.0 > 0.0 {
+            let sf = self.scale_factor();
+            let mask = self.outset_content_mask_to_device_pixels(content_mask.clone());
+            eprintln!(
+                "BORDER_QUAD left logical_x={:.4} logical_w={:.4} \
+                 dev_x={:.0} dev_w={:.0} dev_right={:.0} \
+                 border_logical={:.4} border_dev={:.0} \
+                 mask_left={:.0} mask_right={:.0} sf={sf}",
+                quad.bounds.origin.x.0,
+                quad.bounds.size.width.0,
+                rounded_bounds.origin.x.0,
+                rounded_bounds.size.width.0,
+                rounded_bounds.origin.x.0 + rounded_bounds.size.width.0,
+                quad.border_widths.left.0,
+                rounded_borders.left.0,
+                mask.bounds.origin.x.0,
+                mask.bounds.origin.x.0 + mask.bounds.size.width.0,
+            );
+        } else if Self::debug_border_quads()
+            && quad.border_widths.left.0 == 0.0
+            && !quad.background.is_transparent()
+            && rounded_bounds.size.width.0 > 100.0
+            && rounded_bounds.size.height.0 > 100.0
+        {
+            // Log large background quads so we can see where the center content ends.
+            eprintln!(
+                "BG_QUAD      logical_x={:.4} logical_w={:.4} \
+                 dev_x={:.0} dev_w={:.0} dev_right={:.0}",
+                quad.bounds.origin.x.0,
+                quad.bounds.size.width.0,
+                rounded_bounds.origin.x.0,
+                rounded_bounds.size.width.0,
+                rounded_bounds.origin.x.0 + rounded_bounds.size.width.0,
+            );
+        }
+
+        if let Some(global_id) = self.debug_rounding_global_id() {
+            eprintln!(
+                "ROUNDING quad id={global_id} logical=({:.3}, {:.3}) size=({:.3}, {:.3}) \
+                 dev=({:.0}, {:.0}) size=({:.0}, {:.0}) borders_logical=({:.3}, {:.3}, {:.3}, {:.3}) \
+                 borders_dev=({:.0}, {:.0}, {:.0}, {:.0})",
+                quad.bounds.origin.x.0,
+                quad.bounds.origin.y.0,
+                quad.bounds.size.width.0,
+                quad.bounds.size.height.0,
+                rounded_bounds.origin.x.0,
+                rounded_bounds.origin.y.0,
+                rounded_bounds.size.width.0,
+                rounded_bounds.size.height.0,
+                quad.border_widths.top.0,
+                quad.border_widths.right.0,
+                quad.border_widths.bottom.0,
+                quad.border_widths.left.0,
+                rounded_borders.top.0,
+                rounded_borders.right.0,
+                rounded_borders.bottom.0,
+                rounded_borders.left.0,
+            );
+        }
 
         // Temporary: detect when a bordered quad's device-pixel bounds are non-integer.
         // This would cause fuzzy borders because the shader anti-aliases at sub-pixel edges.
@@ -3534,6 +3648,27 @@ impl Window {
                 size: tile.bounds.size.map(Into::into),
             };
             let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
+
+            if let Some(global_id) = self.debug_rounding_global_id() {
+                eprintln!(
+                    "ROUNDING glyph id={global_id} glyph={:?} logical_origin=({:.3}, {:.3}) \
+                     scaled_origin=({:.3}, {:.3}) subpixel=({}, {}) raster_origin=({}, {}) \
+                     sprite_origin=({:.0}, {:.0}) sprite_size=({:.0}, {:.0})",
+                    glyph_id,
+                    origin.x.0,
+                    origin.y.0,
+                    glyph_origin.x.0,
+                    glyph_origin.y.0,
+                    subpixel_variant.x,
+                    subpixel_variant.y,
+                    raster_bounds.origin.x.0,
+                    raster_bounds.origin.y.0,
+                    bounds.origin.x.0,
+                    bounds.origin.y.0,
+                    bounds.size.width.0,
+                    bounds.size.height.0,
+                );
+            }
 
             if subpixel_rendering {
                 self.next_frame.scene.insert_primitive(SubpixelSprite {
@@ -3754,6 +3889,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
+        let logical_bounds = bounds;
 
         let bounds = self.round_bounds_to_device_pixels(bounds);
         let params = RenderSvgParams {
@@ -3787,13 +3923,34 @@ impl Window {
                 .size
                 .map(|value| ScaledPixels(value.0 as f32 / SMOOTH_SVG_SCALE_FACTOR)),
         };
+        let final_bounds = svg_bounds
+            .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
+            .map_size(|size| size.ceil());
+
+        if let Some(global_id) = self.debug_rounding_global_id() {
+            eprintln!(
+                "ROUNDING svg id={global_id} path={} logical=({:.3}, {:.3}) size=({:.3}, {:.3}) \
+                 rounded=({:.0}, {:.0}) size=({:.0}, {:.0}) sprite=({:.0}, {:.0}) size=({:.0}, {:.0})",
+                params.path,
+                logical_bounds.origin.x.0,
+                logical_bounds.origin.y.0,
+                logical_bounds.size.width.0,
+                logical_bounds.size.height.0,
+                bounds.origin.x.0,
+                bounds.origin.y.0,
+                bounds.size.width.0,
+                bounds.size.height.0,
+                final_bounds.origin.x.0,
+                final_bounds.origin.y.0,
+                final_bounds.size.width.0,
+                final_bounds.size.height.0,
+            );
+        }
 
         self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
-            bounds: svg_bounds
-                .map_origin(|v| ScaledPixels(round_half_toward_zero(v.0)))
-                .map_size(|size| size.ceil()),
+            bounds: final_bounds,
             content_mask,
             color: color.opacity(element_opacity),
             tile,
