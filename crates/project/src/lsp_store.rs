@@ -3973,6 +3973,7 @@ pub struct LspStore {
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
+    registered_language_servers_by_buffer: HashMap<BufferId, HashSet<LanguageServerId>>,
     buffer_reload_tasks: HashMap<BufferId, Task<anyhow::Result<()>>>,
     next_hint_id: Arc<AtomicUsize>,
 }
@@ -4301,6 +4302,7 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             lsp_data: HashMap::default(),
+            registered_language_servers_by_buffer: HashMap::default(),
             buffer_reload_tasks: HashMap::default(),
             next_hint_id: Arc::default(),
             active_entry: None,
@@ -4364,6 +4366,7 @@ impl LspStore {
             semantic_token_config: SemanticTokenConfig::new(cx),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
+            registered_language_servers_by_buffer: HashMap::default(),
             buffer_reload_tasks: HashMap::default(),
             active_entry: None,
 
@@ -4384,6 +4387,7 @@ impl LspStore {
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
                 let buffer_id = buffer.read(cx).remote_id();
+                self.clear_language_server_registrations_for_buffer(buffer_id);
                 if let Some(local) = self.as_local_mut()
                     && let Some(old_file) = File::from_dyn(old_file.as_ref())
                 {
@@ -5016,26 +5020,70 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         cx: &App,
     ) -> Vec<LanguageServerId> {
+        let buffer_id = buffer.read(cx).remote_id();
+        if let Some(local) = self.as_local() {
+            return local
+                .buffers_opened_in_servers
+                .get(&buffer_id)
+                .into_iter()
+                .flatten()
+                .copied()
+                .collect();
+        }
+        if let Some(server_ids) = self.registered_language_servers_by_buffer.get(&buffer_id) {
+            return server_ids.iter().copied().collect();
+        }
+
+        let relevant_language_servers = self.relevant_server_names_for_capability_check(buffer, cx);
+        self.language_server_statuses
+            .iter()
+            .filter_map(|(server_id, server_status)| {
+                relevant_language_servers
+                    .contains(&server_status.name)
+                    .then_some(*server_id)
+            })
+            .collect()
+    }
+
+    fn relevant_server_names_for_capability_check(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> HashSet<LanguageServerName> {
         let Some(language) = buffer.read(cx).language().cloned() else {
-            return Vec::new();
+            return HashSet::default();
         };
-        let registered_language_servers = self
+
+        let settings = {
+            let buffer = buffer.read(cx);
+            LanguageSettings::for_buffer(&buffer, cx).into_owned()
+        };
+        if !settings.enable_language_server {
+            return HashSet::default();
+        }
+
+        let mut available_language_servers = self
             .languages
             .lsp_adapters(&language.name())
             .into_iter()
             .map(|lsp_adapter| lsp_adapter.name())
-            .collect::<HashSet<_>>();
-        self.language_server_statuses
-            .iter()
-            .filter_map(|(server_id, server_status)| {
-                // Include servers that are either registered for this language OR
-                // available to be loaded (for SSH remote mode where adapters like
-                // ty/pylsp/pyright are registered via register_available_lsp_adapter
-                // but only loaded on the server side)
-                let is_relevant = registered_language_servers.contains(&server_status.name)
-                    || self.languages.is_lsp_adapter_available(&server_status.name);
-                is_relevant.then_some(*server_id)
-            })
+            .collect::<Vec<_>>();
+
+        for configured_language_server in &settings.language_servers {
+            if configured_language_server == "..." || configured_language_server.starts_with('!') {
+                continue;
+            }
+
+            let configured_language_server =
+                LanguageServerName(configured_language_server.clone().into());
+            if !available_language_servers.contains(&configured_language_server) {
+                available_language_servers.push(configured_language_server);
+            }
+        }
+
+        settings
+            .customized_language_servers(&available_language_servers)
+            .into_iter()
             .collect()
     }
 
@@ -5142,34 +5190,51 @@ impl LspStore {
     where
         F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
     {
-        let Some(language) = buffer.read(cx).language().cloned() else {
-            return Vec::default();
-        };
-        let registered_language_servers = self
-            .languages
-            .lsp_adapters(&language.name())
+        self.relevant_server_ids_for_capability_check(buffer, cx)
             .into_iter()
-            .map(|lsp_adapter| lsp_adapter.name())
-            .collect::<HashSet<_>>();
-        self.language_server_statuses
-            .iter()
-            .filter_map(|(server_id, server_status)| {
-                // Include servers that are either registered for this language OR
-                // available to be loaded (for SSH remote mode where adapters like
-                // ty/pylsp/pyright are registered via register_available_lsp_adapter
-                // but only loaded on the server side)
-                let is_relevant = registered_language_servers.contains(&server_status.name)
-                    || self.languages.is_lsp_adapter_available(&server_status.name);
-                is_relevant.then_some((server_id, &server_status.name))
-            })
-            .filter_map(|(server_id, server_name)| {
-                self.lsp_server_capabilities
-                    .get(server_id)
-                    .map(|c| (server_id, server_name, c))
+            .filter_map(|server_id| {
+                Some((
+                    server_id,
+                    self.language_server_statuses.get(&server_id)?.name.clone(),
+                    self.lsp_server_capabilities.get(&server_id)?,
+                ))
             })
             .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
-            .map(|(server_id, server_name, _)| (*server_id, server_name.clone()))
+            .map(|(server_id, server_name, _)| (server_id, server_name))
             .collect()
+    }
+
+    fn track_language_server_registration_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        language_server_id: LanguageServerId,
+    ) {
+        self.registered_language_servers_by_buffer
+            .entry(buffer_id)
+            .or_default()
+            .insert(language_server_id);
+    }
+
+    fn remove_language_server_registration_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        language_server_id: LanguageServerId,
+    ) {
+        if let Some(language_servers) = self
+            .registered_language_servers_by_buffer
+            .get_mut(&buffer_id)
+        {
+            language_servers.remove(&language_server_id);
+            if language_servers.is_empty() {
+                self.registered_language_servers_by_buffer
+                    .remove(&buffer_id);
+            }
+        }
+    }
+
+    fn clear_language_server_registrations_for_buffer(&mut self, buffer_id: BufferId) {
+        self.registered_language_servers_by_buffer
+            .remove(&buffer_id);
     }
 
     pub fn request_lsp<R>(
@@ -9753,8 +9818,27 @@ impl LspStore {
                     lsp_store.disk_based_diagnostics_finished(language_server_id, cx)
                 }
 
+                proto::update_language_server::Variant::RegisteredForBuffer(update) => {
+                    if let Ok(buffer_id) = BufferId::new(update.buffer_id) {
+                        lsp_store.track_language_server_registration_for_buffer(
+                            buffer_id,
+                            language_server_id,
+                        );
+                    }
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id,
+                        name: envelope
+                            .payload
+                            .server_name
+                            .map(SharedString::new)
+                            .map(LanguageServerName),
+                        message: proto::update_language_server::Variant::RegisteredForBuffer(
+                            update,
+                        ),
+                    });
+                }
+
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)
-                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_)
                 | non_lsp @ proto::update_language_server::Variant::MetadataUpdated(_) => {
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
@@ -12280,6 +12364,16 @@ impl LspStore {
         self.semantic_token_config.remove_server_data(for_server);
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
+        }
+        let buffer_ids = self
+            .registered_language_servers_by_buffer
+            .iter()
+            .filter_map(|(buffer_id, language_servers)| {
+                language_servers.contains(&for_server).then_some(*buffer_id)
+            })
+            .collect::<Vec<_>>();
+        for buffer_id in buffer_ids {
+            self.remove_language_server_registration_for_buffer(buffer_id, for_server);
         }
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
