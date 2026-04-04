@@ -335,6 +335,137 @@ pub(crate) fn render_display_math(
     render_math_element(&key, math_state, text_color, true, font_size)
 }
 
+pub(crate) fn latex_to_unicode(source: &str) -> String {
+    let mut result = String::new();
+    let chars: Vec<char> = source.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '\\' {
+            let cmd_start = i + 1;
+            let mut cmd_end = cmd_start;
+            while cmd_end < len && chars[cmd_end].is_ascii_alphabetic() {
+                cmd_end += 1;
+            }
+            let cmd = &source[cmd_start..cmd_end];
+            if let Some(sym) = latex_command_to_unicode(cmd) {
+                result.push_str(sym);
+                i = cmd_end;
+                if i < len && chars[i] == ' ' {
+                    i += 1;
+                }
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        } else if chars[i] == '^' {
+            i += 1;
+            let content = extract_group(&chars, &mut i);
+            for ch in content.chars() {
+                result.push(to_superscript(ch));
+            }
+        } else if chars[i] == '_' {
+            i += 1;
+            let content = extract_group(&chars, &mut i);
+            for ch in content.chars() {
+                result.push(to_subscript(ch));
+            }
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
+fn extract_group(chars: &[char], i: &mut usize) -> String {
+    if *i < chars.len() && chars[*i] == '{' {
+        *i += 1;
+        let mut depth = 1;
+        let mut content = String::new();
+        while *i < chars.len() && depth > 0 {
+            if chars[*i] == '{' {
+                depth += 1;
+            } else if chars[*i] == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    *i += 1;
+                    return content;
+                }
+            }
+            content.push(chars[*i]);
+            *i += 1;
+        }
+        content
+    } else if *i < chars.len() {
+        let ch = chars[*i];
+        *i += 1;
+        ch.to_string()
+    } else {
+        String::new()
+    }
+}
+
+fn to_superscript(ch: char) -> char {
+    match ch {
+        '0' => '⁰', '1' => '¹', '2' => '²', '3' => '³', '4' => '⁴',
+        '5' => '⁵', '6' => '⁶', '7' => '⁷', '8' => '⁸', '9' => '⁹',
+        '+' => '⁺', '-' => '⁻', '=' => '⁼', '(' => '⁽', ')' => '⁾',
+        'n' => 'ⁿ', 'i' => 'ⁱ',
+        'T' => 'ᵀ',
+        _ => ch,
+    }
+}
+
+fn to_subscript(ch: char) -> char {
+    match ch {
+        '0' => '₀', '1' => '₁', '2' => '₂', '3' => '₃', '4' => '₄',
+        '5' => '₅', '6' => '₆', '7' => '₇', '8' => '₈', '9' => '₉',
+        '+' => '₊', '-' => '₋', '=' => '₌', '(' => '₍', ')' => '₎',
+        'a' => 'ₐ', 'e' => 'ₑ', 'h' => 'ₕ', 'i' => 'ᵢ', 'j' => 'ⱼ',
+        'k' => 'ₖ', 'l' => 'ₗ', 'm' => 'ₘ', 'n' => 'ₙ', 'o' => 'ₒ',
+        'p' => 'ₚ', 'r' => 'ᵣ', 's' => 'ₛ', 't' => 'ₜ', 'u' => 'ᵤ',
+        'v' => 'ᵥ', 'x' => 'ₓ',
+        _ => ch,
+    }
+}
+
+fn latex_command_to_unicode(cmd: &str) -> Option<&'static str> {
+    Some(match cmd {
+        "alpha" => "α", "beta" => "β", "gamma" => "γ", "delta" => "δ",
+        "epsilon" => "ε", "zeta" => "ζ", "eta" => "η", "theta" => "θ",
+        "iota" => "ι", "kappa" => "κ", "lambda" => "λ", "mu" => "μ",
+        "nu" => "ν", "xi" => "ξ", "pi" => "π", "rho" => "ρ",
+        "sigma" => "σ", "tau" => "τ", "upsilon" => "υ", "phi" => "φ",
+        "chi" => "χ", "psi" => "ψ", "omega" => "ω",
+        "Alpha" => "Α", "Beta" => "Β", "Gamma" => "Γ", "Delta" => "Δ",
+        "Theta" => "Θ", "Lambda" => "Λ", "Xi" => "Ξ", "Pi" => "Π",
+        "Sigma" => "Σ", "Phi" => "Φ", "Psi" => "Ψ", "Omega" => "Ω",
+        "Rightarrow" => "⇒", "Leftarrow" => "⇐", "Leftrightarrow" => "⇔",
+        "rightarrow" => "→", "leftarrow" => "←", "leftrightarrow" => "↔",
+        "cap" => "∩", "cup" => "∪", "in" => "∈", "notin" => "∉",
+        "subset" => "⊂", "supset" => "⊃", "subseteq" => "⊆", "supseteq" => "⊇",
+        "perp" => "⊥", "parallel" => "∥",
+        "cdot" => "·", "times" => "×", "div" => "÷", "pm" => "±", "mp" => "∓",
+        "le" | "leq" => "≤", "ge" | "geq" => "≥", "neq" | "ne" => "≠",
+        "approx" => "≈", "equiv" => "≡", "sim" => "∼", "propto" => "∝",
+        "infty" => "∞", "partial" => "∂", "nabla" => "∇",
+        "forall" => "∀", "exists" => "∃",
+        "sum" => "∑", "prod" => "∏", "int" => "∫",
+        "sqrt" => "√", "cbrt" => "∛",
+        "langle" => "⟨", "rangle" => "⟩",
+        "ldots" | "dots" | "cdots" => "…",
+        "neg" | "lnot" => "¬", "land" | "wedge" => "∧", "lor" | "vee" => "∨",
+        "oplus" => "⊕", "otimes" => "⊗",
+        "emptyset" | "varnothing" => "∅",
+        "mathbb" => "", "mathbf" => "", "mathrm" => "", "mathcal" => "",
+        "text" => "", "textbf" => "", "textrm" => "",
+        "left" | "right" | "bigl" | "bigr" => "",
+        _ => return None,
+    })
+}
+
 pub(crate) fn render_inline_math(
     source: &str,
     math_state: &MathState,

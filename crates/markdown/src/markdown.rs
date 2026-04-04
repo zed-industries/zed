@@ -12,7 +12,7 @@ use gpui::UnderlineStyle;
 use language::LanguageName;
 
 use log::Level;
-use math::{MathState, render_display_math, render_inline_math};
+use math::{MathState, latex_to_unicode, render_display_math};
 use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
 };
@@ -1904,15 +1904,13 @@ impl Element for MarkdownElement {
                     );
                 }
                 MarkdownEvent::InlineMath(source) => {
-                    let text_color = self.style.base_text_style.color;
-                    let font_size = match self.style.base_text_style.font_size {
-                        gpui::AbsoluteLength::Pixels(px) => px.as_f32(),
-                        gpui::AbsoluteLength::Rems(rems) => rems.0 * 16.0,
-                    };
-                    builder.push_sourced_element(
-                        range.clone(),
-                        render_inline_math(source, &math_state, &self.style, text_color, font_size),
-                    );
+                    let unicode_text = latex_to_unicode(source);
+                    builder.push_text_style(TextStyleRefinement {
+                        font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    });
+                    builder.push_text(&unicode_text, range.clone());
+                    builder.pop_text_style();
                 }
                 _ => log::debug!("unsupported markdown event {:?}", event),
             }
