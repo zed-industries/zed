@@ -1894,21 +1894,25 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::DisplayMath(source) => {
                     let text_color = self.style.base_text_style.color;
+                    let font_size = match self.style.base_text_style.font_size {
+                        gpui::AbsoluteLength::Pixels(px) => px.as_f32(),
+                        gpui::AbsoluteLength::Rems(rems) => rems.0 * 16.0,
+                    };
                     builder.push_sourced_element(
                         range.clone(),
-                        render_display_math(source, &math_state, &self.style, text_color),
+                        render_display_math(source, &math_state, &self.style, text_color, font_size),
                     );
                 }
                 MarkdownEvent::InlineMath(source) => {
                     let text_color = self.style.base_text_style.color;
-                    builder.modify_current_div(|div| {
-                        div.child(render_inline_math(
-                            source,
-                            &math_state,
-                            &self.style,
-                            text_color,
-                        ))
-                    });
+                    let font_size = match self.style.base_text_style.font_size {
+                        gpui::AbsoluteLength::Pixels(px) => px.as_f32(),
+                        gpui::AbsoluteLength::Rems(rems) => rems.0 * 16.0,
+                    };
+                    builder.push_sourced_element(
+                        range.clone(),
+                        render_inline_math(source, &math_state, &self.style, text_color, font_size),
+                    );
                 }
                 _ => log::debug!("unsupported markdown event {:?}", event),
             }

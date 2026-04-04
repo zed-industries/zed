@@ -20,7 +20,8 @@ pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_OLD_FOOTNOTES)
     .union(Options::ENABLE_GFM)
     .union(Options::ENABLE_SUPERSCRIPT)
-    .union(Options::ENABLE_SUBSCRIPT);
+    .union(Options::ENABLE_SUBSCRIPT)
+    .union(Options::ENABLE_MATH);
 
 #[derive(Default)]
 struct ParseState {

@@ -209,16 +209,16 @@ impl rex_ttf_parser::OutlineBuilder for GlyphOutlineBuilder {
     }
 }
 
-fn offset_path(path: &Path<Pixels>, offset: Point<Pixels>) -> Path<Pixels> {
+fn scale_and_offset_path(path: &Path<Pixels>, scale: f32, offset: Point<Pixels>) -> Path<Pixels> {
     let mut new_path = Path::new(point(
-        path.bounds.origin.x + offset.x,
-        path.bounds.origin.y + offset.y,
+        path.bounds.origin.x * scale + offset.x,
+        path.bounds.origin.y * scale + offset.y,
     ));
     for vertex in &path.vertices {
         new_path.vertices.push(gpui::PathVertex {
             xy_position: point(
-                vertex.xy_position.x + offset.x,
-                vertex.xy_position.y + offset.y,
+                vertex.xy_position.x * scale + offset.x,
+                vertex.xy_position.y * scale + offset.y,
             ),
             st_position: vertex.st_position,
             content_mask: vertex.content_mask.clone(),
@@ -226,32 +226,30 @@ fn offset_path(path: &Path<Pixels>, offset: Point<Pixels>) -> Path<Pixels> {
     }
     new_path.bounds = Bounds::new(
         point(
-            path.bounds.origin.x + offset.x,
-            path.bounds.origin.y + offset.y,
+            path.bounds.origin.x * scale + offset.x,
+            path.bounds.origin.y * scale + offset.y,
         ),
-        path.bounds.size,
+        size(
+            path.bounds.size.width * scale,
+            path.bounds.size.height * scale,
+        ),
     );
     new_path
 }
 
-fn render_math_expression(
-    source: &str,
-    _display: bool,
-    font_size: f64,
-) -> Result<RenderedMath, String> {
-    let face =
-        rex_ttf_parser::Face::parse(MATH_FONT_DATA, 0).map_err(|e| format!("{e}"))?;
+fn render_math_expression(source: &str, _display: bool) -> Result<RenderedMath, String> {
+    let face = rex_ttf_parser::Face::parse(MATH_FONT_DATA, 0)
+        .map_err(|e| format!("font parse: {e}"))?;
     let font = rex::font::backend::ttf_parser::TtfMathFont::new(face)
-        .map_err(|e| format!("{e:?}"))?;
+        .map_err(|e| format!("math font: {e:?}"))?;
 
     let renderer = rex::render::Renderer::new();
     let layout = renderer
         .layout(source, &font)
-        .map_err(|e| format!("{e:?}"))?;
+        .map_err(|e| format!("layout: {e:?}"))?;
 
     let dims = layout.size();
-    let scale = font_size / 10.0;
-    let mut backend = GpuiMathBackend::new(dims.width, dims.height, dims.depth, scale);
+    let mut backend = GpuiMathBackend::new(dims.width, dims.height, dims.depth, 1.0);
     renderer.render(&layout, &mut backend);
 
     Ok(backend.into_rendered())
@@ -306,7 +304,7 @@ impl CachedMathExpression {
         let task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    render_math_expression(&source, display, 16.0)
+                    render_math_expression(&source, display)
                 })
                 .await;
             let _ = result_clone.set(value);
@@ -328,12 +326,13 @@ pub(crate) fn render_display_math(
     math_state: &MathState,
     _style: &MarkdownStyle,
     text_color: Hsla,
+    font_size: f32,
 ) -> AnyElement {
     let key = MathCacheKey {
         source: source.to_string(),
         display: true,
     };
-    render_math_element(&key, math_state, text_color, true)
+    render_math_element(&key, math_state, text_color, true, font_size)
 }
 
 pub(crate) fn render_inline_math(
@@ -341,12 +340,13 @@ pub(crate) fn render_inline_math(
     math_state: &MathState,
     _style: &MarkdownStyle,
     text_color: Hsla,
+    font_size: f32,
 ) -> AnyElement {
     let key = MathCacheKey {
         source: source.to_string(),
         display: false,
     };
-    render_math_element(&key, math_state, text_color, false)
+    render_math_element(&key, math_state, text_color, false, font_size)
 }
 
 fn render_math_element(
@@ -354,24 +354,29 @@ fn render_math_element(
     math_state: &MathState,
     text_color: Hsla,
     display: bool,
+    font_size: f32,
 ) -> AnyElement {
     let cached = math_state.cache.get(key);
+    let scale = font_size / 10.0;
 
     if let Some(result) = cached.and_then(|c| c.result.get()) {
         match result {
             Ok(rendered) => {
                 let rendered = rendered.clone();
+                let scaled_w = rendered.size.width * scale;
+                let scaled_h = rendered.size.height * scale;
                 let container = if display {
-                    div().w_full().flex().justify_center().py_2()
+                    div().w_full().flex().justify_center().py_1()
                 } else {
-                    div().mx_0p5()
+                    div()
                 };
                 container
                     .child(
                         gpui::canvas(
                             {
-                                let rendered = rendered.clone();
-                                move |_bounds, _window, _cx| rendered.size
+                                move |_bounds, _window, _cx| {
+                                    size(scaled_w, scaled_h)
+                                }
                             },
                             {
                                 let rendered = rendered.clone();
@@ -380,10 +385,13 @@ fn render_math_element(
                                     for (rect, color) in &rendered.rects {
                                         let offset_rect = Bounds::new(
                                             point(
-                                                offset.x + rect.origin.x,
-                                                offset.y + rect.origin.y,
+                                                offset.x + rect.origin.x * scale,
+                                                offset.y + rect.origin.y * scale,
                                             ),
-                                            rect.size,
+                                            size(
+                                                rect.size.width * scale,
+                                                rect.size.height * scale,
+                                            ),
                                         );
                                         let paint_color = if *color == gpui::black() {
                                             text_color
@@ -405,14 +413,14 @@ fn render_math_element(
                                         } else {
                                             *color
                                         };
-                                        let offset_path = offset_path(path, offset);
-                                        window.paint_path(offset_path, paint_color);
+                                        let scaled_path = scale_and_offset_path(path, scale, offset);
+                                        window.paint_path(scaled_path, paint_color);
                                     }
                                 }
                             },
                         )
-                        .w(rendered.size.width)
-                        .h(rendered.size.height),
+                        .w(scaled_w)
+                        .h(scaled_h),
                     )
                     .into_any_element()
             }
