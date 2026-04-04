@@ -31928,6 +31928,18 @@ async fn test_autoscroll_keeps_cursor_visible_below_sticky_headers(cx: &mut Test
             );
             previous_cursor_row = cursor_row;
         });
+
+        // The `ScrollCursorTop` action shouldn't change the scroll position, as the cursor is
+        // already as high up as the sticky headers allow.
+        let scroll_top_before =
+            cx.update_editor(|editor, window, cx| editor.snapshot(window, cx).scroll_position().y);
+        cx.update_editor(|editor, window, cx| {
+            editor.scroll_cursor_top(&ScrollCursorTop, window, cx)
+        });
+        cx.run_until_parked();
+        let scroll_top_after =
+            cx.update_editor(|editor, window, cx| editor.snapshot(window, cx).scroll_position().y);
+        assert_eq!(scroll_top_before, scroll_top_after);
     }
 }
 

@@ -278,7 +278,7 @@ impl Editor {
         (NeedsHorizontalAutoscroll(true), was_scrolled)
     }
 
-    fn visible_sticky_header_count_for_point(
+    pub(crate) fn visible_sticky_header_count_for_point(
         &self,
         display_map: &DisplaySnapshot,
         target_point: DisplayPoint,
