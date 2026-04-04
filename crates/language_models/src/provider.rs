@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod avian;
 pub mod bedrock;
 pub mod cloud;
 pub mod copilot_chat;

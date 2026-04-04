@@ -17,6 +17,7 @@ members = [
     "crates/auto_update",
     "crates/auto_update_helper",
     "crates/auto_update_ui",
+    "crates/avian",
     "crates/aws_http_client",
     "crates/bedrock",
     "crates/breadcrumbs",
@@ -272,6 +273,7 @@ assets = { path = "crates/assets" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
+avian = { path = "crates/avian" }
 aws_http_client = { path = "crates/aws_http_client" }
 bedrock = { path = "crates/bedrock" }
 breadcrumbs = { path = "crates/breadcrumbs" }
