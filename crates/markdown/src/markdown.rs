@@ -1898,10 +1898,16 @@ impl Element for MarkdownElement {
                         gpui::AbsoluteLength::Pixels(px) => px.as_f32(),
                         gpui::AbsoluteLength::Rems(rems) => rems.0 * 16.0,
                     };
-                    builder.push_sourced_element(
-                        range.clone(),
-                        render_display_math(source, &math_state, &self.style, text_color, font_size),
+                    builder.push_div(
+                        div().w_full().flex().justify_center().py_1(),
+                        range,
+                        markdown_end,
                     );
+                    let math_element = render_display_math(
+                        source, &math_state, &self.style, text_color, font_size,
+                    );
+                    builder.push_sourced_element(range.clone(), math_element);
+                    builder.pop_div();
                 }
                 MarkdownEvent::InlineMath(source) => {
                     let unicode_text = latex_to_unicode(source);

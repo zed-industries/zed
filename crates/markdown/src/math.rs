@@ -66,7 +66,7 @@ impl GpuiMathBackend {
             rects: Vec::new(),
             layout_to_canvas: TransformationMatrix {
                 sx: scale,
-                sy: -scale,
+                sy: scale,
                 tx: 0.0,
                 ty: height * scale,
             },
@@ -533,12 +533,7 @@ fn render_math_element(
                 let rendered = rendered.clone();
                 let scaled_w = rendered.size.width * scale;
                 let scaled_h = rendered.size.height * scale;
-                let container = if display {
-                    div().w_full().flex().justify_center().py_1()
-                } else {
-                    div()
-                };
-                container
+                div()
                     .child(
                         gpui::canvas(
                             {
