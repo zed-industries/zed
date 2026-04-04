@@ -217,10 +217,10 @@ impl SearchState {
                     let mut offset = context_offset_range.start;
                     let mut context_text = String::new();
                     let mut highlight_ranges = Vec::new();
-                    for mut chunk in highlight_arguments
-                        .multi_buffer_snapshot
-                        .chunks(context_offset_range.start..context_offset_range.end, true)
-                    {
+                    for mut chunk in highlight_arguments.multi_buffer_snapshot.chunks(
+                        context_offset_range.start..context_offset_range.end,
+                        true.into(),
+                    ) {
                         if !non_whitespace_symbol_occurred {
                             for c in chunk.text.chars() {
                                 if c.is_whitespace() {

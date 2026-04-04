@@ -21,9 +21,9 @@ use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
     CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, File, IndentGuideSettings,
-    IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point,
-    PointUtf16, Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId,
-    TreeSitterOptions, Unclipped,
+    IndentSize, Language, LanguageAware, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
+    OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
+    ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
 
@@ -1072,7 +1072,7 @@ pub struct MultiBufferChunks<'a> {
     range: Range<MultiBufferOffset>,
     excerpt_offset_range: Range<ExcerptOffset>,
     excerpt_chunks: Option<ExcerptChunks<'a>>,
-    language_aware: bool,
+    language_aware: LanguageAware,
     snapshot: &'a MultiBufferSnapshot,
 }
 
@@ -3348,7 +3348,7 @@ impl EventEmitter<Event> for MultiBuffer {}
 
 impl MultiBufferSnapshot {
     pub fn text(&self) -> String {
-        self.chunks(MultiBufferOffset::ZERO..self.len(), false)
+        self.chunks(MultiBufferOffset::ZERO..self.len(), false.into())
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -3386,7 +3386,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = &str> + '_ {
-        self.chunks(range, false).map(|chunk| chunk.text)
+        self.chunks(range, false.into()).map(|chunk| chunk.text)
     }
 
     pub fn is_line_blank(&self, row: MultiBufferRow) -> bool {
@@ -4186,7 +4186,7 @@ impl MultiBufferSnapshot {
     pub fn chunks<T: ToOffset>(
         &self,
         range: Range<T>,
-        language_aware: bool,
+        language_aware: LanguageAware,
     ) -> MultiBufferChunks<'_> {
         let mut chunks = MultiBufferChunks {
             excerpt_offset_range: ExcerptDimension(MultiBufferOffset::ZERO)
@@ -7229,7 +7229,7 @@ impl Excerpt {
     fn chunks_in_range<'a>(
         &'a self,
         range: Range<usize>,
-        language_aware: bool,
+        language_aware: LanguageAware,
         snapshot: &'a MultiBufferSnapshot,
     ) -> ExcerptChunks<'a> {
         let buffer = self.buffer_snapshot(snapshot);

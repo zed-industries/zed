@@ -13526,7 +13526,7 @@ fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completio
     }
 
     let mut offset = 0;
-    for chunk in snapshot.chunks(word_range.clone(), true) {
+    for chunk in snapshot.chunks(word_range.clone(), true.into()) {
         let end_offset = offset + chunk.text.len();
         if let Some(highlight_id) = chunk.syntax_highlight_id {
             completion

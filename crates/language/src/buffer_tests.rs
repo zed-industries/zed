@@ -4102,7 +4102,7 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     let snapshot = buffer.read(cx).snapshot();
 
     // Get all chunks and verify their bitmaps
-    let chunks = snapshot.chunks(0..snapshot.len(), false);
+    let chunks = snapshot.chunks(0..snapshot.len(), false.into());
 
     for chunk in chunks {
         let chunk_text = chunk.text;

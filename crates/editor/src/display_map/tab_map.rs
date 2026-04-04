@@ -3,7 +3,7 @@ use super::{
     fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
 };
 
-use language::Point;
+use language::{LanguageAware, Point};
 use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
@@ -101,7 +101,7 @@ impl TabMap {
             let mut last_tab_with_changed_expansion_offset = None;
             'outer: for chunk in old_snapshot.fold_snapshot.chunks(
                 fold_edit.old.end..old_end_row_successor_offset,
-                false,
+                false.into(),
                 Highlights::default(),
             ) {
                 let mut remaining_tabs = chunk.tabs;
@@ -244,7 +244,7 @@ impl TabSnapshot {
             self.max_point()
         };
         let first_line_chars = self
-            .chunks(range.start..line_end, false, Highlights::default())
+            .chunks(range.start..line_end, false.into(), Highlights::default())
             .flat_map(|chunk| chunk.text.chars())
             .take_while(|&c| c != '\n')
             .count() as u32;
@@ -254,7 +254,7 @@ impl TabSnapshot {
         } else {
             self.chunks(
                 TabPoint::new(range.end.row(), 0)..range.end,
-                false,
+                false.into(),
                 Highlights::default(),
             )
             .flat_map(|chunk| chunk.text.chars())
@@ -274,7 +274,7 @@ impl TabSnapshot {
     pub(crate) fn chunks<'a>(
         &'a self,
         range: Range<TabPoint>,
-        language_aware: bool,
+        language_aware: LanguageAware,
         highlights: Highlights<'a>,
     ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
@@ -324,7 +324,7 @@ impl TabSnapshot {
     pub fn text(&self) -> String {
         self.chunks(
             TabPoint::zero()..self.max_point(),
-            false,
+            false.into(),
             Highlights::default(),
         )
         .map(|chunk| chunk.text)
@@ -1170,7 +1170,7 @@ mod tests {
                 tab_snapshot
                     .chunks(
                         TabPoint::new(0, ix as u32)..tab_snapshot.max_point(),
-                        false,
+                        false.into(),
                         Highlights::default(),
                     )
                     .map(|c| c.text)
@@ -1246,8 +1246,11 @@ mod tests {
             let mut chunks = Vec::new();
             let mut was_tab = false;
             let mut text = String::new();
-            for chunk in snapshot.chunks(start..snapshot.max_point(), false, Highlights::default())
-            {
+            for chunk in snapshot.chunks(
+                start..snapshot.max_point(),
+                false.into(),
+                Highlights::default(),
+            ) {
                 if chunk.is_tab != was_tab {
                     if !text.is_empty() {
                         chunks.push((mem::take(&mut text), was_tab));
@@ -1296,7 +1299,7 @@ mod tests {
 
         // This should not panic.
         let result: String = tab_snapshot
-            .chunks(start..end, false, Highlights::default())
+            .chunks(start..end, false.into(), Highlights::default())
             .map(|c| c.text)
             .collect();
         assert!(!result.is_empty());
@@ -1354,7 +1357,7 @@ mod tests {
             let expected_summary = TextSummary::from(expected_text.as_str());
             assert_eq!(
                 tabs_snapshot
-                    .chunks(start..end, false, Highlights::default())
+                    .chunks(start..end, false.into(), Highlights::default())
                     .map(|c| c.text)
                     .collect::<String>(),
                 expected_text,
@@ -1436,7 +1439,7 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
             FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
-            false,
+            false.into(),
             Default::default(),
         );
         let mut cursor = TabStopCursor::new(chunks);
@@ -1598,7 +1601,7 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let chunks = fold_snapshot.chunks(
             FoldOffset(MultiBufferOffset(0))..fold_snapshot.len(),
-            false,
+            false.into(),
             Default::default(),
         );
         let mut cursor = TabStopCursor::new(chunks);

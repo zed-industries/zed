@@ -98,7 +98,7 @@ use gpui::{
     WeakEntity,
 };
 use language::{
-    Point, Subscription as BufferSubscription,
+    LanguageAware, Point, Subscription as BufferSubscription,
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
 
@@ -1769,7 +1769,7 @@ impl DisplaySnapshot {
         self.block_snapshot
             .chunks(
                 BlockRow(display_row.0)..BlockRow(self.max_point().row().next_row().0),
-                false,
+                false.into(),
                 self.masked,
                 Highlights::default(),
             )
@@ -1783,7 +1783,7 @@ impl DisplaySnapshot {
             self.block_snapshot
                 .chunks(
                     BlockRow(row)..BlockRow(row + 1),
-                    false,
+                    false.into(),
                     self.masked,
                     Highlights::default(),
                 )
@@ -1798,7 +1798,7 @@ impl DisplaySnapshot {
     pub fn chunks(
         &self,
         display_rows: Range<DisplayRow>,
-        language_aware: bool,
+        language_aware: LanguageAware,
         highlight_styles: HighlightStyles,
     ) -> DisplayChunks<'_> {
         self.block_snapshot.chunks(
@@ -1818,7 +1818,7 @@ impl DisplaySnapshot {
     pub fn highlighted_chunks<'a>(
         &'a self,
         display_rows: Range<DisplayRow>,
-        language_aware: bool,
+        language_aware: LanguageAware,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
         self.chunks(
@@ -1910,7 +1910,7 @@ impl DisplaySnapshot {
 
         let chunks = custom_highlights::CustomHighlightsChunks::new(
             multibuffer_range,
-            true,
+            true.into(),
             None,
             Some(&self.semantic_token_highlights),
             multibuffer,
@@ -1961,7 +1961,7 @@ impl DisplaySnapshot {
         let mut line = String::new();
 
         let range = display_row..display_row.next_row();
-        for chunk in self.highlighted_chunks(range, false, editor_style) {
+        for chunk in self.highlighted_chunks(range, false.into(), editor_style) {
             line.push_str(chunk.text);
 
             let text_style = if let Some(style) = chunk.style {
@@ -3388,7 +3388,11 @@ pub mod tests {
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks = Vec::<(String, Option<lsp::DiagnosticSeverity>, Rgba)>::new();
-        for chunk in snapshot.chunks(DisplayRow(0)..DisplayRow(5), true, Default::default()) {
+        for chunk in snapshot.chunks(
+            DisplayRow(0)..DisplayRow(5),
+            true.into(),
+            Default::default(),
+        ) {
             let color = chunk
                 .highlight_style
                 .and_then(|style| style.color)
@@ -3940,7 +3944,7 @@ pub mod tests {
     ) -> Vec<(String, Option<Hsla>, Option<Hsla>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Hsla>, Option<Hsla>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, true, HighlightStyles::default()) {
+        for chunk in snapshot.chunks(rows, true.into(), HighlightStyles::default()) {
             let syntax_color = chunk
                 .syntax_highlight_id
                 .and_then(|id| theme.get(id)?.color);

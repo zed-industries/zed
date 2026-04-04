@@ -1504,7 +1504,7 @@ impl PickerDelegate for MarksViewDelegate {
                                     position.row,
                                     snapshot.line_len(MultiBufferRow(position.row)),
                                 ),
-                            true,
+                            true.into(),
                         );
                         matches.push(MarksMatch {
                             name: name.clone(),
@@ -1530,7 +1530,7 @@ impl PickerDelegate for MarksViewDelegate {
                             let chunks = snapshot.chunks(
                                 Point::new(position.row, 0)
                                     ..Point::new(position.row, snapshot.line_len(position.row)),
-                                true,
+                                true.into(),
                             );
 
                             matches.push(MarksMatch {
