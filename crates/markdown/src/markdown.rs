@@ -543,6 +543,8 @@ impl Markdown {
         self.autoscroll_request = None;
         self.pending_parse = None;
         self.should_reparse = false;
+        self.search_highlights.clear();
+        self.active_search_highlight = None;
         // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
     }
@@ -597,11 +599,7 @@ impl Markdown {
         }
     }
 
-    pub fn set_active_search_highlight(
-        &mut self,
-        active: Option<usize>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn set_active_search_highlight(&mut self, active: Option<usize>, cx: &mut Context<Self>) {
         if self.active_search_highlight != active {
             self.active_search_highlight = active;
             cx.notify();

@@ -877,10 +877,7 @@ impl SearchableItem for MarkdownPreviewView {
     }
 
     fn query_suggestion(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> String {
-        self.markdown
-            .read(cx)
-            .selected_text()
-            .unwrap_or_default()
+        self.markdown.read(cx).selected_text().unwrap_or_default()
     }
 
     fn activate_match(
