@@ -273,7 +273,6 @@ impl ScrollManager {
             this.display_map_id = Some(my_snapshot.display_map_id);
         });
         self.ongoing = other.ongoing;
-        self.sticky_header_line_count = other.sticky_header_line_count;
     }
 
     pub fn offset(&self, cx: &App) -> gpui::Point<f64> {
