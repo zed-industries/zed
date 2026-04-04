@@ -143,7 +143,6 @@
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": "buffer_search::DeployReplace",
       "ctrl-shift-.": "agent::AddSelectionToThread",
-      "ctrl-shift-,": "assistant::InsertIntoEditor",
       "shift-alt-e": "editor::SelectEnclosingSymbol",
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
@@ -182,7 +181,7 @@
     },
   },
   {
-    "context": "Editor && jupyter && !ContextEditor",
+    "context": "Editor && jupyter",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-enter": "repl::Run",
@@ -222,29 +221,10 @@
     },
   },
   {
-    "context": "ContextEditor > Editor",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-i": "assistant::Assist",
-      "ctrl-s": "workspace::Save",
-      "ctrl-shift-,": "assistant::InsertIntoEditor",
-      "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole",
-      "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline",
-      "ctrl-k c": "assistant::CopyCode",
-      "ctrl-g": "search::SelectNextMatch",
-      "ctrl-shift-g": "search::SelectPreviousMatch",
-      "ctrl-k l": "agent::OpenRulesLibrary",
-      "ctrl-shift-v": "agent::PasteRaw",
-    },
-  },
-  {
     "context": "AgentPanel",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "shift-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "shift-alt-c": "agent::OpenSettings",
       "shift-alt-l": "agent::OpenRulesLibrary",
@@ -263,9 +243,10 @@
       "ctrl-shift-.": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
+      "shift-alt-q": "agent::AllowAlways",
       "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-a": "agent::OpenPermissionDropdown",
-      "shift-alt-z": "agent::RejectOnce",
+      "shift-alt-x": "agent::RejectOnce",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
@@ -275,14 +256,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-c": "markdown::CopyAsMarkdown",
-    },
-  },
-  {
-    "context": "AgentPanel && text_thread",
-    "use_key_equivalents": true,
-    "bindings": {
-      "ctrl-n": "agent::NewTextThread",
-      "ctrl-alt-t": "agent::NewThread",
     },
   },
   {
@@ -312,12 +285,36 @@
     "context": "AcpThread",
     "bindings": {
       "ctrl--": "pane::GoBack",
+      "pageup": "agent::ScrollOutputPageUp",
+      "pagedown": "agent::ScrollOutputPageDown",
+      "home": "agent::ScrollOutputToTop",
+      "end": "agent::ScrollOutputToBottom",
+      "up": "agent::ScrollOutputLineUp",
+      "down": "agent::ScrollOutputLineDown",
+      "shift-pageup": "agent::ScrollOutputToPreviousMessage",
+      "shift-pagedown": "agent::ScrollOutputToNextMessage",
+      "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-alt-home": "agent::ScrollOutputToTop",
+      "ctrl-alt-end": "agent::ScrollOutputToBottom",
+      "ctrl-alt-up": "agent::ScrollOutputLineUp",
+      "ctrl-alt-down": "agent::ScrollOutputLineDown",
+      "ctrl-alt-shift-pageup": "agent::ScrollOutputToPreviousMessage",
+      "ctrl-alt-shift-pagedown": "agent::ScrollOutputToNextMessage",
     },
   },
   {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-alt-home": "agent::ScrollOutputToTop",
+      "ctrl-alt-end": "agent::ScrollOutputToBottom",
+      "ctrl-alt-up": "agent::ScrollOutputLineUp",
+      "ctrl-alt-down": "agent::ScrollOutputLineDown",
+      "ctrl-alt-shift-pageup": "agent::ScrollOutputToPreviousMessage",
+      "ctrl-alt-shift-pagedown": "agent::ScrollOutputToNextMessage",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
@@ -720,8 +717,8 @@
     "context": "ThreadSwitcher",
     "bindings": {
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
-      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
-    }
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
+    },
   },
   {
     "context": "ApplicationMenu",
@@ -857,7 +854,7 @@
     },
   },
   {
-    "context": "!ContextEditor && !AcpThread > Editor && mode == full",
+    "context": "!AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
@@ -954,7 +951,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList",
+    "context": "GitPanel && ChangesList && !GitBranchSelector",
     "use_key_equivalents": true,
     "bindings": {
       "up": "git_panel::PreviousEntry",
@@ -1161,6 +1158,8 @@
     "bindings": {
       "ctrl-k": "recent_projects::ToggleActionsMenu",
       "ctrl-shift-a": "workspace::AddFolderToProject",
+      "shift-backspace": "recent_projects::RemoveSelected",
+      "ctrl-shift-enter": "recent_projects::AddToWorkspace",
     },
   },
   {

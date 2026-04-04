@@ -345,6 +345,7 @@ impl WaylandWindowState {
                     height: DevicePixels(f32::from(options.bounds.size.height) as i32),
                 },
                 transparent: true,
+                preferred_present_mode: None,
             };
             WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
         };
@@ -1477,6 +1478,18 @@ impl PlatformWindow for WaylandWindow {
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
+    }
+
+    fn play_system_bell(&self) {
+        let state = self.borrow();
+        let surface = if state.surface_state.toplevel().is_some() {
+            Some(&state.surface)
+        } else {
+            None
+        };
+        if let Some(bell) = state.globals.system_bell.as_ref() {
+            bell.ring(surface);
+        }
     }
 }
 

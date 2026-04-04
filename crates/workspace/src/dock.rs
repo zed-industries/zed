@@ -1,5 +1,6 @@
+use crate::focus_follows_mouse::FocusFollowsMouse as _;
 use crate::persistence::model::DockData;
-use crate::{DraggedDock, Event, ModalLayer, Pane};
+use crate::{DraggedDock, Event, FocusFollowsMouse, ModalLayer, Pane, WorkspaceSettings};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
 use client::proto;
@@ -12,7 +13,7 @@ use gpui::{
     px,
 };
 use serde::{Deserialize, Serialize};
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{
     ContextMenu, CountBadge, Divider, DividerColor, IconButton, Tooltip, prelude::*,
@@ -42,8 +43,18 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
         PanelSizeState::default()
     }
     fn size_state_changed(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
-    fn supports_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+    fn supports_flexible_size(&self) -> bool {
         false
+    }
+    fn has_flexible_size(&self, _window: &Window, _cx: &App) -> bool {
+        false
+    }
+    fn set_flexible_size(
+        &mut self,
+        _flexible: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
     }
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
@@ -89,7 +100,9 @@ pub trait PanelHandle: Send + Sync {
     fn default_size(&self, window: &Window, cx: &App) -> Pixels;
     fn initial_size_state(&self, window: &Window, cx: &App) -> PanelSizeState;
     fn size_state_changed(&self, window: &mut Window, cx: &mut App);
-    fn supports_flexible_size(&self, window: &Window, cx: &App) -> bool;
+    fn supports_flexible_size(&self, cx: &App) -> bool;
+    fn has_flexible_size(&self, window: &Window, cx: &App) -> bool;
+    fn set_flexible_size(&self, flexible: bool, window: &mut Window, cx: &mut App);
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
@@ -176,8 +189,16 @@ where
         self.update(cx, |this, cx| this.size_state_changed(window, cx))
     }
 
-    fn supports_flexible_size(&self, window: &Window, cx: &App) -> bool {
-        self.read(cx).supports_flexible_size(window, cx)
+    fn supports_flexible_size(&self, cx: &App) -> bool {
+        self.read(cx).supports_flexible_size()
+    }
+
+    fn has_flexible_size(&self, window: &Window, cx: &App) -> bool {
+        self.read(cx).has_flexible_size(window, cx)
+    }
+
+    fn set_flexible_size(&self, flexible: bool, window: &mut Window, cx: &mut App) {
+        self.update(cx, |this, cx| this.set_flexible_size(flexible, window, cx))
     }
 
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName> {
@@ -232,6 +253,7 @@ pub struct Dock {
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
+    focus_follows_mouse: FocusFollowsMouse,
     pub(crate) serialized_dock: Option<DockData>,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
@@ -292,7 +314,7 @@ impl DockPosition {
 pub struct PanelSizeState {
     pub size: Option<Pixels>,
     #[serde(default)]
-    pub flexible_size_ratio: Option<f32>,
+    pub flex: Option<f32>,
 }
 
 struct PanelEntry {
@@ -307,6 +329,25 @@ pub struct PanelButtons {
 }
 
 pub(crate) const PANEL_SIZE_STATE_KEY: &str = "dock_panel_size";
+
+fn resize_panel_entry(
+    position: DockPosition,
+    entry: &mut PanelEntry,
+    size: Option<Pixels>,
+    flex: Option<f32>,
+    window: &mut Window,
+    cx: &mut App,
+) -> (&'static str, PanelSizeState) {
+    let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+    let use_flex = entry.panel.has_flexible_size(window, cx) && position.axis() == Axis::Horizontal;
+    if use_flex {
+        entry.size_state.flex = flex;
+    } else {
+        entry.size_state.size = size;
+    }
+    entry.panel.size_state_changed(window, cx);
+    (entry.panel.panel_key(), entry.size_state)
+}
 
 impl Dock {
     pub fn new(
@@ -337,6 +378,7 @@ impl Dock {
                 active_panel_index: None,
                 is_open: false,
                 focus_handle: focus_handle.clone(),
+                focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
                 zoom_layer_open: false,
@@ -840,28 +882,58 @@ impl Dock {
         }
     }
 
+    pub fn toggle_panel_flexible_size(
+        &mut self,
+        panel: &dyn PanelHandle,
+        current_size: Option<Pixels>,
+        current_flex: Option<f32>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(entry) = self
+            .panel_entries
+            .iter_mut()
+            .find(|entry| entry.panel.panel_id() == panel.panel_id())
+        else {
+            return;
+        };
+        let currently_flexible = entry.panel.has_flexible_size(window, cx);
+        if currently_flexible {
+            entry.size_state.size = current_size;
+        } else {
+            entry.size_state.flex = current_flex;
+        }
+        let panel_key = entry.panel.panel_key();
+        let size_state = entry.size_state;
+        let workspace = self.workspace.clone();
+        entry
+            .panel
+            .set_flexible_size(!currently_flexible, window, cx);
+        entry.panel.size_state_changed(window, cx);
+        cx.defer(move |cx| {
+            if let Some(workspace) = workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.persist_panel_size_state(panel_key, size_state, cx);
+                });
+            }
+        });
+        cx.notify();
+    }
+
     pub fn resize_active_panel(
         &mut self,
         size: Option<Pixels>,
-        ratio: Option<f32>,
+        flex: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(index) = self.active_panel_index
             && let Some(entry) = self.panel_entries.get_mut(index)
         {
-            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+            let (panel_key, size_state) =
+                resize_panel_entry(self.position, entry, size, flex, window, cx);
 
-            if entry.panel.supports_flexible_size(window, cx) {
-                entry.size_state.flexible_size_ratio = ratio;
-            } else {
-                entry.size_state.size = size;
-            }
-
-            let panel_key = entry.panel.panel_key();
-            let size_state = entry.size_state;
             let workspace = self.workspace.clone();
-            entry.panel.size_state_changed(window, cx);
             cx.defer(move |cx| {
                 if let Some(workspace) = workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
@@ -876,22 +948,15 @@ impl Dock {
     pub fn resize_all_panels(
         &mut self,
         size: Option<Pixels>,
-        ratio: Option<f32>,
+        flex: Option<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut size_states_to_persist = Vec::new();
-
-        for entry in &mut self.panel_entries {
-            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
-            if entry.panel.supports_flexible_size(window, cx) {
-                entry.size_state.flexible_size_ratio = ratio;
-            } else {
-                entry.size_state.size = size;
-            }
-            entry.panel.size_state_changed(window, cx);
-            size_states_to_persist.push((entry.panel.panel_key(), entry.size_state));
-        }
+        let size_states_to_persist: Vec<_> = self
+            .panel_entries
+            .iter_mut()
+            .map(|entry| resize_panel_entry(self.position, entry, size, flex, window, cx))
+            .collect();
 
         let workspace = self.workspace.clone();
         cx.defer(move |cx| {
@@ -925,7 +990,8 @@ impl Dock {
     pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut App) {
         let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
         for entry in &mut self.panel_entries {
-            if entry.panel.supports_flexible_size(window, cx) {
+            let use_flexible = entry.panel.has_flexible_size(window, cx);
+            if use_flexible {
                 continue;
             }
 
@@ -1023,8 +1089,10 @@ impl Render for Dock {
             };
 
             div()
+                .id("dock-panel")
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
+                .focus_follows_mouse(self.focus_follows_mouse, cx)
                 .flex()
                 .bg(cx.theme().colors().panel_background)
                 .border_color(cx.theme().colors().border)
@@ -1058,6 +1126,7 @@ impl Render for Dock {
                 })
         } else {
             div()
+                .id("dock-panel")
                 .key_context(dispatch_context)
                 .track_focus(&self.focus_handle(cx))
         }
@@ -1087,6 +1156,8 @@ impl Render for PanelButtons {
             DockPosition::Bottom | DockPosition::Right => (Corner::BottomRight, Corner::TopRight),
         };
 
+        let dock_entity = self.dock.clone();
+        let workspace = dock.workspace.clone();
         let mut buttons: Vec<_> = dock
             .panel_entries
             .iter()
@@ -1102,6 +1173,10 @@ impl Render for PanelButtons {
                     .log_err()?;
                 let name = entry.panel.persistent_name();
                 let panel = entry.panel.clone();
+                let supports_flexible = panel.supports_flexible_size(cx);
+                let currently_flexible = panel.has_flexible_size(window, cx);
+                let dock_for_menu = dock_entity.clone();
+                let workspace_for_menu = workspace.clone();
 
                 let is_active_button = Some(i) == active_index && is_open;
                 let (action, tooltip) = if is_active_button {
@@ -1130,19 +1205,75 @@ impl Render for PanelButtons {
                             ];
 
                             ContextMenu::build(window, cx, |mut menu, _, cx| {
+                                let mut has_position_entries = false;
                                 for position in POSITIONS {
-                                    if position != dock_position
-                                        && panel.position_is_valid(position, cx)
-                                    {
+                                    if panel.position_is_valid(position, cx) {
+                                        let is_current = position == dock_position;
                                         let panel = panel.clone();
-                                        menu = menu.entry(
+                                        menu = menu.toggleable_entry(
                                             format!("Dock {}", position.label()),
+                                            is_current,
+                                            IconPosition::Start,
                                             None,
                                             move |window, cx| {
-                                                panel.set_position(position, window, cx);
+                                                if !is_current {
+                                                    panel.set_position(position, window, cx);
+                                                }
                                             },
-                                        )
+                                        );
+                                        has_position_entries = true;
                                     }
+                                }
+                                if supports_flexible {
+                                    if has_position_entries {
+                                        menu = menu.separator();
+                                    }
+                                    let panel_for_flex = panel.clone();
+                                    let dock_for_flex = dock_for_menu.clone();
+                                    let workspace_for_flex = workspace_for_menu.clone();
+                                    menu = menu.toggleable_entry(
+                                        "Flex Width",
+                                        currently_flexible,
+                                        IconPosition::Start,
+                                        None,
+                                        move |window, cx| {
+                                            if !currently_flexible {
+                                                if let Some(ws) = workspace_for_flex.upgrade() {
+                                                    ws.update(cx, |workspace, cx| {
+                                                        workspace.toggle_dock_panel_flexible_size(
+                                                            &dock_for_flex,
+                                                            panel_for_flex.as_ref(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            }
+                                        },
+                                    );
+                                    let panel_for_fixed = panel.clone();
+                                    let dock_for_fixed = dock_for_menu.clone();
+                                    let workspace_for_fixed = workspace_for_menu.clone();
+                                    menu = menu.toggleable_entry(
+                                        "Fixed Width",
+                                        !currently_flexible,
+                                        IconPosition::Start,
+                                        None,
+                                        move |window, cx| {
+                                            if currently_flexible {
+                                                if let Some(ws) = workspace_for_fixed.upgrade() {
+                                                    ws.update(cx, |workspace, cx| {
+                                                        workspace.toggle_dock_panel_flexible_size(
+                                                            &dock_for_fixed,
+                                                            panel_for_fixed.as_ref(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            }
+                                        },
+                                    );
                                 }
                                 menu
                             })
@@ -1290,12 +1421,25 @@ pub mod test {
         fn initial_size_state(&self, _window: &Window, _: &App) -> PanelSizeState {
             PanelSizeState {
                 size: None,
-                flexible_size_ratio: None,
+                flex: None,
             }
         }
 
-        fn supports_flexible_size(&self, _window: &Window, _: &App) -> bool {
+        fn supports_flexible_size(&self) -> bool {
             self.flexible
+        }
+
+        fn has_flexible_size(&self, _window: &Window, _: &App) -> bool {
+            self.flexible
+        }
+
+        fn set_flexible_size(
+            &mut self,
+            flexible: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) {
+            self.flexible = flexible;
         }
 
         fn icon(&self, _window: &Window, _: &App) -> Option<ui::IconName> {

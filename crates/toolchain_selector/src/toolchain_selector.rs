@@ -584,11 +584,11 @@ impl ToolchainSelector {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<()> {
-        let (_, buffer, _) = workspace
+        let buffer = workspace
             .active_item(cx)?
             .act_as::<Editor>(cx)?
             .read(cx)
-            .active_excerpt(cx)?;
+            .active_buffer(cx)?;
         let project = workspace.project().clone();
 
         let language_name = buffer.read(cx).language()?.name();

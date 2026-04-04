@@ -270,10 +270,16 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CopyButtonVisibility {
+    Hidden,
+    AlwaysVisible,
+    VisibleOnHover,
+}
+
 pub enum CodeBlockRenderer {
     Default {
-        copy_button: bool,
-        copy_button_on_hover: bool,
+        copy_button_visibility: CopyButtonVisibility,
         border: bool,
     },
     Custom {
@@ -307,6 +313,78 @@ actions!(
         CopyAsMarkdown
     ]
 );
+
+enum EscapeAction {
+    PassThrough,
+    Nbsp(usize),
+    DoubleNewline,
+    PrefixBackslash,
+}
+
+impl EscapeAction {
+    fn output_len(&self) -> usize {
+        match self {
+            Self::PassThrough => 1,
+            Self::Nbsp(count) => count * '\u{00A0}'.len_utf8(),
+            Self::DoubleNewline => 2,
+            Self::PrefixBackslash => 2,
+        }
+    }
+
+    fn write_to(&self, c: char, output: &mut String) {
+        match self {
+            Self::PassThrough => output.push(c),
+            Self::Nbsp(count) => {
+                for _ in 0..*count {
+                    output.push('\u{00A0}');
+                }
+            }
+            Self::DoubleNewline => {
+                output.push('\n');
+                output.push('\n');
+            }
+            Self::PrefixBackslash => {
+                // '\\' is a single backslash in Rust, e.g. '|' -> '\|'
+                output.push('\\');
+                output.push(c);
+            }
+        }
+    }
+}
+
+// Valid to operate on raw bytes since multi-byte UTF-8
+// sequences never contain ASCII-range bytes.
+struct MarkdownEscaper {
+    in_leading_whitespace: bool,
+}
+
+impl MarkdownEscaper {
+    const TAB_SIZE: usize = 4;
+
+    fn new() -> Self {
+        Self {
+            in_leading_whitespace: true,
+        }
+    }
+
+    fn next(&mut self, byte: u8) -> EscapeAction {
+        let action = if self.in_leading_whitespace && byte == b'\t' {
+            EscapeAction::Nbsp(Self::TAB_SIZE)
+        } else if self.in_leading_whitespace && byte == b' ' {
+            EscapeAction::Nbsp(1)
+        } else if byte == b'\n' {
+            EscapeAction::DoubleNewline
+        } else if byte.is_ascii_punctuation() {
+            EscapeAction::PrefixBackslash
+        } else {
+            EscapeAction::PassThrough
+        };
+
+        self.in_leading_whitespace =
+            byte == b'\n' || (self.in_leading_whitespace && (byte == b' ' || byte == b'\t'));
+        action
+    }
+}
 
 impl Markdown {
     pub fn new(
@@ -471,30 +549,21 @@ impl Markdown {
     }
 
     pub fn escape(s: &str) -> Cow<'_, str> {
-        // Valid to use bytes since multi-byte UTF-8 doesn't use ASCII chars.
-        let count = s
-            .bytes()
-            .filter(|c| *c == b'\n' || c.is_ascii_punctuation())
-            .count();
-        if count > 0 {
-            let mut output = String::with_capacity(s.len() + count);
-            let mut is_newline = false;
-            for c in s.chars() {
-                if is_newline && c == ' ' {
-                    continue;
-                }
-                is_newline = c == '\n';
-                if c == '\n' {
-                    output.push('\n')
-                } else if c.is_ascii_punctuation() {
-                    output.push('\\')
-                }
-                output.push(c)
-            }
-            output.into()
-        } else {
-            s.into()
+        let output_len: usize = {
+            let mut escaper = MarkdownEscaper::new();
+            s.bytes().map(|byte| escaper.next(byte).output_len()).sum()
+        };
+
+        if output_len == s.len() {
+            return s.into();
         }
+
+        let mut escaper = MarkdownEscaper::new();
+        let mut output = String::with_capacity(output_len);
+        for c in s.chars() {
+            escaper.next(c as u8).write_to(c, &mut output);
+        }
+        output.into()
     }
 
     pub fn selected_text(&self) -> Option<String> {
@@ -826,8 +895,7 @@ impl MarkdownElement {
             markdown,
             style,
             code_block_renderer: CodeBlockRenderer::Default {
-                copy_button: true,
-                copy_button_on_hover: false,
+                copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
                 border: false,
             },
             on_url_click: None,
@@ -1610,22 +1678,17 @@ impl Element for MarkdownElement {
 
                             let column_count = alignments.len();
                             builder.push_div(
-                                div().flex().flex_col().items_start(),
-                                range,
-                                markdown_end,
-                            );
-                            builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .min_w_0()
                                     .grid()
                                     .grid_cols(column_count as u16)
                                     .when(self.style.table_columns_min_size, |this| {
                                         this.grid_cols_min_content(column_count as u16)
                                     })
                                     .when(!self.style.table_columns_min_size, |this| {
-                                        this.grid_cols_max_content(column_count as u16)
+                                        this.grid_cols(column_count as u16)
                                     })
+                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
@@ -1691,38 +1754,10 @@ impl Element for MarkdownElement {
                         builder.pop_text_style();
 
                         if let CodeBlockRenderer::Default {
-                            copy_button: true, ..
-                        } = &self.code_block_renderer
-                        {
-                            builder.modify_current_div(|el| {
-                                let content_range = parser::extract_code_block_content_range(
-                                    &parsed_markdown.source()[range.clone()],
-                                );
-                                let content_range = content_range.start + range.start
-                                    ..content_range.end + range.start;
-
-                                let code = parsed_markdown.source()[content_range].to_string();
-                                let codeblock = render_copy_code_block_button(
-                                    range.end,
-                                    code,
-                                    self.markdown.clone(),
-                                );
-                                el.child(
-                                    h_flex()
-                                        .w_4()
-                                        .absolute()
-                                        .top_1p5()
-                                        .right_1p5()
-                                        .justify_end()
-                                        .child(codeblock),
-                                )
-                            });
-                        }
-
-                        if let CodeBlockRenderer::Default {
-                            copy_button_on_hover: true,
+                            copy_button_visibility,
                             ..
                         } = &self.code_block_renderer
+                            && *copy_button_visibility != CopyButtonVisibility::Hidden
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
@@ -1741,10 +1776,17 @@ impl Element for MarkdownElement {
                                     h_flex()
                                         .w_4()
                                         .absolute()
-                                        .top_0()
-                                        .right_0()
                                         .justify_end()
-                                        .visible_on_hover("code_block")
+                                        .when_else(
+                                            *copy_button_visibility
+                                                == CopyButtonVisibility::VisibleOnHover,
+                                            |this| {
+                                                this.top_0()
+                                                    .right_0()
+                                                    .visible_on_hover("code_block")
+                                            },
+                                            |this| this.top_1p5().right_1p5(),
+                                        )
                                         .child(codeblock),
                                 )
                             });
@@ -1770,7 +1812,6 @@ impl Element for MarkdownElement {
                         }
                     }
                     MarkdownTagEnd::Table => {
-                        builder.pop_div();
                         builder.pop_div();
                         builder.table.end();
                     }
@@ -2778,8 +2819,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -3100,13 +3140,118 @@ mod tests {
         );
     }
 
+    fn nbsp(n: usize) -> String {
+        "\u{00A0}".repeat(n)
+    }
+
     #[test]
-    fn test_escape() {
-        assert_eq!(Markdown::escape("hello `world`"), "hello \\`world\\`");
+    fn test_escape_plain_text() {
+        assert_eq!(Markdown::escape("hello world"), "hello world");
+        assert_eq!(Markdown::escape(""), "");
+        assert_eq!(Markdown::escape("café ☕ naïve"), "café ☕ naïve");
+    }
+
+    #[test]
+    fn test_escape_punctuation() {
+        assert_eq!(Markdown::escape("hello `world`"), r"hello \`world\`");
+        assert_eq!(Markdown::escape("a|b"), r"a\|b");
+    }
+
+    #[test]
+    fn test_escape_leading_spaces() {
+        assert_eq!(Markdown::escape("    hello"), [&nbsp(4), "hello"].concat());
         assert_eq!(
-            Markdown::escape("hello\n    cool world"),
-            "hello\n\ncool world"
+            Markdown::escape("    | { a: string }"),
+            [&nbsp(4), r"\| \{ a\: string \}"].concat()
         );
+        assert_eq!(
+            Markdown::escape("  first\n  second"),
+            [&nbsp(2), "first\n\n", &nbsp(2), "second"].concat()
+        );
+        assert_eq!(Markdown::escape("hello   world"), "hello   world");
+    }
+
+    #[test]
+    fn test_escape_leading_tabs() {
+        assert_eq!(Markdown::escape("\thello"), [&nbsp(4), "hello"].concat());
+        assert_eq!(
+            Markdown::escape("hello\n\t\tindented"),
+            ["hello\n\n", &nbsp(8), "indented"].concat()
+        );
+        assert_eq!(
+            Markdown::escape(" \t hello"),
+            [&nbsp(1 + 4 + 1), "hello"].concat()
+        );
+        assert_eq!(Markdown::escape("hello\tworld"), "hello\tworld");
+    }
+
+    #[test]
+    fn test_escape_newlines() {
+        assert_eq!(Markdown::escape("a\nb"), "a\n\nb");
+        assert_eq!(Markdown::escape("a\n\nb"), "a\n\n\n\nb");
+        assert_eq!(Markdown::escape("\nhello"), "\n\nhello");
+    }
+
+    #[test]
+    fn test_escape_multiline_diagnostic() {
+        assert_eq!(
+            Markdown::escape("    | { a: string }\n    | { b: number }"),
+            [
+                &nbsp(4),
+                r"\| \{ a\: string \}",
+                "\n\n",
+                &nbsp(4),
+                r"\| \{ b\: number \}",
+            ]
+            .concat()
+        );
+    }
+
+    fn has_code_block(markdown: &str) -> bool {
+        let parsed_data = parse_markdown_with_options(markdown, false);
+        parsed_data
+            .events
+            .iter()
+            .any(|(_, event)| matches!(event, MarkdownEvent::Start(MarkdownTag::CodeBlock { .. })))
+    }
+
+    #[test]
+    fn test_escape_output_len_matches_precomputed() {
+        let cases = [
+            "",
+            "hello world",
+            "hello `world`",
+            "    hello",
+            "    | { a: string }",
+            "\thello",
+            "hello\n\t\tindented",
+            " \t hello",
+            "hello\tworld",
+            "a\nb",
+            "a\n\nb",
+            "\nhello",
+            "    | { a: string }\n    | { b: number }",
+            "café ☕ naïve",
+        ];
+        for input in cases {
+            let mut escaper = MarkdownEscaper::new();
+            let precomputed: usize = input.bytes().map(|b| escaper.next(b).output_len()).sum();
+
+            let mut escaper = MarkdownEscaper::new();
+            let mut output = String::new();
+            for c in input.chars() {
+                escaper.next(c as u8).write_to(c, &mut output);
+            }
+
+            assert_eq!(precomputed, output.len(), "length mismatch for {:?}", input);
+        }
+    }
+
+    #[test]
+    fn test_escape_prevents_code_block() {
+        let diagnostic = "    | { a: string }";
+        assert!(has_code_block(diagnostic));
+        assert!(!has_code_block(&Markdown::escape(diagnostic)));
     }
 
     #[track_caller]

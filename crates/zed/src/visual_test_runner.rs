@@ -109,7 +109,7 @@ use {
     image::RgbaImage,
     project::{AgentId, Project},
     project_panel::ProjectPanel,
-    settings::{NotifyWhenAgentWaiting, Settings as _},
+    settings::{NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings as _},
     settings_ui::SettingsWindow,
     std::{
         any::Any,
@@ -201,7 +201,12 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         });
         prompt_store::init(cx);
         let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
-        language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        language_model::init(cx);
+        client::RefreshLlmTokenListener::register(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            cx,
+        );
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
         project::AgentRegistryStore::init_global(
@@ -211,9 +216,9 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         );
         agent_ui::init(
             app_state.fs.clone(),
-            app_state.client.clone(),
             prompt_builder,
             app_state.languages.clone(),
+            true,
             false,
             cx,
         );
@@ -231,7 +236,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         agent_settings::AgentSettings::override_global(
             agent_settings::AgentSettings {
                 notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-                play_sound_when_agent_done: false,
+                play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
                 ..agent_settings::AgentSettings::get_global(cx).clone()
             },
             cx,
@@ -2133,16 +2138,10 @@ fn run_agent_thread_view_test(
         })
         .context("Failed to get workspace handle")?;
 
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
     cx.background_executor.allow_parking();
     let panel = cx
         .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
+        .block_test(AgentPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load AgentPanel")?;
     cx.background_executor.forbid_parking();
 
@@ -2594,7 +2593,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                     });
                     cx.new(|cx| {
                         let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
-                        multi_workspace.activate(workspace2, cx);
+                        multi_workspace.activate(workspace2, window, cx);
                         multi_workspace
                     })
                 },
@@ -2645,16 +2644,18 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Switch to workspace 1 so it's highlighted as active (index 0)
     multi_workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.activate_index(0, window, cx);
+            let workspace = multi_workspace.workspaces()[0].clone();
+            multi_workspace.activate(workspace, window, cx);
         })
         .context("Failed to activate workspace 1")?;
 
     cx.run_until_parked();
 
-    // Create the sidebar and register it on the MultiWorkspace
-    let sidebar = multi_workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            let multi_workspace_handle = cx.entity();
+    // Create the sidebar outside the MultiWorkspace update to avoid a
+    // re-entrant read panic (Sidebar::new reads the MultiWorkspace).
+    let sidebar = cx
+        .update_window(multi_workspace_window.into(), |root_view, window, cx| {
+            let multi_workspace_handle: Entity<MultiWorkspace> = root_view.downcast().unwrap();
             cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
         })
         .context("Failed to create sidebar")?;
@@ -3183,10 +3184,11 @@ edition = "2021"
 
     cx.run_until_parked();
 
-    // Create and register the workspace sidebar
-    let sidebar = workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            let multi_workspace_handle = cx.entity();
+    // Create the sidebar outside the MultiWorkspace update to avoid a
+    // re-entrant read panic (Sidebar::new reads the MultiWorkspace).
+    let sidebar = cx
+        .update_window(workspace_window.into(), |root_view, window, cx| {
+            let multi_workspace_handle: Entity<MultiWorkspace> = root_view.downcast().unwrap();
             cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
         })
         .context("Failed to create sidebar")?;
@@ -3294,52 +3296,40 @@ edition = "2021"
         })
         .context("Failed to get workspace handle for agent panel")?;
 
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
-
     // Register an observer so that workspaces created by the worktree creation
     // flow get AgentPanel and ProjectPanel loaded automatically. Without this,
     // `workspace.panel::<AgentPanel>(cx)` returns None in the new workspace and
     // the creation flow's `focus_panel::<AgentPanel>` call is a no-op.
-    let _workspace_observer = cx.update({
-        let prompt_builder = prompt_builder.clone();
-        |cx| {
-            cx.observe_new(move |workspace: &mut Workspace, window, cx| {
-                let Some(window) = window else { return };
-                let prompt_builder = prompt_builder.clone();
-                let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
-                    let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
-                    let agent_panel =
-                        AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
-                    if let Ok(panel) = project_panel.await {
-                        workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
-                            })
-                            .log_err();
-                    }
-                    if let Ok(panel) = agent_panel.await {
-                        workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
-                            })
-                            .log_err();
-                    }
-                    anyhow::Ok(())
-                });
-                workspace.set_panels_task(panels_task);
-            })
-        }
+    let _workspace_observer = cx.update(|cx| {
+        cx.observe_new(move |workspace: &mut Workspace, window, cx| {
+            let Some(window) = window else { return };
+            let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
+                let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
+                let agent_panel = AgentPanel::load(workspace_handle.clone(), cx.clone());
+                if let Ok(panel) = project_panel.await {
+                    workspace_handle
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.add_panel(panel, window, cx);
+                        })
+                        .log_err();
+                }
+                if let Ok(panel) = agent_panel.await {
+                    workspace_handle
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.add_panel(panel, window, cx);
+                        })
+                        .log_err();
+                }
+                anyhow::Ok(())
+            });
+            workspace.set_panels_task(panels_task);
+        })
     });
 
     cx.background_executor.allow_parking();
     let panel = cx
         .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
+        .block_test(AgentPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load AgentPanel")?;
     cx.background_executor.forbid_parking();
 

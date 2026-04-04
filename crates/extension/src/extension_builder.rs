@@ -296,16 +296,12 @@ impl ExtensionBuilder {
             let remotes_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
-                .args(["remote", "-v"])
+                .args(["remote", "get-url", "origin"])
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .output()
                 .await?;
             let has_remote = remotes_output.status.success()
-                && String::from_utf8_lossy(&remotes_output.stdout)
-                    .lines()
-                    .any(|line| {
-                        let mut parts = line.split(|c: char| c.is_whitespace());
-                        parts.next() == Some("origin") && parts.any(|part| part == url)
-                    });
+                && String::from_utf8_lossy(&remotes_output.stdout).trim() == url;
             if !has_remote {
                 bail!(
                     "grammar directory '{}' already exists, but is not a git clone of '{}'",

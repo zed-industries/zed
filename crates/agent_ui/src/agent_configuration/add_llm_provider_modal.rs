@@ -815,7 +815,7 @@ mod tests {
             cx.set_global(store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
 
-            language_model::init_settings(cx);
+            language_model::init(cx);
             editor::init(cx);
         });
 

@@ -148,7 +148,6 @@
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": "buffer_search::DeployReplace",
       "ctrl->": "agent::AddSelectionToThread",
-      "ctrl-<": "assistant::InsertIntoEditor",
       "ctrl-alt-e": "editor::SelectEnclosingSymbol",
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
@@ -185,7 +184,7 @@
     },
   },
   {
-    "context": "Editor && jupyter && !ContextEditor",
+    "context": "Editor && jupyter",
     "bindings": {
       "ctrl-shift-enter": "repl::Run",
       "ctrl-alt-enter": "repl::RunInPlace",
@@ -222,28 +221,9 @@
     },
   },
   {
-    "context": "ContextEditor > Editor",
-    "bindings": {
-      "ctrl-enter": "assistant::Assist",
-      "save": "workspace::Save",
-      "ctrl-s": "workspace::Save",
-      "ctrl-<": "assistant::InsertIntoEditor",
-      "shift-enter": "assistant::Split",
-      "ctrl-r": "assistant::CycleMessageRole",
-      "enter": "assistant::ConfirmCommand",
-      "alt-enter": "editor::Newline",
-      "ctrl-k c": "assistant::CopyCode",
-      "ctrl-g": "search::SelectNextMatch",
-      "ctrl-shift-g": "search::SelectPreviousMatch",
-      "ctrl-k l": "agent::OpenRulesLibrary",
-      "ctrl-shift-v": "agent::PasteRaw",
-    },
-  },
-  {
     "context": "AgentPanel",
     "bindings": {
       "ctrl-n": "agent::NewThread",
-      "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
       "ctrl-alt-c": "agent::OpenSettings",
       "ctrl-alt-p": "agent::ManageProfiles",
@@ -254,17 +234,18 @@
       "alt-tab": "agent::CycleFavoriteModels",
       // `alt-l` is provided as an alternative to `alt-tab` as the latter breaks on Linux under the `AgentPanel` context
       "alt-l": "agent::CycleFavoriteModels",
-      "ctrl-shift-j": "agent::ToggleNavigationMenu",
-      "ctrl-alt-i": "agent::ToggleOptionsMenu",
+      "shift-alt-j": "agent::ToggleNavigationMenu",
+      "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
       "ctrl-shift-t": "agent::CycleStartThreadIn",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl->": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
-      "ctrl-y": "agent::AllowOnce",
+      "shift-alt-q": "agent::AllowAlways",
+      "shift-alt-a": "agent::AllowOnce",
       "ctrl-alt-a": "agent::OpenPermissionDropdown",
-      "ctrl-alt-z": "agent::RejectOnce",
+      "shift-alt-x": "agent::RejectOnce",
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
       "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
     },
@@ -275,13 +256,6 @@
       "copy": "markdown::CopyAsMarkdown",
       "ctrl-insert": "markdown::CopyAsMarkdown",
       "ctrl-c": "markdown::CopyAsMarkdown",
-    },
-  },
-  {
-    "context": "AgentPanel && text_thread",
-    "bindings": {
-      "ctrl-n": "agent::NewTextThread",
-      "ctrl-alt-t": "agent::NewThread",
     },
   },
   {
@@ -310,12 +284,36 @@
     "context": "AcpThread",
     "bindings": {
       "ctrl--": "pane::GoBack",
+      "pageup": "agent::ScrollOutputPageUp",
+      "pagedown": "agent::ScrollOutputPageDown",
+      "home": "agent::ScrollOutputToTop",
+      "end": "agent::ScrollOutputToBottom",
+      "up": "agent::ScrollOutputLineUp",
+      "down": "agent::ScrollOutputLineDown",
+      "shift-pageup": "agent::ScrollOutputToPreviousMessage",
+      "shift-pagedown": "agent::ScrollOutputToNextMessage",
+      "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-alt-home": "agent::ScrollOutputToTop",
+      "ctrl-alt-end": "agent::ScrollOutputToBottom",
+      "ctrl-alt-up": "agent::ScrollOutputLineUp",
+      "ctrl-alt-down": "agent::ScrollOutputLineDown",
+      "ctrl-alt-shift-pageup": "agent::ScrollOutputToPreviousMessage",
+      "ctrl-alt-shift-pagedown": "agent::ScrollOutputToNextMessage",
     },
   },
   {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-alt-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-alt-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-alt-home": "agent::ScrollOutputToTop",
+      "ctrl-alt-end": "agent::ScrollOutputToBottom",
+      "ctrl-alt-up": "agent::ScrollOutputLineUp",
+      "ctrl-alt-down": "agent::ScrollOutputLineDown",
+      "ctrl-alt-shift-pageup": "agent::ScrollOutputToPreviousMessage",
+      "ctrl-alt-shift-pagedown": "agent::ScrollOutputToNextMessage",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-d": "git::Diff",
       "shift-alt-y": "agent::KeepAll",
@@ -718,8 +716,8 @@
     "context": "ThreadSwitcher",
     "bindings": {
       "ctrl-tab": "agents_sidebar::ToggleThreadSwitcher",
-      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }]
-    }
+      "ctrl-shift-tab": ["agents_sidebar::ToggleThreadSwitcher", { "select_last": true }],
+    },
   },
   {
     "context": "Workspace && debugger_running",
@@ -857,7 +855,7 @@
     },
   },
   {
-    "context": "!ContextEditor && !AcpThread > Editor && mode == full",
+    "context": "!AcpThread > Editor && mode == full",
     "bindings": {
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
@@ -959,7 +957,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList",
+    "context": "GitPanel && ChangesList && !GitBranchSelector",
     "bindings": {
       "left": "git_panel::CollapseSelectedEntry",
       "right": "git_panel::ExpandSelectedEntry",
@@ -1149,6 +1147,8 @@
     "bindings": {
       "ctrl-k": "recent_projects::ToggleActionsMenu",
       "ctrl-shift-a": "workspace::AddFolderToProject",
+      "shift-backspace": "recent_projects::RemoveSelected",
+      "ctrl-shift-enter": "recent_projects::AddToWorkspace",
     },
   },
   {

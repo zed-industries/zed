@@ -14,7 +14,7 @@ use util::serde::default_true;
 
 use crate::{
     AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, SlashCommandSettings, fallible_options,
+    RootUserSettings, SaturatingBool, fallible_options,
 };
 
 #[with_fallible_options]
@@ -77,9 +77,6 @@ pub struct ProjectSettingsContent {
 
     /// Configuration for how direnv configuration should be loaded
     pub load_direnv: Option<DirenvSettings>,
-
-    /// Settings for slash commands.
-    pub slash_commands: Option<SlashCommandSettings>,
 
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
@@ -277,6 +274,18 @@ pub struct SemanticTokenRule {
     pub strikethrough: Option<SemanticTokenColorOverride>,
     pub font_weight: Option<SemanticTokenFontWeight>,
     pub font_style: Option<SemanticTokenFontStyle>,
+}
+
+impl SemanticTokenRule {
+    pub fn no_style_defined(&self) -> bool {
+        self.style.is_empty()
+            && self.foreground_color.is_none()
+            && self.background_color.is_none()
+            && self.underline.is_none()
+            && self.strikethrough.is_none()
+            && self.font_weight.is_none()
+            && self.font_style.is_none()
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]

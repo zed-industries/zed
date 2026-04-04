@@ -266,7 +266,10 @@ mod tests {
         CachedMermaidDiagram, MermaidDiagramCache, MermaidState,
         ParsedMarkdownMermaidDiagramContents, extract_mermaid_diagrams, parse_mermaid_info,
     };
-    use crate::{CodeBlockRenderer, Markdown, MarkdownElement, MarkdownOptions, MarkdownStyle};
+    use crate::{
+        CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
+        MarkdownStyle,
+    };
     use collections::HashMap;
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
     use std::sync::Arc;
@@ -309,8 +312,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -581,8 +583,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
                     .code_block_renderer(CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     })
             },

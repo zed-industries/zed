@@ -38,7 +38,7 @@ impl Hash for PathList {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializedPathList {
     pub paths: String,
     pub order: String,
@@ -68,6 +68,11 @@ impl PathList {
     /// Get the paths in lexicographic order.
     pub fn paths(&self) -> &[PathBuf] {
         self.paths.as_ref()
+    }
+
+    /// Get the paths in the lexicographic order.
+    pub fn paths_owned(&self) -> Arc<[PathBuf]> {
+        self.paths.clone()
     }
 
     /// Get the order in which the paths were provided.

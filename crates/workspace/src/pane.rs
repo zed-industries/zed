@@ -2,6 +2,7 @@ use crate::{
     CloseWindow, NewFile, NewTerminal, OpenInTerminal, OpenOptions, OpenTerminal, OpenVisible,
     SplitDirection, ToggleFileFinder, ToggleProjectSymbols, ToggleZoom, Workspace,
     WorkspaceItemBuilder, ZoomIn, ZoomOut,
+    focus_follows_mouse::FocusFollowsMouse as _,
     invalid_item_view::InvalidItemView,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemBufferKind, ItemHandle, ItemSettings,
@@ -11,7 +12,7 @@ use crate::{
     move_item,
     notifications::NotifyResultExt,
     toolbar::Toolbar,
-    workspace_settings::{AutosaveSetting, TabBarSettings, WorkspaceSettings},
+    workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
 };
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
@@ -48,7 +49,9 @@ use ui::{
     IconDecorationKind, Indicator, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition,
     Tooltip, prelude::*, right_click_menu,
 };
-use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
+use util::{
+    ResultExt, debug_panic, maybe, paths::PathStyle, serde::default_true, truncate_and_remove_front,
+};
 
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -229,13 +232,41 @@ split_structs!(
     SplitVertical => "Splits the pane vertically."
 );
 
+/// Activates the previous item in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct ActivatePreviousItem {
+    /// Whether to wrap from the first item to the last item.
+    #[serde(default = "default_true")]
+    pub wrap_around: bool,
+}
+
+impl Default for ActivatePreviousItem {
+    fn default() -> Self {
+        Self { wrap_around: true }
+    }
+}
+
+/// Activates the next item in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = pane)]
+#[serde(deny_unknown_fields, default)]
+pub struct ActivateNextItem {
+    /// Whether to wrap from the last item to the first item.
+    #[serde(default = "default_true")]
+    pub wrap_around: bool,
+}
+
+impl Default for ActivateNextItem {
+    fn default() -> Self {
+        Self { wrap_around: true }
+    }
+}
+
 actions!(
     pane,
     [
-        /// Activates the previous item in the pane.
-        ActivatePreviousItem,
-        /// Activates the next item in the pane.
-        ActivateNextItem,
         /// Activates the last item in the pane.
         ActivateLastItem,
         /// Switches to the alternate file.
@@ -413,6 +444,7 @@ pub struct Pane {
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
+    focus_follows_mouse: FocusFollowsMouse,
     diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
@@ -585,6 +617,7 @@ impl Pane {
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
+            focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
             diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
             welcome_page: None,
@@ -752,7 +785,6 @@ impl Pane {
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tab_bar_settings = TabBarSettings::get_global(cx);
-        let new_max_tabs = WorkspaceSettings::get_global(cx).max_tabs;
 
         if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
             *display_nav_history_buttons = tab_bar_settings.show_nav_history_buttons;
@@ -764,6 +796,12 @@ impl Pane {
             self.preview_item_id = None;
             self.nav_history.0.lock().preview_item_id = None;
         }
+
+        let workspace_settings = WorkspaceSettings::get_global(cx);
+
+        self.focus_follows_mouse = workspace_settings.focus_follows_mouse;
+
+        let new_max_tabs = workspace_settings.max_tabs;
 
         if self.use_max_tabs && new_max_tabs != self.max_tabs {
             self.max_tabs = new_max_tabs;
@@ -1477,14 +1515,14 @@ impl Pane {
 
     pub fn activate_previous_item(
         &mut self,
-        _: &ActivatePreviousItem,
+        action: &ActivatePreviousItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut index = self.active_item_index;
         if index > 0 {
             index -= 1;
-        } else if !self.items.is_empty() {
+        } else if action.wrap_around && !self.items.is_empty() {
             index = self.items.len() - 1;
         }
         self.activate_item(index, true, true, window, cx);
@@ -1492,14 +1530,14 @@ impl Pane {
 
     pub fn activate_next_item(
         &mut self,
-        _: &ActivateNextItem,
+        action: &ActivateNextItem,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let mut index = self.active_item_index;
         if index + 1 < self.items.len() {
             index += 1;
-        } else {
+        } else if action.wrap_around {
             index = 0;
         }
         self.activate_item(index, true, true, window, cx);
@@ -2855,6 +2893,7 @@ impl Pane {
 
                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                         .detach_and_log_err(cx);
+                    cx.stop_propagation();
                 }),
             )
             .on_drag(
@@ -4429,6 +4468,7 @@ impl Render for Pane {
                                 placeholder.child(self.welcome_page.clone().unwrap())
                             }
                         }
+                        .focus_follows_mouse(self.focus_follows_mouse, cx)
                     })
                     .child(
                         // drag target
@@ -8582,6 +8622,51 @@ mod tests {
             has_closed_items,
             "closed item should be in closed_stack and reopenable"
         );
+    }
+
+    #[gpui::test]
+    async fn test_activate_item_with_wrap_around(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem::default(), window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_previous_item(&ActivatePreviousItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
     }
 
     fn init_test(cx: &mut TestAppContext) {
