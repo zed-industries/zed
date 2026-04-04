@@ -237,7 +237,12 @@ fn scale_and_offset_path(path: &Path<Pixels>, scale: f32, offset: Point<Pixels>)
     new_path
 }
 
+fn preprocess_latex(source: &str) -> String {
+    source.replace("\\[", "[").replace("\\]", "]")
+}
+
 fn render_math_expression(source: &str, _display: bool) -> Result<RenderedMath, String> {
+    let source = preprocess_latex(source);
     let face = rex_ttf_parser::Face::parse(MATH_FONT_DATA, 0)
         .map_err(|e| format!("font parse: {e}"))?;
     let font = rex::font::backend::ttf_parser::TtfMathFont::new(face)
@@ -245,7 +250,7 @@ fn render_math_expression(source: &str, _display: bool) -> Result<RenderedMath, 
 
     let renderer = rex::render::Renderer::new();
     let layout = renderer
-        .layout(source, &font)
+        .layout(&source, &font)
         .map_err(|e| format!("layout: {e:?}"))?;
 
     let dims = layout.size();
@@ -398,14 +403,16 @@ pub(crate) fn latex_to_unicode(source: &str) -> String {
             }
         } else if chars[i] == '^' {
             i += 1;
-            let content = extract_group(&chars, &mut i);
-            for ch in content.chars() {
+            let raw_content = extract_group(&chars, &mut i);
+            let converted = latex_to_unicode(&raw_content);
+            for ch in converted.chars() {
                 result.push(to_superscript(ch));
             }
         } else if chars[i] == '_' {
             i += 1;
-            let content = extract_group(&chars, &mut i);
-            for ch in content.chars() {
+            let raw_content = extract_group(&chars, &mut i);
+            let converted = latex_to_unicode(&raw_content);
+            for ch in converted.chars() {
                 result.push(to_subscript(ch));
             }
         } else {
@@ -417,7 +424,10 @@ pub(crate) fn latex_to_unicode(source: &str) -> String {
 }
 
 fn extract_group(chars: &[char], i: &mut usize) -> String {
-    if *i < chars.len() && chars[*i] == '{' {
+    if *i >= chars.len() {
+        return String::new();
+    }
+    if chars[*i] == '{' {
         *i += 1;
         let mut depth = 1;
         let mut content = String::new();
@@ -435,12 +445,19 @@ fn extract_group(chars: &[char], i: &mut usize) -> String {
             *i += 1;
         }
         content
-    } else if *i < chars.len() {
+    } else if chars[*i] == '\\' {
+        let cmd_start = *i + 1;
+        let mut cmd_end = cmd_start;
+        while cmd_end < chars.len() && chars[cmd_end].is_ascii_alphabetic() {
+            cmd_end += 1;
+        }
+        let raw: String = chars[*i..cmd_end].iter().collect();
+        *i = cmd_end;
+        raw
+    } else {
         let ch = chars[*i];
         *i += 1;
         ch.to_string()
-    } else {
-        String::new()
     }
 }
 
@@ -587,25 +604,39 @@ fn render_math_element(
                     )
                     .into_any_element()
             }
-            Err(_error) => {
-                let fallback_text = if display {
-                    format!("$${}$$", key.source)
-                } else {
-                    format!("${}$", key.source)
-                };
-                div()
-                    .child(SharedString::from(fallback_text))
-                    .into_any_element()
-            }
+            Err(_error) => render_math_fallback(&key.source, display),
         }
     } else {
-        let fallback_text = if display {
-            format!("$${}$$", key.source)
-        } else {
-            format!("${}$", key.source)
-        };
-        div()
-            .child(SharedString::from(fallback_text))
-            .into_any_element()
+        render_math_fallback(&key.source, display)
     }
+}
+
+fn render_math_fallback(source: &str, display: bool) -> AnyElement {
+    let text = if display {
+        source.to_string()
+    } else {
+        format!("${source}$")
+    };
+    let container = if display {
+        div()
+            .w_full()
+            .px_4()
+            .py_2()
+            .rounded_md()
+            .bg(gpui::hsla(0., 0., 0.5, 0.08))
+            .overflow_x_hidden()
+    } else {
+        div()
+            .px_1()
+            .rounded_sm()
+            .bg(gpui::hsla(0., 0., 0.5, 0.08))
+    };
+    container
+        .child(
+            div()
+                .text_sm()
+                .font_family("monospace")
+                .child(SharedString::from(text)),
+        )
+        .into_any_element()
 }
