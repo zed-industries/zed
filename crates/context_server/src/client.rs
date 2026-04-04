@@ -38,6 +38,7 @@ pub const INTERNAL_ERROR: i32 = -32603;
 type ResponseHandler = Box<dyn Send + FnOnce(String)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
 type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
+type RequestHandlerMap = HashMap<&'static str, (u64, RequestHandler)>;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -53,6 +54,7 @@ pub(crate) struct Client {
     name: Arc<str>,
     subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+    server_request_handlers: Arc<Mutex<RequestHandlerMap>>,
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
@@ -203,12 +205,13 @@ impl Client {
         let subscription_set = Arc::new(Mutex::new(NotificationSubscriptionSet::default()));
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
-        let request_handlers = Arc::new(Mutex::new(HashMap::<_, RequestHandler>::default()));
+        let server_request_handlers: Arc<Mutex<RequestHandlerMap>> =
+            Arc::new(Mutex::new(HashMap::default()));
 
         let receive_input_task = cx.spawn({
             let subscription_set = subscription_set.clone();
             let response_handlers = response_handlers.clone();
-            let request_handlers = request_handlers.clone();
+            let request_handlers = server_request_handlers.clone();
             let transport = transport.clone();
             async move |cx| {
                 Self::handle_input(
@@ -249,6 +252,7 @@ impl Client {
             server_id,
             subscription_set,
             response_handlers,
+            server_request_handlers,
             name: server_name,
             next_id: Default::default(),
             outbound_tx,
@@ -270,7 +274,7 @@ impl Client {
     async fn handle_input(
         transport: Arc<dyn Transport>,
         subscription_set: Arc<Mutex<NotificationSubscriptionSet>>,
-        request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
+        request_handlers: Arc<Mutex<RequestHandlerMap>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
@@ -280,7 +284,7 @@ impl Client {
             log::trace!("recv: {}", &message);
             if let Ok(request) = serde_json::from_str::<AnyRequest>(&message) {
                 let mut request_handlers = request_handlers.lock();
-                if let Some(handler) = request_handlers.get_mut(request.method) {
+                if let Some((_, handler)) = request_handlers.get_mut(request.method) {
                     handler(
                         request.id,
                         request.params.unwrap_or(RawValue::NULL),
@@ -487,6 +491,58 @@ impl Client {
             set: self.subscription_set.clone(),
         }
     }
+
+    /// Register a handler for a server-initiated request (e.g. `roots/list`).
+    ///
+    /// The handler is called synchronously when the server sends a request with
+    /// the given method. It receives the parsed params as a `serde_json::Value`
+    /// and must return a `serde_json::Value` that will be sent back as the
+    /// JSON-RPC result.
+    ///
+    /// If called again with the same method, the old subscription is superseded:
+    /// the new handler takes effect immediately and the old subscription's `Drop`
+    /// will only remove the handler if its generation still matches.
+    #[must_use]
+    pub fn on_request(
+        &self,
+        method: &'static str,
+        mut f: impl 'static + Send + FnMut(serde_json::Value, AsyncApp) -> serde_json::Value,
+    ) -> RequestHandlerSubscription {
+        let outbound_tx = self.outbound_tx.clone();
+        let handler: RequestHandler =
+            Box::new(move |id: RequestId, params: &RawValue, cx: AsyncApp| {
+                let params_value = serde_json::from_str::<serde_json::Value>(params.get())
+                    .unwrap_or(serde_json::Value::Null);
+                let result = f(params_value, cx);
+                match serde_json::to_string(&serde_json::json!({
+                    "jsonrpc": JSON_RPC_VERSION,
+                    "id": id,
+                    "result": result,
+                })) {
+                    Ok(response) => {
+                        if let Err(e) = outbound_tx.try_send(response) {
+                            log::warn!("failed to send server request response: {e}");
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("failed to serialize server request response: {e}");
+                    }
+                }
+            });
+        let generation = {
+            let mut handlers = self.server_request_handlers.lock();
+            let next = handlers
+                .get(method)
+                .map_or(0, |entry| entry.0.wrapping_add(1));
+            handlers.insert(method, (next, handler));
+            next
+        };
+        RequestHandlerSubscription {
+            method,
+            generation,
+            handlers: self.server_request_handlers.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -497,6 +553,28 @@ impl std::error::Error for RequestCanceled {}
 impl std::fmt::Display for RequestCanceled {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Context server request was canceled")
+    }
+}
+
+/// Subscription for a server-initiated request handler registered via
+/// [`Client::on_request`]. Dropping this value unregisters the handler.
+pub struct RequestHandlerSubscription {
+    method: &'static str,
+    generation: u64,
+    handlers: Arc<Mutex<RequestHandlerMap>>,
+}
+
+impl Drop for RequestHandlerSubscription {
+    fn drop(&mut self) {
+        let mut handlers = self.handlers.lock();
+        // Only remove if this subscription's generation still matches,
+        // i.e. no newer call to on_request has superseded this handler.
+        if handlers
+            .get(self.method)
+            .is_some_and(|entry| entry.0 == self.generation)
+        {
+            handlers.remove(self.method);
+        }
     }
 }
 

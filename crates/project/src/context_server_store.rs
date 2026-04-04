@@ -13,7 +13,10 @@ use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
 use futures::future::Either;
 use futures::{FutureExt as _, StreamExt as _, future::join_all};
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
+use gpui::{
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
+    actions,
+};
 use http_client::HttpClient;
 use itertools::Itertools;
 use rand::Rng as _;
@@ -265,6 +268,8 @@ pub struct ContextServerStore {
     needs_server_update: bool,
     ai_disabled: bool,
     _subscriptions: Vec<Subscription>,
+    roots_subscriptions:
+        HashMap<ContextServerId, context_server::client::RequestHandlerSubscription>,
 }
 
 pub struct ServerStatusChangedEvent {
@@ -470,6 +475,7 @@ impl ContextServerStore {
             server_ids: Default::default(),
             update_servers_task: None,
             context_server_factory,
+            roots_subscriptions: HashMap::default(),
         };
         if maintain_server_loop && !DisableAiSettings::get_global(cx).disable_ai {
             this.available_context_servers_changed(cx);
@@ -598,6 +604,8 @@ impl ContextServerStore {
             return Ok(());
         }
 
+        self.roots_subscriptions.remove(id);
+
         let state = self
             .servers
             .remove(id)
@@ -657,6 +665,44 @@ impl ContextServerStore {
                     Err(err) => resolve_start_failure(&id, err, server, configuration, cx).await,
                 };
                 this.update(cx, |this, cx| {
+                    if let ContextServerState::Running {
+                        server: ref running_server,
+                        ..
+                    } = new_state
+                    {
+                        if let Some(protocol) = running_server.client() {
+                            let worktree_store = this.worktree_store.clone();
+                            let subscription = protocol
+                                .on_request::<context_server::types::requests::ListRoots>(
+                                    move |_params, cx| {
+                                        let roots = cx.read_entity(
+                                            &worktree_store,
+                                            |store: &WorktreeStore, cx| {
+                                                store
+                                                    .visible_worktrees(cx)
+                                                    .filter_map(|wt: Entity<worktree::Worktree>| {
+                                                        let path = wt.read(cx).abs_path();
+                                                        let name =
+                                                            wt.read(cx).root_name_str().to_string();
+                                                        path_to_file_uri(&path).map(|uri| {
+                                                            context_server::types::Root {
+                                                                uri,
+                                                                name: Some(name),
+                                                            }
+                                                        })
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            },
+                                        );
+                                        context_server::types::ListRootsResponse {
+                                            roots,
+                                            meta: None,
+                                        }
+                                    },
+                                );
+                            this.roots_subscriptions.insert(id.clone(), subscription);
+                        }
+                    }
                     this.update_server_state(id.clone(), new_state, cx)
                 })
                 .log_err();
@@ -675,6 +721,8 @@ impl ContextServerStore {
     }
 
     fn remove_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
+        self.roots_subscriptions.remove(id);
+
         let state = self
             .servers
             .remove(id)
@@ -1400,6 +1448,11 @@ impl ContextServerStore {
 
         Ok(())
     }
+}
+
+/// Converts an absolute filesystem path to a `file://` URI string.
+fn path_to_file_uri(path: &std::path::Path) -> Option<String> {
+    Some(url::Url::from_directory_path(path).ok()?.to_string())
 }
 
 /// Determines the appropriate server state after a start attempt fails.

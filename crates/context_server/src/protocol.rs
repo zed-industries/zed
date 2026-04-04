@@ -12,7 +12,7 @@ use futures::channel::oneshot;
 use gpui::AsyncApp;
 use serde_json::Value;
 
-use crate::client::{Client, NotificationSubscription};
+use crate::client::{self, Client, NotificationSubscription};
 use crate::types::{self, Notification, Request};
 
 pub struct ModelContextProtocol {
@@ -40,7 +40,7 @@ impl ModelContextProtocol {
             capabilities: types::ClientCapabilities {
                 experimental: None,
                 sampling: None,
-                roots: None,
+                roots: Some(types::RootsCapabilities { list_changed: None }),
             },
             meta: None,
             client_info,
@@ -121,5 +121,34 @@ impl InitializedContextServerProtocol {
         f: Box<dyn 'static + Send + FnMut(Value, AsyncApp)>,
     ) -> NotificationSubscription {
         self.inner.on_notification(method, f)
+    }
+
+    /// Register a typed handler for a server-initiated request.
+    ///
+    /// The server sends a request (e.g. `roots/list`) and the client must reply
+    /// with the appropriate response. Dropping the returned subscription
+    /// unregisters the handler.
+    #[must_use]
+    pub fn on_request<T: Request>(
+        &self,
+        mut f: impl 'static + Send + FnMut(T::Params, AsyncApp) -> T::Response,
+    ) -> client::RequestHandlerSubscription {
+        self.inner.on_request(T::METHOD, move |params_value, cx| {
+            let Ok(params) = serde_json::from_value::<T::Params>(params_value) else {
+                log::error!(
+                    "failed to deserialize params for server request {}",
+                    T::METHOD
+                );
+                return serde_json::Value::Null;
+            };
+            let response = f(params, cx);
+            serde_json::to_value(response).unwrap_or_else(|e| {
+                log::error!(
+                    "failed to serialize response for server request {}: {e}",
+                    T::METHOD
+                );
+                serde_json::Value::Null
+            })
+        })
     }
 }
