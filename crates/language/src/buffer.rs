@@ -5464,8 +5464,6 @@ impl From<bool> for LanguageAware {
     }
 }
 
-impl LanguageAware {}
-
 pub struct WordsQuery<'a> {
     /// Only returns words with all chars from the fuzzy string in them.
     pub fuzzy_contents: Option<&'a str>,
