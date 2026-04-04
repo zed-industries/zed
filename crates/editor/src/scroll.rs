@@ -201,8 +201,6 @@ pub struct ScrollManager {
     /// Each side separately clamps the x component using its own scroll_max_x when reading from the SharedScrollAnchor.
     scroll_max_x: Option<f64>,
     ongoing: OngoingScroll,
-    /// Number of sticky header lines currently being rendered for the current scroll position.
-    sticky_header_line_count: usize,
     /// The second element indicates whether the autoscroll request is local
     /// (true) or remote (false). Local requests are initiated by user actions,
     /// while remote requests come from external sources.
@@ -234,7 +232,6 @@ impl ScrollManager {
             anchor,
             scroll_max_x: None,
             ongoing: OngoingScroll::new(),
-            sticky_header_line_count: 0,
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
@@ -357,14 +354,6 @@ impl ScrollManager {
             pos.x = pos.x.min(max_x);
         }
         pos
-    }
-
-    pub fn sticky_header_line_count(&self) -> usize {
-        self.sticky_header_line_count
-    }
-
-    pub fn set_sticky_header_line_count(&mut self, count: usize) {
-        self.sticky_header_line_count = count;
     }
 
     fn set_scroll_position(
