@@ -5030,6 +5030,7 @@ impl MultiBufferSnapshot {
             if let Some(excerpt) = cursor.item() {
                 let buffer_snapshot = excerpt.buffer_snapshot(self);
                 if !excerpt.contains(&excerpt_anchor, self) {
+                    diff_transforms_cursor.seek_forward(&excerpt_start_position, Bias::Left);
                     let position = self.summary_for_excerpt_position_without_hunks(
                         Bias::Left,
                         excerpt_start_position,
