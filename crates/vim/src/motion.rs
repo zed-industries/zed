@@ -2506,11 +2506,16 @@ fn find_matching_c_preprocessor_directive(
             if ch != '\n' {
                 continue;
             }
-            let line_offset = char_offset + '\n'.len_utf8();
+            let mut line_offset = char_offset + '\n'.len_utf8();
+
+            // Skip leading whitespace
+            map.buffer_chars_at(line_offset)
+                .take_while(|(c, _)| *c == ' ' || *c == '\t')
+                .for_each(|(_, _)| line_offset += 1);
+
             // Check what directive starts the next line
             let next_line_start = map
                 .buffer_chars_at(line_offset)
-                .skip_while(|(c, _)| *c == ' ' || *c == '\t')
                 .map(|(c, _)| c)
                 .take(6)
                 .collect::<String>();
@@ -2531,16 +2536,22 @@ fn find_matching_c_preprocessor_directive(
         }
     } else if line_start.starts_with("#endif") {
         let mut depth = 0i32;
-        for (ch, char_offset) in map.reverse_buffer_chars_at(MultiBufferOffset(
-            line_range.start.saturating_sub(MultiBufferOffset(1)),
-        )) {
-            let line_offset = if char_offset == MultiBufferOffset(0) {
+        for (ch, char_offset) in
+            map.reverse_buffer_chars_at(line_range.start.saturating_sub_usize(1))
+        {
+            let mut line_offset = if char_offset == MultiBufferOffset(0) {
                 MultiBufferOffset(0)
             } else if ch != '\n' {
                 continue;
             } else {
                 char_offset + '\n'.len_utf8()
             };
+
+            // Skip leading whitespace
+            map.buffer_chars_at(line_offset)
+                .take_while(|(c, _)| *c == ' ' || *c == '\t')
+                .for_each(|(_, _)| line_offset += 1);
+
             // Check what directive starts this line
             let line_start = map
                 .buffer_chars_at(line_offset)
@@ -2549,7 +2560,10 @@ fn find_matching_c_preprocessor_directive(
                 .take(6)
                 .collect::<String>();
 
-            if line_start.starts_with("#endif") {
+            if line_start.starts_with("\n\n") {
+                // empty line
+                continue;
+            } else if line_start.starts_with("#endif") {
                 depth += 1;
             } else if line_start.starts_with("#if") {
                 if depth > 0 {
@@ -3659,8 +3673,7 @@ mod test {
     async fn test_matching_preprocessor_directives(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state(indoc! {r"
-            #ˇif
+        cx.set_shared_state(indoc! {r"#ˇif
 
             #else
 
@@ -3668,8 +3681,7 @@ mod test {
             "})
             .await;
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"
-          #if
+        cx.shared_state().await.assert_eq(indoc! {r"#if
 
           ˇ#else
 
@@ -3677,8 +3689,7 @@ mod test {
           "});
 
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"
-          #if
+        cx.shared_state().await.assert_eq(indoc! {r"#if
 
           #else
 
@@ -3686,8 +3697,7 @@ mod test {
           "});
 
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"
-          ˇ#if
+        cx.shared_state().await.assert_eq(indoc! {r"ˇ#if
 
           #else
 
@@ -3696,9 +3706,12 @@ mod test {
 
         cx.set_shared_state(indoc! {r"
             #ˇif
-            #if
-            #else
-            #endif
+              #if
+
+              #else
+
+              #endif
+
             #else
             #endif
             "})
@@ -3707,9 +3720,12 @@ mod test {
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state().await.assert_eq(indoc! {r"
             #if
-            #if
-            #else
-            #endif
+              #if
+
+              #else
+
+              #endif
+
             ˇ#else
             #endif
             "});
@@ -3717,9 +3733,24 @@ mod test {
         cx.simulate_shared_keystrokes("% %").await;
         cx.shared_state().await.assert_eq(indoc! {r"
             ˇ#if
-            #if
+              #if
+
+              #else
+
+              #endif
+
             #else
             #endif
+            "});
+        cx.simulate_shared_keystrokes("j % % %").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            #if
+              ˇ#if
+
+              #else
+
+              #endif
+
             #else
             #endif
             "});
