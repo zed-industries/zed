@@ -62,6 +62,8 @@ pub fn hover_at(
             editor.hover_state.hiding_delay_task = None;
             editor.hover_state.closest_mouse_distance = None;
             show_hover(editor, anchor, false, window, cx);
+        } else if !editor.hover_state.visible() {
+            editor.hover_state.info_task = None;
         } else {
             let mut getting_closer = false;
             if let Some(mouse_position) = mouse_position {
