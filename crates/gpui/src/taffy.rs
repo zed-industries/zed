@@ -32,6 +32,12 @@ pub struct TaffyLayoutEngine {
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
     /// Unrounded absolute origin in device pixels for each node.
     absolute_origins: FxHashMap<LayoutId, Point<f32>>,
+    /// Unrounded absolute content-box origin in device pixels for each node.
+    absolute_content_origins: FxHashMap<LayoutId, Point<f32>>,
+    /// Snapped absolute origin in device pixels for each node.
+    snapped_origins: FxHashMap<LayoutId, Point<f32>>,
+    /// Snapped absolute content-box origin in device pixels for each node.
+    snapped_content_origins: FxHashMap<LayoutId, Point<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
 }
@@ -46,6 +52,9 @@ impl TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
             absolute_origins: FxHashMap::default(),
+            absolute_content_origins: FxHashMap::default(),
+            snapped_origins: FxHashMap::default(),
+            snapped_content_origins: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
@@ -55,6 +64,9 @@ impl TaffyLayoutEngine {
         self.taffy.clear();
         self.absolute_layout_bounds.clear();
         self.absolute_origins.clear();
+        self.absolute_content_origins.clear();
+        self.snapped_origins.clear();
+        self.snapped_content_origins.clear();
         self.computed_layouts.clear();
     }
 
@@ -179,6 +191,9 @@ impl TaffyLayoutEngine {
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
                 self.absolute_origins.remove(&id);
+                self.absolute_content_origins.remove(&id);
+                self.snapped_origins.remove(&id);
+                self.snapped_content_origins.remove(&id);
                 stack.extend(
                     self.taffy
                         .children(id.into())
@@ -248,21 +263,38 @@ impl TaffyLayoutEngine {
         // rounding — GPUI reconstructs absolute positions through parents,
         // which breaks the cumulative invariant.
         //
+        let parent_id = self.taffy.parent(id.0);
+
+        let (
+            parent_absolute_origin_dev,
+            parent_absolute_content_origin_dev,
+            parent_snapped_content_origin_dev,
+        ) =
+            if let Some(parent_id) = parent_id {
+                self.layout_bounds(parent_id.into(), scale_factor);
+                (
+                    self.absolute_origins
+                        .get(&LayoutId::from(parent_id))
+                        .copied()
+                        .unwrap_or_default(),
+                    self.absolute_content_origins
+                        .get(&LayoutId::from(parent_id))
+                        .copied()
+                        .unwrap_or_default(),
+                    self.snapped_content_origins
+                        .get(&LayoutId::from(parent_id))
+                        .copied()
+                        .unwrap_or_default(),
+                )
+            } else {
+                (Point::default(), Point::default(), Point::default())
+            };
+
         let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
         let loc_x = layout.location.x;
         let loc_y = layout.location.y;
         let size_w = layout.size.width;
         let size_h = layout.size.height;
-
-        let parent_absolute_origin_dev = if let Some(parent_id) = self.taffy.parent(id.0) {
-            self.layout_bounds(parent_id.into(), scale_factor);
-            self.absolute_origins
-                .get(&LayoutId::from(parent_id))
-                .copied()
-                .unwrap_or_default()
-        } else {
-            Point::default()
-        };
 
         let absolute_origin_dev = point(
             parent_absolute_origin_dev.x + loc_x,
@@ -270,14 +302,68 @@ impl TaffyLayoutEngine {
         );
         self.absolute_origins.insert(id, absolute_origin_dev);
 
+        let parent_content_inset = if let Some(parent_id) = parent_id {
+            let parent_layout = self.taffy.layout(parent_id).expect(EXPECT_MESSAGE);
+            point(
+                parent_layout.border.left + parent_layout.padding.left,
+                parent_layout.border.top + parent_layout.padding.top,
+            )
+        } else {
+            Point::default()
+        };
+
+        let local_left_from_content = loc_x - parent_content_inset.x;
+        let local_top_from_content = loc_y - parent_content_inset.y;
+        let local_right_from_content = local_left_from_content + size_w;
+        let local_bottom_from_content = local_top_from_content + size_h;
+
+        let parent_content_left = round_half_toward_zero(parent_absolute_content_origin_dev.x);
+        let parent_content_top = round_half_toward_zero(parent_absolute_content_origin_dev.y);
+
+        let left = parent_snapped_content_origin_dev.x
+            + (round_half_toward_zero(
+                parent_absolute_content_origin_dev.x + local_left_from_content,
+            ) - parent_content_left);
+        let top = parent_snapped_content_origin_dev.y
+            + (round_half_toward_zero(
+                parent_absolute_content_origin_dev.y + local_top_from_content,
+            ) - parent_content_top);
+        let right = parent_snapped_content_origin_dev.x
+            + (round_half_toward_zero(
+                parent_absolute_content_origin_dev.x + local_right_from_content,
+            ) - parent_content_left);
+        let bottom = parent_snapped_content_origin_dev.y
+            + (round_half_toward_zero(
+                parent_absolute_content_origin_dev.y + local_bottom_from_content,
+            ) - parent_content_top);
+
+        self.snapped_origins.insert(id, point(left, top));
+
+        let content_inset = point(
+            layout.border.left + layout.padding.left,
+            layout.border.top + layout.padding.top,
+        );
+        let absolute_content_origin_dev = point(
+            absolute_origin_dev.x + content_inset.x,
+            absolute_origin_dev.y + content_inset.y,
+        );
+        self.absolute_content_origins
+            .insert(id, absolute_content_origin_dev);
+
+        let left_basis = round_half_toward_zero(absolute_origin_dev.x);
+        let top_basis = round_half_toward_zero(absolute_origin_dev.y);
+        let snapped_content_origin_dev = point(
+            left + (round_half_toward_zero(absolute_origin_dev.x + content_inset.x) - left_basis),
+            top + (round_half_toward_zero(absolute_origin_dev.y + content_inset.y) - top_basis),
+        );
+        self.snapped_content_origins
+            .insert(id, snapped_content_origin_dev);
+
         let bounds = Bounds {
-            origin: point(
-                Pixels(absolute_origin_dev.x / scale_factor),
-                Pixels(absolute_origin_dev.y / scale_factor),
-            ),
+            origin: point(Pixels(left / scale_factor), Pixels(top / scale_factor)),
             size: size(
-                Pixels(size_w / scale_factor),
-                Pixels(size_h / scale_factor),
+                Pixels((right - left) / scale_factor),
+                Pixels((bottom - top) / scale_factor),
             ),
         };
 

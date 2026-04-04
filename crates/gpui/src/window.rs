@@ -744,12 +744,6 @@ pub(crate) struct DeferredDraw {
     paint_range: Range<PaintIndex>,
 }
 
-#[derive(Clone, Copy)]
-struct LayoutRoundingContext {
-    raw_bounds: Bounds<Pixels>,
-    scene_bounds: Bounds<Pixels>,
-}
-
 pub(crate) struct Frame {
     pub(crate) focus: Option<FocusId>,
     pub(crate) window_active: bool,
@@ -935,7 +929,6 @@ pub struct Window {
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
-    layout_rounding_stack: Vec<LayoutRoundingContext>,
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
@@ -1437,7 +1430,6 @@ impl Window {
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
-            layout_rounding_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
@@ -2224,75 +2216,6 @@ impl Window {
             round_half_toward_zero(bounds.right().0 * scale_factor),
             round_half_toward_zero(bounds.bottom().0 * scale_factor),
         )
-    }
-
-    #[inline]
-    fn round_bounds_edges_to_logical_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<Pixels> {
-        self.round_bounds_edges_to_device_pixels(bounds)
-            .map(|value| Pixels(value.0 / self.scale_factor()))
-    }
-
-    #[inline]
-    pub(crate) fn snapped_element_offset(&self) -> Point<Pixels> {
-        self.round_point_to_device_pixels(self.element_offset())
-    }
-
-    #[inline]
-    pub(crate) fn raw_layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
-        let scale_factor = self.scale_factor();
-        self.layout_engine
-            .as_mut()
-            .unwrap()
-            .layout_bounds(layout_id, scale_factor)
-            .map(Into::into)
-    }
-
-    fn map_layout_bounds_to_scene(&self, raw_bounds: Bounds<Pixels>) -> Bounds<Pixels> {
-        let Some(parent_context) = self.layout_rounding_stack.last().copied() else {
-            return raw_bounds;
-        };
-
-        let delta = parent_context.scene_bounds.origin - parent_context.raw_bounds.origin;
-        let mut left = raw_bounds.left() + delta.x;
-        let mut top = raw_bounds.top() + delta.y;
-        let mut right = raw_bounds.right() + delta.x;
-        let mut bottom = raw_bounds.bottom() + delta.y;
-
-        let parent_raw = parent_context.raw_bounds;
-        let parent_scene = parent_context.scene_bounds;
-        const EDGE_EPSILON: f32 = 0.001;
-        let shares_edge = |a: Pixels, b: Pixels| (a.0 - b.0).abs() <= EDGE_EPSILON;
-
-        if shares_edge(raw_bounds.left(), parent_raw.left()) {
-            left = parent_scene.left();
-        }
-        if shares_edge(raw_bounds.top(), parent_raw.top()) {
-            top = parent_scene.top();
-        }
-        if shares_edge(raw_bounds.right(), parent_raw.right()) {
-            right = parent_scene.right();
-        }
-        if shares_edge(raw_bounds.bottom(), parent_raw.bottom()) {
-            bottom = parent_scene.bottom();
-        }
-
-        Bounds::from_corners(point(left, top), point(right.max(left), bottom.max(top)))
-    }
-
-    #[inline]
-    pub(crate) fn with_layout_rounding_context<R>(
-        &mut self,
-        raw_bounds: Bounds<Pixels>,
-        scene_bounds: Bounds<Pixels>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        self.layout_rounding_stack.push(LayoutRoundingContext {
-            raw_bounds,
-            scene_bounds: self.round_bounds_edges_to_logical_pixels(scene_bounds),
-        });
-        let result = f(self);
-        self.layout_rounding_stack.pop();
-        result
     }
 
     #[inline]
@@ -3995,9 +3918,14 @@ impl Window {
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         self.invalidator.debug_assert_prepaint();
 
-        let raw_bounds = self.raw_layout_bounds(layout_id);
-        let mut bounds = self.map_layout_bounds_to_scene(raw_bounds);
-        bounds.origin += self.snapped_element_offset();
+        let scale_factor = self.scale_factor();
+        let mut bounds = self
+            .layout_engine
+            .as_mut()
+            .unwrap()
+            .layout_bounds(layout_id, scale_factor)
+            .map(Into::into);
+        bounds.origin += self.round_point_to_device_pixels(self.element_offset());
         bounds
     }
 
