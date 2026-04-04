@@ -4064,7 +4064,7 @@ fn check_multibuffer(
     // Anchor resolution
     let summaries = snapshot.summaries_for_anchors::<MultiBufferOffset, _>(anchors);
     assert_eq!(anchors.len(), summaries.len());
-    for (anchor, resolved_offset) in anchors.iter().zip(summaries.clone()) {
+    for (anchor, resolved_offset) in anchors.iter().zip(summaries) {
         assert!(resolved_offset <= snapshot.len());
         assert_eq!(
             snapshot.summary_for_anchor::<MultiBufferOffset>(anchor),
