@@ -344,7 +344,8 @@ impl ThreadView {
     ) -> Self {
         let id = thread.read(cx).session_id().clone();
 
-        let placeholder = placeholder_text(agent_display_name.as_ref(), false);
+        let has_commands = !session_capabilities.read().available_commands().is_empty();
+        let placeholder = placeholder_text(agent_display_name.as_ref(), has_commands);
 
         let history_subscription = history.as_ref().map(|h| {
             cx.observe(h, |this, history, cx| {
