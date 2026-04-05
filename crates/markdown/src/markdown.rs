@@ -1487,6 +1487,8 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Heading { level, .. } => {
                             self.push_markdown_heading(&mut builder, *level, range, markdown_end);
+                            builder.current_heading_text = Some(String::new());
+                            builder.current_heading_range = Some(range.clone());
                         }
                         MarkdownTag::BlockQuote => {
                             self.push_markdown_block_quote(&mut builder, range, markdown_end);
@@ -1741,6 +1743,7 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::Heading(_) => {
+                        builder.finalize_heading(range);
                         self.pop_markdown_heading(&mut builder);
                     }
                     MarkdownTagEnd::BlockQuote(_kind) => {
@@ -2125,6 +2128,8 @@ struct MarkdownElementBuilder {
     rendered_links: Vec<RenderedLink>,
     rendered_headings: Vec<RenderedHeading>,
     heading_slug_counts: HashMap<String, usize>,
+    current_heading_text: Option<String>,
+    current_heading_range: Option<Range<usize>>,
     current_source_index: usize,
     html_comment: bool,
     base_text_style: TextStyle,
@@ -2163,6 +2168,8 @@ impl MarkdownElementBuilder {
             rendered_links: Vec::new(),
             rendered_headings: Vec::new(),
             heading_slug_counts: HashMap::default(),
+            current_heading_text: None,
+            current_heading_range: None,
             current_source_index: 0,
             html_comment: false,
             base_text_style,
@@ -2316,7 +2323,31 @@ impl MarkdownElementBuilder {
         });
     }
 
+    fn finalize_heading(&mut self, fallback_range: &Range<usize>) {
+        let Some(heading_text) = self.current_heading_text.take() else {
+            return;
+        };
+        let heading_range = self.current_heading_range.take().unwrap_or(fallback_range.clone());
+        let base_slug = generate_heading_slug(&heading_text);
+
+        let count = self.heading_slug_counts.entry(base_slug.clone()).or_insert(0);
+        let slug = if *count == 0 {
+            base_slug
+        } else {
+            format!("{base_slug}-{count}")
+        };
+        *count += 1;
+
+        self.rendered_headings.push(RenderedHeading {
+            source_range: heading_range,
+            slug: slug.into(),
+        });
+    }
+
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
+        if let Some(heading_text) = &mut self.current_heading_text {
+            heading_text.push_str(text);
+        }
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
             source_index: source_range.start,
@@ -3300,6 +3331,25 @@ mod tests {
             "what-about-parens"
         );
         assert_eq!(generate_heading_slug("  leading spaces  "), "leading-spaces");
+    }
+
+    #[gpui::test]
+    fn test_rendered_heading_slugs(cx: &mut TestAppContext) {
+        let rendered = render_markdown(
+            "# Hello World\n\n## Code `block`\n\n### Third Level\n\n#### Fourth Level\n\n## Hello World",
+            cx,
+        );
+        let slugs: Vec<&str> = rendered.headings.iter().map(|h| h.slug.as_ref()).collect();
+        assert_eq!(
+            slugs,
+            vec![
+                "hello-world",
+                "code-block",
+                "third-level",
+                "fourth-level",
+                "hello-world-1",
+            ]
+        );
     }
 
     #[track_caller]
