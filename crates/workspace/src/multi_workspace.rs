@@ -464,6 +464,9 @@ impl MultiWorkspace {
     }
 
     pub fn add_project_group_key(&mut self, project_group_key: ProjectGroupKey) {
+        if project_group_key.path_list().paths().is_empty() {
+            return;
+        }
         if self.project_group_keys.contains(&project_group_key) {
             return;
         }
@@ -856,26 +859,54 @@ impl MultiWorkspace {
         let Some(index) = self.workspaces.iter().position(|w| w == workspace) else {
             return false;
         };
+
+        let old_key = workspace.read(cx).project_group_key(cx);
+
         if self.workspaces.len() <= 1 {
-            return false;
+            let worktree_ids: Vec<_> = workspace
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|wt| wt.read(cx).id())
+                .collect();
+
+            if worktree_ids.is_empty() {
+                return false;
+            }
+
+            workspace.update(cx, |workspace, cx| {
+                for id in worktree_ids {
+                    workspace.project().update(cx, |project, cx| {
+                        project.remove_worktree(id, cx);
+                    });
+                }
+            });
+        } else {
+            let removed_workspace = self.workspaces.remove(index);
+
+            if self.active_workspace_index >= self.workspaces.len() {
+                self.active_workspace_index = self.workspaces.len() - 1;
+            } else if self.active_workspace_index > index {
+                self.active_workspace_index -= 1;
+            }
+
+            self.detach_workspace(&removed_workspace, cx);
+
+            cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(
+                removed_workspace.entity_id(),
+            ));
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         }
 
-        let removed_workspace = self.workspaces.remove(index);
-
-        if self.active_workspace_index >= self.workspaces.len() {
-            self.active_workspace_index = self.workspaces.len() - 1;
-        } else if self.active_workspace_index > index {
-            self.active_workspace_index -= 1;
+        let key_still_in_use = self
+            .workspaces
+            .iter()
+            .any(|ws| ws.read(cx).project_group_key(cx) == old_key);
+        if !key_still_in_use {
+            self.project_group_keys.retain(|k| k != &old_key);
         }
-
-        self.detach_workspace(&removed_workspace, cx);
 
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
-        cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(
-            removed_workspace.entity_id(),
-        ));
-        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         cx.notify();
 
         true
