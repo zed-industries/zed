@@ -524,13 +524,16 @@ fn ensure_thread_subscription(
                     if role == "assistant" {
                         *turn_request_id.borrow_mut() = rid.clone();
                     }
-                    // Before sending the new entry, re-send ALL preceding entries
-                    // with their current content. flush_streaming_text() was called
-                    // right before push_entry(), so all Markdown entities have their
-                    // complete text. The old approach (flush_stale_pending_for_thread)
-                    // only sent the *throttled snapshot* which may be missing final
-                    // tokens that arrived between the last EntryUpdated and now.
-                    for prev_idx in 0..latest_idx {
+                    // Re-send preceding entries FROM THE CURRENT TURN with their
+                    // current content. flush_streaming_text() was called right before
+                    // push_entry(), so all Markdown entities have their complete text.
+                    // Only send entries after the last UserMessage to avoid leaking
+                    // old turn entries into the current interaction on the Go side.
+                    let entries = thread.entries();
+                    let turn_start = entries.iter().enumerate().rev()
+                        .find_map(|(i, e)| matches!(e, acp_thread::AgentThreadEntry::UserMessage(_)).then_some(i + 1))
+                        .unwrap_or(0);
+                    for prev_idx in turn_start..latest_idx {
                         if let Some(prev_entry) = thread.entries().get(prev_idx) {
                             let (prev_role, prev_content, prev_entry_type) = match prev_entry {
                                 acp_thread::AgentThreadEntry::UserMessage(msg) => {
