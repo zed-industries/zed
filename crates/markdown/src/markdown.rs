@@ -983,7 +983,7 @@ impl MarkdownElement {
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
-        let align = builder.current_block_text_align();
+        let align = builder.text_style().text_align;
         builder.modify_current_div(|el| {
             let mut row = div().flex().flex_row().w_full().items_center();
 
@@ -1057,17 +1057,15 @@ impl MarkdownElement {
         let heading_text_style = heading_style.text_style().clone();
         heading.style().refine(&heading_style);
 
-        builder.push_text_style(heading_text_style);
         builder.push_text_style(TextStyleRefinement {
             text_align: Some(align),
-            ..Default::default()
+            ..heading_text_style
         });
         builder.push_div(heading, range, markdown_end);
     }
 
     fn pop_markdown_heading(&self, builder: &mut MarkdownElementBuilder) {
         builder.pop_div();
-        builder.pop_text_style();
         builder.pop_text_style();
     }
 
@@ -2213,10 +2211,6 @@ impl MarkdownElementBuilder {
             table: TableState::default(),
             syntax_theme,
         }
-    }
-
-    fn current_block_text_align(&self) -> TextAlign {
-        self.text_style().text_align
     }
 
     fn push_text_style(&mut self, style: TextStyleRefinement) {
