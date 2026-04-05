@@ -1064,8 +1064,6 @@ pub struct AcpThread {
 struct StreamingTextBuffer {
     /// Text received from the model but not yet appended to the Markdown source.
     pending: String,
-    /// The number of bytes to reveal per timer turn.
-    bytes_to_reveal_per_tick: usize,
     /// The Markdown entity being streamed into.
     target: Entity<Markdown>,
     /// Timer task that periodically moves text from `pending` into `source`.
@@ -1073,11 +1071,10 @@ struct StreamingTextBuffer {
 }
 
 impl StreamingTextBuffer {
-    /// The number of milliseconds between each timer tick, controlling how quickly
-    /// text is revealed.
+    /// The number of milliseconds between each timer tick. The timer batches
+    /// incoming tokens so we don't call `markdown.append` per-character, but
+    /// each tick drains the entire pending buffer.
     const TASK_UPDATE_MS: u64 = 16;
-    /// The time in milliseconds to reveal the entire pending text.
-    const REVEAL_TARGET: f32 = 200.0;
 }
 
 impl From<&AcpThread> for ActionLogTelemetry {
@@ -1603,11 +1600,6 @@ impl AcpThread {
         if let Some(buffer) = &mut self.streaming_text_buffer {
             if buffer.target.entity_id() == markdown.entity_id() {
                 buffer.pending.push_str(&text);
-
-                buffer.bytes_to_reveal_per_tick = (buffer.pending.len() as f32
-                    / StreamingTextBuffer::REVEAL_TARGET
-                    * StreamingTextBuffer::TASK_UPDATE_MS as f32)
-                    .ceil() as usize;
                 return;
             }
             Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
@@ -1615,13 +1607,8 @@ impl AcpThread {
 
         let target = markdown.clone();
         let _reveal_task = self.start_streaming_reveal(cx);
-        let pending_len = text.len();
-        let bytes_to_reveal = (pending_len as f32 / StreamingTextBuffer::REVEAL_TARGET
-            * StreamingTextBuffer::TASK_UPDATE_MS as f32)
-            .ceil() as usize;
         self.streaming_text_buffer = Some(StreamingTextBuffer {
             pending: text,
-            bytes_to_reveal_per_tick: bytes_to_reveal,
             target,
             _reveal_task,
         });
@@ -1661,16 +1648,13 @@ impl AcpThread {
                             return true;
                         }
 
-                        let pending_len = buffer.pending.len();
-
-                        let byte_boundary = buffer
-                            .pending
-                            .ceil_char_boundary(buffer.bytes_to_reveal_per_tick)
-                            .min(pending_len);
-
+                        // Drain the entire pending buffer each tick. The 16ms timer
+                        // still batches (avoids per-character appends), but we never
+                        // withhold bytes — content_only(cx) reads markdown.source()
+                        // so any unrevealed bytes would be invisible to WebSocket sync.
+                        let full = std::mem::take(&mut buffer.pending);
                         buffer.target.update(cx, |markdown: &mut Markdown, cx| {
-                            markdown.append(&buffer.pending[..byte_boundary], cx);
-                            buffer.pending.drain(..byte_boundary);
+                            markdown.append(&full, cx);
                         });
 
                         true
