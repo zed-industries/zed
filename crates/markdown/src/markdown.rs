@@ -2761,6 +2761,13 @@ impl RenderedText {
             .iter()
             .find(|link| link.source_range.contains(&source_index))
     }
+
+    fn heading_source_index_for_slug(&self, slug: &str) -> Option<usize> {
+        self.headings
+            .iter()
+            .find(|heading| heading.slug.as_ref() == slug)
+            .map(|heading| heading.source_range.start)
+    }
 }
 
 #[cfg(test)]
@@ -3350,6 +3357,21 @@ mod tests {
                 "hello-world-1",
             ]
         );
+    }
+
+    #[gpui::test]
+    fn test_heading_source_index_for_slug(cx: &mut TestAppContext) {
+        let rendered = render_markdown("# First\n\nSome text\n\n## Second\n\nMore text", cx);
+        assert!(rendered.heading_source_index_for_slug("first").is_some());
+        assert!(rendered.heading_source_index_for_slug("second").is_some());
+        assert!(rendered.heading_source_index_for_slug("nonexistent").is_none());
+
+        let rendered = render_markdown("# Duplicate\n\nText\n\n## Duplicate\n\nMore text", cx);
+        let first = rendered.heading_source_index_for_slug("duplicate");
+        let second = rendered.heading_source_index_for_slug("duplicate-1");
+        assert!(first.is_some());
+        assert!(second.is_some());
+        assert!(first.unwrap() < second.unwrap());
     }
 
     #[track_caller]
