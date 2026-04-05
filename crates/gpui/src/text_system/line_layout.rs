@@ -958,3 +958,134 @@ impl AsCacheKeyRef for CacheKeyRef<'_> {
         *self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::GlyphId;
+
+    fn glyph_at(x: f32, index: usize) -> ShapedGlyph {
+        ShapedGlyph {
+            id: GlyphId(0),
+            position: point(px(x), px(0.)),
+            index,
+            is_emoji: false,
+        }
+    }
+
+    fn make_layout(glyphs: Vec<ShapedGlyph>) -> LineLayout {
+        LineLayout {
+            font_size: px(16.),
+            width: px(100.),
+            ascent: px(12.),
+            descent: px(4.),
+            runs: vec![ShapedRun {
+                font_id: FontId(0),
+                glyphs,
+            }],
+            len: 0,
+        }
+    }
+
+    #[test]
+    fn test_force_width_latin_unchanged() {
+        let cell_width = px(8.);
+        let mut layout = make_layout(vec![
+            glyph_at(0., 0),
+            glyph_at(8., 1),
+            glyph_at(16., 2),
+        ]);
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        let positions: Vec<f32> = layout.runs[0]
+            .glyphs
+            .iter()
+            .map(|g| g.position.x.0)
+            .collect();
+        assert_eq!(positions, vec![0., 8., 16.]);
+    }
+
+    #[test]
+    fn test_force_width_combining_marks_not_advanced() {
+        let cell_width = px(8.);
+        // Simulates Thai "กี" — base consonant at x=0, combining vowel also at x=0
+        let mut layout = make_layout(vec![
+            glyph_at(0., 0), // ก (base)
+            glyph_at(0., 3), // ี (combining mark, same x)
+        ]);
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        let positions: Vec<f32> = layout.runs[0]
+            .glyphs
+            .iter()
+            .map(|g| g.position.x.0)
+            .collect();
+        // Base at cell 0, combining mark stays at cell 0 (not pushed to cell 1)
+        assert_eq!(positions, vec![0., 0.]);
+    }
+
+    #[test]
+    fn test_force_width_base_after_combining_mark() {
+        let cell_width = px(8.);
+        // Simulates "กีค" — base + combining mark + next base
+        let mut layout = make_layout(vec![
+            glyph_at(0., 0),  // ก (base)
+            glyph_at(0., 3),  // ี (combining mark)
+            glyph_at(8., 6),  // ค (next base)
+        ]);
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        let positions: Vec<f32> = layout.runs[0]
+            .glyphs
+            .iter()
+            .map(|g| g.position.x.0)
+            .collect();
+        // Base at cell 0, combining at cell 0, next base at cell 1
+        assert_eq!(positions, vec![0., 0., 8.]);
+    }
+
+    #[test]
+    fn test_force_width_multiple_combining_marks() {
+        let cell_width = px(8.);
+        // Simulates "ก้" — base + vowel + tone mark (two combining marks stacked)
+        let mut layout = make_layout(vec![
+            glyph_at(0., 0),  // ก (base)
+            glyph_at(0., 3),  // vowel (combining)
+            glyph_at(0., 6),  // tone mark (combining)
+            glyph_at(8., 9),  // next base
+        ]);
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        let positions: Vec<f32> = layout.runs[0]
+            .glyphs
+            .iter()
+            .map(|g| g.position.x.0)
+            .collect();
+        assert_eq!(positions, vec![0., 0., 0., 8.]);
+    }
+
+    #[test]
+    fn test_force_width_corrects_drifted_base_positions() {
+        let cell_width = px(8.);
+        // Font metrics don't perfectly match cell grid — glyphs are slightly off
+        let mut layout = make_layout(vec![
+            glyph_at(0.5, 0),
+            glyph_at(9.2, 1),
+            glyph_at(17.8, 2),
+        ]);
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        let positions: Vec<f32> = layout.runs[0]
+            .glyphs
+            .iter()
+            .map(|g| g.position.x.0)
+            .collect();
+        // All forced to exact cell boundaries
+        assert_eq!(positions, vec![0., 8., 16.]);
+    }
+}
