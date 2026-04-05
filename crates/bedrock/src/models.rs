@@ -1,4 +1,16 @@
+mod amazon;
+mod anthropic;
+mod deepseek;
+mod google;
+mod meta;
+mod minimax;
+mod mistral;
+mod moonshot;
+mod openai;
+mod qwen;
+
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use strum::EnumIter;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -22,8 +34,22 @@ impl BedrockAdaptiveThinkingEffort {
     }
 }
 
+impl FromStr for BedrockAdaptiveThinkingEffort {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "low" => Ok(Self::Low),
+            "medium" => Ok(Self::Medium),
+            "high" => Ok(Self::High),
+            "max" => Ok(Self::Max),
+            other => anyhow::bail!("unknown adaptive thinking effort: {other}"),
+        }
+    }
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum BedrockModelMode {
     #[default]
     Default,
@@ -36,16 +62,29 @@ pub enum BedrockModelMode {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct BedrockModelCacheConfiguration {
     pub max_cache_anchors: usize,
     pub min_total_token: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelCapabilities {
+    pub max_tokens: u64,
+    pub max_output_tokens: u64,
+    pub default_temperature: f32,
+    pub supports_tool_use: bool,
+    pub supports_images: bool,
+    pub supports_thinking: bool,
+    pub supports_adaptive_thinking: bool,
+    pub cache_configuration: Option<BedrockModelCacheConfiguration>,
+    pub extended_context_token_count: Option<u64>,
+    pub thinking_mode: BedrockModelMode,
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    // Anthropic Claude 4+ models
     #[serde(rename = "claude-haiku-4-5", alias = "claude-haiku-4-5-latest")]
     ClaudeHaiku4_5,
     #[serde(
@@ -92,13 +131,11 @@ pub enum Model {
     )]
     ClaudeSonnet4_6,
 
-    // Meta Llama 4 models
     #[serde(rename = "llama-4-scout-17b")]
     Llama4Scout17B,
     #[serde(rename = "llama-4-maverick-17b")]
     Llama4Maverick17B,
 
-    // Google Gemma 3 models
     #[serde(rename = "gemma-3-4b")]
     Gemma3_4B,
     #[serde(rename = "gemma-3-12b")]
@@ -106,7 +143,6 @@ pub enum Model {
     #[serde(rename = "gemma-3-27b")]
     Gemma3_27B,
 
-    // Mistral models
     #[serde(rename = "magistral-small")]
     MagistralSmall,
     #[serde(rename = "mistral-large-3")]
@@ -114,7 +150,6 @@ pub enum Model {
     #[serde(rename = "pixtral-large")]
     PixtralLarge,
 
-    // Qwen models
     #[serde(rename = "qwen3-32b")]
     Qwen3_32B,
     #[serde(rename = "qwen3-vl-235b")]
@@ -130,7 +165,6 @@ pub enum Model {
     #[serde(rename = "qwen3-coder-480b")]
     Qwen3Coder480B,
 
-    // Amazon Nova models
     #[serde(rename = "nova-lite")]
     NovaLite,
     #[serde(rename = "nova-pro")]
@@ -140,23 +174,19 @@ pub enum Model {
     #[serde(rename = "nova-2-lite")]
     Nova2Lite,
 
-    // OpenAI GPT OSS models
     #[serde(rename = "gpt-oss-20b")]
     GptOss20B,
     #[serde(rename = "gpt-oss-120b")]
     GptOss120B,
 
-    // MiniMax models
     #[serde(rename = "minimax-m2")]
     MiniMaxM2,
 
-    // Moonshot models
     #[serde(rename = "kimi-k2-thinking")]
     KimiK2Thinking,
     #[serde(rename = "kimi-k2-5")]
     KimiK2_5,
 
-    // DeepSeek models
     #[serde(rename = "deepseek-r1")]
     DeepSeekR1,
     #[serde(rename = "deepseek-v3")]
@@ -182,21 +212,84 @@ impl Model {
 
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
         if id.starts_with("claude-opus-4-6") {
-            Ok(Self::ClaudeOpus4_6)
+            return Ok(Self::ClaudeOpus4_6);
         } else if id.starts_with("claude-opus-4-5") {
-            Ok(Self::ClaudeOpus4_5)
+            return Ok(Self::ClaudeOpus4_5);
         } else if id.starts_with("claude-opus-4-1") {
-            Ok(Self::ClaudeOpus4_1)
+            return Ok(Self::ClaudeOpus4_1);
         } else if id.starts_with("claude-sonnet-4-6") {
-            Ok(Self::ClaudeSonnet4_6)
+            return Ok(Self::ClaudeSonnet4_6);
         } else if id.starts_with("claude-sonnet-4-5") {
-            Ok(Self::ClaudeSonnet4_5)
+            return Ok(Self::ClaudeSonnet4_5);
         } else if id.starts_with("claude-sonnet-4") {
-            Ok(Self::ClaudeSonnet4)
+            return Ok(Self::ClaudeSonnet4);
         } else if id.starts_with("claude-haiku-4-5") {
-            Ok(Self::ClaudeHaiku4_5)
-        } else {
-            anyhow::bail!("invalid model id {id}");
+            return Ok(Self::ClaudeHaiku4_5);
+        }
+
+        for model in <Self as strum::IntoEnumIterator>::iter() {
+            if !matches!(model, Self::Custom { .. }) && model.id() == id {
+                return Ok(model);
+            }
+        }
+
+        anyhow::bail!("invalid model id {id}")
+    }
+
+    pub fn capabilities(&self) -> ModelCapabilities {
+        match self {
+            Self::ClaudeHaiku4_5 => anthropic::CLAUDE_HAIKU_4_5,
+            Self::ClaudeSonnet4 => anthropic::CLAUDE_SONNET_4,
+            Self::ClaudeSonnet4_5 => anthropic::CLAUDE_SONNET_4_5,
+            Self::ClaudeOpus4_1 => anthropic::CLAUDE_OPUS_4_1,
+            Self::ClaudeOpus4_5 => anthropic::CLAUDE_OPUS_4_5,
+            Self::ClaudeOpus4_6 => anthropic::CLAUDE_OPUS_4_6,
+            Self::ClaudeSonnet4_6 => anthropic::CLAUDE_SONNET_4_6,
+            Self::Llama4Scout17B => meta::LLAMA_4_SCOUT_17B,
+            Self::Llama4Maverick17B => meta::LLAMA_4_MAVERICK_17B,
+            Self::Gemma3_4B => google::GEMMA_3_4B,
+            Self::Gemma3_12B => google::GEMMA_3_12B,
+            Self::Gemma3_27B => google::GEMMA_3_27B,
+            Self::MagistralSmall => mistral::MAGISTRAL_SMALL,
+            Self::MistralLarge3 => mistral::MISTRAL_LARGE_3,
+            Self::PixtralLarge => mistral::PIXTRAL_LARGE,
+            Self::Qwen3_32B => qwen::QWEN3_32B,
+            Self::Qwen3VL235B => qwen::QWEN3_VL_235B,
+            Self::Qwen3_235B => qwen::QWEN3_235B,
+            Self::Qwen3Next80B => qwen::QWEN3_NEXT_80B,
+            Self::Qwen3Coder30B => qwen::QWEN3_CODER_30B,
+            Self::Qwen3CoderNext => qwen::QWEN3_CODER_NEXT,
+            Self::Qwen3Coder480B => qwen::QWEN3_CODER_480B,
+            Self::NovaLite => amazon::NOVA_LITE,
+            Self::NovaPro => amazon::NOVA_PRO,
+            Self::NovaPremier => amazon::NOVA_PREMIER,
+            Self::Nova2Lite => amazon::NOVA_2_LITE,
+            Self::GptOss20B => openai::GPT_OSS_20B,
+            Self::GptOss120B => openai::GPT_OSS_120B,
+            Self::MiniMaxM2 => minimax::MINIMAX_M2,
+            Self::KimiK2Thinking => moonshot::KIMI_K2_THINKING,
+            Self::KimiK2_5 => moonshot::KIMI_K2_5,
+            Self::DeepSeekR1 => deepseek::DEEPSEEK_R1,
+            Self::DeepSeekV3_1 => deepseek::DEEPSEEK_V3_1,
+            Self::DeepSeekV3_2 => deepseek::DEEPSEEK_V3_2,
+            Self::Custom {
+                max_tokens,
+                max_output_tokens,
+                default_temperature,
+                cache_configuration,
+                ..
+            } => ModelCapabilities {
+                max_tokens: *max_tokens,
+                max_output_tokens: max_output_tokens.unwrap_or(4_096),
+                default_temperature: default_temperature.unwrap_or(1.0),
+                supports_tool_use: false,
+                supports_images: false,
+                supports_thinking: false,
+                supports_adaptive_thinking: false,
+                cache_configuration: *cache_configuration,
+                extended_context_token_count: None,
+                thinking_mode: BedrockModelMode::Default,
+            },
         }
     }
 
@@ -323,215 +416,51 @@ impl Model {
     }
 
     pub fn max_token_count(&self) -> u64 {
-        self.max_tokens()
+        self.capabilities().max_tokens
     }
 
     pub fn max_tokens(&self) -> u64 {
-        match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet4_6 => 200_000,
-            Self::Llama4Scout17B | Self::Llama4Maverick17B => 128_000,
-            Self::Gemma3_4B | Self::Gemma3_12B | Self::Gemma3_27B => 128_000,
-            Self::MagistralSmall | Self::MistralLarge3 | Self::PixtralLarge => 128_000,
-            Self::Qwen3_32B
-            | Self::Qwen3VL235B
-            | Self::Qwen3_235B
-            | Self::Qwen3Next80B
-            | Self::Qwen3Coder30B
-            | Self::Qwen3CoderNext
-            | Self::Qwen3Coder480B => 128_000,
-            Self::NovaLite | Self::NovaPro => 300_000,
-            Self::NovaPremier => 1_000_000,
-            Self::Nova2Lite => 300_000,
-            Self::GptOss20B | Self::GptOss120B => 128_000,
-            Self::MiniMaxM2 => 128_000,
-            Self::KimiK2Thinking | Self::KimiK2_5 => 128_000,
-            Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => 128_000,
-            Self::Custom { max_tokens, .. } => *max_tokens,
-        }
+        self.capabilities().max_tokens
     }
 
     pub fn max_output_tokens(&self) -> u64 {
-        match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeSonnet4_6 => 64_000,
-            Self::ClaudeOpus4_1 => 32_000,
-            Self::ClaudeOpus4_6 => 128_000,
-            Self::Llama4Scout17B
-            | Self::Llama4Maverick17B
-            | Self::Gemma3_4B
-            | Self::Gemma3_12B
-            | Self::Gemma3_27B
-            | Self::MagistralSmall
-            | Self::MistralLarge3
-            | Self::PixtralLarge => 8_192,
-            Self::Qwen3_32B
-            | Self::Qwen3VL235B
-            | Self::Qwen3_235B
-            | Self::Qwen3Next80B
-            | Self::Qwen3Coder30B
-            | Self::Qwen3CoderNext
-            | Self::Qwen3Coder480B => 8_192,
-            Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => 5_000,
-            Self::GptOss20B | Self::GptOss120B => 16_000,
-            Self::MiniMaxM2 => 16_000,
-            Self::KimiK2Thinking | Self::KimiK2_5 => 16_000,
-            Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => 16_000,
-            Self::Custom {
-                max_output_tokens, ..
-            } => max_output_tokens.unwrap_or(4_096),
-        }
+        self.capabilities().max_output_tokens
     }
 
     pub fn default_temperature(&self) -> f32 {
-        match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet4_6 => 1.0,
-            Self::Custom {
-                default_temperature,
-                ..
-            } => default_temperature.unwrap_or(1.0),
-            _ => 1.0,
-        }
+        self.capabilities().default_temperature
     }
 
     pub fn supports_tool_use(&self) -> bool {
-        match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet4_6 => true,
-            Self::NovaLite | Self::NovaPro | Self::NovaPremier | Self::Nova2Lite => true,
-            Self::MistralLarge3 | Self::PixtralLarge | Self::MagistralSmall => true,
-            // Gemma accepts toolConfig without error but produces unreliable tool
-            // calls -- malformed JSON args, hallucinated tool names, dropped calls.
-            Self::Qwen3_32B
-            | Self::Qwen3VL235B
-            | Self::Qwen3_235B
-            | Self::Qwen3Next80B
-            | Self::Qwen3Coder30B
-            | Self::Qwen3CoderNext
-            | Self::Qwen3Coder480B => true,
-            Self::MiniMaxM2 => true,
-            Self::KimiK2Thinking | Self::KimiK2_5 => true,
-            Self::DeepSeekR1 | Self::DeepSeekV3_1 | Self::DeepSeekV3_2 => true,
-            _ => false,
-        }
+        self.capabilities().supports_tool_use
     }
 
     pub fn supports_images(&self) -> bool {
-        match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet4_6 => true,
-            Self::NovaLite | Self::NovaPro => true,
-            Self::PixtralLarge => true,
-            Self::Qwen3VL235B => true,
-            Self::KimiK2_5 => true,
-            _ => false,
-        }
+        self.capabilities().supports_images
     }
 
     pub fn supports_extended_context(&self) -> bool {
-        matches!(
-            self,
-            Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeSonnet4_6
-        )
+        self.capabilities().extended_context_token_count.is_some()
     }
 
     pub fn supports_caching(&self) -> bool {
-        match self {
-            Self::ClaudeHaiku4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet4_6 => true,
-            Self::Custom {
-                cache_configuration,
-                ..
-            } => cache_configuration.is_some(),
-            _ => false,
-        }
+        self.capabilities().cache_configuration.is_some()
     }
 
     pub fn cache_configuration(&self) -> Option<BedrockModelCacheConfiguration> {
-        match self {
-            Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeSonnet4_6 => Some(BedrockModelCacheConfiguration {
-                max_cache_anchors: 4,
-                min_total_token: 1024,
-            }),
-            Self::ClaudeHaiku4_5 => Some(BedrockModelCacheConfiguration {
-                max_cache_anchors: 4,
-                min_total_token: 2048,
-            }),
-            Self::Custom {
-                cache_configuration,
-                ..
-            } => cache_configuration.clone(),
-            _ => None,
-        }
+        self.capabilities().cache_configuration
     }
 
     pub fn supports_thinking(&self) -> bool {
-        matches!(
-            self,
-            Self::ClaudeHaiku4_5
-                | Self::ClaudeSonnet4
-                | Self::ClaudeSonnet4_5
-                | Self::ClaudeOpus4_1
-                | Self::ClaudeOpus4_5
-                | Self::ClaudeOpus4_6
-                | Self::ClaudeSonnet4_6
-        )
+        self.capabilities().supports_thinking
     }
 
     pub fn supports_adaptive_thinking(&self) -> bool {
-        matches!(self, Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6)
+        self.capabilities().supports_adaptive_thinking
     }
 
     pub fn thinking_mode(&self) -> BedrockModelMode {
-        if self.supports_adaptive_thinking() {
-            BedrockModelMode::AdaptiveThinking {
-                effort: BedrockAdaptiveThinkingEffort::default(),
-            }
-        } else if self.supports_thinking() {
-            BedrockModelMode::Thinking {
-                budget_tokens: Some(4096),
-            }
-        } else {
-            BedrockModelMode::Default
-        }
+        self.capabilities().thinking_mode
     }
 
     pub fn cross_region_inference_id(
@@ -552,7 +481,6 @@ impl Model {
                 | Self::Nova2Lite
         );
 
-        // Determine region group based on AWS region
         let region_group = if region.starts_with("us-gov-") {
             "us-gov"
         } else if region.starts_with("us-") || region.starts_with("sa-") {
@@ -574,14 +502,12 @@ impl Model {
                 "eu"
             }
         } else if region == "ap-southeast-2" || region == "ap-southeast-4" {
-            // Australia
             if allow_global && supports_global {
                 "global"
             } else {
                 "au"
             }
         } else if region == "ap-northeast-1" || region == "ap-northeast-3" {
-            // Japan
             if allow_global && supports_global {
                 "global"
             } else {
@@ -600,7 +526,6 @@ impl Model {
         match (self, region_group) {
             (Self::Custom { .. }, _) => Ok(model_id.into()),
 
-            // Global inference profiles
             (
                 Self::ClaudeHaiku4_5
                 | Self::ClaudeSonnet4
@@ -612,10 +537,8 @@ impl Model {
                 "global",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // US Government region inference profiles
             (Self::ClaudeSonnet4_5, "us-gov") => Ok(format!("{}.{}", region_group, model_id)),
 
-            // US region inference profiles
             (
                 Self::ClaudeHaiku4_5
                 | Self::ClaudeSonnet4
@@ -635,10 +558,8 @@ impl Model {
                 "us",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Canada region inference profiles
             (Self::NovaLite, "ca") => Ok(format!("{}.{}", region_group, model_id)),
 
-            // EU region inference profiles
             (
                 Self::ClaudeHaiku4_5
                 | Self::ClaudeSonnet4
@@ -651,7 +572,6 @@ impl Model {
                 "eu",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Australia region inference profiles
             (
                 Self::ClaudeHaiku4_5
                 | Self::ClaudeSonnet4_5
@@ -660,7 +580,6 @@ impl Model {
                 "au",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Japan region inference profiles
             (
                 Self::ClaudeHaiku4_5
                 | Self::ClaudeSonnet4_5
@@ -669,7 +588,6 @@ impl Model {
                 "jp",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // APAC region inference profiles (other than AU/JP)
             (
                 Self::ClaudeHaiku4_5
                 | Self::ClaudeSonnet4
@@ -680,7 +598,6 @@ impl Model {
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Default: use model ID directly
             _ => Ok(model_id.into()),
         }
     }
@@ -824,7 +741,6 @@ mod tests {
             "global.amazon.nova-2-lite-v1:0"
         );
 
-        // Models without global support fall back to regional
         assert_eq!(
             Model::NovaPro.cross_region_inference_id("us-east-1", true)?,
             "us.amazon.nova-pro-v1:0"
@@ -834,7 +750,6 @@ mod tests {
 
     #[test]
     fn test_models_without_cross_region() -> anyhow::Result<()> {
-        // Models without cross-region support return their request_id directly
         assert_eq!(
             Model::Gemma3_4B.cross_region_inference_id("us-east-1", false)?,
             "google.gemma-3-4b-it"
@@ -902,7 +817,6 @@ mod tests {
             "meta.llama4-scout-17b-instruct-v1:0"
         );
 
-        // Thinking aliases deserialize to the same model
         assert_eq!(Model::ClaudeSonnet4.id(), "claude-sonnet-4");
         assert_eq!(
             Model::from_id("claude-sonnet-4-thinking").unwrap().id(),
@@ -976,5 +890,71 @@ mod tests {
         assert!(Model::ClaudeOpus4_6.supports_caching());
         assert!(!Model::Llama4Scout17B.supports_caching());
         assert!(!Model::NovaPro.supports_caching());
+    }
+
+    #[test]
+    fn test_from_id_non_claude_models() {
+        assert_eq!(Model::from_id("nova-lite").unwrap().id(), "nova-lite");
+        assert_eq!(Model::from_id("deepseek-r1").unwrap().id(), "deepseek-r1");
+        assert_eq!(
+            Model::from_id("llama-4-scout-17b").unwrap().id(),
+            "llama-4-scout-17b"
+        );
+        assert_eq!(Model::from_id("qwen3-32b").unwrap().id(), "qwen3-32b");
+        assert_eq!(Model::from_id("minimax-m2").unwrap().id(), "minimax-m2");
+        assert!(Model::from_id("nonexistent-model").is_err());
+    }
+
+    #[test]
+    fn test_capabilities_round_trip() {
+        let caps = Model::ClaudeOpus4_6.capabilities();
+        assert_eq!(caps.max_tokens, 200_000);
+        assert_eq!(caps.max_output_tokens, 128_000);
+        assert!(caps.supports_adaptive_thinking);
+        assert!(caps.supports_thinking);
+        assert!(caps.cache_configuration.is_some());
+        assert_eq!(caps.extended_context_token_count, Some(1_000_000));
+    }
+
+    #[test]
+    fn test_custom_model_capabilities() {
+        let custom = Model::Custom {
+            name: "my-model".to_string(),
+            max_tokens: 50_000,
+            display_name: Some("My Model".to_string()),
+            max_output_tokens: Some(8192),
+            default_temperature: Some(0.5),
+            cache_configuration: Some(BedrockModelCacheConfiguration {
+                max_cache_anchors: 2,
+                min_total_token: 512,
+            }),
+        };
+        let caps = custom.capabilities();
+        assert_eq!(caps.max_tokens, 50_000);
+        assert_eq!(caps.max_output_tokens, 8192);
+        assert_eq!(caps.default_temperature, 0.5);
+        assert!(!caps.supports_tool_use);
+        assert!(caps.cache_configuration.is_some());
+    }
+
+    #[test]
+    fn test_adaptive_thinking_effort_from_str() {
+        assert_eq!(
+            "low".parse::<BedrockAdaptiveThinkingEffort>().unwrap(),
+            BedrockAdaptiveThinkingEffort::Low
+        );
+        assert_eq!(
+            "medium".parse::<BedrockAdaptiveThinkingEffort>().unwrap(),
+            BedrockAdaptiveThinkingEffort::Medium
+        );
+        assert_eq!(
+            "high".parse::<BedrockAdaptiveThinkingEffort>().unwrap(),
+            BedrockAdaptiveThinkingEffort::High
+        );
+        assert_eq!(
+            "max".parse::<BedrockAdaptiveThinkingEffort>().unwrap(),
+            BedrockAdaptiveThinkingEffort::Max
+        );
+        assert!("invalid".parse::<BedrockAdaptiveThinkingEffort>().is_err());
     }
 }
