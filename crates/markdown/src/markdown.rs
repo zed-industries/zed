@@ -2123,6 +2123,8 @@ struct MarkdownElementBuilder {
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
+    rendered_headings: Vec<RenderedHeading>,
+    heading_slug_counts: HashMap<String, usize>,
     current_source_index: usize,
     html_comment: bool,
     base_text_style: TextStyle,
@@ -2159,6 +2161,8 @@ impl MarkdownElementBuilder {
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
+            rendered_headings: Vec::new(),
+            heading_slug_counts: HashMap::default(),
             current_source_index: 0,
             html_comment: false,
             base_text_style,
@@ -2429,6 +2433,7 @@ impl MarkdownElementBuilder {
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
+                headings: self.rendered_headings.into(),
             },
         }
     }
@@ -2543,12 +2548,19 @@ pub struct RenderedMarkdown {
 struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
+    headings: Rc<[RenderedHeading]>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
     destination_url: SharedString,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct RenderedHeading {
+    source_range: Range<usize>,
+    slug: SharedString,
 }
 
 impl RenderedText {
