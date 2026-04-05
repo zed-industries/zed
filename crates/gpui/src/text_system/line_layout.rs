@@ -779,18 +779,16 @@ impl LineLayoutCache {
     }
 }
 
-/// Adjusts glyph positions to align with a monospace cell grid, while preserving
-/// the placement of combining marks relative to their base characters.
-///
-/// Without this fix, combining marks (e.g., Thai vowel signs like ี and tone marks
-/// like ่) get incorrectly advanced to the next cell position. HarfBuzz positions
-/// combining marks at the same x coordinate as their base character (they differ
-/// only in y), so we detect them by checking whether the shaped x position hasn't
-/// advanced by at least half a cell beyond the previous base character.
+// Combining marks (e.g. Thai vowel signs, Arabic diacritics) are shaped by
+// HarfBuzz at the same x position as their base character. The force-width
+// loop must not advance the cell counter for these zero-advance glyphs,
+// otherwise they get displaced into the next cell. We detect them by checking
+// whether shaped x has advanced by at least half a cell beyond the last base.
 fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
-    let mut glyph_pos = 0usize;
+    let mut glyph_pos: usize = 0;
+    // NEG_INFINITY ensures the first glyph is always classified as a base.
     let mut last_base_shaped_x = px(f32::NEG_INFINITY);
-    let mut last_base_forced_x = px(0.);
+    let mut last_base_actual_x = px(0.);
 
     for run in layout.runs.iter_mut() {
         for glyph in run.glyphs.iter_mut() {
@@ -802,10 +800,10 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
                     glyph.position.x = forced_x;
                 }
                 last_base_shaped_x = shaped_x;
-                last_base_forced_x = glyph_pos * force_width;
+                last_base_actual_x = glyph.position.x;
                 glyph_pos += 1;
             } else {
-                glyph.position.x = last_base_forced_x + (shaped_x - last_base_shaped_x);
+                glyph.position.x = last_base_actual_x + (shaped_x - last_base_shaped_x);
             }
         }
     }
@@ -987,6 +985,14 @@ mod tests {
         }
     }
 
+    fn glyph_x_positions(layout: &LineLayout) -> Vec<f32> {
+        layout.runs[0]
+            .glyphs
+            .iter()
+            .map(|g| f32::from(g.position.x))
+            .collect()
+    }
+
     #[test]
     fn test_force_width_latin_unchanged() {
         let cell_width = px(8.);
@@ -998,11 +1004,7 @@ mod tests {
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
-        let positions: Vec<f32> = layout.runs[0]
-            .glyphs
-            .iter()
-            .map(|g| g.position.x.0)
-            .collect();
+        let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0., 8., 16.]);
     }
 
@@ -1017,33 +1019,22 @@ mod tests {
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
-        let positions: Vec<f32> = layout.runs[0]
-            .glyphs
-            .iter()
-            .map(|g| g.position.x.0)
-            .collect();
-        // Base at cell 0, combining mark stays at cell 0 (not pushed to cell 1)
+        let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0., 0.]);
     }
 
     #[test]
     fn test_force_width_base_after_combining_mark() {
         let cell_width = px(8.);
-        // Simulates "กีค" — base + combining mark + next base
         let mut layout = make_layout(vec![
-            glyph_at(0., 0),  // ก (base)
-            glyph_at(0., 3),  // ี (combining mark)
-            glyph_at(8., 6),  // ค (next base)
+            glyph_at(0., 0),
+            glyph_at(0., 3),
+            glyph_at(8., 6),
         ]);
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
-        let positions: Vec<f32> = layout.runs[0]
-            .glyphs
-            .iter()
-            .map(|g| g.position.x.0)
-            .collect();
-        // Base at cell 0, combining at cell 0, next base at cell 1
+        let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0., 0., 8.]);
     }
 
@@ -1060,11 +1051,7 @@ mod tests {
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
-        let positions: Vec<f32> = layout.runs[0]
-            .glyphs
-            .iter()
-            .map(|g| g.position.x.0)
-            .collect();
+        let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0., 0., 0., 8.]);
     }
 
@@ -1080,12 +1067,23 @@ mod tests {
 
         apply_force_width_to_layout(&mut layout, cell_width);
 
-        let positions: Vec<f32> = layout.runs[0]
-            .glyphs
-            .iter()
-            .map(|g| g.position.x.0)
-            .collect();
-        // First stays (within tolerance), others snapped to grid
+        let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 8., 16.]);
+    }
+
+    #[test]
+    fn test_force_width_combining_mark_after_within_tolerance_base() {
+        let cell_width = px(8.);
+        // Base glyph is within 1px of grid so it keeps its shaped position.
+        // The combining mark must align to the base's actual position, not the grid slot.
+        let mut layout = make_layout(vec![
+            glyph_at(0.5, 0),
+            glyph_at(0.5, 3),
+        ]);
+
+        apply_force_width_to_layout(&mut layout, cell_width);
+
+        let positions = glyph_x_positions(&layout);
+        assert_eq!(positions, vec![0.5, 0.5]);
     }
 }
