@@ -626,6 +626,48 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    /// Finds an existing workspace in this multi-workspace whose paths match,
+    /// or creates a new one (deserializing its saved state from the database).
+    /// Never searches other windows or matches workspaces with a superset of
+    /// the requested paths.
+    pub fn find_or_create_local_workspace(
+        &mut self,
+        path_list: PathList,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
+        if let Some(workspace) = self
+            .workspaces
+            .iter()
+            .find(|ws| ws.read(cx).project_group_key(cx).path_list() == &path_list)
+            .cloned()
+        {
+            self.activate(workspace.clone(), window, cx);
+            return Task::ready(Ok(workspace));
+        }
+
+        let paths = path_list.paths().to_vec();
+        let app_state = self.workspace().read(cx).app_state().clone();
+        let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
+
+        cx.spawn(async move |_this, cx| {
+            let result = cx
+                .update(|cx| {
+                    Workspace::new_local(
+                        paths,
+                        app_state,
+                        requesting_window,
+                        None,
+                        None,
+                        OpenMode::Activate,
+                        cx,
+                    )
+                })
+                .await?;
+            Ok(result.workspace)
+        })
+    }
+
     pub fn workspace(&self) -> &Entity<Workspace> {
         &self.workspaces[self.active_workspace_index]
     }
@@ -1110,16 +1152,10 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        let workspace = self.workspace().clone();
-
-        let needs_close_prompt = !self.multi_workspace_enabled(cx);
-        let open_mode = if self.multi_workspace_enabled(cx) {
-            open_mode
+        if self.multi_workspace_enabled(cx) {
+            self.find_or_create_local_workspace(PathList::new(&paths), window, cx)
         } else {
-            OpenMode::Activate
-        };
-
-        if needs_close_prompt {
+            let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {
                 let should_continue = workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -1135,10 +1171,6 @@ impl MultiWorkspace {
                 } else {
                     Ok(workspace)
                 }
-            })
-        } else {
-            workspace.update(cx, |workspace, cx| {
-                workspace.open_workspace_for_paths(open_mode, paths, window, cx)
             })
         }
     }

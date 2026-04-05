@@ -689,12 +689,9 @@ impl Sidebar {
             return;
         };
 
-        let paths: Vec<std::path::PathBuf> =
-            path_list.paths().iter().map(|p| p.to_path_buf()).collect();
-
         multi_workspace
-            .update(cx, |mw, cx| {
-                mw.open_project(paths, workspace::OpenMode::Activate, window, cx)
+            .update(cx, |this, cx| {
+                this.find_or_create_local_workspace(path_list.clone(), window, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -2154,16 +2151,12 @@ impl Sidebar {
             return;
         };
 
-        let paths: Vec<std::path::PathBuf> =
-            path_list.paths().iter().map(|p| p.to_path_buf()).collect();
-
-        let open_task = multi_workspace.update(cx, |mw, cx| {
-            mw.open_project(paths, workspace::OpenMode::Activate, window, cx)
+        let open_task = multi_workspace.update(cx, |this, cx| {
+            this.find_or_create_local_workspace(path_list, window, cx)
         });
 
         cx.spawn_in(window, async move |this, cx| {
             let workspace = open_task.await?;
-
             this.update_in(cx, |this, window, cx| {
                 this.activate_thread(metadata, &workspace, window, cx);
             })?;
