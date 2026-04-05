@@ -1450,13 +1450,7 @@ impl Sidebar {
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
-                    .when_some(workspace, |this, workspace| {
-                        this.child(
-                            self.render_project_header_menu(
-                                ix, id_prefix, &workspace, &workspace, cx,
-                            ),
-                        )
-                    })
+                    .child(self.render_project_header_menu(ix, id_prefix, key, cx))
                     .when(view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
@@ -1538,14 +1532,12 @@ impl Sidebar {
         &self,
         ix: usize,
         id_prefix: &str,
-        workspace: &Entity<Workspace>,
-        workspace_for_remove: &Entity<Workspace>,
+        project_group_key: &ProjectGroupKey,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let workspace_for_menu = workspace.clone();
-        let workspace_for_remove = workspace_for_remove.clone();
         let multi_workspace = self.multi_workspace.clone();
         let this = cx.weak_entity();
+        let project_group_key = project_group_key.clone();
 
         PopoverMenu::new(format!("{id_prefix}project-header-menu-{ix}"))
             .on_open(Rc::new({
@@ -1559,116 +1551,102 @@ impl Sidebar {
                 }
             }))
             .menu(move |window, cx| {
-                let workspace = workspace_for_menu.clone();
-                let workspace_for_remove = workspace_for_remove.clone();
                 let multi_workspace = multi_workspace.clone();
+                let project_group_key = project_group_key.clone();
 
                 let menu = ContextMenu::build_persistent(window, cx, move |menu, _window, cx| {
-                    let worktrees: Vec<_> = workspace
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .map(|worktree| {
-                            let worktree_read = worktree.read(cx);
-                            let id = worktree_read.id();
-                            let name: SharedString =
-                                worktree_read.root_name().as_unix_str().to_string().into();
-                            (id, name)
-                        })
-                        .collect();
-
-                    let worktree_count = worktrees.len();
-
                     let mut menu = menu
                         .header("Project Folders")
                         .end_slot_action(Box::new(menu::EndSlot));
 
-                    for (worktree_id, name) in &worktrees {
-                        let worktree_id = *worktree_id;
-                        let workspace_for_worktree = workspace.clone();
-                        let workspace_for_remove_worktree = workspace_for_remove.clone();
-                        let multi_workspace_for_worktree = multi_workspace.clone();
-
-                        let remove_handler = move |window: &mut Window, cx: &mut App| {
-                            if worktree_count <= 1 {
-                                if let Some(mw) = multi_workspace_for_worktree.upgrade() {
-                                    let ws = workspace_for_remove_worktree.clone();
-                                    mw.update(cx, |multi_workspace, cx| {
-                                        multi_workspace.remove(&ws, window, cx);
-                                    });
-                                }
-                            } else {
-                                workspace_for_worktree.update(cx, |workspace, cx| {
-                                    workspace.project().update(cx, |project, cx| {
-                                        project.remove_worktree(worktree_id, cx);
-                                    });
-                                });
-                            }
+                    for path in project_group_key.path_list().paths() {
+                        let Some(name) = path.file_name() else {
+                            continue;
                         };
-
+                        let name: SharedString = name.to_string_lossy().into_owned().into();
+                        let path = path.clone();
+                        let project_group_key = project_group_key.clone();
+                        let multi_workspace = multi_workspace.clone();
                         menu = menu.entry_with_end_slot_on_hover(
                             name.clone(),
                             None,
                             |_, _| {},
                             IconName::Close,
                             "Remove Folder".into(),
-                            remove_handler,
+                            move |_window, cx| {
+                                multi_workspace
+                                    .update(cx, |multi_workspace, cx| {
+                                        multi_workspace.remove_folder_from_project_group(
+                                            &project_group_key,
+                                            &path,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            },
                         );
                     }
 
-                    let workspace_for_add = workspace.clone();
-                    let multi_workspace_for_add = multi_workspace.clone();
                     let menu = menu.separator().entry(
                         "Add Folder to Project",
                         Some(Box::new(AddFolderToProject)),
-                        move |window, cx| {
-                            if let Some(mw) = multi_workspace_for_add.upgrade() {
-                                mw.update(cx, |mw, cx| {
-                                    mw.activate(workspace_for_add.clone(), window, cx);
-                                });
+                        {
+                            let project_group_key = project_group_key.clone();
+                            let multi_workspace = multi_workspace.clone();
+                            move |window, cx| {
+                                multi_workspace
+                                    .update(cx, |multi_workspace, cx| {
+                                        multi_workspace.prompt_to_add_folders_to_project_group(
+                                            &project_group_key,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
                             }
-                            workspace_for_add.update(cx, |workspace, cx| {
-                                workspace.add_folder_to_project(&AddFolderToProject, window, cx);
-                            });
                         },
                     );
 
-                    let workspace_count = multi_workspace
+                    let group_count = multi_workspace
                         .upgrade()
-                        .map_or(0, |mw| mw.read(cx).workspaces().len());
-                    let menu = if workspace_count > 1 {
-                        let workspace_for_move = workspace.clone();
-                        let multi_workspace_for_move = multi_workspace.clone();
+                        .map_or(0, |mw| mw.read(cx).project_group_keys().count());
+                    let menu = if group_count > 1 {
+                        let project_group_key = project_group_key.clone();
+                        let multi_workspace = multi_workspace.clone();
                         menu.entry(
                             "Move to New Window",
                             Some(Box::new(
                                 zed_actions::agents_sidebar::MoveWorkspaceToNewWindow,
                             )),
                             move |window, cx| {
-                                if let Some(mw) = multi_workspace_for_move.upgrade() {
-                                    mw.update(cx, |multi_workspace, cx| {
-                                        multi_workspace.move_workspace_to_new_window(
-                                            &workspace_for_move,
+                                multi_workspace
+                                    .update(cx, |multi_workspace, cx| {
+                                        multi_workspace.move_project_group_to_new_window(
+                                            &project_group_key,
                                             window,
                                             cx,
                                         );
-                                    });
-                                }
+                                    })
+                                    .ok();
                             },
                         )
                     } else {
                         menu
                     };
 
-                    let workspace_for_remove = workspace_for_remove.clone();
-                    let multi_workspace_for_remove = multi_workspace.clone();
+                    let project_group_key = project_group_key.clone();
+                    let multi_workspace = multi_workspace.clone();
                     menu.separator()
                         .entry("Remove Project", None, move |window, cx| {
-                            if let Some(mw) = multi_workspace_for_remove.upgrade() {
-                                let ws = workspace_for_remove.clone();
-                                mw.update(cx, |multi_workspace, cx| {
-                                    multi_workspace.remove(&ws, window, cx);
-                                });
-                            }
+                            multi_workspace
+                                .update(cx, |multi_workspace, cx| {
+                                    multi_workspace.remove_project_group(
+                                        &project_group_key,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
                         })
                 });
 
