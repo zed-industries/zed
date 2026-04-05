@@ -41,6 +41,7 @@ pub struct MarkdownPreviewView {
     image_cache: Entity<RetainAllImageCache>,
     base_directory: Option<PathBuf>,
     pending_update_task: Option<Task<Result<()>>>,
+    pending_scroll_to_heading: Option<SharedString>,
     mode: MarkdownPreviewMode,
 }
 
@@ -224,8 +225,9 @@ impl MarkdownPreviewView {
                 workspace: workspace.clone(),
                 _markdown_subscription: cx.observe(
                     &markdown,
-                    |this: &mut Self, _: Entity<Markdown>, cx| {
+                    |this: &mut Self, markdown: Entity<Markdown>, cx| {
                         this.sync_active_root_block(cx);
+                        this.scroll_to_pending_heading(&markdown, cx);
                     },
                 ),
                 markdown,
@@ -234,6 +236,7 @@ impl MarkdownPreviewView {
                 image_cache: RetainAllImageCache::new(cx),
                 base_directory: None,
                 pending_update_task: None,
+                pending_scroll_to_heading: None,
                 mode,
             };
 
@@ -419,6 +422,20 @@ impl MarkdownPreviewView {
         });
     }
 
+    fn scroll_to_pending_heading(&mut self, markdown: &Entity<Markdown>, cx: &mut Context<Self>) {
+        let Some(source_index) = self
+            .pending_scroll_to_heading
+            .take()
+            .and_then(|slug| markdown.read(cx).heading_source_index_for_slug(&slug))
+        else {
+            return;
+        };
+        
+        markdown.update(cx, |markdown, cx| {
+            markdown.request_autoscroll_to_source_index(source_index, cx);
+        });
+    }
+
     fn move_cursor_to_source_index(
         editor: &Entity<Editor>,
         source_index: usize,
@@ -574,8 +591,6 @@ impl MarkdownPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> MarkdownElement {
-        let workspace = self.workspace.clone();
-        let base_directory = self.base_directory.clone();
         let active_editor = self
             .active_editor
             .as_ref()
@@ -609,8 +624,22 @@ impl MarkdownPreviewView {
                 )
             }
         })
-        .on_url_click(move |url, window, cx| {
-            open_preview_url(url, base_directory.clone(), &workspace, window, cx);
+        .on_url_click({
+            let markdown = self.markdown.clone();
+            let view = cx.entity().downgrade();
+            let workspace = self.workspace.clone();
+            let base_directory = self.base_directory.clone();
+            move |url, window, cx| {
+                handle_url_click(
+                    url,
+                    &markdown,
+                    &view,
+                    base_directory.clone(),
+                    &workspace,
+                    window,
+                    cx,
+                );
+            }
         });
 
         if let Some(active_editor) = active_editor {
@@ -649,6 +678,51 @@ impl MarkdownPreviewView {
     }
 }
 
+fn handle_url_click(
+    url: SharedString,
+    markdown: &Entity<Markdown>,
+    view: &WeakEntity<MarkdownPreviewView>,
+    base_directory: Option<PathBuf>,
+    workspace: &WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let (path_part, fragment) = split_url_fragment(url.as_ref());
+    let path_part = path_part.to_string();
+    let fragment = fragment.map(|f| f.to_string());
+
+    if path_part.is_empty() {
+        let Some(source_index) = fragment
+            .as_ref()
+            .and_then(|f| markdown.read(cx).heading_source_index_for_slug(f))
+        else {
+            return;
+        };
+        
+        markdown.update(cx, |markdown, cx| {
+            markdown.request_autoscroll_to_source_index(source_index, cx);
+        });
+        
+        return;
+    }
+
+    if let Some(fragment) = fragment
+        && let Some(view) = view.upgrade()
+    {
+        view.update(cx, |this, _| {
+            this.pending_scroll_to_heading = Some(fragment.into());
+        });
+    }
+
+    open_preview_url(
+        SharedString::from(path_part),
+        base_directory,
+        workspace,
+        window,
+        cx,
+    );
+}
+
 fn open_preview_url(
     url: SharedString,
     base_directory: Option<PathBuf>,
@@ -676,6 +750,20 @@ fn open_preview_url(
     }
 
     cx.open_url(url.as_ref());
+}
+
+fn split_url_fragment(url: &str) -> (&str, Option<&str>) {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        return (url, None);
+    }
+    match url.find('#') {
+        Some(pos) => {
+            let path = &url[..pos];
+            let fragment = &url[pos + 1..];
+            (path, if fragment.is_empty() { None } else { Some(fragment) })
+        }
+        None => (url, None),
+    }
 }
 
 fn resolve_preview_path(url: &str, base_directory: Option<&Path>) -> Option<PathBuf> {
@@ -817,6 +905,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::resolve_preview_path;
+    use super::split_url_fragment;
 
     #[test]
     fn resolves_relative_preview_paths() -> Result<()> {
@@ -906,4 +995,20 @@ mod tests {
         assert_eq!(resolve_preview_path("https://zed.dev", None), None);
         assert_eq!(resolve_preview_path("http://example.com", None), None);
     }
+
+    #[test]
+    fn test_split_url_fragment() {
+        assert_eq!(split_url_fragment("#heading"), ("", Some("heading")));
+        assert_eq!(
+            split_url_fragment("./file.md#heading"),
+            ("./file.md", Some("heading"))
+        );
+        assert_eq!(split_url_fragment("./file.md"), ("./file.md", None));
+        assert_eq!(
+            split_url_fragment("https://example.com#frag"),
+            ("https://example.com#frag", None)
+        );
+        assert_eq!(split_url_fragment("#"), ("", None));
+    }
+
 }
