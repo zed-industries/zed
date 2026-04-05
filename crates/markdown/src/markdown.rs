@@ -2557,6 +2557,21 @@ struct RenderedLink {
     destination_url: SharedString,
 }
 
+fn generate_heading_slug(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter_map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                Some(c.to_lowercase().next().unwrap_or(c))
+            } else if c == ' ' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedHeading {
     source_range: Range<usize>,
@@ -3264,6 +3279,27 @@ mod tests {
         let diagnostic = "    | { a: string }";
         assert!(has_code_block(diagnostic));
         assert!(!has_code_block(&Markdown::escape(diagnostic)));
+    }
+
+    #[test]
+    fn test_generate_heading_slug() {
+        assert_eq!(generate_heading_slug("Hello World"), "hello-world");
+        assert_eq!(generate_heading_slug("Hello  World"), "hello--world");
+        assert_eq!(generate_heading_slug("Hello-World"), "hello-world");
+        assert_eq!(
+            generate_heading_slug("Some **bold** text"),
+            "some-bold-text"
+        );
+        assert_eq!(generate_heading_slug("Let's try with Ü"), "lets-try-with-ü");
+        assert_eq!(
+            generate_heading_slug("heading with 123 numbers"),
+            "heading-with-123-numbers"
+        );
+        assert_eq!(
+            generate_heading_slug("What about (parens)?"),
+            "what-about-parens"
+        );
+        assert_eq!(generate_heading_slug("  leading spaces  "), "leading-spaces");
     }
 
     #[track_caller]
