@@ -973,6 +973,19 @@
     },
   },
   {
+    "context": "Editor && DebuggerHover && VimControl && vim_mode == normal",
+    "bindings": {
+      "h": "editor::DebuggerHoverCollapseSelected",
+      "j": "editor::DebuggerHoverSelectNext",
+      "k": "editor::DebuggerHoverSelectPrevious",
+      "l": "editor::DebuggerHoverExpandSelected",
+      "left": "editor::DebuggerHoverCollapseSelected",
+      "down": "editor::DebuggerHoverSelectNext",
+      "up": "editor::DebuggerHoverSelectPrevious",
+      "right": "editor::DebuggerHoverExpandSelected"
+    }
+  },
+  {
     // netrw compatibility
     "context": "ProjectPanel && not_editing",
     "bindings": {
