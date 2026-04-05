@@ -62,7 +62,10 @@ use client::{
 };
 use clock::ReplicaId;
 
-use dap::client::DebugAdapterClient;
+use dap::{
+    VariableReference,
+    client::{DebugAdapterClient, SessionId},
+};
 
 use collections::{BTreeSet, HashMap, HashSet, IndexSet};
 use debounced_delay::DebouncedDelay;
@@ -892,16 +895,58 @@ pub enum HoverBlockKind {
     Code { language: String },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebuggerHoverVariable {
+    pub name: String,
+    pub value: String,
+    pub type_name: Option<String>,
+    pub variables_reference: VariableReference,
+}
+
+impl DebuggerHoverVariable {
+    fn from_evaluate_response(expression: String, response: &dap::EvaluateResponse) -> Self {
+        Self {
+            name: expression,
+            value: response.result.clone(),
+            type_name: response
+                .type_
+                .clone()
+                .filter(|type_name| !type_name.is_empty()),
+            variables_reference: response.variables_reference,
+        }
+    }
+
+    fn from_dap_variable(variable: dap::Variable) -> Self {
+        Self {
+            name: variable.name,
+            value: variable.value,
+            type_name: variable.type_.filter(|type_name| !type_name.is_empty()),
+            variables_reference: variable.variables_reference,
+        }
+    }
+
+    pub fn has_children(&self) -> bool {
+        self.variables_reference != 0
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DebuggerHoverData {
+    pub session_id: SessionId,
+    pub root: DebuggerHoverVariable,
+}
+
 #[derive(Debug, Clone)]
 pub struct Hover {
     pub contents: Vec<HoverBlock>,
     pub range: Option<Range<language::Anchor>>,
     pub language: Option<Arc<Language>>,
+    pub debugger_value: Option<DebuggerHoverData>,
 }
 
 impl Hover {
     pub fn is_empty(&self) -> bool {
-        self.contents.iter().all(|block| block.text.is_empty())
+        self.contents.iter().all(|block| block.text.is_empty()) && self.debugger_value.is_none()
     }
 }
 
@@ -4484,8 +4529,78 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<Vec<Hover>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
+        let lsp_hover = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx));
+
+        let debug_hover =
+            self.active_debug_session(cx)
+                .and_then(|(session, active_stack_frame)| {
+                    let buffer_path = BreakpointStore::abs_path_from_buffer(buffer, cx)?;
+                    if buffer_path.as_ref() != active_stack_frame.path.as_ref() {
+                        return None;
+                    }
+
+                    let snapshot = buffer.read(cx).snapshot();
+                    let (expression, range) = hovered_debug_expression(&snapshot, position)?;
+                    let stack_frame_id = active_stack_frame.stack_frame_id;
+                    let session_id = session.read(cx).session_id();
+                    let evaluate = session.update(cx, |session, cx| {
+                        session.evaluate_hover_expression(stack_frame_id, expression.clone(), cx)
+                    });
+
+                    Some((evaluate, range, session_id, expression))
+                });
+
+        match debug_hover {
+            Some((evaluate, range, session_id, expression)) => cx.background_spawn(async move {
+                let mut hovers = lsp_hover.await.unwrap_or_default();
+                if let Some(response) = evaluate.await {
+                    let debugger_value = DebuggerHoverData {
+                        session_id,
+                        root: DebuggerHoverVariable::from_evaluate_response(expression, &response),
+                    };
+
+                    if let Some(existing_hover) = hovers.first_mut() {
+                        existing_hover.debugger_value = Some(debugger_value);
+                        existing_hover.range.get_or_insert(range);
+                    } else {
+                        hovers.push(Hover {
+                            contents: Vec::new(),
+                            range: Some(range),
+                            language: None,
+                            debugger_value: Some(debugger_value),
+                        });
+                    }
+                }
+
+                Some(hovers)
+            }),
+            None => lsp_hover,
+        }
+    }
+
+    pub fn load_debugger_hover_children(
+        &self,
+        session_id: SessionId,
+        variables_reference: VariableReference,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<DebuggerHoverVariable>>> {
+        let Some(session) = self.dap_store.read(cx).session_by_id(session_id) else {
+            return Task::ready(Err(anyhow!("debug session is no longer available")));
+        };
+
+        let task = session.update(cx, |session, cx| {
+            session.load_hover_children(variables_reference, cx)
+        });
+
+        cx.spawn(async move |_, _| {
+            let variables = task.await?;
+            Ok(variables
+                .into_iter()
+                .map(DebuggerHoverVariable::from_dap_variable)
+                .collect())
+        })
     }
 
     pub fn linked_edits(
@@ -6777,6 +6892,84 @@ fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui:
         proto::language_server_prompt_request::Level::Warning(_) => gpui::PromptLevel::Warning,
         proto::language_server_prompt_request::Level::Critical(_) => gpui::PromptLevel::Critical,
     }
+}
+
+fn hovered_debug_expression(
+    snapshot: &language::BufferSnapshot,
+    position: PointUtf16,
+) -> Option<(String, Range<Anchor>)> {
+    hovered_debug_variable_expression(snapshot, position)
+        .or_else(|| hovered_debug_member_expression(snapshot, position))
+}
+
+fn hovered_debug_variable_expression(
+    snapshot: &language::BufferSnapshot,
+    position: PointUtf16,
+) -> Option<(String, Range<Anchor>)> {
+    let offset = snapshot.point_utf16_to_offset(position);
+
+    snapshot
+        .debug_variables_query(offset..offset)
+        .filter_map(|(range, capture_kind)| {
+            (capture_kind == language::DebuggerTextObject::Variable
+                && range.start <= offset
+                && offset <= range.end)
+                .then(|| {
+                    let expression = snapshot.text_for_range(range.clone()).collect::<String>();
+                    let anchor_range =
+                        snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+                    (expression, anchor_range, range.end - range.start)
+                })
+        })
+        .min_by_key(|(_, _, len)| *len)
+        .map(|(expression, range, _)| (expression, range))
+}
+
+fn hovered_debug_member_expression(
+    snapshot: &language::BufferSnapshot,
+    position: PointUtf16,
+) -> Option<(String, Range<Anchor>)> {
+    let offset = snapshot.point_utf16_to_offset(position);
+    let mut node = snapshot.syntax_ancestor(offset..offset)?;
+    let mut best_match = None;
+
+    loop {
+        let byte_range = node.byte_range();
+        if byte_range.start > offset || offset > byte_range.end {
+            break;
+        }
+
+        let expression = snapshot
+            .text_for_range(byte_range.clone())
+            .collect::<String>();
+        if looks_like_debug_hover_member_expression(&expression) {
+            best_match = Some((
+                expression,
+                snapshot.anchor_before(byte_range.start)..snapshot.anchor_after(byte_range.end),
+            ));
+        }
+
+        let Some(parent) = node.parent() else {
+            break;
+        };
+        node = parent;
+    }
+
+    best_match
+}
+
+fn looks_like_debug_hover_member_expression(expression: &str) -> bool {
+    !expression.is_empty()
+        && expression.len() <= 128
+        && !expression.contains(char::is_whitespace)
+        && (expression.contains('.') || expression.contains('[') || expression.contains("->"))
+        && expression.chars().all(|char| {
+            char.is_alphanumeric()
+                || matches!(
+                    char,
+                    '_' | '.' | '[' | ']' | '(' | ')' | '"' | '\'' | '-' | '>'
+                )
+        })
 }
 
 fn provide_inline_values(

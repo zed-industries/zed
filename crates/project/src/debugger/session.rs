@@ -2623,6 +2623,118 @@ impl Session {
         })
     }
 
+    pub fn evaluate_hover_expression(
+        &self,
+        stack_frame_id: StackFrameId,
+        expression: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<dap::EvaluateResponse>> {
+        let session = cx.entity();
+        cx.spawn(async move |_, cx| {
+            let hover_eval_task = session.read_with(cx, |session, _| {
+                session.state.request_dap(EvaluateCommand {
+                    expression: expression.clone(),
+                    frame_id: Some(stack_frame_id),
+                    source: None,
+                    context: Some(EvaluateArgumentsContext::Hover),
+                })
+            });
+
+            match hover_eval_task.await {
+                Ok(response) => Some(response),
+                Err(error) => {
+                    log::debug!(
+                        "Falling back to EvaluateArgumentsContext::Variables after hover evaluation failed: {error:#}"
+                    );
+
+                    let variables_eval_task = session.read_with(cx, |session, _| {
+                        session.state.request_dap(EvaluateCommand {
+                            expression,
+                            frame_id: Some(stack_frame_id),
+                            source: None,
+                            context: Some(EvaluateArgumentsContext::Variables),
+                        })
+                    });
+
+                    variables_eval_task.await.log_err()
+                }
+            }
+        })
+    }
+
+    pub fn load_hover_children(
+        &self,
+        variables_reference: VariableReference,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<dap::Variable>>> {
+        if let Some(cached_variables) = self
+            .session_state()
+            .variables
+            .get(&variables_reference)
+            .cloned()
+        {
+            return Task::ready(Ok(cached_variables));
+        }
+
+        let session = cx.entity();
+        cx.spawn(async move |_, cx| {
+            let request = session.read_with(cx, |session, _| {
+                session.state.request_dap(VariablesCommand {
+                    variables_reference,
+                    filter: None,
+                    start: None,
+                    count: None,
+                    format: None,
+                })
+            });
+
+            let mut variables = request.await?;
+
+            session.update(cx, |session, cx| {
+                session.normalize_variables(&mut variables);
+                session
+                    .active_snapshot
+                    .variables
+                    .insert(variables_reference, variables.clone());
+                cx.emit(SessionEvent::Variables);
+                cx.emit(SessionEvent::InvalidateInlineValue);
+            });
+
+            Ok(variables)
+        })
+    }
+
+    fn normalize_variables(&self, variables: &mut [dap::Variable]) {
+        if self.adapter.0.as_ref() == "Debugpy" {
+            for variable in variables.iter_mut() {
+                if variable.type_ == Some("str".into()) {
+                    let mut unescaped = String::with_capacity(variable.value.len());
+                    let mut chars = variable.value.chars();
+                    while let Some(character) = chars.next() {
+                        if character != '\\' {
+                            unescaped.push(character);
+                        } else {
+                            match chars.next() {
+                                Some('\\') => unescaped.push('\\'),
+                                Some('n') => unescaped.push('\n'),
+                                Some('t') => unescaped.push('\t'),
+                                Some('r') => unescaped.push('\r'),
+                                Some('\'') => unescaped.push('\''),
+                                Some('"') => unescaped.push('"'),
+                                Some(character) => {
+                                    unescaped.push('\\');
+                                    unescaped.push(character);
+                                }
+                                None => {}
+                            }
+                        }
+                    }
+                    variable.value = unescaped;
+                }
+            }
+        }
+    }
+
     pub fn refresh_watchers(&mut self, frame_id: u64, cx: &mut Context<Self>) {
         let watches = self.watchers.clone();
         for (_, watch) in watches.into_iter() {
@@ -2655,35 +2767,7 @@ impl Session {
                     return;
                 };
 
-                if this.adapter.0.as_ref() == "Debugpy" {
-                    for variable in variables.iter_mut() {
-                        if variable.type_ == Some("str".into()) {
-                            // reverse Python repr() escaping
-                            let mut unescaped = String::with_capacity(variable.value.len());
-                            let mut chars = variable.value.chars();
-                            while let Some(c) = chars.next() {
-                                if c != '\\' {
-                                    unescaped.push(c);
-                                } else {
-                                    match chars.next() {
-                                        Some('\\') => unescaped.push('\\'),
-                                        Some('n') => unescaped.push('\n'),
-                                        Some('t') => unescaped.push('\t'),
-                                        Some('r') => unescaped.push('\r'),
-                                        Some('\'') => unescaped.push('\''),
-                                        Some('"') => unescaped.push('"'),
-                                        Some(c) => {
-                                            unescaped.push('\\');
-                                            unescaped.push(c);
-                                        }
-                                        None => {}
-                                    }
-                                }
-                            }
-                            variable.value = unescaped;
-                        }
-                    }
-                }
+                this.normalize_variables(&mut variables);
 
                 this.active_snapshot
                     .variables
