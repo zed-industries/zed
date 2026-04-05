@@ -524,11 +524,45 @@ fn ensure_thread_subscription(
                     if role == "assistant" {
                         *turn_request_id.borrow_mut() = rid.clone();
                     }
-                    // Flush pending throttled content for other entries before
-                    // sending this new entry. Without this, a tool_call entry
-                    // arrives at the API before the preceding text entry's final
-                    // content, causing truncated text in the frontend.
-                    flush_stale_pending_for_thread(&thread_id_for_sub, latest_idx);
+                    // Before sending the new entry, re-send ALL preceding entries
+                    // with their current content. flush_streaming_text() was called
+                    // right before push_entry(), so all Markdown entities have their
+                    // complete text. The old approach (flush_stale_pending_for_thread)
+                    // only sent the *throttled snapshot* which may be missing final
+                    // tokens that arrived between the last EntryUpdated and now.
+                    for prev_idx in 0..latest_idx {
+                        if let Some(prev_entry) = thread.entries().get(prev_idx) {
+                            let (prev_role, prev_content, prev_entry_type) = match prev_entry {
+                                acp_thread::AgentThreadEntry::UserMessage(msg) => {
+                                    ("user", msg.content.to_markdown(cx).to_string(), "text")
+                                }
+                                acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
+                                    ("assistant", msg.content_only(cx), "text")
+                                }
+                                acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
+                                    ("assistant", tool_call.to_markdown(cx), "tool_call")
+                                }
+                                _ => continue,
+                            };
+                            let (prev_tool_name, prev_tool_status) = match prev_entry {
+                                acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
+                                    (tool_call.label.read(cx).source().to_string(), tool_call.status.to_string())
+                                }
+                                _ => (String::new(), String::new()),
+                            };
+                            let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
+                                acp_thread_id: thread_id_for_sub.clone(),
+                                message_id: prev_idx.to_string(),
+                                role: prev_role.to_string(),
+                                content: prev_content,
+                                request_id: rid.clone(),
+                                entry_type: prev_entry_type.to_string(),
+                                tool_name: prev_tool_name,
+                                tool_status: prev_tool_status,
+                                timestamp: chrono::Utc::now().timestamp(),
+                            });
+                        }
+                    }
 
                     let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
                         acp_thread_id: thread_id_for_sub.clone(),
