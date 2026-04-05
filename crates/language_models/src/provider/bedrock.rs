@@ -766,7 +766,7 @@ impl LanguageModel for BedrockModel {
         // initial context doesn't have to fail and retry.
         let estimated_tokens = request
             .previous_input_tokens
-            .unwrap_or_else(|| estimate_request_tokens(&request));
+            .unwrap_or_else(|| count_request_tokens(&request));
         let use_extended_context = can_extend
             && estimated_tokens * 100 > standard_token_limit * EXTENDED_CONTEXT_THRESHOLD_PERCENT;
 
@@ -847,16 +847,61 @@ impl LanguageModel for BedrockModel {
     }
 }
 
-/// Rough byte-length token estimate for the first request in a thread, where
-/// no API-reported token count from a previous request exists yet. We fall back
-/// to this so the very first large request doesn't have to fail and retry.
-fn estimate_request_tokens(request: &LanguageModelRequest) -> u64 {
-    let bytes: usize = request
-        .messages
-        .iter()
-        .map(|message| message.string_contents().len())
-        .sum();
-    (bytes as u64) / 4
+/// Tiktoken-based token count for a request. Used both for the `count_tokens`
+/// trait method (via `get_bedrock_tokens`) and for the extended-context
+/// threshold check on the first request in a thread where no API-reported
+/// token count from a previous response exists yet.
+pub fn count_request_tokens(request: &LanguageModelRequest) -> u64 {
+    use language_model::MessageContent;
+
+    let mut tokens_from_images = 0;
+    let mut string_messages = Vec::with_capacity(request.messages.len());
+
+    for message in &request.messages {
+        let mut string_contents = String::new();
+
+        for content in &message.content {
+            match content {
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                    string_contents.push_str(text);
+                }
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(image) => {
+                    tokens_from_images += image.estimate_tokens();
+                }
+                MessageContent::ToolUse(_) => {
+                    // TODO: Estimate token usage from tool uses.
+                }
+                MessageContent::ToolResult(tool_result) => match &tool_result.content {
+                    LanguageModelToolResultContent::Text(text) => {
+                        string_contents.push_str(text);
+                    }
+                    LanguageModelToolResultContent::Image(image) => {
+                        tokens_from_images += image.estimate_tokens();
+                    }
+                },
+            }
+        }
+
+        if !string_contents.is_empty() {
+            string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
+                role: match message.role {
+                    Role::User => "user".into(),
+                    Role::Assistant => "assistant".into(),
+                    Role::System => "system".into(),
+                },
+                content: Some(string_contents),
+                name: None,
+                function_call: None,
+            });
+        }
+    }
+
+    // Tiktoken doesn't yet support these models, so we manually use the
+    // same tokenizer as GPT-4.
+    tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
+        .map(|tokens| (tokens + tokens_from_images) as u64)
+        .unwrap_or(0)
 }
 
 fn deny_tool_use_events(
@@ -1189,65 +1234,12 @@ pub fn into_bedrock(
     })
 }
 
-// TODO: just call the ConverseOutput.usage() method:
-// https://docs.rs/aws-sdk-bedrockruntime/latest/aws_sdk_bedrockruntime/operation/converse/struct.ConverseOutput.html#method.output
 pub fn get_bedrock_tokens(
     request: LanguageModelRequest,
     cx: &App,
 ) -> BoxFuture<'static, Result<u64>> {
     cx.background_executor()
-        .spawn(async move {
-            let messages = request.messages;
-            let mut tokens_from_images = 0;
-            let mut string_messages = Vec::with_capacity(messages.len());
-
-            for message in messages {
-                use language_model::MessageContent;
-
-                let mut string_contents = String::new();
-
-                for content in message.content {
-                    match content {
-                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
-                            string_contents.push_str(&text);
-                        }
-                        MessageContent::RedactedThinking(_) => {}
-                        MessageContent::Image(image) => {
-                            tokens_from_images += image.estimate_tokens();
-                        }
-                        MessageContent::ToolUse(_tool_use) => {
-                            // TODO: Estimate token usage from tool uses.
-                        }
-                        MessageContent::ToolResult(tool_result) => match tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
-                                string_contents.push_str(&text);
-                            }
-                            LanguageModelToolResultContent::Image(image) => {
-                                tokens_from_images += image.estimate_tokens();
-                            }
-                        },
-                    }
-                }
-
-                if !string_contents.is_empty() {
-                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
-                        role: match message.role {
-                            Role::User => "user".into(),
-                            Role::Assistant => "assistant".into(),
-                            Role::System => "system".into(),
-                        },
-                        content: Some(string_contents),
-                        name: None,
-                        function_call: None,
-                    });
-                }
-            }
-
-            // Tiktoken doesn't yet support these models, so we manually use the
-            // same tokenizer as GPT-4.
-            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
-                .map(|tokens| (tokens + tokens_from_images) as u64)
-        })
+        .spawn(async move { Ok(count_request_tokens(&request)) })
         .boxed()
 }
 
