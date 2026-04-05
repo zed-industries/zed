@@ -955,6 +955,22 @@ pub struct CursorPosition {
     pub editable_region_offset: usize,
 }
 
+pub fn parsed_output_from_editable_region(
+    range_in_excerpt: Range<usize>,
+    mut new_editable_region: String,
+) -> ParsedOutput {
+    let cursor_offset_in_new_editable_region = new_editable_region.find(CURSOR_MARKER);
+    if let Some(offset) = cursor_offset_in_new_editable_region {
+        new_editable_region.replace_range(offset..offset + CURSOR_MARKER.len(), "");
+    }
+
+    ParsedOutput {
+        new_editable_region,
+        range_in_excerpt,
+        cursor_offset_in_new_editable_region,
+    }
+}
+
 /// Parse model output for the given zeta format
 pub fn parse_zeta2_model_output(
     output: &str,
@@ -972,7 +988,7 @@ pub fn parse_zeta2_model_output(
     let old_editable_region = &context[editable_range_in_context.clone()];
     let cursor_offset_in_editable = cursor_offset.saturating_sub(editable_range_in_context.start);
 
-    let (range_in_context, mut output) = match format {
+    let (range_in_context, output) = match format {
         ZetaFormat::v0226Hashline => (
             editable_range_in_context,
             if hashline::output_has_edit_commands(output) {
@@ -1020,16 +1036,7 @@ pub fn parse_zeta2_model_output(
     let range_in_excerpt =
         range_in_context.start + context_start..range_in_context.end + context_start;
 
-    let cursor_offset_in_new_editable_region = output.find(CURSOR_MARKER);
-    if let Some(offset) = cursor_offset_in_new_editable_region {
-        output.replace_range(offset..offset + CURSOR_MARKER.len(), "");
-    }
-
-    Ok(ParsedOutput {
-        new_editable_region: output,
-        range_in_excerpt,
-        cursor_offset_in_new_editable_region,
-    })
+    Ok(parsed_output_from_editable_region(range_in_excerpt, output))
 }
 
 pub fn parse_zeta2_model_output_as_patch(

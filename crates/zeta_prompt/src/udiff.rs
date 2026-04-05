@@ -322,26 +322,23 @@ impl Sink for OffsetUnifiedDiffBuilder<'_> {
     type Out = String;
 
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        if self.before_hunk_len == 0 && self.after_hunk_len == 0 {
-            self.before_hunk_start = before.start.saturating_sub(self.context_lines);
-            self.after_hunk_start = after.start.saturating_sub(self.context_lines);
-            self.update_pos(before.start, self.before_hunk_start);
-        } else if before.start > self.pos + self.context_lines * 2 {
+        if before.start - self.pos > self.context_lines * 2 {
             self.flush();
-            self.before_hunk_start = before.start.saturating_sub(self.context_lines);
+        }
+        if self.before_hunk_len == 0 && self.after_hunk_len == 0 {
+            self.pos = before.start.saturating_sub(self.context_lines);
+            self.before_hunk_start = self.pos;
             self.after_hunk_start = after.start.saturating_sub(self.context_lines);
-            self.update_pos(before.start, self.before_hunk_start);
         }
 
+        self.update_pos(before.start, before.end);
+        self.before_hunk_len += before.end - before.start;
+        self.after_hunk_len += after.end - after.start;
         self.print_tokens(
             &self.before[before.start as usize..before.end as usize],
             '-',
         );
         self.print_tokens(&self.after[after.start as usize..after.end as usize], '+');
-
-        self.before_hunk_len += before.end - before.start;
-        self.after_hunk_len += after.end - after.start;
-        self.pos = before.end;
     }
 
     fn finish(mut self) -> Self::Out {
