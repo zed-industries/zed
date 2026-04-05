@@ -225,9 +225,8 @@ impl MarkdownPreviewView {
                 workspace: workspace.clone(),
                 _markdown_subscription: cx.observe(
                     &markdown,
-                    |this: &mut Self, markdown: Entity<Markdown>, cx| {
+                    |this: &mut Self, _: Entity<Markdown>, cx| {
                         this.sync_active_root_block(cx);
-                        this.scroll_to_pending_heading(&markdown, cx);
                     },
                 ),
                 markdown,
@@ -422,20 +421,6 @@ impl MarkdownPreviewView {
         });
     }
 
-    fn scroll_to_pending_heading(&mut self, markdown: &Entity<Markdown>, cx: &mut Context<Self>) {
-        let Some(source_index) = self
-            .pending_scroll_to_heading
-            .take()
-            .and_then(|slug| markdown.read(cx).heading_source_index_for_slug(&slug))
-        else {
-            return;
-        };
-        
-        markdown.update(cx, |markdown, cx| {
-            markdown.request_autoscroll_to_source_index(source_index, cx);
-        });
-    }
-
     fn move_cursor_to_source_index(
         editor: &Entity<Editor>,
         source_index: usize,
@@ -625,14 +610,12 @@ impl MarkdownPreviewView {
             }
         })
         .on_url_click({
-            let markdown = self.markdown.clone();
             let view = cx.entity().downgrade();
             let workspace = self.workspace.clone();
             let base_directory = self.base_directory.clone();
             move |url, window, cx| {
                 handle_url_click(
                     url,
-                    &markdown,
                     &view,
                     base_directory.clone(),
                     &workspace,
@@ -643,9 +626,13 @@ impl MarkdownPreviewView {
         });
 
         if let Some(active_editor) = active_editor {
+            let editor_for_anchor = active_editor.clone();
             let editor_for_checkbox = active_editor.clone();
             let view_handle = cx.entity().downgrade();
             markdown_element = markdown_element
+                .on_anchor_click(move |source_index, window, cx| {
+                    Self::move_cursor_to_source_index(&editor_for_anchor, source_index, window, cx);
+                })
                 .on_source_click(move |source_index, click_count, window, cx| {
                     if click_count == 2 {
                         Self::move_cursor_to_source_index(&active_editor, source_index, window, cx);
@@ -680,7 +667,6 @@ impl MarkdownPreviewView {
 
 fn handle_url_click(
     url: SharedString,
-    markdown: &Entity<Markdown>,
     view: &WeakEntity<MarkdownPreviewView>,
     base_directory: Option<PathBuf>,
     workspace: &WeakEntity<Workspace>,
@@ -690,21 +676,6 @@ fn handle_url_click(
     let (path_part, fragment) = split_url_fragment(url.as_ref());
     let path_part = path_part.to_string();
     let fragment = fragment.map(|f| f.to_string());
-
-    if path_part.is_empty() {
-        let Some(source_index) = fragment
-            .as_ref()
-            .and_then(|f| markdown.read(cx).heading_source_index_for_slug(f))
-        else {
-            return;
-        };
-        
-        markdown.update(cx, |markdown, cx| {
-            markdown.request_autoscroll_to_source_index(source_index, cx);
-        });
-        
-        return;
-    }
 
     if let Some(fragment) = fragment
         && let Some(view) = view.upgrade()
@@ -867,6 +838,11 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(slug) = self.pending_scroll_to_heading.take() {
+            self.markdown.update(cx, |markdown, _| {
+                markdown.scroll_to_heading(slug);
+            });
+        }
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")

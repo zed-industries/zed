@@ -262,6 +262,7 @@ pub struct Markdown {
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
     heading_slugs: Vec<(SharedString, usize)>,
+    pending_heading_scroll: Option<SharedString>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -430,6 +431,7 @@ impl Markdown {
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
             heading_slugs: Vec::new(),
+            pending_heading_scroll: None,
         };
         this.parse(cx);
         this
@@ -499,6 +501,26 @@ impl Markdown {
             .iter()
             .find(|(s, _)| s.as_ref() == slug)
             .map(|(_, index)| *index)
+    }
+
+    pub fn scroll_to_heading(&mut self, slug: SharedString) {
+        self.pending_heading_scroll = Some(slug);
+    }
+
+    fn sync_headings(&mut self, headings: &[RenderedHeading], cx: &mut Context<Self>) {
+        self.heading_slugs = headings
+            .iter()
+            .map(|h| (h.slug.clone(), h.source_range.start))
+            .collect();
+        if let Some(source_index) = self
+            .pending_heading_scroll
+            .as_ref()
+            .and_then(|slug| self.heading_source_index_for_slug(slug))
+        {
+            self.pending_heading_scroll = None;
+            self.autoscroll_request = Some(source_index);
+            cx.refresh_windows();
+        }
     }
 
     pub fn source(&self) -> &str {
@@ -891,6 +913,7 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_anchor_click: Option<Box<dyn Fn(usize, &mut Window, &mut App)>>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
@@ -908,6 +931,7 @@ impl MarkdownElement {
                 border: false,
             },
             on_url_click: None,
+            on_anchor_click: None,
             on_source_click: None,
             on_checkbox_toggle: None,
             image_resolver: None,
@@ -947,6 +971,14 @@ impl MarkdownElement {
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_url_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_anchor_click(
+        mut self,
+        handler: impl Fn(usize, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_anchor_click = Some(Box::new(handler));
         self
     }
 
@@ -1184,6 +1216,7 @@ impl MarkdownElement {
         }
 
         let on_open_url = self.on_url_click.take();
+        let on_anchor_click = self.on_anchor_click.take();
         let on_source_click = self.on_source_click.take();
 
         self.on_mouse_event(window, cx, {
@@ -1298,7 +1331,16 @@ impl MarkdownElement {
                     if let Some(pressed_link) = markdown.pressed_link.take()
                         && Some(&pressed_link) == rendered_text.link_for_position(event.position)
                     {
-                        if let Some(open_url) = on_open_url.as_ref() {
+                        if let Some(slug) = pressed_link.destination_url.strip_prefix('#')
+                            && let Some(source_index) =
+                                rendered_text.heading_source_index_for_slug(slug)
+                        {
+                            markdown.autoscroll_request = Some(source_index);
+                            if let Some(on_anchor_click) = on_anchor_click.as_ref() {
+                                on_anchor_click(source_index, window, cx);
+                            }
+                            cx.notify();
+                        } else if let Some(open_url) = on_open_url.as_ref() {
                             open_url(pressed_link.destination_url, window, cx);
                         } else {
                             cx.open_url(&pressed_link.destination_url);
@@ -1497,7 +1539,6 @@ impl Element for MarkdownElement {
                         MarkdownTag::Heading { level, .. } => {
                             self.push_markdown_heading(&mut builder, *level, range, markdown_end);
                             builder.current_heading_text = Some(String::new());
-                            builder.current_heading_range = Some(range.clone());
                         }
                         MarkdownTag::BlockQuote => {
                             self.push_markdown_block_quote(&mut builder, range, markdown_end);
@@ -1907,13 +1948,8 @@ impl Element for MarkdownElement {
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
-        self.markdown.update(cx, |markdown, _| {
-            markdown.heading_slugs = rendered_markdown
-                .text
-                .headings
-                .iter()
-                .map(|h| (h.slug.clone(), h.source_range.start))
-                .collect();
+        self.markdown.update(cx, |markdown, cx| {
+            markdown.sync_headings(&rendered_markdown.text.headings, cx);
         });
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
@@ -2363,6 +2399,9 @@ impl MarkdownElementBuilder {
 
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
         if let Some(heading_text) = &mut self.current_heading_text {
+            if heading_text.is_empty() {
+                self.current_heading_range = Some(source_range.clone());
+            }
             heading_text.push_str(text);
         }
         self.pending_line.source_mappings.push(SourceMapping {
