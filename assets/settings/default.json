@@ -1645,6 +1645,12 @@
     "line_endings_button": false,
     // Control when to show the active encoding in the status bar.
     "active_encoding_button": "non_utf8",
+    // Where to place the status bar.
+    // May take 3 values:
+    // 1. bottom
+    // 2. top
+    // 3. left
+    "position": "bottom",
   },
   // Settings specific to the terminal
   "terminal": {

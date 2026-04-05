@@ -457,6 +457,10 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: non_utf8
     pub active_encoding_button: Option<EncodingDisplayOptions>,
+    /// Where to place the status bar in the workspace.
+    ///
+    /// Default: bottom
+    pub position: Option<StatusBarPosition>,
 }
 
 #[derive(
@@ -479,6 +483,28 @@ pub enum EncodingDisplayOptions {
     Disabled,
     #[default]
     NonUtf8,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantNames,
+    strum::VariantArray,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusBarPosition {
+    #[default]
+    Bottom,
+    Top,
+    Left,
 }
 impl EncodingDisplayOptions {
     pub fn should_show(&self, is_utf8: bool, has_bom: bool) -> bool {

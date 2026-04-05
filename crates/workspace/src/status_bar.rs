@@ -1,3 +1,4 @@
+use crate::workspace_settings::StatusBarSettings;
 use crate::{
     ItemHandle, MultiWorkspace, Pane, SidebarSide, ToggleWorkspaceSidebar,
     sidebar_side_context_menu,
@@ -6,6 +7,7 @@ use gpui::{
     AnyView, App, Context, Corner, Decorations, Entity, IntoElement, ParentElement, Render, Styled,
     Subscription, WeakEntity, Window,
 };
+use settings::Settings;
 use std::any::TypeId;
 use theme::CLIENT_SIDE_DECORATION_ROUNDING;
 use ui::{Divider, Indicator, Tooltip, prelude::*};
@@ -70,7 +72,18 @@ pub struct StatusBar {
 impl Render for StatusBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let sidebar = SidebarStatus::query(&self.multi_workspace, cx);
+        self.render_horizontal(window, &sidebar, cx)
+            .into_any_element()
+    }
+}
 
+impl StatusBar {
+    fn render_horizontal(
+        &self,
+        window: &mut Window,
+        sidebar: &SidebarStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         h_flex()
             .w_full()
             .justify_between()
@@ -95,12 +108,28 @@ impl Render for StatusBar {
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
-            .child(self.render_left_tools(&sidebar, cx))
-            .child(self.render_right_tools(&sidebar, cx))
+            .child(self.render_left_tools(sidebar, cx))
+            .child(self.render_right_tools(sidebar, cx))
     }
-}
 
-impl StatusBar {
+    fn render_vertical_left(
+        &self,
+        _window: &mut Window,
+        sidebar: &SidebarStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .h_full()
+            .justify_between()
+            .gap(DynamicSpacing::Base08.rems(cx))
+            .p(DynamicSpacing::Base04.rems(cx))
+            .bg(cx.theme().colors().status_bar_background)
+            .border_r(px(1.0))
+            .border_color(cx.theme().colors().status_bar_background)
+            .child(self.render_left_tools_vertical(sidebar, cx))
+            .child(self.render_right_tools_vertical(sidebar, cx))
+    }
+
     fn render_left_tools(
         &self,
         sidebar: &SidebarStatus,
@@ -130,6 +159,38 @@ impl StatusBar {
             .when(
                 sidebar.show_toggle && !sidebar.open && sidebar.side == SidebarSide::Right,
                 |this| this.child(self.render_sidebar_toggle(sidebar, cx)),
+            )
+    }
+
+    fn render_left_tools_vertical(
+        &self,
+        sidebar: &SidebarStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .min_h_0()
+            .overflow_y_hidden()
+            .when(
+                sidebar.show_toggle && !sidebar.open && sidebar.side == SidebarSide::Left,
+                |this| this.child(self.render_sidebar_toggle_vertical(sidebar, cx)),
+            )
+            .children(self.left_items.iter().map(|item| item.to_any()))
+    }
+
+    fn render_right_tools_vertical(
+        &self,
+        sidebar: &SidebarStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .flex_shrink_0()
+            .gap_1()
+            .overflow_y_hidden()
+            .children(self.right_items.iter().rev().map(|item| item.to_any()))
+            .when(
+                sidebar.show_toggle && !sidebar.open && sidebar.side == SidebarSide::Right,
+                |this| this.child(self.render_sidebar_toggle_vertical(sidebar, cx)),
             )
     }
 
@@ -187,6 +248,63 @@ impl StatusBar {
             .child(toggle)
             .when(!on_right, |this| {
                 this.child(Divider::vertical().color(ui::DividerColor::Border))
+            })
+    }
+
+    fn render_sidebar_toggle_vertical(
+        &self,
+        sidebar: &SidebarStatus,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let on_right = sidebar.side == SidebarSide::Right;
+        let has_notifications = sidebar.has_notifications;
+        let indicator_border = cx.theme().colors().status_bar_background;
+
+        let toggle = sidebar_side_context_menu("sidebar-status-toggle-menu-vertical", cx)
+            .anchor(if on_right {
+                Corner::BottomRight
+            } else {
+                Corner::BottomLeft
+            })
+            .attach(if on_right {
+                Corner::TopRight
+            } else {
+                Corner::TopLeft
+            })
+            .trigger(move |_is_active, _window, _cx| {
+                IconButton::new(
+                    "toggle-workspace-sidebar-vertical",
+                    if on_right {
+                        IconName::ThreadsSidebarRightClosed
+                    } else {
+                        IconName::ThreadsSidebarLeftClosed
+                    },
+                )
+                .icon_size(IconSize::Small)
+                .when(has_notifications, |this| {
+                    this.indicator(Indicator::dot().color(Color::Accent))
+                        .indicator_border_color(Some(indicator_border))
+                })
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action("Open Threads Sidebar", &ToggleWorkspaceSidebar, cx)
+                })
+                .on_click(move |_, window, cx| {
+                    if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+                        multi_workspace.update(cx, |multi_workspace, cx| {
+                            multi_workspace.toggle_sidebar(window, cx);
+                        });
+                    }
+                })
+            });
+
+        v_flex()
+            .gap_0p5()
+            .when(on_right, |this| {
+                this.child(Divider::horizontal().color(ui::DividerColor::Border))
+            })
+            .child(toggle)
+            .when(!on_right, |this| {
+                this.child(Divider::horizontal().color(ui::DividerColor::Border))
             })
     }
 }

@@ -8004,22 +8004,24 @@ impl Render for Workspace {
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
-        let render_padding = |size| {
+        let editor_background = cx.theme().colors().editor_background;
+        let pane_group_border = cx.theme().colors().pane_group_border;
+        let render_padding = |size: f32| {
             (size > 0.0).then(|| {
                 div()
                     .h_full()
                     .w(relative(size))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_color(cx.theme().colors().pane_group_border)
+                    .bg(editor_background)
+                    .border_color(pane_group_border)
             })
         };
         let paddings = if centered_layout {
             let settings = WorkspaceSettings::get_global(cx).centered_layout;
             (
-                render_padding(Self::adjust_padding(
+                Some(Self::adjust_padding(
                     settings.left_padding.map(|padding| padding.0),
                 )),
-                render_padding(Self::adjust_padding(
+                Some(Self::adjust_padding(
                     settings.right_padding.map(|padding| padding.0),
                 )),
             )
@@ -8036,6 +8038,8 @@ impl Render for Workspace {
             .map(|(_, notification)| notification.entity_id())
             .collect::<Vec<_>>();
         let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
+        let status_bar_position = StatusBarSettings::get_global(cx).position;
+        let status_bar_visible = self.status_bar_visible(cx);
 
         div()
             .relative()
@@ -8054,6 +8058,10 @@ impl Render for Workspace {
                         cx.notify(id);
                     }
                 })
+                .when(
+                    status_bar_visible && status_bar_position == settings::StatusBarPosition::Top,
+                    |parent| parent.child(self.status_bar.clone()),
+                )
                 .child(
                     div()
                         .size_full()
@@ -8187,7 +8195,9 @@ impl Render for Workspace {
                                                                 h_flex()
                                                                     .flex_1()
                                                                     .when_some(
-                                                                        paddings.0,
+                                                                        paddings
+                                                                            .0
+                                                                            .and_then(|size| render_padding(size)),
                                                                         |this, p| {
                                                                             this.child(
                                                                                 p.border_r_1(),
@@ -8209,7 +8219,9 @@ impl Render for Workspace {
                                                                         cx,
                                                                     ))
                                                                     .when_some(
-                                                                        paddings.1,
+                                                                        paddings
+                                                                            .1
+                                                                            .and_then(|size| render_padding(size)),
                                                                         |this, p| {
                                                                             this.child(
                                                                                 p.border_l_1(),
@@ -8259,7 +8271,7 @@ impl Render for Workspace {
                                                                     .child(
                                                                         h_flex()
                                                                             .flex_1()
-                                                                            .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
+                                                                            .when_some(paddings.0.and_then(|size| render_padding(size)), |this, p| this.child(p.border_r_1()))
                                                                             .child(self.center.render(
                                                                                 self.zoomed.as_ref(),
                                                                                 &PaneRenderContext {
@@ -8274,7 +8286,7 @@ impl Render for Workspace {
                                                                                 window,
                                                                                 cx,
                                                                             ))
-                                                                            .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
+                                                                            .when_some(paddings.1.and_then(|size| render_padding(size)), |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
 
@@ -8322,7 +8334,7 @@ impl Render for Workspace {
                                                                     .child(
                                                                         h_flex()
                                                                             .flex_1()
-                                                                            .when_some(paddings.0, |this, p| this.child(p.border_r_1()))
+                                                                            .when_some(paddings.0.and_then(|size| render_padding(size)), |this, p| this.child(p.border_r_1()))
                                                                             .child(self.center.render(
                                                                                 self.zoomed.as_ref(),
                                                                                 &PaneRenderContext {
@@ -8337,7 +8349,7 @@ impl Render for Workspace {
                                                                                 window,
                                                                                 cx,
                                                                             ))
-                                                                            .when_some(paddings.1, |this, p| this.child(p.border_l_1())),
+                                                                            .when_some(paddings.1.and_then(|size| render_padding(size)), |this, p| this.child(p.border_l_1())),
                                                                     )
                                                             )
 
@@ -8369,7 +8381,7 @@ impl Render for Workspace {
                                                     .child(
                                                         h_flex()
                                                             .flex_1()
-                                                            .when_some(paddings.0, |this, p| {
+                                                            .when_some(paddings.0.and_then(|size| render_padding(size)), |this, p| {
                                                                 this.child(p.border_r_1())
                                                             })
                                                             .child(self.center.render(
@@ -8386,7 +8398,7 @@ impl Render for Workspace {
                                                                 window,
                                                                 cx,
                                                             ))
-                                                            .when_some(paddings.1, |this, p| {
+                                                            .when_some(paddings.1.and_then(|size| render_padding(size)), |this, p| {
                                                                 this.child(p.border_l_1())
                                                             }),
                                                     )
@@ -8433,9 +8445,11 @@ impl Render for Workspace {
                                 }))
                                 .children(self.render_notifications(window, cx)),
                         )
-                        .when(self.status_bar_visible(cx), |parent| {
-                            parent.child(self.status_bar.clone())
-                        })
+                        .when(
+                            status_bar_visible
+                                && status_bar_position != settings::StatusBarPosition::Top,
+                            |parent| parent.child(self.status_bar.clone()),
+                        )
                         .child(self.toast_layer.clone()),
                 )
     }
