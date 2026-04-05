@@ -27,7 +27,7 @@ use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, Window, actions,
 };
 use gpui_tokio::Tokio;
-use http_client::{HttpClient, StatusCode};
+use http_client::HttpClient;
 use language_model::{
     AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
@@ -55,11 +55,12 @@ actions!(bedrock, [Tab, TabPrev]);
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("amazon-bedrock");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Amazon Bedrock");
 
-/// Proactive extended-context threshold: send the 1M header when the previous
-/// request's input tokens exceed this fraction of the standard context window.
-/// Expressed as numerator / denominator to avoid floating-point in const context.
-const EXTENDED_CONTEXT_THRESHOLD_NUM: u64 = 9;
-const EXTENDED_CONTEXT_THRESHOLD_DEN: u64 = 10;
+/// We use the previous request's API-reported token count as a proxy for the
+/// current request's size because we don't know the exact count until after
+/// serialization, and precise pre-flight counting is expensive. When the
+/// previous count exceeds this percentage of the standard context window, we
+/// proactively enable the extended (1M) context header.
+const EXTENDED_CONTEXT_THRESHOLD_PERCENT: u64 = 90;
 
 /// Credentials stored in the keychain for static authentication.
 /// Region is handled separately since it's orthogonal to auth method.
@@ -616,23 +617,21 @@ impl BedrockModel {
                 .boxed();
         };
 
-        let task = Tokio::spawn(
-            cx,
-            bedrock::stream_completion(runtime_client.clone(), request.clone()),
-        );
-
-        async move {
-            let result = task.await.map_err(|e| BedrockError::Other(e.into()))?;
+        let retry_eligible = !request.use_extended_context;
+        let task = Tokio::spawn(cx, async move {
+            let result = bedrock::stream_completion(runtime_client.clone(), request.clone()).await;
 
             match result {
-                Err(BedrockError::Retry(_)) if !request.use_extended_context => {
+                Err(BedrockError::Retry(_)) if retry_eligible => {
                     request.use_extended_context = true;
-                    bedrock::stream_completion(runtime_client.clone(), request).await
+                    bedrock::stream_completion(runtime_client, request).await
                 }
+                Err(BedrockError::Retry(message)) => Err(BedrockError::Validation(message)),
                 other => other,
             }
-        }
-        .boxed()
+        });
+
+        async move { task.await.map_err(|e| BedrockError::Other(e.into()))? }.boxed()
     }
 }
 
@@ -760,16 +759,16 @@ impl LanguageModel for BedrockModel {
         let can_extend = self.model.supports_extended_context();
         let standard_token_limit = self.model.max_token_count();
 
-        // Use real token counts from the previous API response to decide whether
-        // to request the extended (1M) context window. The header carries a ~5x
-        // cost premium, so we only enable it when the conversation is approaching
-        // the standard window limit (90% threshold).
+        // We use the previous request's API-reported input token count to decide
+        // whether to send the extended (1M) context header, which carries a ~5x
+        // cost premium. On the first request in a thread (where no prior count
+        // exists), we fall back to a rough byte-length estimate so that a large
+        // initial context doesn't have to fail and retry.
+        let estimated_tokens = request
+            .previous_input_tokens
+            .unwrap_or_else(|| estimate_request_tokens(&request));
         let use_extended_context = can_extend
-            && request.previous_input_tokens.is_some_and(|tokens| {
-                tokens
-                    > standard_token_limit * EXTENDED_CONTEXT_THRESHOLD_NUM
-                        / EXTENDED_CONTEXT_THRESHOLD_DEN
-            });
+            && estimated_tokens * 100 > standard_token_limit * EXTENDED_CONTEXT_THRESHOLD_PERCENT;
 
         let bedrock_request = match into_bedrock(
             request,
@@ -802,13 +801,7 @@ impl LanguageModel for BedrockModel {
                         }
                     }
                 }
-                BedrockError::Retry(ref msg) => {
-                    LanguageModelCompletionError::UpstreamProviderError {
-                        message: msg.clone(),
-                        status: StatusCode::IM_A_TEAPOT,
-                        retry_after: None,
-                    }
-                }
+
                 BedrockError::RateLimited => LanguageModelCompletionError::RateLimitExceeded {
                     provider: PROVIDER_NAME,
                     retry_after: None,
@@ -852,6 +845,18 @@ impl LanguageModel for BedrockModel {
                 min_total_token: config.min_total_token,
             })
     }
+}
+
+/// Rough byte-length token estimate for the first request in a thread, where
+/// no API-reported token count from a previous request exists yet. We fall back
+/// to this so the very first large request doesn't have to fail and retry.
+fn estimate_request_tokens(request: &LanguageModelRequest) -> u64 {
+    let bytes: usize = request
+        .messages
+        .iter()
+        .map(|message| message.string_contents().len())
+        .sum();
+    (bytes as u64) / 4
 }
 
 fn deny_tool_use_events(

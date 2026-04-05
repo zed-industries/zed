@@ -101,10 +101,7 @@ pub async fn stream_completion(
             match &err {
                 ConverseStreamError::ValidationException(e) => {
                     let msg = e.message().unwrap_or("validation error");
-                    if msg.to_lowercase().contains("too long")
-                        || msg.to_lowercase().contains("exceeds")
-                        || msg.to_lowercase().contains("maximum")
-                    {
+                    if msg.to_lowercase().contains("prompt too long") {
                         BedrockError::Retry(msg.to_string())
                     } else {
                         BedrockError::Validation(msg.to_string())
@@ -154,7 +151,10 @@ pub fn aws_document_to_value(document: &Document) -> Value {
         Document::Number(value) => match *value {
             AwsNumber::PosInt(value) => Value::Number(Number::from(value)),
             AwsNumber::NegInt(value) => Value::Number(Number::from(value)),
-            AwsNumber::Float(value) => Value::Number(Number::from_f64(value).unwrap()),
+            AwsNumber::Float(value) => match Number::from_f64(value) {
+                Some(number) => Value::Number(number),
+                None => Value::Null,
+            },
         },
         Document::String(value) => Value::String(value.clone()),
         Document::Array(array) => Value::Array(array.iter().map(aws_document_to_value).collect()),
