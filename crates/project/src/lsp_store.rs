@@ -2337,20 +2337,11 @@ impl LocalLspStore {
         }
     }
 
-    fn server_capabilities_support_range_formatting(
-        capabilities: &lsp::ServerCapabilities,
-    ) -> bool {
-        matches!(
-            capabilities.document_range_formatting_provider.as_ref(),
-            Some(provider) if *provider != OneOf::Left(false)
-        )
-    }
-
     fn server_supports_formatting(server: &Arc<LanguageServer>) -> bool {
         let capabilities = server.capabilities();
         let formatting = capabilities.document_formatting_provider.as_ref();
         matches!(formatting, Some(p) if *p != OneOf::Left(false))
-            || Self::server_capabilities_support_range_formatting(&capabilities)
+            || server_capabilities_support_range_formatting(&capabilities)
     }
 
     async fn format_via_lsp(
@@ -5119,15 +5110,6 @@ impl LspStore {
         self.check_if_any_relevant_server_matches(buffer, |_, capabilities| check(capabilities), cx)
     }
 
-    fn server_capabilities_support_range_formatting(
-        capabilities: &lsp::ServerCapabilities,
-    ) -> bool {
-        matches!(
-            capabilities.document_range_formatting_provider.as_ref(),
-            Some(provider) if *provider != OneOf::Left(false)
-        )
-    }
-
     fn formatter_supports_range_formatting(
         &self,
         formatter: &Formatter,
@@ -5141,7 +5123,7 @@ impl LspStore {
                 settings.prettier.allowed
                     || self.check_if_capable_for_proto_request(
                         buffer,
-                        Self::server_capabilities_support_range_formatting,
+                        server_capabilities_support_range_formatting,
                         cx,
                     )
             }
@@ -5150,7 +5132,7 @@ impl LspStore {
             Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current) => self
                 .check_if_capable_for_proto_request(
                     buffer,
-                    Self::server_capabilities_support_range_formatting,
+                    server_capabilities_support_range_formatting,
                     cx,
                 ),
             Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Specific {
@@ -5159,7 +5141,7 @@ impl LspStore {
                 buffer,
                 |server_status, capabilities| {
                     server_status.name.0.as_ref() == name
-                        && Self::server_capabilities_support_range_formatting(capabilities)
+                        && server_capabilities_support_range_formatting(capabilities)
                 },
                 cx,
             ),
@@ -5213,23 +5195,6 @@ impl LspStore {
             .entry(buffer_id)
             .or_default()
             .insert(language_server_id);
-    }
-
-    fn remove_language_server_registration_for_buffer(
-        &mut self,
-        buffer_id: BufferId,
-        language_server_id: LanguageServerId,
-    ) {
-        if let Some(language_servers) = self
-            .registered_language_servers_by_buffer
-            .get_mut(&buffer_id)
-        {
-            language_servers.remove(&language_server_id);
-            if language_servers.is_empty() {
-                self.registered_language_servers_by_buffer
-                    .remove(&buffer_id);
-            }
-        }
     }
 
     fn clear_language_server_registrations_for_buffer(&mut self, buffer_id: BufferId) {
@@ -12365,16 +12330,11 @@ impl LspStore {
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
         }
-        let buffer_ids = self
-            .registered_language_servers_by_buffer
-            .iter()
-            .filter_map(|(buffer_id, language_servers)| {
-                language_servers.contains(&for_server).then_some(*buffer_id)
-            })
-            .collect::<Vec<_>>();
-        for buffer_id in buffer_ids {
-            self.remove_language_server_registration_for_buffer(buffer_id, for_server);
-        }
+        self.registered_language_servers_by_buffer
+            .retain(|_, servers| {
+                servers.remove(&for_server);
+                !servers.is_empty()
+            });
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
             local
@@ -13476,6 +13436,13 @@ fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
         Some(options) => OneOf::Right(serde_json::from_value::<T>(options)?),
         None => OneOf::Left(true),
     })
+}
+
+fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabilities) -> bool {
+    matches!(
+        capabilities.document_range_formatting_provider.as_ref(),
+        Some(provider) if *provider != OneOf::Left(false)
+    )
 }
 
 fn subscribe_to_binary_statuses(
