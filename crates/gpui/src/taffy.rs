@@ -30,14 +30,8 @@ struct NodeContext {
 pub struct TaffyLayoutEngine {
     taffy: TaffyTree<NodeContext>,
     absolute_layout_bounds: FxHashMap<LayoutId, Bounds<Pixels>>,
-    /// Unrounded absolute origin in device pixels for each node.
-    absolute_origins: FxHashMap<LayoutId, Point<f32>>,
-    /// Unrounded absolute content-box origin in device pixels for each node.
-    absolute_content_origins: FxHashMap<LayoutId, Point<f32>>,
-    /// Snapped absolute origin in device pixels for each node.
-    snapped_origins: FxHashMap<LayoutId, Point<f32>>,
-    /// Snapped absolute content-box origin in device pixels for each node.
-    snapped_content_origins: FxHashMap<LayoutId, Point<f32>>,
+    snapped_layout_bounds: FxHashMap<LayoutId, Bounds<f32>>,
+    snapped_content_bounds: FxHashMap<LayoutId, Bounds<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
 }
@@ -51,10 +45,8 @@ impl TaffyLayoutEngine {
         TaffyLayoutEngine {
             taffy,
             absolute_layout_bounds: FxHashMap::default(),
-            absolute_origins: FxHashMap::default(),
-            absolute_content_origins: FxHashMap::default(),
-            snapped_origins: FxHashMap::default(),
-            snapped_content_origins: FxHashMap::default(),
+            snapped_layout_bounds: FxHashMap::default(),
+            snapped_content_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
             layout_bounds_scratch_space: Vec::new(),
         }
@@ -63,10 +55,8 @@ impl TaffyLayoutEngine {
     pub fn clear(&mut self) {
         self.taffy.clear();
         self.absolute_layout_bounds.clear();
-        self.absolute_origins.clear();
-        self.absolute_content_origins.clear();
-        self.snapped_origins.clear();
-        self.snapped_content_origins.clear();
+        self.snapped_layout_bounds.clear();
+        self.snapped_content_bounds.clear();
         self.computed_layouts.clear();
     }
 
@@ -190,10 +180,8 @@ impl TaffyLayoutEngine {
             stack.push(id);
             while let Some(id) = stack.pop() {
                 self.absolute_layout_bounds.remove(&id);
-                self.absolute_origins.remove(&id);
-                self.absolute_content_origins.remove(&id);
-                self.snapped_origins.remove(&id);
-                self.snapped_content_origins.remove(&id);
+                self.snapped_layout_bounds.remove(&id);
+                self.snapped_content_bounds.remove(&id);
                 stack.extend(
                     self.taffy
                         .children(id.into())
@@ -258,117 +246,159 @@ impl TaffyLayoutEngine {
             return layout;
         }
 
-        // Taffy's rounding is disabled because its post-pass stores rounded
-        // relative positions but uses unrounded cumulative positions for edge
-        // rounding — GPUI reconstructs absolute positions through parents,
-        // which breaks the cumulative invariant.
-        //
         let parent_id = self.taffy.parent(id.0);
+        let snapped_bounds = if let Some(parent_id) = parent_id {
+            let parent_id = LayoutId::from(parent_id);
+            self.layout_bounds(parent_id, scale_factor);
+            let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+            let parent_layout = self.taffy.layout(parent_id.into()).expect(EXPECT_MESSAGE);
+            let parent_content_bounds = *self
+                .snapped_content_bounds
+                .get(&parent_id)
+                .expect("parent content bounds should be cached");
 
-        let (
-            parent_absolute_origin_dev,
-            parent_absolute_content_origin_dev,
-            parent_snapped_content_origin_dev,
-        ) =
-            if let Some(parent_id) = parent_id {
-                self.layout_bounds(parent_id.into(), scale_factor);
-                (
-                    self.absolute_origins
-                        .get(&LayoutId::from(parent_id))
-                        .copied()
-                        .unwrap_or_default(),
-                    self.absolute_content_origins
-                        .get(&LayoutId::from(parent_id))
-                        .copied()
-                        .unwrap_or_default(),
-                    self.snapped_content_origins
-                        .get(&LayoutId::from(parent_id))
-                        .copied()
-                        .unwrap_or_default(),
-                )
-            } else {
-                (Point::default(), Point::default(), Point::default())
-            };
+            let parent_raw_content_left =
+                (parent_layout.border.left + parent_layout.padding.left)
+                    .clamp(0.0, parent_layout.size.width);
+            let parent_raw_content_top =
+                (parent_layout.border.top + parent_layout.padding.top)
+                    .clamp(0.0, parent_layout.size.height);
+            let parent_raw_content_width = raw_content_size(
+                parent_layout.size.width,
+                parent_layout.border.left,
+                parent_layout.border.right,
+                parent_layout.padding.left,
+                parent_layout.padding.right,
+            );
+            let parent_raw_content_height = raw_content_size(
+                parent_layout.size.height,
+                parent_layout.border.top,
+                parent_layout.border.bottom,
+                parent_layout.padding.top,
+                parent_layout.padding.bottom,
+            );
 
-        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
-        let loc_x = layout.location.x;
-        let loc_y = layout.location.y;
-        let size_w = layout.size.width;
-        let size_h = layout.size.height;
-
-        let absolute_origin_dev = point(
-            parent_absolute_origin_dev.x + loc_x,
-            parent_absolute_origin_dev.y + loc_y,
-        );
-        self.absolute_origins.insert(id, absolute_origin_dev);
-
-        let parent_content_inset = if let Some(parent_id) = parent_id {
-            let parent_layout = self.taffy.layout(parent_id).expect(EXPECT_MESSAGE);
-            point(
-                parent_layout.border.left + parent_layout.padding.left,
-                parent_layout.border.top + parent_layout.padding.top,
+            Bounds::from_corners(
+                point(
+                    parent_content_bounds.origin.x
+                        + map_axis_edge(
+                            layout.location.x - parent_raw_content_left,
+                            parent_raw_content_width,
+                            parent_content_bounds.size.width,
+                        ),
+                    parent_content_bounds.origin.y
+                        + map_axis_edge(
+                            layout.location.y - parent_raw_content_top,
+                            parent_raw_content_height,
+                            parent_content_bounds.size.height,
+                        ),
+                ),
+                point(
+                    parent_content_bounds.origin.x
+                        + map_axis_edge(
+                            layout.location.x - parent_raw_content_left + layout.size.width,
+                            parent_raw_content_width,
+                            parent_content_bounds.size.width,
+                        ),
+                    parent_content_bounds.origin.y
+                        + map_axis_edge(
+                            layout.location.y - parent_raw_content_top + layout.size.height,
+                            parent_raw_content_height,
+                            parent_content_bounds.size.height,
+                        ),
+                ),
             )
         } else {
-            Point::default()
+            let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+            Bounds::from_corners(
+                point(
+                    round_half_toward_zero(layout.location.x),
+                    round_half_toward_zero(layout.location.y),
+                ),
+                point(
+                    round_half_toward_zero(layout.location.x + layout.size.width),
+                    round_half_toward_zero(layout.location.y + layout.size.height),
+                ),
+            )
         };
 
-        let local_left_from_content = loc_x - parent_content_inset.x;
-        let local_top_from_content = loc_y - parent_content_inset.y;
-        let local_right_from_content = local_left_from_content + size_w;
-        let local_bottom_from_content = local_top_from_content + size_h;
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
 
-        let parent_content_left = round_half_toward_zero(parent_absolute_content_origin_dev.x);
-        let parent_content_top = round_half_toward_zero(parent_absolute_content_origin_dev.y);
+        self.snapped_layout_bounds.insert(id, snapped_bounds);
 
-        let left = parent_snapped_content_origin_dev.x
-            + (round_half_toward_zero(
-                parent_absolute_content_origin_dev.x + local_left_from_content,
-            ) - parent_content_left);
-        let top = parent_snapped_content_origin_dev.y
-            + (round_half_toward_zero(
-                parent_absolute_content_origin_dev.y + local_top_from_content,
-            ) - parent_content_top);
-        let right = parent_snapped_content_origin_dev.x
-            + (round_half_toward_zero(
-                parent_absolute_content_origin_dev.x + local_right_from_content,
-            ) - parent_content_left);
-        let bottom = parent_snapped_content_origin_dev.y
-            + (round_half_toward_zero(
-                parent_absolute_content_origin_dev.y + local_bottom_from_content,
-            ) - parent_content_top);
-
-        self.snapped_origins.insert(id, point(left, top));
-
-        let content_inset = point(
-            layout.border.left + layout.padding.left,
-            layout.border.top + layout.padding.top,
+        let snapped_content_bounds = Bounds::from_corners(
+            point(
+                snapped_bounds.origin.x
+                    + snapped_inner_inset(layout.border.left, layout.padding.left),
+                snapped_bounds.origin.y
+                    + snapped_inner_inset(layout.border.top, layout.padding.top),
+            ),
+            point(
+                snapped_bounds.right()
+                    - snapped_inner_inset(layout.border.right, layout.padding.right),
+                snapped_bounds.bottom()
+                    - snapped_inner_inset(layout.border.bottom, layout.padding.bottom),
+            ),
         );
-        let absolute_content_origin_dev = point(
-            absolute_origin_dev.x + content_inset.x,
-            absolute_origin_dev.y + content_inset.y,
-        );
-        self.absolute_content_origins
-            .insert(id, absolute_content_origin_dev);
-
-        let left_basis = round_half_toward_zero(absolute_origin_dev.x);
-        let top_basis = round_half_toward_zero(absolute_origin_dev.y);
-        let snapped_content_origin_dev = point(
-            left + (round_half_toward_zero(absolute_origin_dev.x + content_inset.x) - left_basis),
-            top + (round_half_toward_zero(absolute_origin_dev.y + content_inset.y) - top_basis),
-        );
-        self.snapped_content_origins
-            .insert(id, snapped_content_origin_dev);
+        self.snapped_content_bounds.insert(id, snapped_content_bounds);
 
         let bounds = Bounds {
-            origin: point(Pixels(left / scale_factor), Pixels(top / scale_factor)),
+            origin: point(
+                Pixels(snapped_bounds.origin.x / scale_factor),
+                Pixels(snapped_bounds.origin.y / scale_factor),
+            ),
             size: size(
-                Pixels((right - left) / scale_factor),
-                Pixels((bottom - top) / scale_factor),
+                Pixels(snapped_bounds.size.width / scale_factor),
+                Pixels(snapped_bounds.size.height / scale_factor),
             ),
         };
 
         self.absolute_layout_bounds.insert(id, bounds);
         bounds
+    }
+}
+
+fn raw_content_size(
+    raw_outer_size: f32,
+    raw_border_start: f32,
+    raw_border_end: f32,
+    raw_padding_start: f32,
+    raw_padding_end: f32,
+) -> f32 {
+    (raw_outer_size - raw_border_start - raw_border_end - raw_padding_start - raw_padding_end)
+        .max(0.0)
+}
+
+fn map_axis_edge(raw_edge: f32, raw_total: f32, snapped_total: f32) -> f32 {
+    const EDGE_EPSILON: f32 = 0.001;
+
+    if raw_edge <= 0.0 {
+        return round_half_toward_zero(raw_edge);
+    }
+    if raw_edge >= raw_total {
+        return snapped_total + round_half_toward_zero(raw_edge - raw_total);
+    }
+    if raw_total <= EDGE_EPSILON {
+        return round_half_toward_zero(raw_edge);
+    }
+
+    round_half_toward_zero(raw_edge * snapped_total / raw_total)
+}
+
+fn snapped_inner_inset(raw_border: f32, raw_padding: f32) -> f32 {
+    snapped_nonzero_length(raw_border) + snapped_length(raw_padding)
+}
+
+fn snapped_length(raw_length: f32) -> f32 {
+    round_half_toward_zero(raw_length.max(0.0))
+}
+
+fn snapped_nonzero_length(raw_length: f32) -> f32 {
+    let snapped = snapped_length(raw_length);
+    if raw_length == 0.0 {
+        0.0
+    } else {
+        snapped.max(1.0)
     }
 }
 
