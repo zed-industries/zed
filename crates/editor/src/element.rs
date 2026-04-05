@@ -250,6 +250,10 @@ impl EditorElement {
         register_action(editor, window, Editor::select_page_up);
         register_action(editor, window, Editor::cancel);
         register_action(editor, window, Editor::blame_hover);
+        register_action(editor, window, Editor::debugger_hover_expand_selected);
+        register_action(editor, window, Editor::debugger_hover_collapse_selected);
+        register_action(editor, window, Editor::debugger_hover_select_next);
+        register_action(editor, window, Editor::debugger_hover_select_previous);
         register_action(editor, window, Editor::next_snippet_tabstop);
         register_action(editor, window, Editor::previous_snippet_tabstop);
         register_action(editor, window, Editor::copy);
@@ -5488,6 +5492,14 @@ impl EditorElement {
             });
         }
 
+        let (is_single_debugger_hover, stable_debugger_hover_origin) = {
+            let editor = self.editor.read(cx);
+            (
+                editor.hover_state.is_single_debugger_hover(),
+                editor.hover_state.stable_debugger_hover_origin(),
+            )
+        };
+
         fn draw_occluder(
             width: Pixels,
             origin: gpui::Point<Pixels>,
@@ -5572,7 +5584,7 @@ impl EditorElement {
                 .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
         };
 
-        let can_place_below = || {
+        let can_place_below = {
             let mut bounds_below = Vec::new();
             let mut current_y = hovered_point.y + line_height;
             for popover in &measured_hover_popovers {
@@ -5586,10 +5598,32 @@ impl EditorElement {
                 .all(|b| b.is_contained_within(hitbox) && !intersects_menu(*b))
         };
 
+        if is_single_debugger_hover && measured_hover_popovers.len() == 1 {
+            let popover = measured_hover_popovers
+                .pop()
+                .expect("expected single debugger hover popover");
+            let popover_origin = stable_debugger_hover_origin.unwrap_or_else(|| {
+                if can_place_below {
+                    point(hovered_point.x + popover.horizontal_offset, hovered_point.y + line_height)
+                } else {
+                    point(
+                        hovered_point.x + popover.horizontal_offset,
+                        hovered_point.y - popover.size.height,
+                    )
+                }
+            });
+
+            window.defer_draw(popover.element, popover_origin, 2, None);
+            self.editor.update(cx, |editor, _| {
+                editor.hover_state.stable_debugger_hover_origin = Some(popover_origin);
+            });
+            return;
+        }
+
         if can_place_above {
             // try placing above hovered point
             place_popovers_above(hovered_point, measured_hover_popovers, window, cx);
-        } else if can_place_below() {
+        } else if can_place_below {
             // try placing below hovered point
             place_popovers_below(
                 hovered_point,
