@@ -374,13 +374,13 @@ impl EditAgent {
                         buffer.edit(edits.iter().cloned(), None, cx);
                         let max_edit_end = buffer
                             .summaries_for_anchors::<Point, _>(
-                                edits.iter().map(|(range, _)| &range.end),
+                                edits.iter().map(|(range, _)| range.end),
                             )
                             .max()
                             .unwrap();
                         let min_edit_start = buffer
                             .summaries_for_anchors::<Point, _>(
-                                edits.iter().map(|(range, _)| &range.start),
+                                edits.iter().map(|(range, _)| range.start),
                             )
                             .min()
                             .unwrap();

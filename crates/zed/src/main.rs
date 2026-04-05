@@ -10,7 +10,7 @@ use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
 use clap::Parser;
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{Client, ProxySettings, UserStore, parse_zed_link};
+use client::{Client, ProxySettings, RefreshLlmTokenListener, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use crashes::InitCrashHandler;
@@ -664,7 +664,12 @@ fn main() {
         );
 
         copilot_ui::init(&app_state, cx);
-        language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        language_model::init(cx);
+        RefreshLlmTokenListener::register(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            cx,
+        );
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         acp_tools::init(cx);
         zed::telemetry_log::init(cx);
@@ -857,6 +862,7 @@ fn main() {
                 diff_paths,
                 wsl,
                 diff_all: diff_all_mode,
+                dev_container: args.dev_container,
             })
         }
 
@@ -1207,6 +1213,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 
     let mut task = None;
+    let dev_container = request.dev_container;
     if !request.open_paths.is_empty() || !request.diff_paths.is_empty() {
         let app_state = app_state.clone();
         task = Some(cx.spawn(async move |cx| {
@@ -1217,7 +1224,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 &request.diff_paths,
                 request.diff_all,
                 app_state,
-                workspace::OpenOptions::default(),
+                workspace::OpenOptions {
+                    open_in_dev_container: dev_container,
+                    ..Default::default()
+                },
                 cx,
             )
             .await?;
@@ -1634,6 +1644,13 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(long, value_name = "USER@DISTRO")]
     wsl: Option<String>,
+
+    /// Open the project in a dev container.
+    ///
+    /// Automatically triggers "Reopen in Dev Container" if a `.devcontainer/`
+    /// configuration is found in the project directory.
+    #[arg(long)]
+    dev_container: bool,
 
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]

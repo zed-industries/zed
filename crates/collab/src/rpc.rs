@@ -1485,6 +1485,7 @@ fn notify_rejoined_projects(
                 worktree_id: worktree.id,
                 abs_path: worktree.abs_path.clone(),
                 root_name: worktree.root_name,
+                root_repo_common_dir: worktree.root_repo_common_dir,
                 updated_entries: worktree.updated_entries,
                 removed_entries: worktree.removed_entries,
                 scan_id: worktree.scan_id,
@@ -1775,6 +1776,7 @@ async fn share_project(
             &request.worktrees,
             request.is_ssh_project,
             request.windows_paths.unwrap_or(false),
+            &request.features,
         )
         .await?;
     response.send(proto::ShareProjectResponse {
@@ -1840,6 +1842,28 @@ async fn join_project(
     tracing::info!(%project_id, "join project");
 
     let db = session.db().await;
+    let project_model = db.get_project(project_id).await?;
+    let host_features: Vec<String> =
+        serde_json::from_str(&project_model.features).unwrap_or_default();
+    let guest_features: HashSet<_> = request.features.iter().collect();
+    let host_features_set: HashSet<_> = host_features.iter().collect();
+    if guest_features != host_features_set {
+        let host_connection_id = project_model.host_connection()?;
+        let mut pool = session.connection_pool().await;
+        let host_version = pool
+            .connection(host_connection_id)
+            .map(|c| c.zed_version.to_string());
+        let guest_version = pool
+            .connection(session.connection_id)
+            .map(|c| c.zed_version.to_string());
+        drop(pool);
+        Err(anyhow!(
+            "The host (v{}) and guest (v{}) are using incompatible versions of Zed. The peer with the older version must update to collaborate.",
+            host_version.as_deref().unwrap_or("unknown"),
+            guest_version.as_deref().unwrap_or("unknown"),
+        ))?;
+    }
+
     let (project, replica_id) = &mut *db
         .join_project(
             project_id,
@@ -1850,6 +1874,7 @@ async fn join_project(
         )
         .await?;
     drop(db);
+
     tracing::info!(%project_id, "join remote project");
     let collaborators = project
         .collaborators
@@ -1909,6 +1934,7 @@ async fn join_project(
         language_server_capabilities,
         role: project.role.into(),
         windows_paths: project.path_style == PathStyle::Windows,
+        features: project.features.clone(),
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -1918,6 +1944,7 @@ async fn join_project(
             worktree_id,
             abs_path: worktree.abs_path.clone(),
             root_name: worktree.root_name,
+            root_repo_common_dir: worktree.root_repo_common_dir,
             updated_entries: worktree.entries,
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,

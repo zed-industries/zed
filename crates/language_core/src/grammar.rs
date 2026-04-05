@@ -275,12 +275,11 @@ impl Grammar {
     }
 
     pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
-        let capture_id = self
-            .highlights_config
+        self.highlights_config
             .as_ref()?
             .query
-            .capture_index_for_name(name)?;
-        Some(self.highlight_map.lock().get(capture_id))
+            .capture_index_for_name(name)
+            .and_then(|capture_id| self.highlight_map.lock().get(capture_id))
     }
 
     pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {

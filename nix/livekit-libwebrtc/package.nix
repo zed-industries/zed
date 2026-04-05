@@ -37,6 +37,8 @@
   libxfixes,
   libxrandr,
   libxtst,
+  libx11,
+  libxi,
   pipewire,
   xorg,
 }:
@@ -224,8 +226,8 @@ stdenv.mkDerivation {
     libxrandr
     libxtst
     pipewire
-    xorg.libX11
-    xorg.libXi
+    libx11
+    libxi
   ]);
 
   preConfigure = ''

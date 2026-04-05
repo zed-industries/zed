@@ -23,7 +23,6 @@ agent_settings.workspace = true
 agent_ui = { workspace = true, features = ["audio"] }
 anyhow.workspace = true
 chrono.workspace = true
-collections.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true

@@ -225,6 +225,11 @@
   // 3. Hide on both typing and cursor movement:
   //    "on_typing_and_movement"
   "hide_mouse": "on_typing_and_movement",
+  // Determines whether the focused panel follows the mouse location.
+  "focus_follows_mouse": {
+    "enabled": false,
+    "debounce_ms": 250,
+  },
   // Determines how snippets are sorted relative to other completion items.
   //
   // 1. Place snippets at the top of the completion list:
@@ -1102,11 +1107,14 @@
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
     "notify_when_agent_waiting": "primary_screen",
-    // Whether to play a sound when the agent has either completed
+    // When to play a sound when the agent has either completed
     // its response, or needs user input.
-
-    // Default: false
-    "play_sound_when_agent_done": false,
+    // "never" - Never play the sound
+    // "when_hidden" - Only play the sound when the agent panel is not visible
+    // "always" - Always play the sound
+    //
+    // Default: never
+    "play_sound_when_agent_done": "never",
     // Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
     //
     // Default: true
@@ -2529,21 +2537,31 @@
     "format_dap_log_messages": true,
     "button": true,
   },
-  // Configures any number of settings profiles that are temporarily applied on
-  // top of your existing user settings when selected from
-  // `settings profile selector: toggle`.
+  // Configures any number of settings profiles that are temporarily applied
+  // when selected from `settings profile selector: toggle`.
+  //
+  // Each profile has an optional `base` ("user" or "default") and a `settings`
+  // object. When `base` is "user" (the default), the profile applies on top of
+  // your user settings. When `base` is "default", user settings are ignored and
+  // the profile applies on top of Zed's defaults.
+  //
   // Examples:
   // "profiles": {
   //   "Presenting": {
-  //     "agent_ui_font_size": 20.0,
-  //     "buffer_font_size": 20.0,
-  //     "theme": "One Light",
-  //     "ui_font_size": 20.0
+  //     "base": "default",
+  //     "settings": {
+  //       "agent_ui_font_size": 20.0,
+  //       "buffer_font_size": 20.0,
+  //       "theme": "One Light",
+  //       "ui_font_size": 20.0
+  //     }
   //   },
   //   "Python (ty)": {
-  //     "languages": {
-  //       "Python": {
-  //         "language_servers": ["ty"]
+  //     "settings": {
+  //       "languages": {
+  //         "Python": {
+  //           "language_servers": ["ty"]
+  //         }
   //       }
   //     }
   //   }

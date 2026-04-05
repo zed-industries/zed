@@ -596,6 +596,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .when(!filter_packages, |job| {
                 job.add_step(steps::cargo_nextest(platform))
             })
+            .when(platform == Platform::Mac, |job| {
+                job.add_step(steps::cargo_build_visual_tests())
+            })
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }

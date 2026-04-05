@@ -159,10 +159,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: "primary_screen"
     pub notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
-    /// Whether to play a sound when the agent has either completed its response, or needs user input.
+    /// When to play a sound when the agent has either completed its response, or needs user input.
     ///
-    /// Default: false
-    pub play_sound_when_agent_done: Option<bool>,
+    /// Default: never
+    pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: true
@@ -345,6 +345,37 @@ pub enum NotifyWhenAgentWaiting {
     PrimaryScreen,
     AllScreens,
     Never,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaySoundWhenAgentDone {
+    #[default]
+    Never,
+    WhenHidden,
+    Always,
+}
+
+impl PlaySoundWhenAgentDone {
+    pub fn should_play(&self, visible: bool) -> bool {
+        match self {
+            PlaySoundWhenAgentDone::Never => false,
+            PlaySoundWhenAgentDone::WhenHidden => !visible,
+            PlaySoundWhenAgentDone::Always => true,
+        }
+    }
 }
 
 #[with_fallible_options]

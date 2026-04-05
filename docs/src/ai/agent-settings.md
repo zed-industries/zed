@@ -292,13 +292,16 @@ The default value is `false`.
 
 ### Sound Notification
 
-Control whether to hear a notification sound when the agent is done generating changes or needs your input.
-The default value is `false`.
+Control whether to hear a notification sound when the agent is done generating changes or needs your input. The default value is `never`.
+
+- `"never"` (default) — Never play the sound.
+- `"when_hidden"` — Only play the sound when the agent panel is not visible.
+- `"always"` — Always play the sound on completion.
 
 ```json [settings]
 {
   "agent": {
-    "play_sound_when_agent_done": true
+    "play_sound_when_agent_done": "never"
   }
 }
 ```

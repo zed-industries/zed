@@ -426,7 +426,7 @@ impl MarksState {
                             name.clone(),
                             buffer
                                 .read(cx)
-                                .summaries_for_anchors::<Point, _>(anchors)
+                                .summaries_for_anchors::<Point, _>(anchors.iter().copied())
                                 .collect(),
                         )
                     })
@@ -492,7 +492,14 @@ impl MarksState {
         {
             let buffer_marks = old_marks
                 .into_iter()
-                .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
+                .map(|(k, v)| {
+                    (
+                        k,
+                        v.into_iter()
+                            .filter_map(|anchor| anchor.raw_text_anchor())
+                            .collect(),
+                    )
+                })
                 .collect();
             self.buffer_marks
                 .insert(buffer.read(cx).remote_id(), buffer_marks);
@@ -569,6 +576,7 @@ impl MarksState {
         anchors: Vec<Anchor>,
         cx: &mut Context<Self>,
     ) {
+        let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
         let buffer = multibuffer.read(cx).as_singleton();
         let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
@@ -602,7 +610,7 @@ impl MarksState {
             name.clone(),
             anchors
                 .into_iter()
-                .map(|anchor| anchor.text_anchor)
+                .filter_map(|anchor| Some(multibuffer_snapshot.anchor_to_buffer_anchor(anchor)?.0))
                 .collect(),
         );
         if !self.watched_buffers.contains_key(&buffer_id) {
@@ -629,12 +637,13 @@ impl MarksState {
                 return Some(Mark::Local(anchors.get(name)?.clone()));
             }
 
-            let (excerpt_id, buffer_id, _) = multi_buffer.read(cx).read(cx).as_singleton()?;
-            if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
+            let multibuffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            let buffer_snapshot = multibuffer_snapshot.as_singleton()?;
+            if let Some(anchors) = self.buffer_marks.get(&buffer_snapshot.remote_id()) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .iter()
-                    .map(|anchor| Anchor::in_buffer(excerpt_id, *anchor))
+                    .filter_map(|anchor| multibuffer_snapshot.anchor_in_excerpt(*anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
             }
@@ -895,14 +904,13 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor
-                    .selections
-                    .newest::<Point>(&editor.display_snapshot(cx));
-                if let Some((_, buffer, _)) = editor
-                    .buffer()
-                    .read(cx)
-                    .excerpt_containing(selection.head(), cx)
-                {
+                let multibuffer = editor.buffer().read(cx);
+                let snapshot = multibuffer.snapshot(cx);
+                let selection = editor.selections.newest_anchor();
+                let buffer = snapshot
+                    .anchor_to_buffer_anchor(selection.head())
+                    .and_then(|(text_anchor, _)| multibuffer.buffer(text_anchor.buffer_id));
+                if let Some(buffer) = buffer {
                     buffer
                         .read(cx)
                         .file()

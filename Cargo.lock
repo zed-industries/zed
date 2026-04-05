@@ -260,7 +260,6 @@ dependencies = [
  "chrono",
  "client",
  "collections",
- "credentials_provider",
  "env_logger 0.11.8",
  "feature_flags",
  "fs",
@@ -289,6 +288,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "zed_credentials_provider",
 ]
 
 [[package]]
@@ -2856,6 +2856,7 @@ dependencies = [
  "chrono",
  "clock",
  "cloud_api_client",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "credentials_provider",
@@ -2869,6 +2870,7 @@ dependencies = [
  "http_client",
  "http_client_tls",
  "httparse",
+ "language_model",
  "log",
  "objc2-foundation",
  "parking_lot",
@@ -2900,6 +2902,7 @@ dependencies = [
  "util",
  "windows 0.61.3",
  "worktree",
+ "zed_credentials_provider",
 ]
 
 [[package]]
@@ -3059,6 +3062,7 @@ dependencies = [
  "serde",
  "serde_json",
  "text",
+ "zed_credentials_provider",
  "zeta_prompt",
 ]
 
@@ -4035,12 +4039,8 @@ name = "credentials_provider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "futures 0.3.32",
  "gpui",
- "paths",
- "release_channel",
  "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -5115,6 +5115,7 @@ dependencies = [
  "collections",
  "copilot",
  "copilot_ui",
+ "credentials_provider",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5157,6 +5158,7 @@ dependencies = [
  "workspace",
  "worktree",
  "zed_actions",
+ "zed_credentials_provider",
  "zeta_prompt",
  "zlog",
  "zstd",
@@ -5173,6 +5175,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "collections",
+ "criterion",
  "db",
  "debug_adapter_extension",
  "dirs 4.0.0",
@@ -5580,6 +5583,13 @@ dependencies = [
  "env_filter",
  "jiff",
  "log",
+]
+
+[[package]]
+name = "env_var"
+version = "0.1.0"
+dependencies = [
+ "gpui",
 ]
 
 [[package]]
@@ -7131,7 +7141,6 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "feature_flags",
  "fs",
  "git",
  "git_ui",
@@ -7189,7 +7198,6 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "feature_flags",
  "file_icons",
  "futures 0.3.32",
  "fuzzy",
@@ -9316,12 +9324,12 @@ dependencies = [
  "anthropic",
  "anyhow",
  "base64 0.22.1",
- "client",
  "cloud_api_client",
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "credentials_provider",
+ "env_var",
  "futures 0.3.32",
  "gpui",
  "http_client",
@@ -9334,11 +9342,9 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "settings",
  "smol",
  "thiserror 2.0.17",
  "util",
- "zed_env_vars",
 ]
 
 [[package]]
@@ -13139,6 +13145,7 @@ dependencies = [
  "wax",
  "which 6.0.3",
  "worktree",
+ "zed_credentials_provider",
  "zeroize",
  "zlog",
  "ztracing",
@@ -15748,6 +15755,7 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+ "zed_credentials_provider",
 ]
 
 [[package]]
@@ -15863,7 +15871,6 @@ dependencies = [
  "agent_ui",
  "anyhow",
  "chrono",
- "collections",
  "editor",
  "feature_flags",
  "fs",
@@ -22182,10 +22189,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_credentials_provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "credentials_provider",
+ "futures 0.3.32",
+ "gpui",
+ "paths",
+ "release_channel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "zed_env_vars"
 version = "0.1.0"
 dependencies = [
- "gpui",
+ "env_var",
 ]
 
 [[package]]

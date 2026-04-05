@@ -13,8 +13,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection, NewThreadLocation,
-    NotifyWhenAgentWaiting, RegisterSetting, Settings, SettingsContent, SettingsStore,
-    SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
+    NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
+    SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file,
 };
 
@@ -165,7 +165,7 @@ pub struct AgentSettings {
     pub profiles: IndexMap<AgentProfileId, AgentProfileSettings>,
 
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
-    pub play_sound_when_agent_done: bool,
+    pub play_sound_when_agent_done: PlaySoundWhenAgentDone,
     pub single_file_review: bool,
     pub model_parameters: Vec<LanguageModelParameters>,
     pub enable_feedback: bool,
@@ -618,7 +618,7 @@ impl Settings for AgentSettings {
                 .collect(),
 
             notify_when_agent_waiting: agent.notify_when_agent_waiting.unwrap(),
-            play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap(),
+            play_sound_when_agent_done: agent.play_sound_when_agent_done.unwrap_or_default(),
             single_file_review: agent.single_file_review.unwrap(),
             model_parameters: agent.model_parameters,
             enable_feedback: agent.enable_feedback.unwrap(),

@@ -9,9 +9,7 @@ use crate::ThreadHistory;
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::Result;
-use editor::{
-    CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
-};
+use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
@@ -621,7 +619,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                 for (terminal_text, terminal_range) in terminal_ranges {
                                     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
                                     let Some(start) =
-                                        snapshot.as_singleton_anchor(source_range.start)
+                                        snapshot.anchor_in_excerpt(source_range.start)
                                     else {
                                         return;
                                     };
@@ -1235,7 +1233,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletionProvider<T> {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
@@ -2147,7 +2144,7 @@ fn build_code_label_for_path(
         .theme()
         .syntax()
         .highlight_id("variable")
-        .map(HighlightId);
+        .map(HighlightId::new);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file, None);

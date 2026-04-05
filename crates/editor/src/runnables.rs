@@ -8,9 +8,7 @@ use gpui::{
 };
 use language::{Buffer, BufferRow, Runnable};
 use lsp::LanguageServerName;
-use multi_buffer::{
-    Anchor, BufferOffset, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _,
-};
+use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
 use project::{
     Location, Project, TaskSourceKind,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
@@ -165,7 +163,7 @@ impl Editor {
                     .update(cx, |editor, cx| {
                         let multi_buffer = editor.buffer().read(cx);
                         if multi_buffer.is_singleton() {
-                            Some((multi_buffer.snapshot(cx), Anchor::min()..Anchor::max()))
+                            Some((multi_buffer.snapshot(cx), Anchor::Min..Anchor::Max))
                         } else {
                             let display_snapshot =
                                 editor.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -209,16 +207,8 @@ impl Editor {
                     .fold(HashMap::default(), |mut acc, (kind, location, task)| {
                         let buffer = location.target.buffer;
                         let buffer_snapshot = buffer.read(cx).snapshot();
-                        let offset = multi_buffer_snapshot.excerpts().find_map(
-                            |(excerpt_id, snapshot, _)| {
-                                if snapshot.remote_id() == buffer_snapshot.remote_id() {
-                                    multi_buffer_snapshot
-                                        .anchor_in_excerpt(excerpt_id, location.target.range.start)
-                                } else {
-                                    None
-                                }
-                            },
-                        );
+                        let offset =
+                            multi_buffer_snapshot.anchor_in_excerpt(location.target.range.start);
                         if let Some(offset) = offset {
                             let task_buffer_range =
                                 location.target.range.to_point(&buffer_snapshot);
@@ -369,20 +359,23 @@ impl Editor {
             (selection, buffer, snapshot)
         };
         let selection_range = selection.range();
-        let start = editor_snapshot
+        let Some((_, range)) = editor_snapshot
             .display_snapshot
             .buffer_snapshot()
-            .anchor_after(selection_range.start)
-            .text_anchor;
-        let end = editor_snapshot
-            .display_snapshot
-            .buffer_snapshot()
-            .anchor_after(selection_range.end)
-            .text_anchor;
-        let location = Location {
-            buffer,
-            range: start..end,
+            .anchor_range_to_buffer_anchor_range(
+                editor_snapshot
+                    .display_snapshot
+                    .buffer_snapshot()
+                    .anchor_after(selection_range.start)
+                    ..editor_snapshot
+                        .display_snapshot
+                        .buffer_snapshot()
+                        .anchor_before(selection_range.end),
+            )
+        else {
+            return Task::ready(None);
         };
+        let location = Location { buffer, range };
         let captured_variables = {
             let mut variables = TaskVariables::default();
             let buffer = location.buffer.read(cx);
@@ -430,9 +423,9 @@ impl Editor {
             return HashMap::default();
         }
         let buffers = if visible_only {
-            self.visible_excerpts(true, cx)
-                .into_values()
-                .map(|(buffer, _, _)| buffer)
+            self.visible_buffers(cx)
+                .into_iter()
+                .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
                 .collect()
         } else {
             self.buffer().read(cx).all_buffers()
@@ -482,19 +475,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Option<(Entity<Buffer>, u32, Arc<RunnableTasks>)> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let offset = self
-            .selections
-            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-            .head();
-        let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
-        let offset = excerpt.map_offset_to_buffer(offset);
-        let buffer_id = excerpt.buffer().remote_id();
+        let anchor = self.selections.newest_anchor().head();
+        let (anchor, buffer_snapshot) = snapshot.anchor_to_buffer_anchor(anchor)?;
+        let offset = anchor.to_offset(buffer_snapshot);
 
-        let layer = excerpt.buffer().syntax_layer_at(offset)?;
+        let layer = buffer_snapshot.syntax_layer_at(offset)?;
         let mut cursor = layer.node().walk();
 
-        while cursor.goto_first_child_for_byte(offset.0).is_some() {
-            if cursor.node().end_byte() == offset.0 {
+        while cursor.goto_first_child_for_byte(offset).is_some() {
+            if cursor.node().end_byte() == offset {
                 cursor.goto_next_sibling();
             }
         }
@@ -503,18 +492,18 @@ impl Editor {
         loop {
             let node = cursor.node();
             let node_range = node.byte_range();
-            let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
+            let symbol_start_row = buffer_snapshot.offset_to_point(node.start_byte()).row;
 
             // Check if this node contains our offset
-            if node_range.start <= offset.0 && node_range.end >= offset.0 {
+            if node_range.start <= offset && node_range.end >= offset {
                 // If it contains offset, check for task
                 if let Some(tasks) = self
                     .runnables
                     .runnables
-                    .get(&buffer_id)
+                    .get(&buffer_snapshot.remote_id())
                     .and_then(|(_, tasks)| tasks.get(&symbol_start_row))
                 {
-                    let buffer = self.buffer.read(cx).buffer(buffer_id)?;
+                    let buffer = self.buffer.read(cx).buffer(buffer_snapshot.remote_id())?;
                     return Some((buffer, symbol_start_row, Arc::new(tasks.to_owned())));
                 }
             }
