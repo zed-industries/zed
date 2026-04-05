@@ -610,15 +610,7 @@ impl LineLayoutCache {
                 .layout_line(&text, font_size, runs);
 
             if let Some(force_width) = force_width {
-                let mut glyph_pos = 0;
-                for run in layout.runs.iter_mut() {
-                    for glyph in run.glyphs.iter_mut() {
-                        if (glyph.position.x - glyph_pos * force_width).abs() > px(1.) {
-                            glyph.position.x = glyph_pos * force_width;
-                        }
-                        glyph_pos += 1;
-                    }
-                }
+                apply_force_width_to_layout(&mut layout, force_width);
             }
 
             let key = Arc::new(CacheKey {
@@ -767,15 +759,7 @@ impl LineLayoutCache {
             .layout_line(&text, font_size, runs);
 
         if let Some(force_width) = force_width {
-            let mut glyph_pos = 0;
-            for run in layout.runs.iter_mut() {
-                for glyph in run.glyphs.iter_mut() {
-                    if (glyph.position.x - glyph_pos * force_width).abs() > px(1.) {
-                        glyph.position.x = glyph_pos * force_width;
-                    }
-                    glyph_pos += 1;
-                }
-            }
+            apply_force_width_to_layout(&mut layout, force_width);
         }
 
         let key = Arc::new(HashedCacheKey {
@@ -792,6 +776,38 @@ impl LineLayoutCache {
             .insert(key.clone(), layout.clone());
         current_frame.used_lines_by_hash.push(key);
         layout
+    }
+}
+
+/// Adjusts glyph positions to align with a monospace cell grid, while preserving
+/// the placement of combining marks relative to their base characters.
+///
+/// Without this fix, combining marks (e.g., Thai vowel signs like ี and tone marks
+/// like ่) get incorrectly advanced to the next cell position. HarfBuzz positions
+/// combining marks at the same x coordinate as their base character (they differ
+/// only in y), so we detect them by checking whether the shaped x position hasn't
+/// advanced by at least half a cell beyond the previous base character.
+fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
+    let mut glyph_pos = 0usize;
+    let mut last_base_shaped_x = px(f32::NEG_INFINITY);
+    let mut last_base_forced_x = px(0.);
+
+    for run in layout.runs.iter_mut() {
+        for glyph in run.glyphs.iter_mut() {
+            let shaped_x = glyph.position.x;
+
+            if shaped_x > last_base_shaped_x + force_width * 0.5 {
+                let forced_x = glyph_pos * force_width;
+                if (shaped_x - forced_x).abs() > px(1.) {
+                    glyph.position.x = forced_x;
+                }
+                last_base_shaped_x = shaped_x;
+                last_base_forced_x = glyph_pos * force_width;
+                glyph_pos += 1;
+            } else {
+                glyph.position.x = last_base_forced_x + (shaped_x - last_base_shaped_x);
+            }
+        }
     }
 }
 
