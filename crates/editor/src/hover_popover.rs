@@ -10,7 +10,7 @@ use crate::{
 use anyhow::{Context as _, anyhow};
 use dap::client::SessionId;
 use gpui::{
-    AnyElement, App, AsyncApp, AsyncWindowContext, Bounds, Context, Entity, Focusable as _,
+    AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _,
     FontWeight, Hsla, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement,
     Pixels, ScrollHandle, Size, StatefulInteractiveElement, StyleRefinement, Styled, Subscription,
     Task, TaskExt, TextStyleRefinement, WeakEntity, Window, canvas, div, px,
@@ -1212,14 +1212,12 @@ impl DebuggerHoverView {
 fn debugger_hover_variable_colors(cx: &App) -> DebuggerHoverVariableColors {
     let syntax = cx.theme().syntax();
     let colors = cx.theme().colors();
+    let syntax_color_for = |name| syntax.style_for_name(name).and_then(|style| style.color);
 
     DebuggerHoverVariableColors {
-        name: syntax.get("variable").color.or(Some(colors.text)),
-        value: syntax
-            .get("variable.special")
-            .color
-            .or(Some(colors.text_accent)),
-        type_name: syntax.get("type").color.or(Some(colors.text_muted)),
+        name: syntax_color_for("variable").or(Some(colors.text)),
+        value: syntax_color_for("variable.special").or(Some(colors.text_accent)),
+        type_name: syntax_color_for("type").or(Some(colors.text_muted)),
     }
 }
 
@@ -2148,8 +2146,8 @@ mod tests {
             _buffer: &Entity<Buffer>,
             _position: text::Anchor,
             _cx: &mut App,
-        ) -> Option<Task<anyhow::Result<Option<Range<text::Anchor>>>>> {
-            None
+        ) -> Task<anyhow::Result<Option<Range<text::Anchor>>>> {
+            Task::ready(Ok(None))
         }
 
         fn perform_rename(
