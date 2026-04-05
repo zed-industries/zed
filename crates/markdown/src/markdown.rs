@@ -261,6 +261,7 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
+    heading_slugs: Vec<(SharedString, usize)>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -428,6 +429,7 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
+            heading_slugs: Vec::new(),
         };
         this.parse(cx);
         this
@@ -490,6 +492,13 @@ impl Markdown {
 
     pub fn is_parsing(&self) -> bool {
         self.pending_parse.is_some()
+    }
+
+    pub fn heading_source_index_for_slug(&self, slug: &str) -> Option<usize> {
+        self.heading_slugs
+            .iter()
+            .find(|(s, _)| s.as_ref() == slug)
+            .map(|(_, index)| *index)
     }
 
     pub fn source(&self) -> &str {
@@ -1898,6 +1907,14 @@ impl Element for MarkdownElement {
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
+        self.markdown.update(cx, |markdown, _| {
+            markdown.heading_slugs = rendered_markdown
+                .text
+                .headings
+                .iter()
+                .map(|h| (h.slug.clone(), h.source_range.start))
+                .collect();
+        });
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
         (layout_id, rendered_markdown)
