@@ -1436,10 +1436,7 @@ impl Sidebar {
                         })
                     }),
             )
-            .child({
-                let workspace_for_new_thread = workspace.clone();
-                let path_list_for_new_thread = path_list.clone();
-
+            .child(
                 h_flex()
                     .when(self.project_header_menu_ix != Some(ix), |this| {
                         this.visible_on_hover(group_name)
@@ -1469,12 +1466,10 @@ impl Sidebar {
                             })),
                         )
                     })
-                    .when(
-                        show_new_thread_button && workspace_for_new_thread.is_some(),
-                        |this| {
-                            let workspace_for_new_thread =
-                                workspace_for_new_thread.clone().unwrap();
-                            let path_list_for_new_thread = path_list_for_new_thread.clone();
+                    .when_some(
+                        workspace.filter(|_| show_new_thread_button),
+                        |this, workspace| {
+                            let path_list = path_list.clone();
                             this.child(
                                 IconButton::new(
                                     SharedString::from(format!(
@@ -1486,26 +1481,22 @@ impl Sidebar {
                                 .tooltip(Tooltip::text("New Thread"))
                                 .on_click(cx.listener(
                                     move |this, _, window, cx| {
-                                        this.collapsed_groups.remove(&path_list_for_new_thread);
+                                        this.collapsed_groups.remove(&path_list);
                                         this.selection = None;
-                                        this.create_new_thread(
-                                            &workspace_for_new_thread,
-                                            window,
-                                            cx,
-                                        );
+                                        this.create_new_thread(&workspace, window, cx);
                                     },
                                 )),
                             )
                         },
-                    )
-            })
+                    ),
+            )
             .when(!is_active, |this| {
-                let path_list_for_open = path_list.clone();
+                let path_list = path_list.clone();
                 this.cursor_pointer()
                     .hover(|s| s.bg(hover_color))
                     .tooltip(Tooltip::text("Open Workspace"))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if let Some(workspace) = this.workspace_for_group(&path_list_for_open, cx) {
+                        if let Some(workspace) = this.workspace_for_group(&path_list, cx) {
                             this.active_entry = Some(ActiveEntry::Draft(workspace.clone()));
                             if let Some(multi_workspace) = this.multi_workspace.upgrade() {
                                 multi_workspace.update(cx, |multi_workspace, cx| {
@@ -1518,7 +1509,7 @@ impl Sidebar {
                                 });
                             }
                         } else {
-                            this.open_workspace_for_group(&path_list_for_open, window, cx);
+                            this.open_workspace_for_group(&path_list, window, cx);
                         }
                     }))
             })
