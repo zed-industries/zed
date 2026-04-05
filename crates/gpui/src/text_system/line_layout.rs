@@ -1071,11 +1071,11 @@ mod tests {
     #[test]
     fn test_force_width_corrects_drifted_base_positions() {
         let cell_width = px(8.);
-        // Font metrics don't perfectly match cell grid — glyphs are slightly off
+        // Font metrics don't perfectly match cell grid — glyphs drift >1px from cell boundary
         let mut layout = make_layout(vec![
-            glyph_at(0.5, 0),
-            glyph_at(9.2, 1),
-            glyph_at(17.8, 2),
+            glyph_at(0.5, 0),  // within 1px tolerance, kept as-is
+            glyph_at(10.2, 1), // >1px off from 8.0, corrected
+            glyph_at(19.8, 2), // >1px off from 16.0, corrected
         ]);
 
         apply_force_width_to_layout(&mut layout, cell_width);
@@ -1085,7 +1085,7 @@ mod tests {
             .iter()
             .map(|g| g.position.x.0)
             .collect();
-        // All forced to exact cell boundaries
-        assert_eq!(positions, vec![0., 8., 16.]);
+        // First stays (within tolerance), others snapped to grid
+        assert_eq!(positions, vec![0.5, 8., 16.]);
     }
 }
