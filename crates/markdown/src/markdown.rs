@@ -36,8 +36,8 @@ use gpui::{
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledText, Task, TextLayout, TextRun, TextStyle, TextStyleRefinement,
-    actions, img, point, quad,
+    StyleRefinement, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
+    TextStyleRefinement, actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -983,13 +983,20 @@ impl MarkdownElement {
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
+        let align = builder.current_block_text_align();
         builder.modify_current_div(|el| {
-            el.items_center().flex().flex_row().child(
+            let mut row = div().flex().flex_row().w_full().items_center();
+            row = match align {
+                TextAlign::Left => row.justify_start(),
+                TextAlign::Center => row.justify_center(),
+                TextAlign::Right => row.justify_end(),
+            };
+            el.child(row.child(
                 img(source)
                     .max_w_full()
                     .when_some(height, |this, height| this.h(height))
                     .when_some(width, |this, width| this.w(width)),
-            )
+            ))
         });
         let _ = range;
     }
@@ -999,14 +1006,24 @@ impl MarkdownElement {
         builder: &mut MarkdownElementBuilder,
         range: &Range<usize>,
         markdown_end: usize,
+        text_align_override: Option<TextAlign>,
     ) {
-        builder.push_div(
-            div().when(!self.style.height_is_multiple_of_line_height, |el| {
-                el.mb_2().line_height(rems(1.3))
-            }),
-            range,
-            markdown_end,
-        );
+        let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
+        let mut paragraph = div().when(!self.style.height_is_multiple_of_line_height, |el| {
+            el.mb_2().line_height(rems(1.3))
+        });
+        paragraph = match align {
+            TextAlign::Center => paragraph.text_center(),
+            TextAlign::Left => paragraph.text_left(),
+            TextAlign::Right => paragraph.text_right(),
+        };
+        builder.push_block_text_align(align);
+        builder.push_div(paragraph, range, markdown_end);
+    }
+
+    fn pop_markdown_paragraph(&self, builder: &mut MarkdownElementBuilder) {
+        builder.pop_div();
+        builder.pop_block_text_align();
     }
 
     fn push_markdown_heading(
@@ -1015,20 +1032,29 @@ impl MarkdownElement {
         level: pulldown_cmark::HeadingLevel,
         range: &Range<usize>,
         markdown_end: usize,
+        text_align_override: Option<TextAlign>,
     ) {
+        let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
         let mut heading = div().mb_2();
         heading = apply_heading_style(heading, level, self.style.heading_level_styles.as_ref());
+        heading = match align {
+            TextAlign::Center => heading.text_center(),
+            TextAlign::Left => heading.text_left(),
+            TextAlign::Right => heading.text_right(),
+        };
 
         let mut heading_style = self.style.heading.clone();
         let heading_text_style = heading_style.text_style().clone();
         heading.style().refine(&heading_style);
 
         builder.push_text_style(heading_text_style);
+        builder.push_block_text_align(align);
         builder.push_div(heading, range, markdown_end);
     }
 
     fn pop_markdown_heading(&self, builder: &mut MarkdownElementBuilder) {
         builder.pop_div();
+        builder.pop_block_text_align();
         builder.pop_text_style();
     }
 
@@ -1483,10 +1509,10 @@ impl Element for MarkdownElement {
                             }
                         }
                         MarkdownTag::Paragraph => {
-                            self.push_markdown_paragraph(&mut builder, range, markdown_end);
+                            self.push_markdown_paragraph(&mut builder, range, markdown_end, None);
                         }
                         MarkdownTag::Heading { level, .. } => {
-                            self.push_markdown_heading(&mut builder, *level, range, markdown_end);
+                            self.push_markdown_heading(&mut builder, *level, range, markdown_end, None);
                         }
                         MarkdownTag::BlockQuote => {
                             self.push_markdown_block_quote(&mut builder, range, markdown_end);
@@ -1738,7 +1764,7 @@ impl Element for MarkdownElement {
                         current_img_block_range.take();
                     }
                     MarkdownTagEnd::Paragraph => {
-                        builder.pop_div();
+                        self.pop_markdown_paragraph(&mut builder);
                     }
                     MarkdownTagEnd::Heading(_) => {
                         self.pop_markdown_heading(&mut builder);
@@ -2126,6 +2152,7 @@ struct MarkdownElementBuilder {
     current_source_index: usize,
     html_comment: bool,
     base_text_style: TextStyle,
+    block_text_align_stack: Vec<TextAlign>,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
@@ -2162,12 +2189,28 @@ impl MarkdownElementBuilder {
             current_source_index: 0,
             html_comment: false,
             base_text_style,
+            block_text_align_stack: Vec::new(),
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
         }
+    }
+
+    fn push_block_text_align(&mut self, align: TextAlign) {
+        self.block_text_align_stack.push(align);
+    }
+
+    fn pop_block_text_align(&mut self) {
+        self.block_text_align_stack.pop();
+    }
+
+    fn current_block_text_align(&self) -> TextAlign {
+        self.block_text_align_stack
+            .last()
+            .copied()
+            .unwrap_or(self.base_text_style.text_align)
     }
 
     fn push_text_style(&mut self, style: TextStyleRefinement) {
