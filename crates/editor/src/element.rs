@@ -9838,7 +9838,7 @@ impl Element for EditorElement {
                     // editor's scroll state — doing so would accumulate
                     // floating-point drift across frames.
                     if !line_height.is_zero() {
-                        scroll_position.y = window.round_f64_to_nearest_device_pixel(
+                        scroll_position.y = window.pixel_snap_f64(
                             scroll_position.y * f64::from(line_height),
                         ) / f64::from(line_height);
                     }
@@ -10472,7 +10472,7 @@ impl Element for EditorElement {
                     // horizontal autoscroll is done. Y was already rounded
                     // earlier, before gutter layout.
                     if !em_layout_width.is_zero() {
-                        scroll_position.x = window.round_f64_to_nearest_device_pixel(
+                        scroll_position.x = window.pixel_snap_f64(
                             scroll_position.x * f64::from(em_layout_width),
                         ) / f64::from(em_layout_width);
                     }

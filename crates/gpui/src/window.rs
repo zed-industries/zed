@@ -2170,24 +2170,24 @@ impl Window {
     /// Rounds a logical size or coordinate to the nearest device pixel for this window.
     /// Uses round-half-toward-zero to match the layout engine's rounding policy.
     #[inline]
-    pub fn round_to_nearest_device_pixel(&self, value: Pixels) -> Pixels {
+    pub fn pixel_snap(&self, value: Pixels) -> Pixels {
         let scale_factor = self.scale_factor();
         px(round_half_toward_zero(value.0 * scale_factor) / scale_factor)
     }
 
-    /// f64 variant of [`Self::round_to_nearest_device_pixel`] for scroll-offset
+    /// f64 variant of [`Self::pixel_snap`] for scroll-offset
     /// arithmetic that must preserve f64 precision.
     #[inline]
-    pub fn round_f64_to_nearest_device_pixel(&self, value: f64) -> f64 {
+    pub fn pixel_snap_f64(&self, value: f64) -> f64 {
         let scale_factor = f64::from(self.scale_factor());
         round_half_toward_zero_f64(value * scale_factor) / scale_factor
     }
 
     #[inline]
-    fn round_point_to_device_pixels(&self, position: Point<Pixels>) -> Point<Pixels> {
+    fn snap_point(&self, position: Point<Pixels>) -> Point<Pixels> {
         point(
-            self.round_to_nearest_device_pixel(position.x),
-            self.round_to_nearest_device_pixel(position.y),
+            self.pixel_snap(position.x),
+            self.pixel_snap(position.y),
         )
     }
 
@@ -2208,7 +2208,7 @@ impl Window {
     }
 
     #[inline]
-    fn round_bounds_edges_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+    fn snap_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
         self.bounds_from_device_edges(
             round_half_toward_zero(bounds.left().0 * scale_factor),
@@ -2219,7 +2219,7 @@ impl Window {
     }
 
     #[inline]
-    fn outset_bounds_to_device_pixels(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
+    fn outset_bounds(&self, bounds: Bounds<Pixels>) -> Bounds<ScaledPixels> {
         let scale_factor = self.scale_factor();
         let left = (bounds.left().0 * scale_factor).floor();
         let top = (bounds.top().0 * scale_factor).floor();
@@ -2229,34 +2229,34 @@ impl Window {
     }
 
     #[inline]
-    fn outset_content_mask_to_device_pixels(
+    fn outset_content_mask(
         &self,
         content_mask: ContentMask<Pixels>,
     ) -> ContentMask<ScaledPixels> {
         ContentMask {
-            bounds: self.outset_bounds_to_device_pixels(content_mask.bounds),
+            bounds: self.outset_bounds(content_mask.bounds),
         }
     }
 
     #[inline]
-    fn round_edges_to_device_pixels(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
+    fn snap_border_widths(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
         Edges {
-            top: self.round_nonzero_length_to_device_pixels(edges.top),
-            right: self.round_nonzero_length_to_device_pixels(edges.right),
-            bottom: self.round_nonzero_length_to_device_pixels(edges.bottom),
-            left: self.round_nonzero_length_to_device_pixels(edges.left),
+            top: self.snap_nonzero_length(edges.top),
+            right: self.snap_nonzero_length(edges.right),
+            bottom: self.snap_nonzero_length(edges.bottom),
+            left: self.snap_nonzero_length(edges.left),
         }
     }
 
     #[inline]
-    fn round_length_to_device_pixels(&self, value: Pixels) -> ScaledPixels {
+    fn snap_length(&self, value: Pixels) -> ScaledPixels {
         let scaled = (value.0 * self.scale_factor()).max(0.0);
         ScaledPixels(round_half_toward_zero(scaled))
     }
 
     #[inline]
-    fn round_nonzero_length_to_device_pixels(&self, value: Pixels) -> ScaledPixels {
-        let rounded = self.round_length_to_device_pixels(value).0;
+    fn snap_nonzero_length(&self, value: Pixels) -> ScaledPixels {
+        let rounded = self.snap_length(value).0;
         if value.is_zero() {
             ScaledPixels(0.0)
         } else {
@@ -3268,7 +3268,7 @@ impl Window {
         if !clipped_bounds.is_empty() {
             self.next_frame
                 .scene
-                .push_layer(self.outset_bounds_to_device_pixels(clipped_bounds));
+                .push_layer(self.outset_bounds(clipped_bounds));
         }
 
         let result = f(self);
@@ -3299,8 +3299,8 @@ impl Window {
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: self.outset_bounds_to_device_pixels(shadow_bounds),
-                content_mask: self.outset_content_mask_to_device_pixels(content_mask.clone()),
+                bounds: self.outset_bounds(shadow_bounds),
+                content_mask: self.outset_content_mask(content_mask.clone()),
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
             });
@@ -3321,13 +3321,13 @@ impl Window {
 
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
-        let rounded_bounds = self.round_bounds_edges_to_device_pixels(quad.bounds);
-        let rounded_borders = self.round_edges_to_device_pixels(quad.border_widths);
+        let rounded_bounds = self.snap_bounds(quad.bounds);
+        let rounded_borders = self.snap_border_widths(quad.border_widths);
 
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             bounds: rounded_bounds,
-            content_mask: self.outset_content_mask_to_device_pixels(content_mask),
+            content_mask: self.outset_content_mask(content_mask),
             background: quad.background.opacity(opacity),
             border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
@@ -3376,8 +3376,8 @@ impl Window {
                 ScaledPixels(round_half_toward_zero(origin.y.0 * scale_factor)),
             ),
             size: size(
-                self.round_nonzero_length_to_device_pixels(width),
-                self.round_nonzero_length_to_device_pixels(height),
+                self.snap_nonzero_length(width),
+                self.snap_nonzero_length(height),
             ),
         };
         let content_mask = self.content_mask();
@@ -3387,9 +3387,9 @@ impl Window {
             order: 0,
             pad: 0,
             bounds,
-            content_mask: self.outset_content_mask_to_device_pixels(content_mask),
+            content_mask: self.outset_content_mask(content_mask),
             color: style.color.unwrap_or_default().opacity(element_opacity),
-            thickness: self.round_nonzero_length_to_device_pixels(style.thickness),
+            thickness: self.snap_nonzero_length(style.thickness),
             wavy: if style.wavy { 1 } else { 0 },
         });
     }
@@ -3413,8 +3413,8 @@ impl Window {
                 ScaledPixels(round_half_toward_zero(origin.y.0 * scale_factor)),
             ),
             size: size(
-                self.round_nonzero_length_to_device_pixels(width),
-                self.round_nonzero_length_to_device_pixels(height),
+                self.snap_nonzero_length(width),
+                self.snap_nonzero_length(height),
             ),
         };
         let content_mask = self.content_mask();
@@ -3424,8 +3424,8 @@ impl Window {
             order: 0,
             pad: 0,
             bounds,
-            content_mask: self.outset_content_mask_to_device_pixels(content_mask),
-            thickness: self.round_nonzero_length_to_device_pixels(style.thickness),
+            content_mask: self.outset_content_mask(content_mask),
+            thickness: self.snap_nonzero_length(style.thickness),
             color: style.color.unwrap_or_default().opacity(opacity),
             wavy: 0,
         });
@@ -3491,7 +3491,7 @@ impl Window {
                 ) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
+            let content_mask = self.outset_content_mask(self.content_mask());
 
             if subpixel_rendering {
                 self.next_frame.scene.insert_primitive(SubpixelSprite {
@@ -3680,7 +3680,7 @@ impl Window {
                 ) + raster_bounds.origin.map(Into::into),
                 size: tile.bounds.size.map(Into::into),
             };
-            let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
+            let content_mask = self.outset_content_mask(self.content_mask());
             let opacity = self.element_opacity();
 
             self.next_frame.scene.insert_primitive(PolychromeSprite {
@@ -3712,7 +3712,7 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         let element_opacity = self.element_opacity();
-        let bounds = self.round_bounds_edges_to_device_pixels(bounds);
+        let bounds = self.snap_bounds(bounds);
         let params = RenderSvgParams {
             path,
             size: bounds.size.map(|pixels| {
@@ -3732,7 +3732,7 @@ impl Window {
         else {
             return Ok(());
         };
-        let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
+        let content_mask = self.outset_content_mask(self.content_mask());
         let svg_bounds = Bounds {
             origin: bounds.center()
                 - Point::new(
@@ -3775,7 +3775,7 @@ impl Window {
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
 
-        let bounds = self.outset_bounds_to_device_pixels(bounds);
+        let bounds = self.outset_bounds(bounds);
         let params = RenderImageParams {
             image_id: data.id,
             frame_index,
@@ -3793,7 +3793,7 @@ impl Window {
                 )))
             })?
             .expect("Callback above only returns Some");
-        let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
+        let content_mask = self.outset_content_mask(self.content_mask());
         let corner_radii = corner_radii.scale(self.scale_factor());
         let opacity = self.element_opacity();
 
@@ -3819,8 +3819,8 @@ impl Window {
 
         self.invalidator.debug_assert_paint();
 
-        let bounds = self.round_bounds_edges_to_device_pixels(bounds);
-        let content_mask = self.outset_content_mask_to_device_pixels(self.content_mask());
+        let bounds = self.snap_bounds(bounds);
+        let content_mask = self.outset_content_mask(self.content_mask());
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
             bounds,
@@ -3925,7 +3925,7 @@ impl Window {
             .unwrap()
             .layout_bounds(layout_id, scale_factor)
             .map(Into::into);
-        bounds.origin += self.round_point_to_device_pixels(self.element_offset());
+        bounds.origin += self.snap_point(self.element_offset());
         bounds
     }
 

@@ -241,6 +241,53 @@ impl TaffyLayoutEngine {
             .expect(EXPECT_MESSAGE);
     }
 
+    // GPUI reconstructs absolute layout bounds by walking parents, so we cannot
+    // use Taffy's built-in rounding pass directly. Taffy rounds child widths as
+    // `round(parent_abs + width) - round(parent_abs)`, which guarantees edge
+    // closure but leaks the parent's absolute phase into every interior offset.
+    // That makes centered descendants jitter as a window is resized: the same
+    // local offset can alternate between N and N+1 device pixels depending on
+    // the parent's absolute position.
+    //
+    // The constraints for this code are:
+    // - Shared layout edges must close exactly. `size_full` children must reach
+    //   the parent's snapped content edge, and siblings that abut in raw layout
+    //   must abut after snapping too.
+    // - Centered / interior child placement must be stable under ancestor motion.
+    //   Moving the parent in absolute space must not change a child's snapped
+    //   local offset by a pixel.
+    // - A node's own border / padding / content box must agree with painting.
+    //   If layout says the content starts one pixel in, `paint_quad` must use
+    //   that same one-pixel inset; otherwise backgrounds visibly separate from
+    //   borders.
+    // - Scroll transforms and other non-Taffy primitives are handled elsewhere
+    //   in `window.rs`; this code only snaps Taffy-owned box geometry.
+    //
+    // Strategies we rejected because they violate those constraints:
+    // - Absolute cumulative rounding (`round(parent_abs + x) - round(parent_abs)`)
+    //   preserves seams but reintroduces resize jitter for centered children.
+    // - Naive hierarchical rounding (`round(parent_snapped + x)`) keeps child
+    //   offsets stable but fails seam closure when widths / far edges are still
+    //   derived independently.
+    // - Using the same local remap for a node's own content box and for child
+    //   placement misaligns layout with rendering, because `paint_quad` rounds
+    //   border widths independently from the outer rect.
+    //
+    // The strategy below splits those responsibilities:
+    // - Snap this node's outer bounds hierarchically inside the parent's snapped
+    //   content box using a parent-local map
+    //     Q(x) = round(x * snapped_parent_content_size / raw_parent_content_size)
+    //   after converting Taffy's child location from parent-outer coordinates
+    //   into parent-content coordinates.
+    // - Derive this node's own snapped content box from its snapped outer bounds
+    //   using the same inset rounding rule the renderer uses for borders and
+    //   padding (`snapped_inner_inset`).
+    // - Use the parent-local map only for child placement, never for the node's
+    //   own border/padding/content insets.
+    //
+    // This is the smallest layout-side scheme we found that keeps seams closed,
+    // keeps centered descendants stable, and stays aligned with paint-time border
+    // rasterization.
     pub fn layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
         if let Some(layout) = self.absolute_layout_bounds.get(&id).cloned() {
             return layout;

@@ -345,7 +345,7 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let line_height = window.round_to_nearest_device_pixel(
+        let line_height = window.pixel_snap(
             text_style
                 .line_height
                 .to_pixels(font_size.into(), window.rem_size()),
