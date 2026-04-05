@@ -986,17 +986,21 @@ impl MarkdownElement {
         let align = builder.current_block_text_align();
         builder.modify_current_div(|el| {
             let mut row = div().flex().flex_row().w_full().items_center();
+
             row = match align {
                 TextAlign::Left => row.justify_start(),
                 TextAlign::Center => row.justify_center(),
                 TextAlign::Right => row.justify_end(),
             };
-            el.child(row.child(
-                img(source)
-                    .max_w_full()
-                    .when_some(height, |this, height| this.h(height))
-                    .when_some(width, |this, width| this.w(width)),
-            ))
+
+            el.child(
+                row.child(
+                    img(source)
+                        .max_w_full()
+                        .when_some(height, |this, height| this.h(height))
+                        .when_some(width, |this, width| this.w(width)),
+                ),
+            )
         });
         let _ = range;
     }
@@ -1012,18 +1016,23 @@ impl MarkdownElement {
         let mut paragraph = div().when(!self.style.height_is_multiple_of_line_height, |el| {
             el.mb_2().line_height(rems(1.3))
         });
+
         paragraph = match align {
             TextAlign::Center => paragraph.text_center(),
             TextAlign::Left => paragraph.text_left(),
             TextAlign::Right => paragraph.text_right(),
         };
-        builder.push_block_text_align(align);
+
+        builder.push_text_style(TextStyleRefinement {
+            text_align: Some(align),
+            ..Default::default()
+        });
         builder.push_div(paragraph, range, markdown_end);
     }
 
     fn pop_markdown_paragraph(&self, builder: &mut MarkdownElementBuilder) {
         builder.pop_div();
-        builder.pop_block_text_align();
+        builder.pop_text_style();
     }
 
     fn push_markdown_heading(
@@ -1037,6 +1046,7 @@ impl MarkdownElement {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
         let mut heading = div().mb_2();
         heading = apply_heading_style(heading, level, self.style.heading_level_styles.as_ref());
+
         heading = match align {
             TextAlign::Center => heading.text_center(),
             TextAlign::Left => heading.text_left(),
@@ -1048,13 +1058,16 @@ impl MarkdownElement {
         heading.style().refine(&heading_style);
 
         builder.push_text_style(heading_text_style);
-        builder.push_block_text_align(align);
+        builder.push_text_style(TextStyleRefinement {
+            text_align: Some(align),
+            ..Default::default()
+        });
         builder.push_div(heading, range, markdown_end);
     }
 
     fn pop_markdown_heading(&self, builder: &mut MarkdownElementBuilder) {
         builder.pop_div();
-        builder.pop_block_text_align();
+        builder.pop_text_style();
         builder.pop_text_style();
     }
 
@@ -1512,7 +1525,13 @@ impl Element for MarkdownElement {
                             self.push_markdown_paragraph(&mut builder, range, markdown_end, None);
                         }
                         MarkdownTag::Heading { level, .. } => {
-                            self.push_markdown_heading(&mut builder, *level, range, markdown_end, None);
+                            self.push_markdown_heading(
+                                &mut builder,
+                                *level,
+                                range,
+                                markdown_end,
+                                None,
+                            );
                         }
                         MarkdownTag::BlockQuote => {
                             self.push_markdown_block_quote(&mut builder, range, markdown_end);
@@ -2152,7 +2171,6 @@ struct MarkdownElementBuilder {
     current_source_index: usize,
     html_comment: bool,
     base_text_style: TextStyle,
-    block_text_align_stack: Vec<TextAlign>,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
     list_stack: Vec<ListStackEntry>,
@@ -2189,7 +2207,6 @@ impl MarkdownElementBuilder {
             current_source_index: 0,
             html_comment: false,
             base_text_style,
-            block_text_align_stack: Vec::new(),
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
             list_stack: Vec::new(),
@@ -2198,19 +2215,8 @@ impl MarkdownElementBuilder {
         }
     }
 
-    fn push_block_text_align(&mut self, align: TextAlign) {
-        self.block_text_align_stack.push(align);
-    }
-
-    fn pop_block_text_align(&mut self) {
-        self.block_text_align_stack.pop();
-    }
-
     fn current_block_text_align(&self) -> TextAlign {
-        self.block_text_align_stack
-            .last()
-            .copied()
-            .unwrap_or(self.base_text_style.text_align)
+        self.text_style().text_align
     }
 
     fn push_text_style(&mut self, style: TextStyleRefinement) {
