@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods, reason = "This is only used in xtasks")]
 use std::{
     fmt::{self, Debug},
     ops::Not,
