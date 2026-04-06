@@ -2288,8 +2288,7 @@ impl GitRepository for RealGitRepository {
         let git_binary = self.git_binary();
         self.executor
             .spawn(async move {
-                let args: Vec<OsString> =
-                    vec!["--no-optional-locks".into(), "add".into(), "-A".into()];
+                let args: Vec<OsString> = vec!["add".into(), "-A".into()];
                 git_binary?.run(&args).await?;
                 Ok(())
             })
