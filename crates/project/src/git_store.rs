@@ -4680,6 +4680,50 @@ impl Repository {
         })
     }
 
+    pub fn push_tag(
+        &mut self,
+        name: SharedString,
+        remote: SharedString,
+        askpass: AskPassDelegate,
+        _cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let askpass_delegates = self.askpass_delegates.clone();
+        let askpass_id = util::post_inc(&mut self.latest_askpass_id);
+
+        self.send_job(
+            Some(format!("git push {} refs/tags/{}", remote, name).into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState {
+                        backend,
+                        environment,
+                        ..
+                    }) => {
+                        backend
+                            .push_tag(
+                                name.to_string(),
+                                remote.to_string(),
+                                askpass,
+                                environment,
+                                _cx,
+                            )
+                            .await
+                    }
+                    RepositoryState::Remote(_) => {
+                        askpass_delegates.lock().insert(askpass_id, askpass);
+                        let _defer = util::defer(|| {
+                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
+                            debug_assert!(askpass_delegate.is_some());
+                        });
+                        bail!(
+                            "Git graph commit operations are not supported for collab repositories"
+                        )
+                    }
+                }
+            },
+        )
+    }
+
     pub fn cherry_pick(
         &mut self,
         sha: String,

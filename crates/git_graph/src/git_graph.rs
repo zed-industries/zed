@@ -1,11 +1,14 @@
+use askpass::{AskPassDelegate, EncryptedPassword};
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
+use futures::channel::oneshot;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
     repository::{
-        CommitDiff, CommitFile, DropCommitSupport, GraphLogOptions, InitialGraphCommitData,
-        LogOrder, LogSource, RepoPath, ResetMode, SearchCommitArgs,
+        Branch, CommitDiff, CommitFile, DropCommitSupport, GraphLogOptions, InitialGraphCommitData,
+        LogOrder, LogSource, PushOptions, Remote, RepoPath, ResetMode, SearchCommitArgs,
+        UpstreamTracking,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
@@ -44,9 +47,8 @@ use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     Button, ButtonLike, ButtonStyle, Checkbox, Chip, ColumnWidthConfig, CommonAnimationExt as _,
-    ContextMenu, DiffStat,
-    Divider, HeaderResizeInfo, HighlightedLabel, PopoverMenu, PopoverMenuHandle,
-    RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
+    ContextMenu, DiffStat, Divider, HeaderResizeInfo, HighlightedLabel, PopoverMenu,
+    PopoverMenuHandle, RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, ToggleState, Tooltip, WithScrollbar,
     bind_redistributable_columns, prelude::*, render_redistributable_columns_resize_handles,
     render_table_header, table_row::TableRow,
@@ -56,6 +58,7 @@ use workspace::{
     item::{Item, ItemEvent, TabTooltipContent},
     notifications::DetachAndPromptErr,
 };
+use zeroize::Zeroize;
 
 const COMMIT_CIRCLE_RADIUS: Pixels = px(3.5);
 const COMMIT_CIRCLE_STROKE_WIDTH: Pixels = px(1.5);
@@ -344,6 +347,16 @@ impl RefNameKind {
             _ => None,
         }
     }
+
+    fn branch_lookup_name(&self) -> Option<SharedString> {
+        match self {
+            RefNameKind::Branch(name) => {
+                let n = name.as_ref();
+                Some(n.strip_prefix("HEAD -> ").unwrap_or(n).to_string().into())
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -377,6 +390,14 @@ impl ResetPromptMode {
             Self::Hard => "Hard",
         }
     }
+}
+
+#[derive(Clone)]
+struct BranchPushTarget {
+    branch: Branch,
+    remote: Remote,
+    remote_branch_name: SharedString,
+    options: Option<PushOptions>,
 }
 
 pub struct SplitState {
@@ -1576,49 +1597,74 @@ impl GitGraph {
             let branch_name_for_checkout = branch_name.clone();
             let branch_name_for_copy = branch_name.clone();
             let branch_name_for_label = branch_name.clone();
+            let ref_kind_for_rename = ref_kind.clone();
+            let ref_kind_for_delete = ref_kind.clone();
+            let ref_kind_for_push = ref_kind.clone();
             move |context_menu, _, _| {
                 context_menu
                     .context(focus_handle)
-                    .entry(
-                        "Checkout Branch",
-                        None,
-                        {
-                            let branch_name = branch_name_for_checkout.clone();
-                            let weak = weak.clone();
-                            move |window, cx| {
-                                if let Some(entity) = weak.upgrade() {
-                                    entity.update(cx, |this, cx| {
-                                        this.checkout_branch(
-                                            branch_name.to_string(),
-                                            window,
-                                            cx,
-                                        );
-                                    });
-                                }
+                    .entry("Checkout Branch", None, {
+                        let branch_name = branch_name_for_checkout.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.checkout_branch(branch_name.to_string(), window, cx);
+                                });
                             }
-                        },
-                    )
+                        }
+                    })
                     .separator()
-                    .action(
-                        "Merge into current branch...",
-                        MergeCommit.boxed_clone(),
-                    )
+                    .entry("Rename Branch...", None, {
+                        let ref_kind = ref_kind_for_rename.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.rename_branch_ref(ref_kind.clone(), window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .entry("Delete Branch...", None, {
+                        let ref_kind = ref_kind_for_delete.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.delete_branch_ref(ref_kind.clone(), window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .entry("Push Branch...", None, {
+                        let ref_kind = ref_kind_for_push.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.push_branch_ref(ref_kind.clone(), window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .separator()
+                    .action("Merge into current branch...", MergeCommit.boxed_clone())
                     .action(
                         format!("Rebase current branch on {}...", branch_name_for_label),
                         RebaseOntoCommit.boxed_clone(),
                     )
                     .separator()
-                    .action("Copy Commit Hash to Clipboard", CopyCommitHash.boxed_clone())
-                    .entry(
-                        "Copy Branch Name to Clipboard",
-                        None,
-                        {
-                            let name = branch_name_for_copy.clone();
-                            move |_window, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
-                            }
-                        },
+                    .action(
+                        "Copy Commit Hash to Clipboard",
+                        CopyCommitHash.boxed_clone(),
                     )
+                    .entry("Copy Branch Name to Clipboard", None, {
+                        let name = branch_name_for_copy.clone();
+                        move |_window, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                        }
+                    })
             }
         }))
     }
@@ -1636,38 +1682,45 @@ impl GitGraph {
         Some(ContextMenu::build(window, cx, {
             let tag_name_for_delete = tag_name.clone();
             let tag_name_for_copy = tag_name.clone();
+            let tag_name_for_push = tag_name.clone();
             move |context_menu, _, _| {
                 context_menu
                     .context(focus_handle)
                     .action("Checkout...", CheckoutCommit.boxed_clone())
                     .separator()
-                    .entry(
-                        "Delete Tag...",
-                        None,
-                        {
-                            let tag_name = tag_name_for_delete.clone();
-                            let weak = weak.clone();
-                            move |window, cx| {
-                                if let Some(entity) = weak.upgrade() {
-                                    entity.update(cx, |this, cx| {
-                                        this.delete_tag(tag_name.to_string(), window, cx);
-                                    });
-                                }
+                    .entry("Delete Tag...", None, {
+                        let tag_name = tag_name_for_delete.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.delete_tag(tag_name.to_string(), window, cx);
+                                });
                             }
-                        },
-                    )
+                        }
+                    })
+                    .entry("Push Tag...", None, {
+                        let tag_name = tag_name_for_push.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.push_tag(tag_name.to_string(), window, cx);
+                                });
+                            }
+                        }
+                    })
                     .separator()
-                    .action("Copy Commit Hash to Clipboard", CopyCommitHash.boxed_clone())
-                    .entry(
-                        "Copy Tag Name to Clipboard",
-                        None,
-                        {
-                            let name = tag_name_for_copy.clone();
-                            move |_window, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
-                            }
-                        },
+                    .action(
+                        "Copy Commit Hash to Clipboard",
+                        CopyCommitHash.boxed_clone(),
                     )
+                    .entry("Copy Tag Name to Clipboard", None, {
+                        let name = tag_name_for_copy.clone();
+                        move |_window, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                        }
+                    })
             }
         }))
     }
@@ -1685,68 +1738,83 @@ impl GitGraph {
 
         Some(ContextMenu::build(window, cx, {
             let stash_name_for_copy = stash_name.clone();
+            let render_entry = |icon: IconName, label: &'static str| {
+                move |_window: &mut Window, _cx: &mut App| {
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                        .child(Label::new(label))
+                        .into_any_element()
+                }
+            };
             move |context_menu, _, _| {
                 context_menu
                     .context(focus_handle)
-                    .entry(
-                        "Apply Stash...",
-                        None,
-                        {
-                            let weak = weak.clone();
-                            move |window, cx| {
-                                if let Some(entity) = weak.upgrade() {
-                                    entity.update(cx, |this, cx| {
-                                        this.apply_stash(stash_index, window, cx);
-                                    });
-                                }
+                    .custom_entry(render_entry(IconName::ArrowDown, "Apply Stash..."), {
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.apply_stash(stash_index, window, cx);
+                                });
                             }
-                        },
-                    )
-                    .entry(
-                        "Pop Stash...",
-                        None,
-                        {
-                            let weak = weak.clone();
-                            move |window, cx| {
-                                if let Some(entity) = weak.upgrade() {
-                                    entity.update(cx, |this, cx| {
-                                        this.pop_stash(stash_index, window, cx);
-                                    });
-                                }
+                        }
+                    })
+                    .custom_entry(render_entry(IconName::ArrowUp, "Pop Stash..."), {
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.pop_stash(stash_index, window, cx);
+                                });
                             }
-                        },
-                    )
-                    .entry(
-                        "Drop Stash...",
-                        None,
+                        }
+                    })
+                    .custom_entry(render_entry(IconName::Trash, "Drop Stash..."), {
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.drop_stash(stash_index, window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .separator()
+                    .custom_entry(
+                        render_entry(IconName::GitBranchPlus, "Create Branch from Stash..."),
                         {
                             let weak = weak.clone();
                             move |window, cx| {
                                 if let Some(entity) = weak.upgrade() {
                                     entity.update(cx, |this, cx| {
-                                        this.drop_stash(stash_index, window, cx);
+                                        this.show_create_branch_modal(window, cx);
                                     });
                                 }
                             }
                         },
                     )
                     .separator()
-                    .action(
-                        "Create Branch from Stash...",
-                        CreateBranchAtCommit.boxed_clone(),
-                    )
-                    .separator()
-                    .action("Copy Commit Hash to Clipboard", CopyCommitHash.boxed_clone())
-                    .entry(
-                        "Copy Stash Name to Clipboard",
-                        None,
+                    .custom_entry(
+                        render_entry(IconName::Copy, "Copy Commit Hash to Clipboard"),
                         {
-                            let name = stash_name_for_copy.clone();
+                            let weak = weak.clone();
                             move |_window, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                                if let Some(entity) = weak.upgrade() {
+                                    entity.update(cx, |this, cx| {
+                                        this.copy_selected_commit_hash(cx);
+                                    });
+                                }
                             }
                         },
                     )
+                    .entry("Copy Stash Name to Clipboard", None, {
+                        let name = stash_name_for_copy.clone();
+                        move |_window, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+                        }
+                    })
             }
         }))
     }
@@ -1880,9 +1948,7 @@ impl GitGraph {
     ) -> impl IntoElement {
         let ref_kind = RefNameKind::classify(name);
         let weak = cx.weak_entity();
-        let chip_id = ElementId::Name(
-            format!("ref-chip-{}-{}", row_index, name.as_ref()).into(),
-        );
+        let chip_id = ElementId::Name(format!("ref-chip-{}-{}", row_index, name.as_ref()).into());
 
         div()
             .id(chip_id)
@@ -2032,8 +2098,8 @@ impl GitGraph {
                                 .gap_2()
                                 .overflow_hidden()
                                 .children((!visible_ref_names.is_empty()).then(|| {
-                                    h_flex().gap_1().children(
-                                        visible_ref_names.iter().map(|name| {
+                                    h_flex().gap_1().children(visible_ref_names.iter().map(
+                                        |name| {
                                             self.render_interactive_chip(
                                                 name,
                                                 accent_color,
@@ -2041,8 +2107,8 @@ impl GitGraph {
                                                 cx,
                                             )
                                             .into_any_element()
-                                        }),
-                                    )
+                                        },
+                                    ))
                                 }))
                                 .child(subject_label),
                         )
@@ -2354,6 +2420,58 @@ impl GitGraph {
         cx.write_to_clipboard(ClipboardItem::new_string(subject.to_string()));
     }
 
+    fn askpass_delegate(
+        &self,
+        operation: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AskPassDelegate {
+        let workspace = self.workspace.clone();
+        let operation = operation.into();
+        let window = window.window_handle();
+        AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    if let Some(workspace) = workspace.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                GitGraphAskPassModal::new(
+                                    operation.clone(),
+                                    prompt.into(),
+                                    tx,
+                                    window,
+                                    cx,
+                                )
+                            });
+                        });
+                    }
+                })
+                .ok();
+        })
+    }
+
+    fn resolve_branch(
+        &self,
+        ref_kind: RefNameKind,
+        repository: Entity<Repository>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<Branch>> {
+        let branch_name = ref_kind
+            .branch_lookup_name()
+            .unwrap_or_else(|| ref_kind.display_name());
+        let receiver = repository.update(cx, |repository, _| repository.branches());
+
+        cx.spawn(async move |_, _| {
+            let branches = receiver
+                .await
+                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+            branches
+                .into_iter()
+                .find(|branch| branch.name() == branch_name.as_ref())
+                .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found", branch_name))
+        })
+    }
+
     fn checkout_branch(
         &mut self,
         branch_name: String,
@@ -2369,14 +2487,167 @@ impl GitGraph {
 
         let task = cx.spawn(async move |_, cx| {
             repository
-                .update(cx, |repository, _| {
-                    repository.change_branch(branch_name)
-                })
+                .update(cx, |repository, _| repository.change_branch(branch_name))
                 .await
                 .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
             Ok(())
         });
         self.run_git_operation(task, "Failed to checkout branch", window, cx);
+    }
+
+    fn push_branch_ref(
+        &mut self,
+        ref_kind: RefNameKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let branch_task = self.resolve_branch(ref_kind, repository.clone(), cx);
+        let default_remote_name = repository
+            .read(cx)
+            .remote_upstream_url
+            .as_ref()
+            .map(|_| SharedString::from("upstream"))
+            .or_else(|| {
+                repository
+                    .read(cx)
+                    .remote_origin_url
+                    .as_ref()
+                    .map(|_| SharedString::from("origin"))
+            });
+        let askpass = self.askpass_delegate("git push", window, cx);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let branch = branch_task.await?;
+            let target = {
+                if branch.is_remote() {
+                    anyhow::bail!("Cannot push a remote-tracking branch");
+                }
+
+                let (remote, remote_branch_name, options) = match branch.upstream.as_ref() {
+                    Some(upstream) if matches!(upstream.tracking, UpstreamTracking::Tracked(_)) => {
+                        let remote_name = upstream
+                            .remote_name()
+                            .ok_or_else(|| anyhow::anyhow!("Branch has no configured remote"))?;
+                        (
+                            Remote {
+                                name: remote_name.to_string().into(),
+                            },
+                            upstream
+                                .branch_name()
+                                .unwrap_or_else(|| branch.name())
+                                .to_string()
+                                .into(),
+                            None,
+                        )
+                    }
+                    Some(upstream) if matches!(upstream.tracking, UpstreamTracking::Gone) => (
+                        Remote {
+                            name: default_remote_name.clone().ok_or_else(|| {
+                                anyhow::anyhow!("No remote configured for repository")
+                            })?,
+                        },
+                        branch.name().to_string().into(),
+                        Some(PushOptions::SetUpstream),
+                    ),
+                    _ => (
+                        Remote {
+                            name: default_remote_name.clone().ok_or_else(|| {
+                                anyhow::anyhow!("No remote configured for repository")
+                            })?,
+                        },
+                        branch.name().to_string().into(),
+                        Some(PushOptions::SetUpstream),
+                    ),
+                };
+
+                anyhow::Ok(BranchPushTarget {
+                    branch: branch.clone(),
+                    remote,
+                    remote_branch_name,
+                    options,
+                })
+            }?;
+
+            this.update_in(cx, |this, window, cx| {
+                let branch_name: SharedString = target.branch.name().to_string().into();
+                let remote_branch_name = target.remote_branch_name.clone();
+                let remote_name = target.remote.name.clone();
+                let options = target.options;
+                let askpass = askpass;
+                let repository = repository.clone();
+                let task = cx.spawn(async move |_, cx| {
+                    repository
+                        .update(cx, |repository, cx| {
+                            repository.push(
+                                branch_name,
+                                remote_branch_name,
+                                remote_name,
+                                options,
+                                askpass,
+                                cx,
+                            )
+                        })
+                        .await
+                        .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+                    Ok(())
+                });
+                this.run_git_operation(task, "Failed to push branch", window, cx);
+            })?;
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to push branch", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+    }
+
+    fn push_tag(&mut self, tag_name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let Some(remote_name) = repository
+            .read(cx)
+            .remote_upstream_url
+            .as_ref()
+            .map(|_| SharedString::from("upstream"))
+            .or_else(|| {
+                repository
+                    .read(cx)
+                    .remote_origin_url
+                    .as_ref()
+                    .map(|_| SharedString::from("origin"))
+            })
+        else {
+            let prompt = window.prompt(
+                PromptLevel::Warning,
+                "No remote configured for repository",
+                None,
+                &["Ok"],
+                cx,
+            );
+            cx.spawn(async move |_, _| {
+                prompt.await.ok();
+                anyhow::Ok(())
+            })
+            .detach();
+            return;
+        };
+
+        let askpass = self.askpass_delegate(format!("git push {}", remote_name), window, cx);
+
+        let task = cx.spawn(async move |_, cx| {
+            repository
+                .update(cx, |repository, cx| {
+                    repository.push_tag(tag_name.into(), remote_name, askpass, cx)
+                })
+                .await
+                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+            Ok(())
+        });
+        self.run_git_operation(task, "Failed to push tag", window, cx);
     }
 
     fn checkout_selected_commit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2726,6 +2997,129 @@ impl GitGraph {
         });
     }
 
+    fn delete_branch_ref(
+        &mut self,
+        ref_kind: RefNameKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let branch_task = self.resolve_branch(ref_kind, repository.clone(), cx);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let branch = branch_task.await?;
+            this.update_in(cx, |this, window, cx| {
+                this.delete_branch(branch.name().to_string(), branch.is_remote(), window, cx);
+            })?;
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to delete branch", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+    }
+
+    fn delete_branch(
+        &mut self,
+        branch_name: String,
+        is_remote: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+
+        let warning_message = if is_remote {
+            format!(
+                "Delete remote branch '{}'? This cannot be undone.",
+                branch_name
+            )
+        } else {
+            format!("Delete branch '{}'? This cannot be undone.", branch_name)
+        };
+
+        let confirm = self.prompt_confirmation(
+            PromptLevel::Warning,
+            warning_message,
+            None,
+            "Delete",
+            window,
+            cx,
+        );
+
+        cx.spawn_in(window, async move |this, cx| {
+            if !confirm.await? {
+                return Ok(());
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                let branch_name = branch_name.clone();
+                let repository = repository.clone();
+                let task = cx.spawn(async move |_, cx| {
+                    repository
+                        .update(cx, |repository, _| {
+                            repository.delete_branch(is_remote, branch_name)
+                        })
+                        .await
+                        .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+                    Ok(())
+                });
+                this.run_git_operation(task, "Failed to delete branch", window, cx);
+            })?;
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to delete branch", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+    }
+
+    fn rename_branch_ref(
+        &mut self,
+        ref_kind: RefNameKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let branch_task = self.resolve_branch(ref_kind, repository.clone(), cx);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let branch = branch_task.await?;
+            if branch.is_remote() {
+                anyhow::bail!("Cannot rename a remote-tracking branch");
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                this.rename_branch(branch.name().to_string(), window, cx);
+            })?;
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to rename branch", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+    }
+
+    fn rename_branch(&mut self, branch_name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let graph = cx.weak_entity();
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RenameBranchModal::new(branch_name, repository, graph, window, cx)
+            });
+        });
+    }
+
     fn apply_stash(
         &mut self,
         stash_index: Option<usize>,
@@ -2739,9 +3133,7 @@ impl GitGraph {
         self.context_menu = None;
         self.commit_context_menu_state = None;
 
-        let task = repository.update(cx, |repository, cx| {
-            repository.stash_apply(stash_index, cx)
-        });
+        let task = repository.update(cx, |repository, cx| repository.stash_apply(stash_index, cx));
 
         cx.spawn(async move |this, cx| {
             task.await?;
@@ -2786,9 +3178,8 @@ impl GitGraph {
                 this.context_menu = None;
                 this.commit_context_menu_state = None;
 
-                let task = repository.update(cx, |repository, cx| {
-                    repository.stash_pop(stash_index, cx)
-                });
+                let task =
+                    repository.update(cx, |repository, cx| repository.stash_pop(stash_index, cx));
 
                 cx.spawn(async move |this, cx| {
                     task.await?;
@@ -2800,9 +3191,12 @@ impl GitGraph {
 
                     Ok(())
                 })
-                .detach_and_prompt_err("Failed to pop stash", window, cx, |error, _, _| {
-                    Some(error.to_string())
-                });
+                .detach_and_prompt_err(
+                    "Failed to pop stash",
+                    window,
+                    cx,
+                    |error, _, _| Some(error.to_string()),
+                );
             })?;
 
             Ok(())
@@ -2840,9 +3234,8 @@ impl GitGraph {
                 this.context_menu = None;
                 this.commit_context_menu_state = None;
 
-                let receiver = repository.update(cx, |repository, cx| {
-                    repository.stash_drop(stash_index, cx)
-                });
+                let receiver =
+                    repository.update(cx, |repository, cx| repository.stash_drop(stash_index, cx));
 
                 cx.spawn(async move |this, cx| {
                     receiver
@@ -3989,9 +4382,12 @@ impl CherryPickModal {
 
             Ok(())
         })
-        .detach_and_prompt_err("Failed to cherry-pick commit", window, cx, |error, _, _| {
-            Some(error.to_string())
-        });
+        .detach_and_prompt_err(
+            "Failed to cherry-pick commit",
+            window,
+            cx,
+            |error, _, _| Some(error.to_string()),
+        );
 
         cx.emit(DismissEvent);
     }
@@ -4194,6 +4590,190 @@ impl Render for AddTagModal {
                     .gap_2()
                     .child(self.name_editor.clone())
                     .child(self.message_editor.clone()),
+            )
+    }
+}
+
+struct RenameBranchModal {
+    graph: WeakEntity<GitGraph>,
+    repository: Entity<Repository>,
+    branch_name: SharedString,
+    editor: Entity<Editor>,
+}
+
+impl RenameBranchModal {
+    fn new(
+        branch_name: String,
+        repository: Entity<Repository>,
+        graph: WeakEntity<GitGraph>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(branch_name.clone(), window, cx);
+            editor
+        });
+        Self {
+            graph,
+            repository,
+            branch_name: branch_name.into(),
+            editor,
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let new_name = self.editor.read(cx).text(cx);
+        if new_name.is_empty() || new_name == self.branch_name.as_ref() {
+            cx.emit(DismissEvent);
+            return;
+        }
+
+        let repository = self.repository.clone();
+        let graph = self.graph.clone();
+        let old_name = self.branch_name.to_string();
+
+        cx.spawn(async move |_, cx| {
+            repository
+                .update(cx, |repository, _| {
+                    repository.rename_branch(old_name.clone(), new_name.clone())
+                })
+                .await??;
+
+            let _ = graph.update(cx, |graph, cx| {
+                graph.reload_graph(cx);
+            });
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to rename branch", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for RenameBranchModal {}
+impl ModalView for RenameBranchModal {}
+impl Focusable for RenameBranchModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for RenameBranchModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("RenameBranchModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(ui::rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
+                    .child(Label::new(format!("Rename Branch ({})", self.branch_name))),
+            )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
+}
+
+struct GitGraphAskPassModal {
+    operation: SharedString,
+    prompt: SharedString,
+    editor: Entity<Editor>,
+    tx: Option<oneshot::Sender<EncryptedPassword>>,
+}
+
+impl GitGraphAskPassModal {
+    fn new(
+        operation: SharedString,
+        prompt: SharedString,
+        tx: oneshot::Sender<EncryptedPassword>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            if prompt.contains("yes/no") || prompt.contains("Username") {
+                editor.set_masked(false, cx);
+            } else {
+                editor.set_masked(true, cx);
+            }
+            editor
+        });
+
+        Self {
+            operation,
+            prompt,
+            editor,
+            tx: Some(tx),
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(tx) = self.tx.take() {
+            let mut text = self.editor.update(cx, |editor, cx| {
+                let text = editor.text(cx);
+                editor.clear(window, cx);
+                text
+            });
+            if let Ok(password) = EncryptedPassword::try_from(text.as_ref()) {
+                let _ = tx.send(password);
+            }
+            text.zeroize();
+        }
+
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for GitGraphAskPassModal {}
+impl ModalView for GitGraphAskPassModal {}
+impl Focusable for GitGraphAskPassModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for GitGraphAskPassModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("GitGraphAskPassModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(ui::rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
+                    .child(Label::new(self.operation.clone())),
+            )
+            .child(
+                v_flex()
+                    .px_3()
+                    .pb_3()
+                    .w_full()
+                    .gap_2()
+                    .child(Label::new(self.prompt.clone()))
+                    .child(self.editor.clone()),
             )
     }
 }

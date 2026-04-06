@@ -816,6 +816,14 @@ pub trait GitRepository: Send + Sync {
 
     fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>>;
     fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn push_tag(
+        &self,
+        name: String,
+        remote_name: String,
+        ask_pass: AskPassDelegate,
+        env: Arc<HashMap<String, String>>,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
@@ -2016,8 +2024,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git = git_binary?;
-                let commit_line =
-                    git.run(&["rev-list", "--parents", "-n", "1", &sha]).await?;
+                let commit_line = git.run(&["rev-list", "--parents", "-n", "1", &sha]).await?;
                 let parent_count = commit_line.split_whitespace().count().saturating_sub(1);
 
                 let mut args = vec!["cherry-pick"];
@@ -2174,6 +2181,46 @@ impl GitRepository for RealGitRepository {
 
     fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.simple_git_command(vec!["tag".into(), "-d".into(), name])
+    }
+
+    fn push_tag(
+        &self,
+        name: String,
+        remote_name: String,
+        ask_pass: AskPassDelegate,
+        env: Arc<HashMap<String, String>>,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
+        let working_directory = self.working_directory();
+        let git_directory = self.path();
+        let executor = cx.background_executor().clone();
+        let git_binary_path = self.system_git_binary_path.clone();
+        let is_trusted = self.is_trusted();
+
+        async move {
+            let git_binary_path =
+                git_binary_path.context("git not found on $PATH, can't push tag")?;
+            let working_directory = working_directory?;
+            let git = GitBinary::new(
+                git_binary_path,
+                working_directory,
+                git_directory,
+                executor.clone(),
+                is_trusted,
+            );
+
+            let mut command = git.build_command(&["push"]);
+            command
+                .envs(env.iter())
+                .arg(remote_name)
+                .arg(format!("refs/tags/{name}"))
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            run_git_command(env, ask_pass, command, executor).await
+        }
+        .boxed()
     }
 
     fn blame(

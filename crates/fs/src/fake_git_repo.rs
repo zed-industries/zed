@@ -755,6 +755,23 @@ impl GitRepository for FakeGitRepository {
         async { Ok(()) }.boxed()
     }
 
+    fn push_tag(
+        &self,
+        _name: String,
+        _remote_name: String,
+        _ask_pass: AskPassDelegate,
+        _env: Arc<HashMap<String, String>>,
+        _cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
+        async {
+            Ok(git::repository::RemoteCommandOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+        .boxed()
+    }
+
     fn blame(
         &self,
         path: RepoPath,
