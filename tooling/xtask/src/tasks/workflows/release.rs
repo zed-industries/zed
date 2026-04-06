@@ -156,7 +156,7 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
 fn compliance_check() -> NamedJob {
     fn run_compliance_check() -> Step<Run> {
         named::bash(
-            r#"cargo xtask compliance "$GITHUB_REF_NAME" --report-path "$COMPLIANCE_FILE_OUTPUT\""#,
+            r#"cargo xtask compliance "$GITHUB_REF_NAME" --report-path "$COMPLIANCE_FILE_OUTPUT""#,
         )
         .id("run-compliance-check")
         .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
