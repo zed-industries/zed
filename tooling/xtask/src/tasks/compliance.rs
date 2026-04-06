@@ -48,6 +48,7 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
     let previous_version = GitCommand::run(GetVersionTags)?
         .sorted()
         .find_previous_minor_version(&tag)
+        .cloned()
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Could not find previous version for tag {tag}",
@@ -55,14 +56,22 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
             )
         })?;
 
-    println!("Checking compliance for version {}", tag.version());
+    println!(
+        "Checking compliance for version {} with version {} as base",
+        tag.version(),
+        previous_version.version()
+    );
 
     let commits = GitCommand::run(CommitsFromVersionToHead::new(
         previous_version,
         args.version_branch(),
     ))?;
 
-    println!("Found {} commits to check", commits.len());
+    let Some(range) = commits.range() else {
+        anyhow::bail!("No commits found to check");
+    };
+
+    println!("Checking commit range {range}, {} total", commits.len());
 
     let client = GitHubClient::for_app(
         app_id.parse().context("Failed to parse app ID as int")?,
@@ -74,10 +83,22 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     let report = Reporter::new(commits, &client).generate_report().await?;
 
+    println!(
+        "Generated report for version {}",
+        args.version_tag().to_string()
+    );
+
     let summary = report.summary();
+
+    println!(
+        "Applying compliance labels to {} pull requests",
+        summary.pull_requests
+    );
 
     for report in report.errors() {
         if let Some(pr_number) = report.commit.pr_number() {
+            println!("Adding review label to PR {}...", pr_number);
+
             client
                 .add_label_to_pull_request(compliance::github::PR_REVIEW_LABEL, pr_number)
                 .await?;

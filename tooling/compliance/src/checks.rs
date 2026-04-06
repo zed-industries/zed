@@ -356,7 +356,7 @@ mod tests {
                 .any(|member| member == login.as_str()))
         }
 
-        async fn add_label_to_pull_request(
+        async fn ensure_pull_request_has_label(
             &self,
             _label: &str,
             _pr_number: u64,

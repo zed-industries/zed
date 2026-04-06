@@ -114,7 +114,7 @@ pub trait GitHubApiClient {
     async fn get_pull_request_comments(&self, pr_number: u64) -> Result<Vec<PullRequestComment>>;
     async fn get_commit_authors(&self, commit_shas: &[&CommitSha]) -> Result<AuthorsForCommits>;
     async fn check_org_membership(&self, login: &GithubLogin) -> Result<bool>;
-    async fn add_label_to_pull_request(&self, label: &str, pr_number: u64) -> Result<()>;
+    async fn ensure_pull_request_has_label(&self, label: &str, pr_number: u64) -> Result<()>;
 }
 
 pub struct GitHubClient {
@@ -160,7 +160,9 @@ impl GitHubClient {
     }
 
     pub async fn add_label_to_pull_request(&self, label: &str, pr_number: u64) -> Result<()> {
-        self.api.add_label_to_pull_request(label, pr_number).await
+        self.api
+            .ensure_pull_request_has_label(label, pr_number)
+            .await
     }
 }
 
@@ -393,13 +395,21 @@ mod octo_client {
                 .any(|member| member.login == login.as_str()))
         }
 
-        async fn add_label_to_pull_request(&self, label: &str, pr_number: u64) -> Result<()> {
-            self.client
+        async fn ensure_pull_request_has_label(&self, label: &str, pr_number: u64) -> Result<()> {
+            if self
+                .client
                 .issues(ORG, REPO)
-                .add_labels(pr_number, &[label.to_owned()])
+                .get(pr_number)
                 .await
-                .map(|_| ())
-                .map_err(Into::into)
+                .is_ok_and(|issue| !issue.labels.iter().any(|pr_label| pr_label.name == label))
+            {
+                self.client
+                    .issues(ORG, REPO)
+                    .add_labels(pr_number, &[label.to_owned()])
+                    .await?;
+            }
+
+            Ok(())
         }
     }
 }

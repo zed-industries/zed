@@ -216,6 +216,15 @@ impl CommitDetails {
 #[derive(Debug, Deref, Default, DerefMut)]
 pub struct CommitList(Vec<CommitDetails>);
 
+impl CommitList {
+    pub fn range(&self) -> Option<String> {
+        self.0
+            .first()
+            .zip(self.0.last())
+            .map(|(first, last)| format!("{}..{}", first.sha().0, last.sha().0))
+    }
+}
+
 impl IntoIterator for CommitList {
     type IntoIter = std::vec::IntoIter<CommitDetails>;
     type Item = CommitDetails;
@@ -264,28 +273,23 @@ impl VersionTagList {
         self
     }
 
-    pub fn find_previous_minor_version(&self, version_tag: &VersionTag) -> Option<VersionTag> {
+    pub fn find_previous_minor_version(&self, version_tag: &VersionTag) -> Option<&VersionTag> {
         self.0
             .iter()
-            .take_while(|tag| {
-                tag.version().major < version_tag.version().major
+            .take_while(|tag| tag.version() < version_tag.version())
+            .collect_vec()
+            .into_iter()
+            .rev()
+            .find(|tag| {
+                (tag.version().major < version_tag.version().major
                     || (tag.version().major == version_tag.version().major
-                        && tag.version().minor < version_tag.version().minor)
+                        && tag.version().minor < version_tag.version().minor))
+                    && tag.version().patch == 0
             })
-            .last()
             .or_else(|| {
                 self.0
                     .last()
                     .filter(|tag| tag.version() < version_tag.version())
-            })
-            .map(|previous_version| {
-                VersionTag(
-                    Version {
-                        patch: 0,
-                        ..previous_version.version().clone()
-                    },
-                    version_tag.1,
-                )
             })
     }
 }
