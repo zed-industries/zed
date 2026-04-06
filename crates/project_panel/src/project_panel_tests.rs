@@ -1254,8 +1254,8 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
             let file_name_selection = &file_name_selections[0];
             assert_eq!(
                 file_name_selection.start,
-                MultiBufferOffset("one".len()),
-                "Should select the file name disambiguation after the original file name"
+                MultiBufferOffset(0),
+                "Should select from the beginning of the filename"
             );
             assert_eq!(
                 file_name_selection.end,
@@ -3473,6 +3473,79 @@ async fn test_create_duplicate_items_and_check_history(cx: &mut gpui::TestAppCon
                         && abs_path == Some(PathBuf::from(path!("/src/test/fourth.txt")))
                 })
         );
+    });
+}
+
+#[gpui::test]
+async fn test_duplicate_selects_full_filename(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "one.txt": "",
+            "one.two.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_next(&Default::default(), window, cx);
+        panel.select_next(&Default::default(), window, cx);
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "      one.txt  <== selected", "      one.two.txt",]
+    );
+
+    // Duplicate "one.txt" — rename editor should open with the full stem "one copy" selected
+    panel.update_in(cx, |panel, window, cx| {
+        panel.duplicate(&Duplicate, window, cx);
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "      one.txt",
+            "      [EDITOR: 'one copy.txt']  <== selected  <== marked",
+            "      one.two.txt",
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
+            assert_eq!(
+                selections.len(),
+                1,
+                "Duplicate should produce a single selection, got: {selections:?}"
+            );
+            let selection = &selections[0];
+            assert_eq!(
+                selection.start,
+                MultiBufferOffset(0),
+                "Duplicate rename should select from the start of the filename stem"
+            );
+            assert_eq!(
+                selection.end,
+                MultiBufferOffset("one copy".len()),
+                "Duplicate rename should select the full stem including the copy suffix"
+            );
+        });
+        assert!(panel.confirm_edit(true, window, cx).is_none());
     });
 }
 
