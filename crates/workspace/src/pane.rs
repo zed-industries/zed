@@ -4930,8 +4930,8 @@ mod tests {
         item::test::{TestItem, TestProjectItem},
     };
     use gpui::{
-        AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, TestAppContext,
-        VisualTestContext, size,
+        AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        TestAppContext, VisualTestContext, size,
     };
     use project::FakeFs;
     use settings::SettingsStore;
@@ -6657,8 +6657,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_drag_tab_to_middle_tab_with_mouse_events(cx: &mut TestAppContext) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -6710,8 +6708,6 @@ mod tests {
     async fn test_drag_pinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6787,8 +6783,6 @@ mod tests {
     async fn test_drag_unpinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6841,8 +6835,6 @@ mod tests {
     async fn test_drag_mixed_tabs_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6908,8 +6900,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_middle_click_pinned_tab_does_not_close(cx: &mut TestAppContext) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
