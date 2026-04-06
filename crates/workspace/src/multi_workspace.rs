@@ -308,8 +308,8 @@ impl MultiWorkspace {
         let quit_subscription = cx.on_app_quit(Self::app_will_quit);
         let settings_subscription =
             cx.observe_global_in::<settings::SettingsStore>(window, |this, window, cx| {
-                if DisableAiSettings::get_global(cx).disable_ai && this.sidebar_open() {
-                    this.close_sidebar(window, cx);
+                if DisableAiSettings::get_global(cx).disable_ai {
+                    this.collapse_to_single_workspace(window, cx);
                 }
             });
         Self::subscribe_to_workspace(&workspace, window, cx);
@@ -749,11 +749,6 @@ impl MultiWorkspace {
     /// Adds a workspace to this window without changing which workspace is
     /// active.
     pub fn add(&mut self, workspace: Entity<Workspace>, window: &Window, cx: &mut Context<Self>) {
-        if !self.multi_workspace_enabled(cx) {
-            self.set_single_workspace(workspace, cx);
-            return;
-        }
-
         self.insert_workspace(workspace, window, cx);
     }
 
@@ -764,11 +759,6 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.multi_workspace_enabled(cx) {
-            self.set_single_workspace(workspace, cx);
-            return;
-        }
-
         // Re-activating the current transient workspace is a no-op.
         if self.active_workspace.transient_workspace() == Some(&workspace) {
             self.focus_active_workspace(window, cx);
@@ -822,10 +812,21 @@ impl MultiWorkspace {
         self.workspaces.len() - 1
     }
 
-    fn set_single_workspace(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) {
-        self.workspaces[0] = workspace;
-        self.active_workspace = ActiveWorkspace::Persistent(0);
-        cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
+    /// Collapses to a single transient workspace, discarding all persistent
+    /// workspaces. Used when multi-workspace is disabled (e.g. disable_ai).
+    fn collapse_to_single_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sidebar_open {
+            self.close_sidebar(window, cx);
+        }
+        let active = self.workspace().clone();
+        for workspace in std::mem::take(&mut self.workspaces) {
+            if workspace != active {
+                self.detach_workspace(&workspace, cx);
+                cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
+            }
+        }
+        self.project_group_keys.clear();
+        self.active_workspace = ActiveWorkspace::Transient(active);
         cx.notify();
     }
 
