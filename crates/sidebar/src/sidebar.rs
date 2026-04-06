@@ -856,7 +856,8 @@ impl Sidebar {
                                          workspace: ThreadEntryWorkspace|
                  -> ThreadEntry {
                     let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                    let worktrees = worktree_info_from_thread_paths(&row.folder_paths, &group_key);
+                    let worktrees: Vec<WorktreeInfo> =
+                        worktree_info_from_thread_paths(&row.folder_paths, &group_key).collect();
                     ThreadEntry {
                         metadata: row,
                         icon,
@@ -867,7 +868,7 @@ impl Sidebar {
                         is_background: false,
                         is_title_generating: false,
                         highlight_positions: Vec::new(),
-                        worktrees: worktrees.collect(),
+                        worktrees,
                         diff_stats: DiffStats::default(),
                     }
                 };
