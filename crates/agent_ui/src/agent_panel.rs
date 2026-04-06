@@ -25,6 +25,7 @@ use zed_actions::agent::{
     ResolveConflictsWithAgent, ReviewBranchDiff,
 };
 
+use crate::thread_metadata_store::ThreadMetadataStore;
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CycleStartThreadIn,
     Follow, InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown,
@@ -755,28 +756,21 @@ impl AgentPanel {
                 .as_ref()
                 .and_then(|p| p.last_active_thread.as_ref())
             {
-                if thread_info.agent_type.is_native() {
-                    let session_id = acp::SessionId::new(thread_info.session_id.clone());
-                    let load_result = cx.update(|_window, cx| {
-                        let thread_store = ThreadStore::global(cx);
-                        thread_store.update(cx, |store, cx| store.load_thread(session_id, cx))
-                    });
-                    let thread_exists = if let Ok(task) = load_result {
-                        task.await.ok().flatten().is_some()
-                    } else {
-                        false
-                    };
-                    if thread_exists {
-                        Some(thread_info)
-                    } else {
-                        log::warn!(
-                            "last active thread {} not found in database, skipping restoration",
-                            thread_info.session_id
-                        );
-                        None
-                    }
-                } else {
+                let session_id = acp::SessionId::new(thread_info.session_id.clone());
+                let has_metadata = cx
+                    .update(|_window, cx| {
+                        let store = ThreadMetadataStore::global(cx);
+                        store.read(cx).entry(&session_id).is_some()
+                    })
+                    .unwrap_or(false);
+                if has_metadata {
                     Some(thread_info)
+                } else {
+                    log::warn!(
+                        "last active thread {} has no metadata, skipping restoration",
+                        thread_info.session_id
+                    );
+                    None
                 }
             } else {
                 None
@@ -1760,6 +1754,10 @@ impl AgentPanel {
             return;
         };
 
+        if thread_view.read(cx).thread.read(cx).entries().is_empty() {
+            return;
+        }
+
         self.background_threads
             .insert(thread_view.read(cx).id.clone(), conversation_view);
         self.cleanup_background_threads(cx);
@@ -2104,6 +2102,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(store) = ThreadMetadataStore::try_global(cx) {
+            store.update(cx, |store, cx| store.unarchive(&session_id, cx));
+        }
+
         if let Some(conversation_view) = self.background_threads.remove(&session_id) {
             self.set_active_view(
                 ActiveView::AgentThread { conversation_view },
@@ -4399,6 +4401,8 @@ mod tests {
             );
         });
 
+        send_message(&panel_a, cx);
+
         let agent_type_a = panel_a.read_with(cx, |panel, _cx| panel.selected_agent.clone());
 
         // --- Set up workspace B: ClaudeCode, no active thread ---
@@ -4454,6 +4458,72 @@ mod tests {
             assert!(
                 panel.active_conversation_view().is_none(),
                 "workspace B should have no active thread"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_non_native_thread_without_metadata_is_not_restored(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_agent_thread(cx).is_some(),
+                "should have an active thread after connection"
+            );
+        });
+
+        // Serialize without ever sending a message, so no thread metadata exists.
+        panel.update(cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        loaded.read_with(cx, |panel, _cx| {
+            assert!(
+                panel.active_conversation_view().is_none(),
+                "thread without metadata should not be restored"
             );
         });
     }
@@ -4801,6 +4871,38 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_empty_draft_thread_not_retained_when_navigating_away(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let connection_a = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_a, &mut cx);
+        let session_id_a = active_session_id(&panel, &cx);
+
+        panel.read_with(&cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            assert!(
+                thread.read(cx).entries().is_empty(),
+                "newly opened draft thread should have no entries"
+            );
+            assert!(panel.background_threads.is_empty());
+        });
+
+        let connection_b = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection_b, &mut cx);
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.background_threads.is_empty(),
+                "empty draft thread should not be retained in background_threads"
+            );
+            assert!(
+                !panel.background_threads.contains_key(&session_id_a),
+                "empty draft thread should not be keyed in background_threads"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_running_thread_retained_when_navigating_away(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
 
@@ -4911,6 +5013,7 @@ mod tests {
         // Open thread B — thread A goes to background.
         let connection_b = StubAgentConnection::new();
         open_thread_with_connection(&panel, connection_b, &mut cx);
+        send_message(&panel, &mut cx);
 
         let session_id_b = active_session_id(&panel, &cx);
 

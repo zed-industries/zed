@@ -20,7 +20,6 @@ use editor::{
     actions::ExpandAllDiffHunks,
 };
 use editor::{EditorStyle, RewrapOptions};
-use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
 use git::commit::ParsedCommitMessage;
@@ -4529,7 +4528,6 @@ impl GitPanel {
         let commit = branch.most_recent_commit.as_ref()?.clone();
         let workspace = self.workspace.clone();
         let this = cx.entity();
-        let can_open_git_graph = cx.has_flag::<GitGraphFeatureFlag>();
 
         Some(
             h_flex()
@@ -4607,18 +4605,16 @@ impl GitPanel {
                                     ),
                             )
                         })
-                        .when(can_open_git_graph, |this| {
-                            this.child(
-                                panel_icon_button("git-graph-button", IconName::GitGraph)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(|_window, cx| {
-                                        Tooltip::for_action("Open Git Graph", &Open, cx)
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(Open.boxed_clone(), cx)
-                                    }),
-                            )
-                        }),
+                        .child(
+                            panel_icon_button("git-graph-button", IconName::GitGraph)
+                                .icon_size(IconSize::Small)
+                                .tooltip(|_window, cx| {
+                                    Tooltip::for_action("Open Git Graph", &Open, cx)
+                                })
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Open.boxed_clone(), cx)
+                                }),
+                        ),
                 ),
         )
     }
