@@ -972,6 +972,7 @@ pub trait GitRepository: Send + Sync {
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>>;
+
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
 }
@@ -2281,6 +2282,7 @@ impl GitRepository for RealGitRepository {
             })
             .boxed()
     }
+
     fn push(
         &self,
         branch_name: String,

@@ -6159,6 +6159,33 @@ impl Repository {
             }
         })
     }
+
+    pub fn resolve_commit(&mut self, sha: String) -> oneshot::Receiver<Result<bool>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    let results = backend.revparse_batch(vec![sha]).await?;
+                    Ok(results.into_iter().next().flatten().is_some())
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("resolve_commit is not supported for remote repositories")
+                }
+            }
+        })
+    }
+
+    pub fn repair_worktrees(&mut self) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.repair_worktrees().await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("repair_worktrees is not supported for remote repositories")
+                }
+            }
+        })
+    }
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
