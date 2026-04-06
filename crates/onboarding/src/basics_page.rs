@@ -3,7 +3,7 @@ use std::sync::Arc;
 use client::{Client, TelemetrySettings};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{Action, App, IntoElement};
+use gpui::{Action, App, ClickEvent, IntoElement, Window};
 use project::agent_server_store::AllAgentServersSettings;
 use project::project_settings::ProjectSettings;
 use project::{AgentRegistryStore, RegistryAgent};
@@ -527,24 +527,21 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
 
 const FEATURED_AGENT_IDS: &[&str] = &["claude-acp", "codex-acp", "github-copilot-cli", "cursor"];
 
-fn render_agent_button(agent: &RegistryAgent, installed: bool, cx: &mut App) -> impl IntoElement {
-    let agent_id = agent.id().to_string();
-    let name = agent.name().clone();
-    let element_id = format!("{}-onboarding", agent_id);
-
-    let icon = match agent.icon_path() {
-        Some(icon_path) => Icon::from_external_svg(icon_path.clone()),
-        None => Icon::new(IconName::Sparkle),
-    }
-    .size(IconSize::XSmall)
-    .color(Color::Muted);
-
+fn render_onboarding_agent_card(
+    element_id: impl Into<ElementId>,
+    icon: Icon,
+    name: impl Into<SharedString>,
+    active: bool,
+    action_label: &'static str,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &mut App,
+) -> impl IntoElement {
     v_flex()
         .id(element_id)
         .border_1()
         .border_color(cx.theme().colors().border_variant)
         .rounded_sm()
-        .when(!installed, |this| {
+        .when(!active, |this| {
             this.cursor_pointer().hover(|s| {
                 s.bg(cx.theme().colors().element_hover)
                     .border_color(cx.theme().colors().border)
@@ -569,7 +566,7 @@ fn render_agent_button(agent: &RegistryAgent, installed: bool, cx: &mut App) -> 
                 .border_color(cx.theme().colors().border_variant)
                 .bg(cx.theme().colors().element_background.opacity(0.5))
                 .map(|this| {
-                    if installed {
+                    if active {
                         this.child(
                             Icon::new(IconName::Check)
                                 .size(IconSize::Small)
@@ -577,95 +574,77 @@ fn render_agent_button(agent: &RegistryAgent, installed: bool, cx: &mut App) -> 
                         )
                     } else {
                         this.child(
-                            Label::new("Install")
+                            Label::new(action_label)
                                 .size(LabelSize::XSmall)
                                 .color(Color::Muted),
                         )
                     }
                 }),
         )
-        .when(!installed, |this| {
-            let fs = <dyn Fs>::global(cx);
+        .when(!active, |this| this.on_click(on_click))
+}
+
+fn render_registry_agent_button(
+    agent: &RegistryAgent,
+    installed: bool,
+    cx: &mut App,
+) -> impl IntoElement {
+    let agent_id = agent.id().to_string();
+    let element_id = format!("{}-onboarding", agent_id);
+
+    let icon = match agent.icon_path() {
+        Some(icon_path) => Icon::from_external_svg(icon_path.clone()),
+        None => Icon::new(IconName::Sparkle),
+    }
+    .size(IconSize::XSmall)
+    .color(Color::Muted);
+
+    let fs = <dyn Fs>::global(cx);
+    render_onboarding_agent_card(
+        element_id,
+        icon,
+        agent.name().clone(),
+        installed,
+        "Install",
+        move |_, _, cx| {
             let agent_id = agent_id.clone();
-            this.on_click(move |_, _, cx| {
-                let agent_id = agent_id.clone();
-                update_settings_file(fs.clone(), cx, move |settings, _| {
-                    let agent_servers = settings.agent_servers.get_or_insert_default();
-                    agent_servers.entry(agent_id).or_insert_with(|| {
-                        CustomAgentServerSettings::Registry {
-                            env: Default::default(),
-                            default_mode: None,
-                            default_model: None,
-                            favorite_models: Vec::new(),
-                            default_config_options: HashMap::default(),
-                            favorite_config_option_values: HashMap::default(),
-                        }
-                    });
+            update_settings_file(fs.clone(), cx, move |settings, _| {
+                let agent_servers = settings.agent_servers.get_or_insert_default();
+                agent_servers.entry(agent_id).or_insert_with(|| {
+                    CustomAgentServerSettings::Registry {
+                        env: Default::default(),
+                        default_mode: None,
+                        default_model: None,
+                        favorite_models: Vec::new(),
+                        default_config_options: HashMap::default(),
+                        favorite_config_option_values: HashMap::default(),
+                    }
                 });
-            })
-        })
+            });
+        },
+        cx,
+    )
 }
 
 fn render_zed_agent_button(cx: &mut App) -> impl IntoElement {
     let client = Client::global(cx);
     let is_signed_in = !client.status().borrow().is_signed_out();
 
-    v_flex()
-        .id("zed-agent-onboarding")
-        .border_1()
-        .border_color(cx.theme().colors().border_variant)
-        .rounded_sm()
-        .when(!is_signed_in, |this| {
-            this.cursor_pointer().hover(|s| {
-                s.bg(cx.theme().colors().element_hover)
-                    .border_color(cx.theme().colors().border)
-            })
-        })
-        .child(
-            h_flex()
-                .px_1()
-                .py_1p5()
-                .gap_1()
-                .items_center()
-                .justify_center()
-                .child(
-                    Icon::new(IconName::ZedAgent)
-                        .size(IconSize::XSmall)
-                        .color(Color::Muted),
-                )
-                .child(Label::new("Zed Agent").size(LabelSize::Small)),
-        )
-        .child(
-            h_flex()
-                .p_0p5()
-                .h_full()
-                .justify_center()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .bg(cx.theme().colors().element_background.opacity(0.5))
-                .map(|this| {
-                    if is_signed_in {
-                        this.child(
-                            Icon::new(IconName::Check)
-                                .size(IconSize::Small)
-                                .color(Color::Success),
-                        )
-                    } else {
-                        this.child(
-                            Label::new("Sign in")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                    }
-                }),
-        )
-        .when(!is_signed_in, |this| {
-            this.on_click(move |_, _, cx| {
-                let client = Client::global(cx);
-                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, cx).await)
-                    .detach_and_log_err(cx);
-            })
-        })
+    render_onboarding_agent_card(
+        "zed-agent-onboarding",
+        Icon::new(IconName::ZedAgent)
+            .size(IconSize::XSmall)
+            .color(Color::Muted),
+        "Zed Agent",
+        is_signed_in,
+        "Sign in",
+        move |_, _, cx| {
+            let client = Client::global(cx);
+            cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, cx).await)
+                .detach_and_log_err(cx);
+        },
+        cx,
+    )
 }
 
 fn render_ai_section(cx: &mut App) -> impl IntoElement {
@@ -696,7 +675,7 @@ fn render_ai_section(cx: &mut App) -> impl IntoElement {
                 return grid;
             };
             let is_installed = installed_agents.contains_key(*agent_id);
-            grid.child(render_agent_button(agent, is_installed, cx))
+            grid.child(render_registry_agent_button(agent, is_installed, cx))
         },
     );
 
