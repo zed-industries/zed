@@ -1,11 +1,12 @@
 use crate::{PlatformDispatcher, Priority, RunnableVariant};
+use scheduler::Instant;
 use scheduler::{Clock, Scheduler, SessionId, TestScheduler, TestSchedulerConfig, Yield};
 use std::{
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 /// TestDispatcher provides deterministic async execution for tests.
@@ -29,11 +30,12 @@ impl TestDispatcher {
                 .map_or(false, |var| var == "1" || var == "true"),
             timeout_ticks: 0..=1000,
         }));
+        Self::from_scheduler(scheduler)
+    }
 
-        let session_id = scheduler.allocate_session_id();
-
+    pub fn from_scheduler(scheduler: Arc<TestScheduler>) -> Self {
         TestDispatcher {
-            session_id,
+            session_id: scheduler.allocate_session_id(),
             scheduler,
             num_cpus_override: Arc::new(AtomicUsize::new(0)),
         }
@@ -45,6 +47,10 @@ impl TestDispatcher {
 
     pub fn session_id(&self) -> SessionId {
         self.session_id
+    }
+
+    pub fn drain_tasks(&self) {
+        self.scheduler.drain_tasks();
     }
 
     pub fn advance_clock(&self, by: Duration) {
@@ -69,6 +75,14 @@ impl TestDispatcher {
 
     pub fn run_until_parked(&self) {
         while self.tick(false) {}
+    }
+
+    pub fn allow_parking(&self) {
+        self.scheduler.allow_parking();
+    }
+
+    pub fn forbid_parking(&self) {
+        self.scheduler.forbid_parking();
     }
 
     /// Override the value returned by `BackgroundExecutor::num_cpus()` in tests.

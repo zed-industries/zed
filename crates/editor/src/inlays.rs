@@ -45,6 +45,7 @@ impl InlaySplice {
 #[derive(Debug, Clone)]
 pub struct Inlay {
     pub id: InlayId,
+    // TODO this could be an ExcerptAnchor
     pub position: Anchor,
     pub content: InlayContent,
 }
@@ -58,10 +59,12 @@ pub enum InlayContent {
 impl Inlay {
     pub fn hint(id: InlayId, position: Anchor, hint: &InlayHint) -> Self {
         let mut text = hint.text();
-        if hint.padding_right && text.reversed_chars_at(text.len()).next() != Some(' ') {
+        let needs_right_padding = hint.padding_right && !text.ends_with(" ");
+        let needs_left_padding = hint.padding_left && !text.starts_with(" ");
+        if needs_right_padding {
             text.push(" ");
         }
-        if hint.padding_left && text.chars_at(0).next() != Some(' ') {
+        if needs_left_padding {
             text.push_front(" ");
         }
         Self {

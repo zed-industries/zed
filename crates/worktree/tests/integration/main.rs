@@ -14,10 +14,12 @@ use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandl
 use serde_json::json;
 use settings::{SettingsStore, WorktreeId};
 use std::{
+    cell::Cell,
     env,
     fmt::Write,
     mem,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 use util::{
@@ -406,6 +408,164 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
                 .collect::<Vec<_>>(),
             vec![rel_path(""), rel_path(NEW_NAME)]
         );
+    });
+}
+
+#[gpui::test]
+async fn test_root_rescan_reconciles_stale_state(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "old.txt": "",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path(""), rel_path("old.txt")]
+        );
+    });
+
+    fs.pause_events();
+    fs.remove_file(Path::new("/root/old.txt"), RemoveOptions::default())
+        .await
+        .unwrap();
+    fs.insert_file(Path::new("/root/new.txt"), Vec::new()).await;
+    assert_eq!(fs.buffered_event_count(), 2);
+    fs.clear_buffered_events();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("old.txt")).is_some());
+        assert!(tree.entry_for_path(rel_path("new.txt")).is_none());
+    });
+
+    fs.emit_fs_event("/root", Some(fs::PathEventKind::Rescan));
+    fs.unpause_events_and_flush();
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("old.txt")).is_none());
+        assert!(tree.entry_for_path(rel_path("new.txt")).is_some());
+        assert_eq!(
+            tree.entries(true, 0)
+                .map(|entry| entry.path.as_ref())
+                .collect::<Vec<_>>(),
+            vec![rel_path(""), rel_path("new.txt")]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_subtree_rescan_reports_unchanged_descendants_as_updated(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": {
+                "child.txt": "",
+                "nested": {
+                    "grandchild.txt": "",
+                },
+                "remove": {
+                    "removed.txt": "",
+                }
+            },
+            "other.txt": "",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let tree_updates = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |_, cx| {
+        let tree_updates = tree_updates.clone();
+        cx.subscribe(&tree, move |_, _, event, _| {
+            if let Event::UpdatedEntries(update) = event {
+                tree_updates.lock().extend(
+                    update
+                        .iter()
+                        .filter(|(path, _, _)| path.as_ref() != rel_path("fs-event-sentinel"))
+                        .map(|(path, _, change)| (path.clone(), *change)),
+                );
+            }
+        })
+        .detach();
+    });
+    fs.pause_events();
+    fs.insert_file("/root/dir/new.txt", b"new content".to_vec())
+        .await;
+    fs.remove_dir(
+        "/root/dir/remove".as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
+
+    fs.emit_fs_event("/root/dir", Some(fs::PathEventKind::Rescan));
+    tree.flush_fs_events(cx).await;
+
+    assert_eq!(
+        mem::take(&mut *tree_updates.lock()),
+        &[
+            (rel_path("dir").into(), PathChange::Updated),
+            (rel_path("dir/child.txt").into(), PathChange::Updated),
+            (rel_path("dir/nested").into(), PathChange::Updated),
+            (
+                rel_path("dir/nested/grandchild.txt").into(),
+                PathChange::Updated
+            ),
+            (rel_path("dir/new.txt").into(), PathChange::Added),
+            (rel_path("dir/remove").into(), PathChange::Removed),
+            (
+                rel_path("dir/remove/removed.txt").into(),
+                PathChange::Removed
+            ),
+        ]
+    );
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("other.txt")).is_some());
     });
 }
 
@@ -2576,6 +2736,97 @@ fn check_worktree_entries(
     }
 }
 
+#[gpui::test]
+async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor);
+
+    // Set up a main repo and a linked worktree pointing back to it.
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/linked_worktree")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    fs.write(
+        path!("/linked_worktree/file.txt").as_ref(),
+        "content".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        path!("/linked_worktree").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    // For a linked worktree, root_repo_common_dir should point to the
+    // main repo's .git, not the worktree-specific git directory.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot().root_repo_common_dir().map(|p| p.as_ref()),
+            Some(Path::new(path!("/main_repo/.git"))),
+        );
+    });
+
+    let event_count: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    tree.update(cx, {
+        let event_count = event_count.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if matches!(event, Event::UpdatedRootRepoCommonDir) {
+                    event_count.set(event_count.get() + 1);
+                }
+            })
+            .detach();
+        }
+    });
+
+    // Remove .git — root_repo_common_dir should become None.
+    fs.remove_file(
+        &PathBuf::from(path!("/linked_worktree/.git")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.snapshot().root_repo_common_dir(), None);
+    });
+    assert_eq!(
+        event_count.get(),
+        1,
+        "should have emitted UpdatedRootRepoCommonDir on removal"
+    );
+}
+
 fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 
@@ -2946,4 +3197,68 @@ async fn test_refresh_entries_for_paths_creates_ancestors(cx: &mut TestAppContex
             "All ancestors should be created when refreshing a deeply nested path"
         );
     });
+}
+
+#[gpui::test]
+async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "test.txt": "content",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root/test.txt"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.is_single_file(), "Should be a single-file worktree");
+        assert_eq!(tree.abs_path().as_ref(), Path::new("/root/test.txt"));
+    });
+
+    // Delete the file
+    fs.remove_file(Path::new("/root/test.txt"), Default::default())
+        .await
+        .unwrap();
+
+    // Subscribe to worktree events
+    let deleted_event_received = Rc::new(Cell::new(false));
+    let _subscription = cx.update({
+        let deleted_event_received = deleted_event_received.clone();
+        |cx| {
+            cx.subscribe(&tree, move |_, event, _| {
+                if matches!(event, Event::Deleted) {
+                    deleted_event_received.set(true);
+                }
+            })
+        }
+    });
+
+    // Trigger filesystem events - the scanner should detect the file is gone immediately
+    // and emit a Deleted event
+    cx.background_executor.run_until_parked();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.background_executor.run_until_parked();
+
+    assert!(
+        deleted_event_received.get(),
+        "Should receive Deleted event when single-file worktree root is deleted"
+    );
 }

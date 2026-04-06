@@ -10,23 +10,6 @@ pub enum Role {
 }
 
 impl Role {
-    pub fn from_proto(role: i32) -> Role {
-        match proto::LanguageModelRole::from_i32(role) {
-            Some(proto::LanguageModelRole::LanguageModelUser) => Role::User,
-            Some(proto::LanguageModelRole::LanguageModelAssistant) => Role::Assistant,
-            Some(proto::LanguageModelRole::LanguageModelSystem) => Role::System,
-            None => Role::User,
-        }
-    }
-
-    pub fn to_proto(self) -> proto::LanguageModelRole {
-        match self {
-            Role::User => proto::LanguageModelRole::LanguageModelUser,
-            Role::Assistant => proto::LanguageModelRole::LanguageModelAssistant,
-            Role::System => proto::LanguageModelRole::LanguageModelSystem,
-        }
-    }
-
     pub fn cycle(self) -> Role {
         match self {
             Role::User => Role::Assistant,

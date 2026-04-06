@@ -12,8 +12,11 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedSt
 use language::{Buffer, LanguageName, language_settings::all_language_settings};
 use lsp::{AdapterServerCapabilities, LanguageServerId};
 use rpc::{TypedEnvelope, proto};
-use settings::{SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore};
+use settings::{
+    DefaultSemanticTokenRules, SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore,
+};
 use smol::future::yield_now;
+
 use text::{Anchor, Bias, OffsetUtf16, PointUtf16, Unclipped};
 use util::ResultExt as _;
 
@@ -56,6 +59,15 @@ impl SemanticTokenConfig {
         } else {
             false
         }
+    }
+
+    /// Clears all cached stylizers.
+    ///
+    /// This is called when settings change to ensure that any modifications to
+    /// language-specific semantic token rules (e.g. from extension install/uninstall)
+    /// are picked up. Stylizers are recreated lazily on next use.
+    pub(super) fn clear_stylizers(&mut self) {
+        self.stylizers.clear();
     }
 
     pub(super) fn update_global_mode(&mut self, new_mode: settings::SemanticTokens) -> bool {
@@ -462,6 +474,7 @@ impl SemanticTokenStylizer {
         let global_rules = &ProjectSettings::get_global(cx)
             .global_lsp_settings
             .semantic_token_rules;
+        let default_rules = cx.global::<DefaultSemanticTokenRules>();
 
         let rules_by_token_type = token_types
             .iter()
@@ -475,6 +488,7 @@ impl SemanticTokenStylizer {
                     .rules
                     .iter()
                     .chain(language_rules.into_iter().flat_map(|lr| &lr.rules))
+                    .chain(default_rules.0.rules.iter())
                     .rev()
                     .filter(filter)
                     .cloned()
@@ -571,8 +585,7 @@ async fn raw_to_buffer_semantic_tokens(
                     }
 
                     Some(BufferSemanticToken {
-                        range: buffer_snapshot.anchor_before(start)
-                            ..buffer_snapshot.anchor_after(end),
+                        range: buffer_snapshot.anchor_range_inside(start..end),
                         token_type: token.token_type,
                         token_modifiers: token.token_modifiers,
                     })
@@ -595,6 +608,14 @@ pub struct SemanticTokensData {
     pub(super) raw_tokens: RawSemanticTokens,
     pub(super) latest_invalidation_requests: HashMap<LanguageServerId, Option<usize>>,
     update: Option<(Global, SemanticTokensTask)>,
+}
+
+impl SemanticTokensData {
+    pub(super) fn remove_server_data(&mut self, server_id: LanguageServerId) {
+        self.raw_tokens.servers.remove(&server_id);
+        self.latest_invalidation_requests.remove(&server_id);
+        self.update = None;
+    }
 }
 
 /// All the semantic token tokens for a buffer.
@@ -653,8 +674,8 @@ impl ServerSemanticTokens {
 
     pub(crate) fn apply(&mut self, edits: &[SemanticTokensEdit]) {
         for edit in edits {
-            let start = edit.start as usize;
-            let end = start + edit.delete_count as usize;
+            let start = (edit.start as usize).min(self.data.len());
+            let end = (start + edit.delete_count as usize).min(self.data.len());
             self.data.splice(start..end, edit.data.iter().copied());
         }
     }
@@ -999,5 +1020,39 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[test]
+    fn applies_out_of_bounds_delta_edit_without_panic() {
+        let mut tokens = ServerSemanticTokens::from_full(vec![2, 5, 3, 0, 3, 0, 5, 4, 1, 0], None);
+
+        // start beyond data length
+        tokens.apply(&[SemanticTokensEdit {
+            start: 100,
+            delete_count: 5,
+            data: vec![1, 2, 3, 4, 5],
+        }]);
+        assert_eq!(
+            tokens.data,
+            vec![2, 5, 3, 0, 3, 0, 5, 4, 1, 0, 1, 2, 3, 4, 5]
+        );
+
+        // delete_count extends past data length
+        let mut tokens = ServerSemanticTokens::from_full(vec![2, 5, 3, 0, 3], None);
+        tokens.apply(&[SemanticTokensEdit {
+            start: 3,
+            delete_count: 100,
+            data: vec![9, 9],
+        }]);
+        assert_eq!(tokens.data, vec![2, 5, 3, 9, 9]);
+
+        // empty data
+        let mut tokens = ServerSemanticTokens::from_full(Vec::new(), None);
+        tokens.apply(&[SemanticTokensEdit {
+            start: 0,
+            delete_count: 5,
+            data: vec![1, 2, 3, 4, 5],
+        }]);
+        assert_eq!(tokens.data, vec![1, 2, 3, 4, 5]);
     }
 }

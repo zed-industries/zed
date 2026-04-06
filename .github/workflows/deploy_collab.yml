@@ -12,9 +12,12 @@ jobs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     name: Check formatting and Clippy lints
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -23,14 +26,12 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::cargo_fmt
@@ -42,9 +43,12 @@ jobs:
     - style
     name: Run tests
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -53,18 +57,16 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
     - name: deploy_collab::tests::run_collab_tests
@@ -91,7 +93,7 @@ jobs:
     - name: deploy_collab::publish::sign_into_registry
       run: doctl registry login
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: deploy_collab::publish::build_docker_image
@@ -111,7 +113,7 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: deploy_collab::deploy::install_doctl
@@ -119,8 +121,9 @@ jobs:
       with:
         token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
     - name: deploy_collab::deploy::sign_into_kubernetes
-      run: |
-        doctl kubernetes cluster kubeconfig save --expiry-seconds 600 ${{ secrets.CLUSTER_NAME }}
+      run: doctl kubernetes cluster kubeconfig save --expiry-seconds 600 "$CLUSTER_NAME"
+      env:
+        CLUSTER_NAME: ${{ secrets.CLUSTER_NAME }}
     - name: deploy_collab::deploy::start_rollout
       run: |
         set -eu
@@ -140,7 +143,7 @@ jobs:
         echo "Deploying collab:$GITHUB_SHA to $ZED_KUBE_NAMESPACE"
 
         source script/lib/deploy-helpers.sh
-        export_vars_for_environment $ZED_KUBE_NAMESPACE
+        export_vars_for_environment "$ZED_KUBE_NAMESPACE"
 
         ZED_DO_CERTIFICATE_ID="$(doctl compute certificate list --format ID --no-header)"
         export ZED_DO_CERTIFICATE_ID
@@ -150,14 +153,14 @@ jobs:
         export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT
         export DATABASE_MAX_CONNECTIONS=850
         envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status "deployment/$ZED_SERVICE_NAME" --watch
         echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
 
         export ZED_SERVICE_NAME=api
         export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_API_LOAD_BALANCER_SIZE_UNIT
         export DATABASE_MAX_CONNECTIONS=60
         envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
-        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
+        kubectl -n "$ZED_KUBE_NAMESPACE" rollout status "deployment/$ZED_SERVICE_NAME" --watch
         echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
 defaults:
   run:

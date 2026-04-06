@@ -3,7 +3,7 @@ mod go_locator {
     use dap::{DapLocator, adapters::DebugAdapterName};
     use gpui::TestAppContext;
     use project::debugger::locators::go::{DelveLaunchRequest, GoLocator};
-    use task::{HideStrategy, RevealStrategy, RevealTarget, Shell, TaskTemplate};
+    use task::{HideStrategy, RevealStrategy, RevealTarget, SaveStrategy, Shell, TaskTemplate};
     #[gpui::test]
     async fn test_create_scenario_for_go_build(_: &mut TestAppContext) {
         let locator = GoLocator;
@@ -22,6 +22,8 @@ mod go_locator {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            save: SaveStrategy::default(),
+            hooks: Default::default(),
         };
 
         let scenario = locator
@@ -49,6 +51,8 @@ mod go_locator {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            save: SaveStrategy::default(),
+            hooks: Default::default(),
         };
 
         let scenario = locator
@@ -187,6 +191,8 @@ mod go_locator {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            save: SaveStrategy::default(),
+            hooks: Default::default(),
         };
 
         let scenario = locator
@@ -221,6 +227,8 @@ mod python_locator {
             shell: task::Shell::System,
             show_summary: false,
             show_command: false,
+            save: task::SaveStrategy::default(),
+            hooks: Default::default(),
         };
 
         let expected_scenario = DebugScenario {

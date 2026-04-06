@@ -26,8 +26,10 @@ reqwest_client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
+settings_content.workspace = true
 snippet_provider.workspace = true
-theme.workspace = true
+task.workspace = true
+theme_settings.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
 tree-sitter.workspace = true

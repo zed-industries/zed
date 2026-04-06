@@ -1,3 +1,5 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use std::time::Duration;
 
 use anyhow::Result;
@@ -101,7 +103,7 @@ impl Render for AnimationExample {
     }
 }
 
-fn main() {
+fn run_example() {
     application().with_assets(Assets {}).run(|cx: &mut App| {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
@@ -117,4 +119,16 @@ fn main() {
         })
         .unwrap();
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

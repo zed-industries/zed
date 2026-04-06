@@ -2,11 +2,14 @@ use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
-use cloud_api_client::{GetAuthenticatedUserResponse, Organization, Plan, PlanInfo};
+use cloud_api_client::{
+    GetAuthenticatedUserResponse, KnownOrUnknown, Organization, OrganizationId, Plan, PlanInfo,
+};
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
+use db::kvp::KeyValueStore;
 use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
@@ -22,6 +25,8 @@ use std::{
 };
 use text::ReplicaId;
 use util::{ResultExt, TryFutureExt as _};
+
+const CURRENT_ORGANIZATION_ID_KEY: &str = "current_organization_id";
 
 pub type UserId = u64;
 
@@ -111,6 +116,7 @@ pub struct UserStore {
     current_user: watch::Receiver<Option<Arc<User>>>,
     current_organization: Option<Arc<Organization>>,
     organizations: Vec<Arc<Organization>>,
+    plans_by_organization: HashMap<OrganizationId, Plan>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -137,6 +143,7 @@ pub enum Event {
     ParticipantIndicesChanged,
     PrivateUserInfoUpdated,
     PlanUpdated,
+    OrganizationChanged,
 }
 
 #[derive(Clone, Copy)]
@@ -185,6 +192,7 @@ impl UserStore {
             current_user: current_user_rx,
             current_organization: None,
             organizations: Vec::new(),
+            plans_by_organization: HashMap::default(),
             plan_info: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
@@ -690,6 +698,38 @@ impl UserStore {
         self.current_organization.clone()
     }
 
+    pub fn set_current_organization(
+        &mut self,
+        organization: Arc<Organization>,
+        cx: &mut Context<Self>,
+    ) {
+        let is_same_organization = self
+            .current_organization
+            .as_ref()
+            .is_some_and(|current| current.id == organization.id);
+
+        if !is_same_organization {
+            let organization_id = organization.id.0.to_string();
+            self.current_organization.replace(organization);
+            cx.emit(Event::OrganizationChanged);
+            cx.notify();
+
+            let kvp = KeyValueStore::global(cx);
+            db::write_and_log(cx, move || async move {
+                kvp.write_kvp(CURRENT_ORGANIZATION_ID_KEY.into(), organization_id)
+                    .await
+            });
+        }
+    }
+
+    pub fn organizations(&self) -> &Vec<Arc<Organization>> {
+        &self.organizations
+    }
+
+    pub fn plan_for_organization(&self, organization_id: &OrganizationId) -> Option<Plan> {
+        self.plans_by_organization.get(organization_id).copied()
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -703,6 +743,12 @@ impl UserStore {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
             };
+        }
+
+        if let Some(organization) = &self.current_organization
+            && let Some(plan) = self.plan_for_organization(&organization.id)
+        {
+            return Some(plan);
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
@@ -780,7 +826,45 @@ impl UserStore {
         }
 
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
-        self.current_organization = self.organizations.first().cloned();
+        let persisted_org_id = KeyValueStore::global(cx)
+            .read_kvp(CURRENT_ORGANIZATION_ID_KEY)
+            .log_err()
+            .flatten()
+            .map(|id| OrganizationId(Arc::from(id)));
+
+        self.current_organization = persisted_org_id
+            .and_then(|persisted_id| {
+                self.organizations
+                    .iter()
+                    .find(|org| org.id == persisted_id)
+                    .cloned()
+            })
+            .or_else(|| {
+                response
+                    .default_organization_id
+                    .and_then(|default_organization_id| {
+                        self.organizations
+                            .iter()
+                            .find(|organization| organization.id == default_organization_id)
+                            .cloned()
+                    })
+            })
+            .or_else(|| self.organizations.first().cloned());
+        self.plans_by_organization = response
+            .plans_by_organization
+            .into_iter()
+            .map(|(organization_id, plan)| {
+                let plan = match plan {
+                    KnownOrUnknown::Known(plan) => plan,
+                    KnownOrUnknown::Unknown(_) => {
+                        // If we get a plan that we don't recognize, fall back to the Free plan.
+                        Plan::ZedFree
+                    }
+                };
+
+                (organization_id, plan)
+            })
+            .collect();
 
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,

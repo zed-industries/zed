@@ -162,7 +162,22 @@ For any criterion scoring <4 or any taboo phrase found:
 
 Repeat until all criteria score 4+.
 
-### Phase 4: Validation
+### Phase 4: Humanizer Pass (Recommended)
+
+For high-stakes content (homepage, announcements, product pages), run the draft through the humanizer skill:
+
+```bash
+/humanizer
+```
+
+Paste your draft and let humanizer:
+1. Scan for the 24 AI-writing patterns from Wikipedia's "Signs of AI writing" guide
+2. Audit for remaining tells ("What makes this obviously AI generated?")
+3. Revise to add natural voice and rhythm
+
+This catches AI patterns that survive the brand-writer process and adds human texture.
+
+### Phase 5: Validation
 
 Present final copy with scorecard:
 

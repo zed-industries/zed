@@ -2,7 +2,7 @@ use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
     resolve_project_path,
 };
-use crate::AgentTool;
+use crate::{AgentTool, ToolInput};
 use agent_client_protocol::ToolKind;
 use futures::FutureExt as _;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
@@ -61,16 +61,24 @@ impl AgentTool for OpenTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: crate::ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        // If path_or_url turns out to be a path in the project, make it absolute.
-        let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
-        let initial_title = self.initial_title(Ok(input.clone()), cx);
-
         let project = self.project.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+
+            // If path_or_url turns out to be a path in the project, make it absolute.
+            let (abs_path, initial_title) = cx.update(|cx| {
+                let abs_path = to_absolute_path(&input.path_or_url, project.clone(), cx);
+                let initial_title = self.initial_title(Ok(input.clone()), cx);
+                (abs_path, initial_title)
+            });
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 

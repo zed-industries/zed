@@ -392,8 +392,7 @@ TBD: Centered layout related settings
 
 ```json [settings]
   "edit_predictions": {
-    "mode": "eager",                // Automatically show (eager) or hold-alt (subtle)
-    "enabled_in_text_threads": true // Show/hide predictions in agent text threads
+    "mode": "eager"                  // Automatically show (eager) or hold-alt (subtle)
   },
   "show_edit_predictions": true     // Show/hide predictions in editor
 ```
@@ -436,7 +435,6 @@ TBD: Centered layout related settings
   "file_finder": {
     "file_icons": true,         // Show/hide file icons
     "modal_max_width": "small", // Horizontal size: small, medium, large, xlarge, full
-    "git_status": true,         // Show the git status for each entry
     "include_ignored": null     // gitignored files in results: true, false, null
   },
 ```

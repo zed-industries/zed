@@ -31,7 +31,7 @@ use x11rb::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
         ConnectionExt as _, EventMask, ModMask, Visibility,
     },
-    protocol::{Event, randr, render, xinput, xkb, xproto},
+    protocol::{Event, dri3, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
     wrapper::ConnectionExt as _,
     xcb_ffi::XCBConnection,
@@ -49,10 +49,9 @@ use super::{
 };
 
 use crate::linux::{
-    DEFAULT_CURSOR_ICON_NAME, LinuxClient, ResultExt as _, capslock_from_xkb,
-    cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
-    keystroke_from_xkb, keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb,
-    open_uri_internal,
+    DEFAULT_CURSOR_ICON_NAME, LinuxClient, capslock_from_xkb, cursor_style_to_icon_names,
+    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
+    keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
@@ -63,9 +62,9 @@ use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowParams, point, px,
+    TouchPhase, WindowButtonLayout, WindowParams, point, px,
 };
-use gpui_wgpu::WgpuContext;
+use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
 /// Value for DeviceId parameters which selects all devices.
 pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
@@ -177,8 +176,10 @@ pub struct X11ClientState {
     pub(crate) last_mouse_button: Option<MouseButton>,
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
+    pub(crate) pinch_scale: f32,
 
-    pub(crate) gpu_context: WgpuContext,
+    pub(crate) gpu_context: GpuContext,
+    pub(crate) compositor_gpu: Option<CompositorGpuHint>,
 
     pub(crate) scale_factor: f32,
 
@@ -295,7 +296,7 @@ impl X11ClientStatePtr {
 }
 
 #[derive(Clone)]
-pub(crate) struct X11Client(Rc<RefCell<X11ClientState>>);
+pub(crate) struct X11Client(pub(crate) Rc<RefCell<X11ClientState>>);
 
 impl X11Client {
     pub(crate) fn new() -> anyhow::Result<Self> {
@@ -342,11 +343,12 @@ impl X11Client {
         xcb_connection.prefetch_extension_information(render::X11_EXTENSION_NAME)?;
         xcb_connection.prefetch_extension_information(xinput::X11_EXTENSION_NAME)?;
 
-        // Announce to X server that XInput up to 2.1 is supported. To increase this to 2.2 and
-        // beyond, support for touch events would need to be added.
+        // Announce to X server that XInput up to 2.4 is supported.
+        // Version 2.4 is needed for gesture events (GesturePinchBegin/Update/End).
+        // If the server only supports an older version, gesture events simply won't be delivered.
         let xinput_version = get_reply(
             || "XInput XiQueryVersion failed",
-            xcb_connection.xinput_xi_query_version(2, 1),
+            xcb_connection.xinput_xi_query_version(2, 4),
         )?;
         assert!(
             xinput_version.major_version >= 2,
@@ -421,8 +423,6 @@ impl X11Client {
             .to_string();
         let keyboard_layout = LinuxKeyboardLayout::new(layout_name.into());
 
-        let gpu_context = WgpuContext::new().notify_err("Unable to init GPU context");
-
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
         let scale_factor = get_scale_factor(&xcb_connection, &resource_database, x_root_index);
@@ -432,6 +432,9 @@ impl X11Client {
             .context("Failed to initialize cursor theme handler")?;
 
         let clipboard = Clipboard::new().context("Failed to initialize clipboard")?;
+
+        let screen = &xcb_connection.setup().roots[x_root_index];
+        let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
 
         let xcb_connection = Rc::new(xcb_connection);
 
@@ -471,6 +474,15 @@ impl X11Client {
                             window.window.set_appearance(appearance);
                         }
                     }
+                    XDPEvent::ButtonLayout(layout_str) => {
+                        let layout = WindowButtonLayout::parse(&layout_str)
+                            .log_err()
+                            .unwrap_or_else(WindowButtonLayout::linux_default);
+                        client.with_common(|common| common.button_layout = layout);
+                        for window in client.0.borrow_mut().windows.values_mut() {
+                            window.window.set_button_layout();
+                        }
+                    }
                     XDPEvent::CursorTheme(_) | XDPEvent::CursorSize(_) => {
                         // noop, X11 manages this for us.
                     }
@@ -492,7 +504,9 @@ impl X11Client {
             last_mouse_button: None,
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
-            gpu_context,
+            pinch_scale: 1.0,
+            gpu_context: Rc::new(RefCell::new(None)),
+            compositor_gpu,
             scale_factor,
 
             xkb_context,
@@ -599,6 +613,9 @@ impl X11Client {
                     }
                     Ok(None) => {
                         break;
+                    }
+                    Err(err @ ConnectionError::IoError(..)) => {
+                        return Err(EventHandlerError::from(err));
                     }
                     Err(err) => {
                         let err = handle_connection_error(err);
@@ -1310,6 +1327,64 @@ impl X11Client {
                     reset_pointer_device_scroll_positions(pointer);
                 }
             }
+            Event::XinputGesturePinchBegin(event) => {
+                let window = self.get_window(event.event)?;
+                let mut state = self.0.borrow_mut();
+                state.pinch_scale = 1.0;
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                drop(state);
+                window.handle_input(PlatformInput::Pinch(gpui::PinchEvent {
+                    position,
+                    delta: 0.0,
+                    modifiers,
+                    phase: gpui::TouchPhase::Started,
+                }));
+            }
+            Event::XinputGesturePinchUpdate(event) => {
+                let window = self.get_window(event.event)?;
+                let mut state = self.0.borrow_mut();
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                // scale is in FP16.16 format: divide by 65536 to get the float value
+                let new_absolute_scale = event.scale as f32 / 65536.0;
+                let previous_scale = state.pinch_scale;
+                let zoom_delta = new_absolute_scale - previous_scale;
+                state.pinch_scale = new_absolute_scale;
+                drop(state);
+                window.handle_input(PlatformInput::Pinch(gpui::PinchEvent {
+                    position,
+                    delta: zoom_delta,
+                    modifiers,
+                    phase: gpui::TouchPhase::Moved,
+                }));
+            }
+            Event::XinputGesturePinchEnd(event) => {
+                let window = self.get_window(event.event)?;
+                let mut state = self.0.borrow_mut();
+                state.pinch_scale = 1.0;
+                let modifiers = modifiers_from_xinput_info(event.mods);
+                state.modifiers = modifiers;
+                let position = point(
+                    px(event.event_x as f32 / u16::MAX as f32 / state.scale_factor),
+                    px(event.event_y as f32 / u16::MAX as f32 / state.scale_factor),
+                );
+                drop(state);
+                window.handle_input(PlatformInput::Pinch(gpui::PinchEvent {
+                    position,
+                    delta: 0.0,
+                    modifiers,
+                    phase: gpui::TouchPhase::Ended,
+                }));
+            }
             _ => {}
         };
 
@@ -1511,19 +1586,27 @@ impl LinuxClient for X11Client {
             .generate_id()
             .context("X11: Failed to generate window ID")?;
 
+        let xcb_connection = state.xcb_connection.clone();
+        let client_side_decorations_supported = state.client_side_decorations_supported;
+        let x_root_index = state.x_root_index;
+        let atoms = state.atoms;
+        let scale_factor = state.scale_factor;
+        let appearance = state.common.appearance;
+        let compositor_gpu = state.compositor_gpu.take();
         let window = X11Window::new(
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
-            &state.gpu_context,
+            state.gpu_context.clone(),
+            compositor_gpu,
             params,
-            &state.xcb_connection,
-            state.client_side_decorations_supported,
-            state.x_root_index,
+            &xcb_connection,
+            client_side_decorations_supported,
+            x_root_index,
             x_window,
-            &state.atoms,
-            state.scale_factor,
-            state.common.appearance,
+            &atoms,
+            scale_factor,
+            appearance,
             parent_window,
         )?;
         check_reply(
@@ -1861,11 +1944,14 @@ impl X11ClientState {
                         if let Some(window) = state.windows.get_mut(&x_window) {
                             let expose_event_received = window.expose_event_received;
                             window.expose_event_received = false;
+                            let force_render = std::mem::take(
+                                &mut window.window.state.borrow_mut().force_render_after_recovery,
+                            );
                             let window = window.window.clone();
                             drop(state);
                             window.refresh(RequestFrameOptions {
                                 require_presentation: expose_event_received,
-                                force_render: false,
+                                force_render,
                             });
                         }
                         xcb_connection
@@ -1973,7 +2059,30 @@ fn fp3232_to_f32(value: xinput::Fp3232) -> f32 {
     value.integral as f32 + value.frac as f32 / u32::MAX as f32
 }
 
-fn check_compositor_present(xcb_connection: &XCBConnection, root: u32) -> bool {
+fn detect_compositor_gpu(
+    xcb_connection: &XCBConnection,
+    screen: &xproto::Screen,
+) -> Option<CompositorGpuHint> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::MetadataExt;
+
+    xcb_connection
+        .extension_information(dri3::X11_EXTENSION_NAME)
+        .ok()??;
+
+    let reply = dri3::open(xcb_connection, screen.root, 0)
+        .ok()?
+        .reply()
+        .ok()?;
+    let fd = reply.device_fd;
+
+    let path = format!("/proc/self/fd/{}", fd.as_raw_fd());
+    let metadata = std::fs::metadata(&path).ok()?;
+
+    crate::linux::compositor_gpu_hint_from_dev_t(metadata.rdev())
+}
+
+fn check_compositor_present(xcb_connection: &XCBConnection, root: xproto::Window) -> bool {
     // Method 1: Check for _NET_WM_CM_S{root}
     let atom_name = format!("_NET_WM_CM_S{}", root);
     let atom1 = get_reply(

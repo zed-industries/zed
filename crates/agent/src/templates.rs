@@ -85,6 +85,7 @@ mod tests {
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(rendered.contains("## Fixing Diagnostics"));
+        assert!(!rendered.contains("## Planning"));
         assert!(rendered.contains("test-model"));
     }
 }

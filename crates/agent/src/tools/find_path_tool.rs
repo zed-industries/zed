@@ -1,4 +1,4 @@
-use crate::{AgentTool, ToolCallEventStream};
+use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
 use futures::FutureExt as _;
@@ -121,13 +121,18 @@ impl AgentTool for FindPathTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let search_paths_task = search_paths(&input.glob, self.project.clone(), cx);
+        let project = self.project.clone();
+        cx.spawn(async move |cx| {
+            let input = input.recv().await.map_err(|e| FindPathToolOutput::Error {
+                error: format!("Failed to receive tool input: {e}"),
+            })?;
 
-        cx.background_spawn(async move {
+            let search_paths_task = cx.update(|cx| search_paths(&input.glob, project, cx));
+
             let matches = futures::select! {
                 result = search_paths_task.fuse() => result.map_err(|e| FindPathToolOutput::Error { error: e.to_string() })?,
                 _ = event_stream.cancelled_by_user().fuse() => {
