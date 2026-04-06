@@ -2408,7 +2408,7 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let directory = PathBuf::from(envelope.payload.directory);
-        let name = envelope.payload.name;
+        let name = envelope.payload.name.unwrap_or_default();
         let commit = envelope.payload.commit;
         let use_existing_branch = envelope.payload.use_existing_branch;
         let target = if name.is_empty() {
@@ -6021,15 +6021,13 @@ impl Repository {
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let (name, commit, use_existing_branch) = match target {
                         CreateWorktreeTarget::ExistingBranch { branch_name } => {
-                            (branch_name, None, true)
+                            (Some(branch_name), None, true)
                         }
                         CreateWorktreeTarget::NewBranch {
                             branch_name,
-                            base_sha: start_point,
-                        } => (branch_name, start_point, false),
-                        CreateWorktreeTarget::Detached {
-                            base_sha: start_point,
-                        } => (String::new(), start_point, false),
+                            base_sha,
+                        } => (Some(branch_name), base_sha, false),
+                        CreateWorktreeTarget::Detached { base_sha } => (None, base_sha, false),
                     };
 
                     client
