@@ -289,11 +289,17 @@ impl FromStr for VersionTagList {
     }
 }
 
-pub struct CommitsFromVersionToHead(pub(crate) VersionTag);
+pub struct CommitsFromVersionToHead {
+    version_tag: VersionTag,
+    branch: String,
+}
 
 impl CommitsFromVersionToHead {
-    pub fn new(version_tag: VersionTag) -> Self {
-        Self(version_tag)
+    pub fn new(version_tag: VersionTag, branch: String) -> Self {
+        Self {
+            version_tag,
+            branch,
+        }
     }
 }
 
@@ -304,28 +310,12 @@ impl Subcommand for CommitsFromVersionToHead {
         [
             "log".to_string(),
             format!("--pretty=format:{}", CommitDetails::FORMAT_STRING),
-            format!("{}..HEAD", self.0.to_string()),
+            format!(
+                "{version}..{branch}",
+                version = self.version_tag.to_string(),
+                branch = self.branch
+            ),
         ]
-    }
-}
-
-pub struct Checkout(pub(crate) String);
-
-impl Checkout {
-    pub fn new(branch: impl ToOwned<Owned = String>) -> Self {
-        Self(branch.to_owned())
-    }
-
-    pub fn previous_branch() -> Self {
-        Self("-".to_owned())
-    }
-}
-
-impl Subcommand for Checkout {
-    type ParsedOutput = NoOutput;
-
-    fn args(&self) -> impl IntoIterator<Item = String> {
-        ["checkout", self.0.as_str()].map(ToOwned::to_owned)
     }
 }
 

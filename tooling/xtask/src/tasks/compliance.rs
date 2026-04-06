@@ -5,7 +5,7 @@ use clap::Parser;
 
 use compliance::{
     checks::Reporter,
-    git::{Checkout, CommitsFromVersionToHead, GetVersionTags, GitCommand, VersionTag},
+    git::{CommitsFromVersionToHead, GetVersionTags, GitCommand, VersionTag},
     github::GitHubClient,
     report::ReportReviewSummary,
 };
@@ -42,8 +42,6 @@ impl ComplianceArgs {
 }
 
 async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
-    let in_workflow_context = std::env::var("GITHUB_ACTIONS").is_ok_and(|v| v == "true");
-
     let app_id = std::env::var("GITHUB_APP_ID").context("Missing GITHUB_APP_ID")?;
     let key = std::env::var("GITHUB_APP_KEY").context("Missing GITHUB_APP_KEY")?;
 
@@ -60,13 +58,12 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
             )
         })?;
 
-    if !in_workflow_context {
-        GitCommand::run(Checkout::new(args.version_branch()))?;
-    }
-
     println!("Checking compliance for version {}", tag.version());
 
-    let commits = GitCommand::run(CommitsFromVersionToHead::new(previous_version))?;
+    let commits = GitCommand::run(CommitsFromVersionToHead::new(
+        previous_version,
+        args.version_branch(),
+    ))?;
 
     println!("Found {} commits to check", commits.len());
 
@@ -93,10 +90,6 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
     report.write_markdown(&report_path)?;
 
     println!("Wrote compliance report to {}", report_path.display());
-
-    if !in_workflow_context {
-        GitCommand::run(Checkout::previous_branch())?;
-    }
 
     match summary.review_summary() {
         ReportReviewSummary::MissingReviews => Err(anyhow::anyhow!(
