@@ -5,9 +5,7 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
-#[cfg(any(test, feature = "test-support"))]
-use project::Project;
-use project::{DisableAiSettings, ProjectGroupKey};
+use project::{DisableAiSettings, Project, ProjectGroupKey};
 use settings::Settings;
 pub use settings::SidebarSide;
 use std::future::Future;
@@ -863,23 +861,48 @@ impl MultiWorkspace {
         let old_key = workspace.read(cx).project_group_key(cx);
 
         if self.workspaces.len() <= 1 {
-            let worktree_ids: Vec<_> = workspace
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|wt| wt.read(cx).id())
-                .collect();
+            let has_worktrees = workspace.read(cx).visible_worktrees(cx).next().is_some();
 
-            if worktree_ids.is_empty() {
+            if !has_worktrees {
                 return false;
             }
 
-            workspace.update(cx, |workspace, cx| {
-                for id in worktree_ids {
-                    workspace.project().update(cx, |project, cx| {
-                        project.remove_worktree(id, cx);
-                    });
-                }
+            let old_workspace = workspace.clone();
+            let old_entity_id = old_workspace.entity_id();
+
+            let app_state = old_workspace.read(cx).app_state().clone();
+
+            let project = Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                project::LocalProjectFlags::default(),
+                cx,
+            );
+
+            let new_workspace = cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+
+            self.workspaces[0] = new_workspace.clone();
+            self.active_workspace_index = 0;
+
+            Self::subscribe_to_workspace(&new_workspace, window, cx);
+
+            self.sync_sidebar_to_workspace(&new_workspace, cx);
+
+            let weak_self = cx.weak_entity();
+
+            new_workspace.update(cx, |workspace, cx| {
+                workspace.set_multi_workspace(weak_self, cx);
             });
+
+            self.detach_workspace(&old_workspace, cx);
+
+            cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(old_entity_id));
+            cx.emit(MultiWorkspaceEvent::WorkspaceAdded(new_workspace));
+            cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
         } else {
             let removed_workspace = self.workspaces.remove(index);
 
@@ -901,6 +924,7 @@ impl MultiWorkspace {
             .workspaces
             .iter()
             .any(|ws| ws.read(cx).project_group_key(cx) == old_key);
+
         if !key_still_in_use {
             self.project_group_keys.retain(|k| k != &old_key);
         }
