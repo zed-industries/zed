@@ -7,7 +7,9 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
-use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
+use agent::{
+    NativeAgentServer, NativeAgentSessionList, NoModelConfiguredError, SharedThread, ThreadStore,
+};
 use agent_client_protocol as acp;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
@@ -135,6 +137,10 @@ pub(crate) enum ThreadError {
     },
     RequestFailed,
     MaxOutputTokens,
+    NoModelSelected,
+    ApiError {
+        provider: SharedString,
+    },
     Other {
         message: SharedString,
         acp_error_code: Option<SharedString>,
@@ -145,6 +151,8 @@ impl From<anyhow::Error> for ThreadError {
     fn from(error: anyhow::Error) -> Self {
         if error.is::<MaxOutputTokensError>() {
             Self::MaxOutputTokens
+        } else if error.is::<NoModelConfiguredError>() {
+            Self::NoModelSelected
         } else if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
@@ -179,6 +187,11 @@ impl From<anyhow::Error> for ThreadError {
                     provider: provider.to_string().into(),
                 },
                 UpstreamProviderError { .. } => Self::RequestFailed,
+                BadRequestFormat { provider, .. }
+                | HttpResponseError { provider, .. }
+                | ApiEndpointNotFound { provider } => Self::ApiError {
+                    provider: provider.to_string().into(),
+                },
                 _ => {
                     let message: SharedString = format!("{:#}", error).into();
                     Self::Other {
