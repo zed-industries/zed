@@ -188,6 +188,25 @@ fn open_and_focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestCo
     cx.run_until_parked();
 }
 
+fn format_linked_worktree_chips(worktrees: &[WorktreeInfo]) -> String {
+    let mut seen = Vec::new();
+    let mut chips = Vec::new();
+    for wt in worktrees {
+        if wt.kind == ui::WorktreeKind::Main {
+            continue;
+        }
+        if !seen.contains(&wt.name) {
+            seen.push(wt.name.clone());
+            chips.push(format!("{{{}}}", wt.name));
+        }
+    }
+    if chips.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", chips.join(", "))
+    }
+}
+
 fn visible_entries_as_strings(
     sidebar: &Entity<Sidebar>,
     cx: &mut gpui::VisualTestContext,
@@ -235,23 +254,8 @@ fn visible_entries_as_strings(
                         } else {
                             ""
                         };
-                        let worktree = if thread.worktrees.is_empty() {
-                            String::new()
-                        } else {
-                            let mut seen = Vec::new();
-                            let mut chips = Vec::new();
-                            for wt in &thread.worktrees {
-                                if !seen.contains(&wt.name) {
-                                    seen.push(wt.name.clone());
-                                    chips.push(format!("{{{}}}", wt.name));
-                                }
-                            }
-                            format!(" {}", chips.join(", "))
-                        };
-                        format!(
-                            "  {}{}{}{}{}{}",
-                            title, worktree, active, status_str, notified, selected
-                        )
+                        let worktree = format_linked_worktree_chips(&thread.worktrees);
+                        format!("  {title}{worktree}{active}{status_str}{notified}{selected}")
                     }
                     ListEntry::ViewMore {
                         is_fully_expanded, ..
@@ -263,35 +267,11 @@ fn visible_entries_as_strings(
                         }
                     }
                     ListEntry::DraftThread { worktrees, .. } => {
-                        let worktree = if worktrees.is_empty() {
-                            String::new()
-                        } else {
-                            let mut seen = Vec::new();
-                            let mut chips = Vec::new();
-                            for wt in worktrees {
-                                if !seen.contains(&wt.name) {
-                                    seen.push(wt.name.clone());
-                                    chips.push(format!("{{{}}}", wt.name));
-                                }
-                            }
-                            format!(" {}", chips.join(", "))
-                        };
+                        let worktree = format_linked_worktree_chips(worktrees);
                         format!("  [~ Draft{}]{}", worktree, selected)
                     }
                     ListEntry::NewThread { worktrees, .. } => {
-                        let worktree = if worktrees.is_empty() {
-                            String::new()
-                        } else {
-                            let mut seen = Vec::new();
-                            let mut chips = Vec::new();
-                            for wt in worktrees {
-                                if !seen.contains(&wt.name) {
-                                    seen.push(wt.name.clone());
-                                    chips.push(format!("{{{}}}", wt.name));
-                                }
-                            }
-                            format!(" {}", chips.join(", "))
-                        };
+                        let worktree = format_linked_worktree_chips(worktrees);
                         format!("  [+ New Thread{}]{}", worktree, selected)
                     }
                 }

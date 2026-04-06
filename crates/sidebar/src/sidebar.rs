@@ -163,6 +163,7 @@ struct WorktreeInfo {
     name: SharedString,
     full_path: SharedString,
     highlight_positions: Vec<usize>,
+    kind: ui::WorktreeKind,
 }
 
 #[derive(Clone)]
@@ -307,9 +308,9 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 
 /// Derives worktree display info from a thread's stored path list.
 ///
-/// For each path in the thread's `folder_paths` that is not one of the
-/// group's main paths (i.e. it's a git linked worktree), produces a
-/// [`WorktreeInfo`] with the short worktree name and full path.
+/// For each path in the thread's `folder_paths`, produces a
+/// [`WorktreeInfo`] with a short display name, full path, and whether
+/// the worktree is the main checkout or a linked git worktree.
 fn worktree_info_from_thread_paths(
     folder_paths: &PathList,
     group_key: &project::ProjectGroupKey,
@@ -319,20 +320,27 @@ fn worktree_info_from_thread_paths(
         .paths()
         .iter()
         .filter_map(|path| {
-            if main_paths.iter().any(|mp| mp.as_path() == path.as_path()) {
-                return None;
+            let is_main = main_paths.iter().any(|mp| mp.as_path() == path.as_path());
+            if is_main {
+                let name = path.file_name()?.to_string_lossy().to_string();
+                Some(WorktreeInfo {
+                    name: SharedString::from(name),
+                    full_path: SharedString::from(path.display().to_string()),
+                    highlight_positions: Vec::new(),
+                    kind: ui::WorktreeKind::Main,
+                })
+            } else {
+                let main_path = main_paths
+                    .iter()
+                    .find(|mp| mp.file_name() == path.file_name())
+                    .or(main_paths.first())?;
+                Some(WorktreeInfo {
+                    name: linked_worktree_short_name(main_path, path).unwrap_or_default(),
+                    full_path: SharedString::from(path.display().to_string()),
+                    highlight_positions: Vec::new(),
+                    kind: ui::WorktreeKind::Linked,
+                })
             }
-            // Find the main path whose file name matches this linked
-            // worktree's file name, falling back to the first main path.
-            let main_path = main_paths
-                .iter()
-                .find(|mp| mp.file_name() == path.file_name())
-                .or(main_paths.first())?;
-            Some(WorktreeInfo {
-                name: linked_worktree_short_name(main_path, path).unwrap_or_default(),
-                full_path: SharedString::from(path.display().to_string()),
-                highlight_positions: Vec::new(),
-            })
         })
         .collect()
 }
@@ -1074,7 +1082,9 @@ impl Sidebar {
                     && active_workspace.as_ref().is_some_and(|active_ws| {
                         let ws_path_list = workspace_path_list(active_ws, cx);
                         let has_linked_worktrees =
-                            !worktree_info_from_thread_paths(&ws_path_list, &group_key).is_empty();
+                            worktree_info_from_thread_paths(&ws_path_list, &group_key)
+                                .iter()
+                                .any(|wt| wt.kind == ui::WorktreeKind::Linked);
                         if !has_linked_worktrees {
                             return false;
                         }
@@ -2546,6 +2556,7 @@ impl Sidebar {
                                 name: wt.name.clone(),
                                 full_path: wt.full_path.clone(),
                                 highlight_positions: Vec::new(),
+                                kind: wt.kind,
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,
@@ -2818,6 +2829,7 @@ impl Sidebar {
                         name: wt.name.clone(),
                         full_path: wt.full_path.clone(),
                         highlight_positions: wt.highlight_positions.clone(),
+                        kind: wt.kind,
                     })
                     .collect(),
             )
@@ -3097,6 +3109,7 @@ impl Sidebar {
                         name: wt.name.clone(),
                         full_path: wt.full_path.clone(),
                         highlight_positions: wt.highlight_positions.clone(),
+                        kind: wt.kind,
                     })
                     .collect(),
             )
@@ -3134,6 +3147,7 @@ impl Sidebar {
                         name: wt.name.clone(),
                         full_path: wt.full_path.clone(),
                         highlight_positions: wt.highlight_positions.clone(),
+                        kind: wt.kind,
                     })
                     .collect(),
             )
