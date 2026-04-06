@@ -6171,7 +6171,7 @@ impl Repository {
         })
     }
 
-    pub fn resolve_commit(&mut self, sha: String) -> oneshot::Receiver<Result<bool>> {
+    pub fn commit_exists(&mut self, sha: String) -> oneshot::Receiver<Result<bool>> {
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
@@ -6179,7 +6179,7 @@ impl Repository {
                     Ok(results.into_iter().next().flatten().is_some())
                 }
                 RepositoryState::Remote(_) => {
-                    anyhow::bail!("resolve_commit is not supported for remote repositories")
+                    anyhow::bail!("commit_exists is not supported for remote repositories")
                 }
             }
         })
