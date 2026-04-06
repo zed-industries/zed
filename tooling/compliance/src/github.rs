@@ -271,7 +271,7 @@ mod octo_client {
         async fn get_filtered<T: DeserializeOwned + 'static>(
             &self,
             page: Page<T>,
-            predicate: fn(&T) -> bool,
+            predicate: impl Fn(&T) -> bool,
         ) -> octocrab::Result<Vec<T>> {
             let stream = page.into_stream(&self.client);
             pin!(stream);
@@ -397,11 +397,17 @@ mod octo_client {
 
         async fn ensure_pull_request_has_label(&self, label: &str, pr_number: u64) -> Result<()> {
             if self
-                .client
-                .issues(ORG, REPO)
-                .get(pr_number)
+                .get_filtered(
+                    self.client
+                        .issues(ORG, REPO)
+                        .list_labels_for_issue(pr_number)
+                        .per_page(PAGE_SIZE)
+                        .send()
+                        .await?,
+                    |pr_label| pr_label.name == label,
+                )
                 .await
-                .is_ok_and(|issue| !issue.labels.iter().any(|pr_label| pr_label.name == label))
+                .is_ok_and(|l| l.is_empty())
             {
                 self.client
                     .issues(ORG, REPO)
