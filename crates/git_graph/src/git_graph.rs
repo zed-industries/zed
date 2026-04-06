@@ -4,8 +4,8 @@ use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
     repository::{
-        CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
-        SearchCommitArgs,
+        CommitDiff, CommitFile, GraphLogOptions, InitialGraphCommitData, LogOrder, LogSource,
+        RepoPath, SearchCommitArgs,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
@@ -40,9 +40,10 @@ use theme::AccentColors;
 use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
-    ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
-    HeaderResizeInfo, HighlightedLabel, RedistributableColumnsState, ScrollableHandle, Table,
-    TableInteractionState, TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar,
+    ButtonLike, Checkbox, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat,
+    Divider, HeaderResizeInfo, HighlightedLabel, PopoverMenu, PopoverMenuHandle,
+    RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
+    TableRenderContext, TableResizeBehavior, ToggleState, Tooltip, WithScrollbar,
     bind_redistributable_columns, prelude::*, render_redistributable_columns_resize_handles,
     render_table_header, table_row::TableRow,
 };
@@ -226,6 +227,50 @@ struct SearchState {
     pub selected_index: Option<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GraphSettings {
+    show_stashes: bool,
+    show_tags: bool,
+    include_reflog_commits: bool,
+    first_parent_only: bool,
+}
+
+impl Default for GraphSettings {
+    fn default() -> Self {
+        Self {
+            show_stashes: true,
+            show_tags: true,
+            include_reflog_commits: false,
+            first_parent_only: false,
+        }
+    }
+}
+
+impl From<GraphSettings> for GraphLogOptions {
+    fn from(settings: GraphSettings) -> Self {
+        Self {
+            show_stashes: settings.show_stashes,
+            show_tags: settings.show_tags,
+            include_reflog_commits: settings.include_reflog_commits,
+            first_parent_only: settings.first_parent_only,
+        }
+    }
+}
+
+struct SettingsDropdownState {
+    handle: PopoverMenuHandle<ContextMenu>,
+    settings: GraphSettings,
+}
+
+impl Default for SettingsDropdownState {
+    fn default() -> Self {
+        Self {
+            handle: PopoverMenuHandle::default(),
+            settings: GraphSettings::default(),
+        }
+    }
+}
+
 pub struct SplitState {
     left_ratio: f32,
     visible_left_ratio: f32,
@@ -277,6 +322,11 @@ actions!(
         OpenCommitView,
         /// Focuses the search field.
         FocusSearch,
+        ToggleSettingsDropdown,
+        ToggleShowStashes,
+        ToggleShowTags,
+        ToggleReflogCommits,
+        ToggleFirstParentOnly,
     ]
 );
 
@@ -897,6 +947,7 @@ fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
 pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
+    settings_dropdown_state: SettingsDropdownState,
     graph_data: GraphData,
     git_store: Entity<GitStore>,
     workspace: WeakEntity<Workspace>,
@@ -925,6 +976,16 @@ impl GitGraph {
         self.search_state.selected_index = None;
         self.search_state.state.next_state();
         cx.notify();
+    }
+
+    fn reload_graph(&mut self, cx: &mut Context<Self>) {
+        self.selected_entry_idx = None;
+        self.hovered_entry_idx = None;
+        self.selected_commit_diff = None;
+        self.selected_commit_diff_stats = None;
+        self._commit_diff_task = None;
+        self.pending_select_sha = None;
+        self.invalidate_state(cx);
     }
 
     fn row_height(cx: &App) -> Pixels {
@@ -994,7 +1055,9 @@ impl GitGraph {
 
         let accent_colors = cx.theme().accents();
         let graph = GraphData::new(accent_colors_count(accent_colors));
-        let log_source = LogSource::default();
+        let settings_dropdown_state = SettingsDropdownState::default();
+        let log_source =
+            LogSource::default().with_graph_options(settings_dropdown_state.settings.into());
         let log_order = LogOrder::default();
 
         cx.subscribe(&git_store, |this, _, event, cx| match event {
@@ -1060,6 +1123,7 @@ impl GitGraph {
                 selected_index: None,
                 state: QueryState::Empty,
             },
+            settings_dropdown_state,
             workspace,
             graph_data: graph,
             _commit_diff_task: None,
@@ -1184,6 +1248,50 @@ impl GitGraph {
         git_store.repositories().get(&self.repo_id).cloned()
     }
 
+    fn is_visible_ref_name(&self, ref_name: &str) -> bool {
+        if !self.settings_dropdown_state.settings.show_tags
+            && (ref_name.starts_with("tag: ") || ref_name.starts_with("refs/tags/"))
+        {
+            return false;
+        }
+
+        if !self.settings_dropdown_state.settings.show_stashes
+            && (ref_name == "refs/stash"
+                || ref_name == "stash"
+                || ref_name.starts_with("stash@{")
+                || ref_name.contains("refs/stash"))
+        {
+            return false;
+        }
+
+        true
+    }
+
+    fn visible_ref_names(&self, ref_names: &[SharedString]) -> Vec<SharedString> {
+        ref_names
+            .iter()
+            .filter(|name| self.is_visible_ref_name(name))
+            .cloned()
+            .collect()
+    }
+
+    fn update_graph_settings(
+        &mut self,
+        update: impl FnOnce(&mut GraphSettings),
+        cx: &mut Context<Self>,
+    ) {
+        let mut settings = self.settings_dropdown_state.settings;
+        update(&mut settings);
+
+        if settings == self.settings_dropdown_state.settings {
+            return;
+        }
+
+        self.settings_dropdown_state.settings = settings;
+        self.log_source = self.log_source.clone().with_graph_options(settings.into());
+        self.reload_graph(cx);
+    }
+
     fn render_chip(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
         Chip::new(name.clone())
             .label_size(LabelSize::Small)
@@ -1253,6 +1361,7 @@ impl GitGraph {
                     .get(commit.color_idx)
                     .copied()
                     .unwrap_or_else(|| accent_colors.0.first().copied().unwrap_or_default());
+                let visible_ref_names = self.visible_ref_names(&commit.data.ref_names);
 
                 let is_selected = self.selected_entry_idx == Some(idx);
                 let is_matched = self.search_state.matches.contains(&commit.data.sha);
@@ -1310,11 +1419,9 @@ impl GitGraph {
                             h_flex()
                                 .gap_2()
                                 .overflow_hidden()
-                                .children((!commit.data.ref_names.is_empty()).then(|| {
+                                .children((!visible_ref_names.is_empty()).then(|| {
                                     h_flex().gap_1().children(
-                                        commit
-                                            .data
-                                            .ref_names
+                                        visible_ref_names
                                             .iter()
                                             .map(|name| self.render_chip(name, accent_color)),
                                     )
@@ -1626,6 +1733,76 @@ impl GitGraph {
         })
     }
 
+    fn render_settings_button(&self, _cx: &mut Context<Self>) -> PopoverMenu<ContextMenu> {
+        let settings = self.settings_dropdown_state.settings;
+
+        let render_setting = |id_suffix: &'static str, label: &'static str, enabled: bool| {
+            move |_window: &mut Window, _cx: &mut App| {
+                Checkbox::new(
+                    format!("git-graph-settings-checkbox-{id_suffix}"),
+                    if enabled {
+                        ToggleState::Selected
+                    } else {
+                        ToggleState::Unselected
+                    },
+                )
+                .label(label)
+                .label_size(LabelSize::Small)
+                .label_color(Color::Default)
+                .visualization_only(true)
+                .into_any_element()
+            }
+        };
+
+        PopoverMenu::new("git-graph-settings")
+            .trigger_with_tooltip(
+                IconButton::new("toggle-git-graph-settings", IconName::Settings)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Subtle)
+                    .toggle_state(self.settings_dropdown_state.handle.is_deployed()),
+                Tooltip::text("Git Graph Settings"),
+            )
+            .anchor(Corner::TopRight)
+            .with_handle(self.settings_dropdown_state.handle.clone())
+            .menu(move |window, cx| {
+                Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                    menu.custom_entry(
+                        render_setting("show-stashes", "Show Stashes", settings.show_stashes),
+                        move |window, cx| {
+                            window.dispatch_action(Box::new(ToggleShowStashes), cx);
+                        },
+                    )
+                    .custom_entry(
+                        render_setting("show-tags", "Show Tags", settings.show_tags),
+                        move |window, cx| {
+                            window.dispatch_action(Box::new(ToggleShowTags), cx);
+                        },
+                    )
+                    .custom_entry(
+                        render_setting(
+                            "include-reflog-commits",
+                            "Include commits only mentioned by reflogs",
+                            settings.include_reflog_commits,
+                        ),
+                        move |window, cx| {
+                            window.dispatch_action(Box::new(ToggleReflogCommits), cx);
+                        },
+                    )
+                    .custom_entry(
+                        render_setting(
+                            "first-parent-only",
+                            "Only follow the first parent of commits",
+                            settings.first_parent_only,
+                        ),
+                        move |window, cx| {
+                            window.dispatch_action(Box::new(ToggleFirstParentOnly), cx);
+                        },
+                    )
+                }))
+            })
+    }
+
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let color = cx.theme().colors();
         let query_focus_handle = self.search_state.editor.focus_handle(cx);
@@ -1663,6 +1840,7 @@ impl GitGraph {
                         query_focus_handle,
                     )),
             )
+            .child(self.render_settings_button(cx))
             .child(
                 h_flex()
                     .min_w_64()
@@ -1782,7 +1960,7 @@ impl GitGraph {
         });
 
         let full_sha: SharedString = commit_entry.data.sha.to_string().into();
-        let ref_names = commit_entry.data.ref_names.clone();
+        let ref_names = self.visible_ref_names(&commit_entry.data.ref_names);
 
         let accent_colors = cx.theme().accents();
         let accent_color = accent_colors
@@ -2789,6 +2967,9 @@ impl Render for GitGraph {
                     .editor
                     .update(cx, |editor, cx| editor.focus_handle(cx).focus(window, cx));
             }))
+            .on_action(cx.listener(|this, _: &ToggleSettingsDropdown, window, cx| {
+                this.settings_dropdown_state.handle.toggle(window, cx);
+            }))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
@@ -2804,6 +2985,29 @@ impl Render for GitGraph {
                 this.search_state.case_sensitive = !this.search_state.case_sensitive;
                 this.search_state.state.next_state();
                 cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ToggleShowStashes, _window, cx| {
+                this.update_graph_settings(
+                    |settings| settings.show_stashes = !settings.show_stashes,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|this, _: &ToggleShowTags, _window, cx| {
+                this.update_graph_settings(|settings| settings.show_tags = !settings.show_tags, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleReflogCommits, _window, cx| {
+                this.update_graph_settings(
+                    |settings| {
+                        settings.include_reflog_commits = !settings.include_reflog_commits;
+                    },
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|this, _: &ToggleFirstParentOnly, _window, cx| {
+                this.update_graph_settings(
+                    |settings| settings.first_parent_only = !settings.first_parent_only,
+                    cx,
+                );
             }))
             .child(
                 v_flex()
