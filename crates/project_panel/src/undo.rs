@@ -305,14 +305,17 @@ impl UndoMessage {
 impl Inner {
     async fn manage_undo_and_redo(mut self, mut cx: AsyncApp) {
         loop {
-            let Ok(new) = dbg!(self.rx.recv().await) else {
+            let Ok(new) = self.rx.recv().await else {
                 // project panel got closed
                 return;
             };
 
             let error_title = new.error_title();
             let res = match new {
-                UndoMessage::Changed(changes) => Ok(self.record(changes)),
+                UndoMessage::Changed(changes) => {
+                    self.record(changes);
+                    Ok(())
+                }
                 UndoMessage::PlsUndo => {
                     let res = self.undo(&mut cx).await;
                     let _ = self.panel.update(&mut cx, |_, cx| cx.notify());
@@ -406,19 +409,18 @@ impl Inner {
         let before_cursor = self.cursor - 1; // see docs above
         self.cursor -= 1; // take a step back into the past
 
-        let change_before_the_cursor = self
+        // If undoing fails, the user would be in a stuck state from which
+        // manual intervention would likely be needed in order to undo. As such,
+        // we remove the change from the `history` even before attempting to
+        // execute its inversion.
+        let undo_change = self
             .history
             .remove(before_cursor)
             .expect("we can undo")
-            .clone();
-        // If this fails we can not redo/undo this change so it needs to
-        // be gone from history, thats why we just removed it above! :)
-        let change_created_by_undoing = change_before_the_cursor
             .to_inverse()
             .execute(self, cx)
             .await?;
-        self.history
-            .insert(before_cursor, change_created_by_undoing);
+        self.history.insert(before_cursor, undo_change);
         Ok(())
     }
 
@@ -427,12 +429,17 @@ impl Inner {
             return Ok(());
         }
 
-        let change_at_the_cursor = self
+        // If redoing fails, the user would be in a stuck state from which
+        // manual intervention would likely be needed in order to redo. As such,
+        // we remove the change from the `history` even before attempting to
+        // execute its inversion.
+        let redo_change = self
             .history
             .remove(self.cursor)
             .expect("we can redo")
-            .clone();
-        let redo_change = change_at_the_cursor.to_inverse().execute(self, cx).await?;
+            .to_inverse()
+            .execute(self, cx)
+            .await?;
         self.history.insert(self.cursor, redo_change);
         self.cursor += 1;
         Ok(())
