@@ -807,14 +807,19 @@ pub trait GitRepository: Send + Sync {
         record_origin: bool,
         no_commit: bool,
     ) -> BoxFuture<'_, Result<()>>;
-    fn revert_commit(&self, sha: String) -> BoxFuture<'_, Result<()>>;
+    fn revert_commit(&self, sha: String, no_commit: bool) -> BoxFuture<'_, Result<()>>;
     fn drop_commit_support(&self, sha: String) -> BoxFuture<'_, Result<DropCommitSupport>>;
     fn drop_commit(&self, sha: String) -> BoxFuture<'_, Result<()>>;
     fn merge_commit(&self, sha: String) -> BoxFuture<'_, Result<()>>;
     fn rebase_onto(&self, sha: String) -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
-    fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>>;
+    fn delete_branch(
+        &self,
+        is_remote: bool,
+        name: String,
+        force_delete: bool,
+    ) -> BoxFuture<'_, Result<()>>;
     fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn push_tag(
         &self,
@@ -2044,8 +2049,13 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn revert_commit(&self, sha: String) -> BoxFuture<'_, Result<()>> {
-        self.simple_git_command(vec!["revert".into(), "--no-edit".into(), sha])
+    fn revert_commit(&self, sha: String, no_commit: bool) -> BoxFuture<'_, Result<()>> {
+        let mut args = vec!["revert".into(), "--no-edit".into()];
+        if no_commit {
+            args.push("--no-commit".into());
+        }
+        args.push(sha);
+        self.simple_git_command(args)
     }
 
     fn drop_commit_support(&self, sha: String) -> BoxFuture<'_, Result<DropCommitSupport>> {
@@ -2166,13 +2176,28 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn delete_branch(&self, is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(
+        &self,
+        is_remote: bool,
+        name: String,
+        force_delete: bool,
+    ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
 
         self.executor
             .spawn(async move {
                 git_binary?
-                    .run(&["branch", if is_remote { "-dr" } else { "-d" }, &name])
+                    .run(&[
+                        "branch",
+                        if is_remote {
+                            "-dr"
+                        } else if force_delete {
+                            "-D"
+                        } else {
+                            "-d"
+                        },
+                        &name,
+                    ])
                     .await?;
                 anyhow::Ok(())
             })

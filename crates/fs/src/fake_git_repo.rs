@@ -705,7 +705,7 @@ impl GitRepository for FakeGitRepository {
         future::ready(Ok(())).boxed()
     }
 
-    fn revert_commit(&self, _sha: String) -> BoxFuture<'_, Result<()>> {
+    fn revert_commit(&self, _sha: String, _no_commit: bool) -> BoxFuture<'_, Result<()>> {
         future::ready(Ok(())).boxed()
     }
 
@@ -742,7 +742,12 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn delete_branch(&self, _is_remote: bool, name: String) -> BoxFuture<'_, Result<()>> {
+    fn delete_branch(
+        &self,
+        _is_remote: bool,
+        name: String,
+        _force_delete: bool,
+    ) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             if !state.branches.remove(&name) {
                 bail!("no such branch: {name}");

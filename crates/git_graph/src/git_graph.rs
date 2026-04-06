@@ -1521,42 +1521,35 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) -> Option<Entity<ContextMenu>> {
         let selected_commit = self.selected_commit_info(cx)?;
-        let context_state = self.commit_context_menu_state.as_ref()?;
-        if context_state.row_index != selected_commit.index {
+        if self
+            .commit_context_menu_state
+            .as_ref()
+            .is_none_or(|context_state| context_state.row_index != selected_commit.index)
+        {
             return None;
         }
 
-        let drop_disabled = !context_state.drop_support.can_drop;
         let copy_subject_disabled = selected_commit.subject.is_none();
         let focus_handle = self.focus_handle.clone();
 
         Some(ContextMenu::build(window, cx, |context_menu, _, _| {
             context_menu
                 .context(focus_handle)
-                .action("Add Tag...", AddTag.boxed_clone())
+                .action("Create Tag...", AddTag.boxed_clone())
                 .action("Create Branch...", CreateBranchAtCommit.boxed_clone())
                 .separator()
-                .action("Checkout...", CheckoutCommit.boxed_clone())
-                .action("Cherry Pick...", CherryPickCommit.boxed_clone())
-                .action("Revert...", RevertCommit.boxed_clone())
-                .action_disabled_when(drop_disabled, "Drop...", DropCommit.boxed_clone())
-                .action("Merge into current branch...", MergeCommit.boxed_clone())
+                .action("Checkout Commit...", CheckoutCommit.boxed_clone())
+                .action("Cherry-Pick Commit...", CherryPickCommit.boxed_clone())
+                .action("Revert Commit...", RevertCommit.boxed_clone())
                 .action(
-                    "Rebase current branch on this Commit...",
-                    RebaseOntoCommit.boxed_clone(),
-                )
-                .action(
-                    "Reset current branch to this Commit...",
+                    "Reset Current Branch to This Commit...",
                     ResetCommit.boxed_clone(),
                 )
                 .separator()
-                .action(
-                    "Copy Commit Hash to Clipboard",
-                    CopyCommitHash.boxed_clone(),
-                )
+                .action("Copy Commit Hash", CopyCommitHash.boxed_clone())
                 .action_disabled_when(
                     copy_subject_disabled,
-                    "Copy Commit Subject to Clipboard",
+                    "Copy Commit Subject",
                     CopyCommitSubject.boxed_clone(),
                 )
         }))
@@ -1573,7 +1566,10 @@ impl GitGraph {
         self.select_entry(row_index, ScrollStrategy::Nearest, cx);
 
         let context_menu = match &ref_kind {
-            RefNameKind::Branch(_) => self.build_branch_context_menu(&ref_kind, window, cx),
+            RefNameKind::Branch(_) => {
+                self.deploy_branch_context_menu(position, row_index, ref_kind, window, cx);
+                return;
+            }
             RefNameKind::Tag(_) => self.build_tag_context_menu(&ref_kind, window, cx),
             RefNameKind::Stash(_) => self.build_stash_context_menu(&ref_kind, window, cx),
         };
@@ -1583,83 +1579,148 @@ impl GitGraph {
         }
     }
 
+    fn deploy_branch_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        _row_index: usize,
+        ref_kind: RefNameKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let branch_task = self.resolve_branch(ref_kind, repository, cx);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let branch = branch_task.await?;
+            this.update_in(cx, |this, window, cx| {
+                if let Some(context_menu) = this.build_branch_context_menu(branch, window, cx) {
+                    this.set_context_menu(context_menu, position, window, cx);
+                }
+            })?;
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to open branch menu", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+    }
+
     fn build_branch_context_menu(
         &self,
-        ref_kind: &RefNameKind,
+        branch: Branch,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<ContextMenu>> {
-        let branch_name = ref_kind.display_name();
+        let branch_name: SharedString = branch.name().to_string().into();
         let focus_handle = self.focus_handle.clone();
         let weak = cx.weak_entity();
+        let is_remote = branch.is_remote();
 
         Some(ContextMenu::build(window, cx, {
             let branch_name_for_checkout = branch_name.clone();
             let branch_name_for_copy = branch_name.clone();
-            let branch_name_for_label = branch_name.clone();
-            let ref_kind_for_rename = ref_kind.clone();
-            let ref_kind_for_delete = ref_kind.clone();
-            let ref_kind_for_push = ref_kind.clone();
+            let branch_name_for_rename = branch_name.clone();
+            let branch_name_for_delete = branch_name.clone();
+            let branch_name_for_push = branch_name.clone();
             move |context_menu, _, _| {
+                let context_menu =
+                    context_menu
+                        .context(focus_handle)
+                        .entry("Checkout Branch", None, {
+                            let branch_name = branch_name_for_checkout.clone();
+                            let weak = weak.clone();
+                            move |window, cx| {
+                                if let Some(entity) = weak.upgrade() {
+                                    entity.update(cx, |this, cx| {
+                                        this.checkout_branch(branch_name.to_string(), window, cx);
+                                    });
+                                }
+                            }
+                        });
+
+                let context_menu = if is_remote {
+                    context_menu
+                } else {
+                    context_menu.entry("Rename Branch...", None, {
+                        let branch_name = branch_name_for_rename.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.rename_branch(branch_name.to_string(), window, cx);
+                                });
+                            }
+                        }
+                    })
+                };
+
+                let context_menu = context_menu.entry(
+                    if is_remote {
+                        "Delete Remote-Tracking Branch..."
+                    } else {
+                        "Delete Branch..."
+                    },
+                    None,
+                    {
+                        let branch_name = branch_name_for_delete.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.delete_branch(
+                                        branch_name.to_string(),
+                                        is_remote,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }
+                    },
+                );
+
+                let context_menu = if is_remote {
+                    context_menu
+                } else {
+                    context_menu.entry("Push Branch", None, {
+                        let branch_name = branch_name_for_push.clone();
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.push_branch(branch_name.to_string(), window, cx);
+                                });
+                            }
+                        }
+                    })
+                };
+
                 context_menu
-                    .context(focus_handle)
-                    .entry("Checkout Branch", None, {
-                        let branch_name = branch_name_for_checkout.clone();
+                    .separator()
+                    .entry("Merge Branch into Current Branch...", None, {
                         let weak = weak.clone();
                         move |window, cx| {
                             if let Some(entity) = weak.upgrade() {
                                 entity.update(cx, |this, cx| {
-                                    this.checkout_branch(branch_name.to_string(), window, cx);
+                                    this.merge_selected_commit(window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .entry("Rebase Current Branch onto Branch...", None, {
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.rebase_selected_commit(window, cx);
                                 });
                             }
                         }
                     })
                     .separator()
-                    .entry("Rename Branch...", None, {
-                        let ref_kind = ref_kind_for_rename.clone();
-                        let weak = weak.clone();
-                        move |window, cx| {
-                            if let Some(entity) = weak.upgrade() {
-                                entity.update(cx, |this, cx| {
-                                    this.rename_branch_ref(ref_kind.clone(), window, cx);
-                                });
-                            }
-                        }
-                    })
-                    .entry("Delete Branch...", None, {
-                        let ref_kind = ref_kind_for_delete.clone();
-                        let weak = weak.clone();
-                        move |window, cx| {
-                            if let Some(entity) = weak.upgrade() {
-                                entity.update(cx, |this, cx| {
-                                    this.delete_branch_ref(ref_kind.clone(), window, cx);
-                                });
-                            }
-                        }
-                    })
-                    .entry("Push Branch...", None, {
-                        let ref_kind = ref_kind_for_push.clone();
-                        let weak = weak.clone();
-                        move |window, cx| {
-                            if let Some(entity) = weak.upgrade() {
-                                entity.update(cx, |this, cx| {
-                                    this.push_branch_ref(ref_kind.clone(), window, cx);
-                                });
-                            }
-                        }
-                    })
-                    .separator()
-                    .action("Merge into current branch...", MergeCommit.boxed_clone())
-                    .action(
-                        format!("Rebase current branch on {}...", branch_name_for_label),
-                        RebaseOntoCommit.boxed_clone(),
-                    )
-                    .separator()
-                    .action(
-                        "Copy Commit Hash to Clipboard",
-                        CopyCommitHash.boxed_clone(),
-                    )
-                    .entry("Copy Branch Name to Clipboard", None, {
+                    .action("Copy Branch HEAD Hash", CopyCommitHash.boxed_clone())
+                    .entry("Copy Branch Name", None, {
                         let name = branch_name_for_copy.clone();
                         move |_window, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
@@ -1686,7 +1747,7 @@ impl GitGraph {
             move |context_menu, _, _| {
                 context_menu
                     .context(focus_handle)
-                    .action("Checkout...", CheckoutCommit.boxed_clone())
+                    .action("Checkout Tag...", CheckoutCommit.boxed_clone())
                     .separator()
                     .entry("Delete Tag...", None, {
                         let tag_name = tag_name_for_delete.clone();
@@ -1699,7 +1760,7 @@ impl GitGraph {
                             }
                         }
                     })
-                    .entry("Push Tag...", None, {
+                    .entry("Push Tag", None, {
                         let tag_name = tag_name_for_push.clone();
                         let weak = weak.clone();
                         move |window, cx| {
@@ -1710,12 +1771,19 @@ impl GitGraph {
                             }
                         }
                     })
+                    .entry("Create Branch from Tag...", None, {
+                        let weak = weak.clone();
+                        move |window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.show_create_branch_from_tag_modal(window, cx);
+                                });
+                            }
+                        }
+                    })
                     .separator()
-                    .action(
-                        "Copy Commit Hash to Clipboard",
-                        CopyCommitHash.boxed_clone(),
-                    )
-                    .entry("Copy Tag Name to Clipboard", None, {
+                    .action("Copy Tagged Commit Hash", CopyCommitHash.boxed_clone())
+                    .entry("Copy Tag Name", None, {
                         let name = tag_name_for_copy.clone();
                         move |_window, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
@@ -1738,6 +1806,7 @@ impl GitGraph {
 
         Some(ContextMenu::build(window, cx, {
             let stash_name_for_copy = stash_name.clone();
+            let stash_name_for_branch = stash_name.clone();
             let render_entry = |icon: IconName, label: &'static str| {
                 move |_window: &mut Window, _cx: &mut App| {
                     h_flex()
@@ -1751,7 +1820,7 @@ impl GitGraph {
             move |context_menu, _, _| {
                 context_menu
                     .context(focus_handle)
-                    .custom_entry(render_entry(IconName::ArrowDown, "Apply Stash..."), {
+                    .custom_entry(render_entry(IconName::ArrowDown, "Apply Stash"), {
                         let weak = weak.clone();
                         move |window, cx| {
                             if let Some(entity) = weak.upgrade() {
@@ -1789,27 +1858,28 @@ impl GitGraph {
                             move |window, cx| {
                                 if let Some(entity) = weak.upgrade() {
                                     entity.update(cx, |this, cx| {
-                                        this.show_create_branch_modal(window, cx);
+                                        this.show_create_branch_from_stash_modal(
+                                            stash_name_for_branch.to_string(),
+                                            window,
+                                            cx,
+                                        );
                                     });
                                 }
                             }
                         },
                     )
                     .separator()
-                    .custom_entry(
-                        render_entry(IconName::Copy, "Copy Commit Hash to Clipboard"),
-                        {
-                            let weak = weak.clone();
-                            move |_window, cx| {
-                                if let Some(entity) = weak.upgrade() {
-                                    entity.update(cx, |this, cx| {
-                                        this.copy_selected_commit_hash(cx);
-                                    });
-                                }
+                    .custom_entry(render_entry(IconName::Copy, "Copy Stash Commit Hash"), {
+                        let weak = weak.clone();
+                        move |_window, cx| {
+                            if let Some(entity) = weak.upgrade() {
+                                entity.update(cx, |this, cx| {
+                                    this.copy_selected_commit_hash(cx);
+                                });
                             }
-                        },
-                    )
-                    .entry("Copy Stash Name to Clipboard", None, {
+                        }
+                    })
+                    .entry("Copy Stash Name", None, {
                         let name = stash_name_for_copy.clone();
                         move |_window, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
@@ -1864,6 +1934,48 @@ impl GitGraph {
     }
 
     fn show_create_branch_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_create_branch_modal_with_options(None, "Create Branch".into(), window, cx);
+    }
+
+    fn show_create_branch_from_stash_modal(
+        &mut self,
+        stash_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let suggested_name = if let Some(index) = stash_name
+            .strip_prefix("stash@{")
+            .and_then(|rest| rest.strip_suffix('}'))
+        {
+            format!("stash-{}", index)
+        } else {
+            "stash-branch".to_string()
+        };
+
+        self.show_create_branch_modal_with_options(
+            Some(suggested_name),
+            "Create Branch from Stash".into(),
+            window,
+            cx,
+        );
+    }
+
+    fn show_create_branch_from_tag_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_create_branch_modal_with_options(
+            None,
+            "Create Branch from Tag".into(),
+            window,
+            cx,
+        );
+    }
+
+    fn show_create_branch_modal_with_options(
+        &mut self,
+        initial_name: Option<String>,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
@@ -1880,6 +1992,8 @@ impl GitGraph {
                         graph,
                         repository,
                         commit.sha.clone(),
+                        initial_name,
+                        title,
                         window,
                         cx,
                     )
@@ -2495,16 +2609,11 @@ impl GitGraph {
         self.run_git_operation(task, "Failed to checkout branch", window, cx);
     }
 
-    fn push_branch_ref(
-        &mut self,
-        ref_kind: RefNameKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn push_branch(&mut self, branch_name: String, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
-        let branch_task = self.resolve_branch(ref_kind, repository.clone(), cx);
+        let receiver = repository.update(cx, |repository, _| repository.branches());
         let default_remote_name = repository
             .read(cx)
             .remote_upstream_url
@@ -2520,7 +2629,13 @@ impl GitGraph {
         let askpass = self.askpass_delegate("git push", window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
-            let branch = branch_task.await?;
+            let branches = receiver
+                .await
+                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+            let branch = branches
+                .into_iter()
+                .find(|branch| branch.name() == branch_name)
+                .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found", branch_name))?;
             let target = {
                 if branch.is_remote() {
                     anyhow::bail!("Cannot push a remote-tracking branch");
@@ -2718,38 +2833,15 @@ impl GitGraph {
         let Some(commit) = self.selected_commit_info(cx) else {
             return;
         };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let graph = cx.weak_entity();
 
-        let confirm = self.prompt_confirmation(
-            PromptLevel::Warning,
-            format!("Revert commit {}?", commit.sha),
-            None,
-            "Revert",
-            window,
-            cx,
-        );
-
-        cx.spawn_in(window, async move |this, cx| {
-            if !confirm.await? {
-                return Ok(());
-            }
-
-            this.update_in(cx, |this, window, cx| {
-                let sha = commit.sha.to_string();
-                let repository = repository.clone();
-                let task = cx.spawn(async move |_, cx| {
-                    repository
-                        .update(cx, |repository, _| repository.revert_commit(sha))
-                        .await
-                        .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
-                    Ok(())
-                });
-                this.run_git_operation(task, "Failed to revert commit", window, cx);
-            })?;
-
-            Ok(())
-        })
-        .detach_and_prompt_err("Failed to revert commit", window, cx, |error, _, _| {
-            Some(error.to_string())
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RevertCommitModal::new(graph, repository, commit.sha.clone(), window, cx)
+            });
         });
     }
 
@@ -2997,29 +3089,6 @@ impl GitGraph {
         });
     }
 
-    fn delete_branch_ref(
-        &mut self,
-        ref_kind: RefNameKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(repository) = self.get_repository(cx) else {
-            return;
-        };
-        let branch_task = self.resolve_branch(ref_kind, repository.clone(), cx);
-
-        cx.spawn_in(window, async move |this, cx| {
-            let branch = branch_task.await?;
-            this.update_in(cx, |this, window, cx| {
-                this.delete_branch(branch.name().to_string(), branch.is_remote(), window, cx);
-            })?;
-            Ok(())
-        })
-        .detach_and_prompt_err("Failed to delete branch", window, cx, |error, _, _| {
-            Some(error.to_string())
-        });
-    }
-
     fn delete_branch(
         &mut self,
         branch_name: String,
@@ -3027,80 +3096,40 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(repository) = self.get_repository(cx) else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
+        let graph = cx.weak_entity();
 
-        let warning_message = if is_remote {
-            format!(
-                "Delete remote branch '{}'? This cannot be undone.",
-                branch_name
-            )
-        } else {
-            format!("Delete branch '{}'? This cannot be undone.", branch_name)
-        };
-
-        let confirm = self.prompt_confirmation(
-            PromptLevel::Warning,
-            warning_message,
-            None,
-            "Delete",
-            window,
-            cx,
-        );
-
-        cx.spawn_in(window, async move |this, cx| {
-            if !confirm.await? {
-                return Ok(());
-            }
-
-            this.update_in(cx, |this, window, cx| {
-                let branch_name = branch_name.clone();
-                let repository = repository.clone();
-                let task = cx.spawn(async move |_, cx| {
-                    repository
-                        .update(cx, |repository, _| {
-                            repository.delete_branch(is_remote, branch_name)
-                        })
-                        .await
-                        .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
-                    Ok(())
-                });
-                this.run_git_operation(task, "Failed to delete branch", window, cx);
-            })?;
-
-            Ok(())
-        })
-        .detach_and_prompt_err("Failed to delete branch", window, cx, |error, _, _| {
-            Some(error.to_string())
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                DeleteBranchModal::new(graph, branch_name, is_remote, window, cx)
+            });
         });
     }
 
-    fn rename_branch_ref(
+    fn perform_delete_branch(
         &mut self,
-        ref_kind: RefNameKind,
+        branch_name: String,
+        is_remote: bool,
+        force_delete: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
-        let branch_task = self.resolve_branch(ref_kind, repository.clone(), cx);
 
-        cx.spawn_in(window, async move |this, cx| {
-            let branch = branch_task.await?;
-            if branch.is_remote() {
-                anyhow::bail!("Cannot rename a remote-tracking branch");
-            }
-
-            this.update_in(cx, |this, window, cx| {
-                this.rename_branch(branch.name().to_string(), window, cx);
-            })?;
+        let task = cx.spawn(async move |_, cx| {
+            repository
+                .update(cx, |repository, _| {
+                    repository.delete_branch(is_remote, branch_name, force_delete)
+                })
+                .await
+                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
             Ok(())
-        })
-        .detach_and_prompt_err("Failed to rename branch", window, cx, |error, _, _| {
-            Some(error.to_string())
         });
+        self.run_git_operation(task, "Failed to delete branch", window, cx);
     }
 
     fn rename_branch(&mut self, branch_name: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -4242,7 +4271,9 @@ struct CreateBranchAtCommitModal {
     graph: WeakEntity<GitGraph>,
     repository: Entity<Repository>,
     commit_sha: SharedString,
+    title: SharedString,
     editor: Entity<Editor>,
+    checkout_after_create: bool,
 }
 
 impl CreateBranchAtCommitModal {
@@ -4250,12 +4281,18 @@ impl CreateBranchAtCommitModal {
         graph: WeakEntity<GitGraph>,
         repository: Entity<Repository>,
         commit_sha: SharedString,
+        initial_name: Option<String>,
+        title: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter branch name…", window, cx);
+            if let Some(initial_name) = initial_name.clone() {
+                editor.set_text(initial_name, window, cx);
+            } else {
+                editor.set_placeholder_text("Enter branch name…", window, cx);
+            }
             editor
         });
 
@@ -4263,7 +4300,9 @@ impl CreateBranchAtCommitModal {
             graph,
             repository,
             commit_sha,
+            title,
             editor,
+            checkout_after_create: false,
         }
     }
 
@@ -4280,13 +4319,20 @@ impl CreateBranchAtCommitModal {
         let repository = self.repository.clone();
         let graph = self.graph.clone();
         let commit_sha = self.commit_sha.to_string();
+        let checkout_after_create = self.checkout_after_create;
 
         cx.spawn(async move |_, cx| {
             repository
                 .update(cx, |repository, _| {
-                    repository.create_branch_at(commit_sha, branch_name)
+                    repository.create_branch_at(commit_sha, branch_name.clone())
                 })
                 .await??;
+
+            if checkout_after_create {
+                repository
+                    .update(cx, |repository, _| repository.change_branch(branch_name))
+                    .await??;
+            }
 
             let _ = graph.update(cx, |graph, cx| {
                 graph.reload_graph(cx);
@@ -4325,9 +4371,34 @@ impl Render for CreateBranchAtCommitModal {
                     .pb_1()
                     .gap_1p5()
                     .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
-                    .child(Label::new(format!("Create Branch at {}", self.commit_sha))),
+                    .child(Label::new(self.title.clone())),
             )
-            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+            .child(
+                v_flex()
+                    .px_3()
+                    .pb_3()
+                    .w_full()
+                    .gap_2()
+                    .child(self.editor.clone())
+                    .child(
+                        Checkbox::new(
+                            "create-branch-checkout-after-create",
+                            if self.checkout_after_create {
+                                ToggleState::Selected
+                            } else {
+                                ToggleState::Unselected
+                            },
+                        )
+                        .label("Checkout after create")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(
+                            |this: &mut CreateBranchAtCommitModal, _, _window, cx| {
+                                this.checkout_after_create = !this.checkout_after_create;
+                                cx.notify();
+                            },
+                        )),
+                    ),
+            )
     }
 }
 
@@ -4580,7 +4651,7 @@ impl Render for AddTagModal {
                     .pb_1()
                     .gap_1p5()
                     .child(Icon::new(IconName::GitCommit).size(IconSize::XSmall))
-                    .child(Label::new(format!("Add Tag at {}", self.commit_sha))),
+                    .child(Label::new(format!("Create Tag at {}", self.commit_sha))),
             )
             .child(
                 v_flex()
@@ -4684,6 +4755,264 @@ impl Render for RenameBranchModal {
                     .child(Label::new(format!("Rename Branch ({})", self.branch_name))),
             )
             .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
+    }
+}
+
+struct DeleteBranchModal {
+    graph: WeakEntity<GitGraph>,
+    branch_name: SharedString,
+    is_remote: bool,
+    force_delete: bool,
+    focus_handle: FocusHandle,
+}
+
+impl DeleteBranchModal {
+    fn new(
+        graph: WeakEntity<GitGraph>,
+        branch_name: String,
+        is_remote: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            graph,
+            branch_name: branch_name.into(),
+            is_remote,
+            force_delete: false,
+            focus_handle: _cx.focus_handle(),
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let graph = self.graph.clone();
+        let branch_name = self.branch_name.to_string();
+        let is_remote = self.is_remote;
+        let force_delete = self.force_delete;
+        if let Some(graph) = graph.upgrade() {
+            graph.update(cx, |graph, cx| {
+                graph.perform_delete_branch(branch_name, is_remote, force_delete, window, cx);
+            });
+        }
+
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for DeleteBranchModal {}
+impl ModalView for DeleteBranchModal {}
+impl Focusable for DeleteBranchModal {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for DeleteBranchModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("DeleteBranchModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(ui::rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::Trash).size(IconSize::XSmall))
+                    .child(Label::new(if self.is_remote {
+                        format!("Delete Remote-Tracking Branch ({})", self.branch_name)
+                    } else {
+                        format!("Delete Branch ({})", self.branch_name)
+                    })),
+            )
+            .child(
+                v_flex()
+                    .px_3()
+                    .pb_3()
+                    .w_full()
+                    .gap_2()
+                    .child(Label::new("This cannot be undone."))
+                    .when(!self.is_remote, |this| {
+                        this.child(
+                            Checkbox::new(
+                                "delete-branch-force-delete",
+                                if self.force_delete {
+                                    ToggleState::Selected
+                                } else {
+                                    ToggleState::Unselected
+                                },
+                            )
+                            .label("Force delete")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(
+                                |this: &mut DeleteBranchModal, _, _window, cx| {
+                                    this.force_delete = !this.force_delete;
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("delete-branch-cancel", "Cancel")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(
+                                        |this: &mut DeleteBranchModal, _, window, cx| {
+                                            this.cancel(&Cancel, window, cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                Button::new("delete-branch-confirm", "Delete")
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener(
+                                        |this: &mut DeleteBranchModal, _, window, cx| {
+                                            this.confirm(&Confirm, window, cx);
+                                        },
+                                    )),
+                            ),
+                    ),
+            )
+    }
+}
+
+struct RevertCommitModal {
+    graph: WeakEntity<GitGraph>,
+    repository: Entity<Repository>,
+    commit_sha: SharedString,
+    no_commit: bool,
+    focus_handle: FocusHandle,
+}
+
+impl RevertCommitModal {
+    fn new(
+        graph: WeakEntity<GitGraph>,
+        repository: Entity<Repository>,
+        commit_sha: SharedString,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            graph,
+            repository,
+            commit_sha,
+            no_commit: false,
+            focus_handle: cx.focus_handle(),
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let repository = self.repository.clone();
+        let graph = self.graph.clone();
+        let sha = self.commit_sha.to_string();
+        let no_commit = self.no_commit;
+
+        cx.spawn(async move |_, cx| {
+            repository
+                .update(cx, |repository, _| repository.revert_commit(sha, no_commit))
+                .await??;
+
+            let _ = graph.update(cx, |graph, cx| {
+                graph.reload_graph(cx);
+            });
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to revert commit", window, cx, |error, _, _| {
+            Some(error.to_string())
+        });
+
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for RevertCommitModal {}
+impl ModalView for RevertCommitModal {}
+impl Focusable for RevertCommitModal {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for RevertCommitModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("RevertCommitModal")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(ui::rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitCommit).size(IconSize::XSmall))
+                    .child(Label::new(format!("Revert Commit {}", self.commit_sha))),
+            )
+            .child(
+                v_flex()
+                    .px_3()
+                    .pb_3()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        Checkbox::new(
+                            "revert-commit-no-commit",
+                            if self.no_commit {
+                                ToggleState::Selected
+                            } else {
+                                ToggleState::Unselected
+                            },
+                        )
+                        .label("Do not commit (--no-commit)")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(
+                            |this: &mut RevertCommitModal, _, _window, cx| {
+                                this.no_commit = !this.no_commit;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("revert-commit-cancel", "Cancel")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(
+                                        |this: &mut RevertCommitModal, _, window, cx| {
+                                            this.cancel(&Cancel, window, cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                Button::new("revert-commit-confirm", "Revert")
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener(
+                                        |this: &mut RevertCommitModal, _, window, cx| {
+                                            this.confirm(&Confirm, window, cx);
+                                        },
+                                    )),
+                            ),
+                    ),
+            )
     }
 }
 

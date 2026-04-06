@@ -2576,7 +2576,7 @@ impl GitStore {
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(is_remote, branch_name)
+                repository_handle.delete_branch(is_remote, branch_name, false)
             })
             .await??;
 
@@ -4742,11 +4742,11 @@ impl Repository {
         })
     }
 
-    pub fn revert_commit(&mut self, sha: String) -> oneshot::Receiver<Result<()>> {
+    pub fn revert_commit(&mut self, sha: String, no_commit: bool) -> oneshot::Receiver<Result<()>> {
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.revert_commit(sha).await
+                    backend.revert_commit(sha, no_commit).await
                 }
                 RepositoryState::Remote(_) => {
                     bail!("Git graph commit operations are not supported for collab repositories")
@@ -6453,13 +6453,20 @@ impl Repository {
         &mut self,
         is_remote: bool,
         branch_name: String,
+        force_delete: bool,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
             Some(
                 format!(
                     "git branch {} {}",
-                    if is_remote { "-dr" } else { "-d" },
+                    if is_remote {
+                        "-dr"
+                    } else if force_delete {
+                        "-D"
+                    } else {
+                        "-d"
+                    },
                     branch_name
                 )
                 .into(),
@@ -6467,7 +6474,10 @@ impl Repository {
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(state) => {
-                        state.backend.delete_branch(is_remote, branch_name).await
+                        state
+                            .backend
+                            .delete_branch(is_remote, branch_name, force_delete)
+                            .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
