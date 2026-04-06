@@ -11161,7 +11161,7 @@ async fn test_odd_events_for_ignored_dirs(
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::BranchChanged,
+            RepositoryEvent::HeadChanged,
             RepositoryEvent::StatusesChanged,
             RepositoryEvent::StatusesChanged,
         ],

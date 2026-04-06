@@ -154,7 +154,7 @@ impl MentionSet {
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
             ))),
-            MentionUri::PastedImage
+            MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::MergeConflict { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
@@ -283,7 +283,7 @@ impl MentionSet {
                 include_errors,
                 include_warnings,
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
-            MentionUri::PastedImage => {
+            MentionUri::PastedImage { .. } => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
                     "pasted imaged URI should not be included in completions"
@@ -739,9 +739,11 @@ pub(crate) async fn insert_images_as_context(
         return;
     }
 
-    let replacement_text = MentionUri::PastedImage.as_link().to_string();
-
     for (image, name) in images {
+        let mention_uri = MentionUri::PastedImage {
+            name: name.to_string(),
+        };
+        let replacement_text = mention_uri.as_link().to_string();
         let Some((text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
@@ -804,7 +806,13 @@ pub(crate) async fn insert_images_as_context(
             .shared();
 
         mention_set.update(cx, |mention_set, _cx| {
-            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+            mention_set.insert_mention(
+                crease_id,
+                MentionUri::PastedImage {
+                    name: name.to_string(),
+                },
+                task.clone(),
+            )
         });
 
         if task
@@ -873,7 +881,7 @@ pub(crate) fn paste_images_as_context(
 
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
-        let default_name: SharedString = MentionUri::PastedImage.name().into();
+        let default_name: SharedString = "Image".into();
         let (mut images, paths): (Vec<(gpui::Image, SharedString)>, Vec<_>) = clipboard
             .into_entries()
             .filter_map(|entry| match entry {

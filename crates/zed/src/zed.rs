@@ -502,12 +502,15 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         let line_ending_indicator =
             cx.new(|_| line_ending_selector::LineEndingIndicator::default());
+        let merge_conflict_indicator =
+            cx.new(|cx| git_ui::MergeConflictIndicator::new(workspace, cx));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(active_file_name, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
+            status_bar.add_left_item(merge_conflict_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_encoding, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
@@ -2602,18 +2605,33 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.read(|cx| cx.windows().len()), 2);
-
-        // Replace existing windows
-        let window = cx
-            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+        cx.run_until_parked();
+        multi_workspace_1
+            .update(cx, |multi_workspace, _window, cx| {
+                assert_eq!(multi_workspace.workspaces().len(), 2);
+                assert!(multi_workspace.sidebar_open());
+                let workspace = multi_workspace.workspace().read(cx);
+                assert_eq!(
+                    workspace
+                        .worktrees(cx)
+                        .map(|w| w.read(cx).abs_path())
+                        .collect::<Vec<_>>(),
+                    &[
+                        Path::new(path!("/root/c")).into(),
+                        Path::new(path!("/root/d")).into(),
+                    ]
+                );
+            })
             .unwrap();
+
+        // Opening with -n (open_new_workspace: Some(true)) still creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
-                    requesting_window: Some(window),
+                    open_new_workspace: Some(true),
                     ..Default::default()
                 },
                 cx,
@@ -2623,23 +2641,6 @@ mod tests {
         .unwrap();
         cx.background_executor.run_until_parked();
         assert_eq!(cx.read(|cx| cx.windows().len()), 2);
-        let multi_workspace_1 = cx
-            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
-            .unwrap();
-        multi_workspace_1
-            .update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspace().read(cx);
-                assert_eq!(
-                    workspace
-                        .worktrees(cx)
-                        .map(|w| w.read(cx).abs_path())
-                        .collect::<Vec<_>>(),
-                    &[Path::new(path!("/root/e")).into()]
-                );
-                assert!(workspace.right_dock().read(cx).is_open());
-                assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
-            })
-            .unwrap();
     }
 
     #[gpui::test]
@@ -2720,7 +2721,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-        let window1 = cx.update(|cx| cx.active_window().unwrap());
 
         cx.update(|cx| {
             open_paths(
@@ -2734,6 +2734,8 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
+        // Opening a directory with default options adds to the existing window
+        // rather than creating a new one.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir2"))],
@@ -2744,25 +2746,23 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
-        let window2 = cx.update(|cx| cx.active_window().unwrap());
-        assert!(window1 != window2);
-        cx.update_window(window1, |_, window, _| window.activate_window())
-            .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
+        // Opening a directory with -n creates a new window.
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(path!("/root/dir2/c"))],
+                &[PathBuf::from(path!("/root/dir2"))],
                 app_state.clone(),
-                workspace::OpenOptions::default(),
+                workspace::OpenOptions {
+                    open_new_workspace: Some(true),
+                    ..Default::default()
+                },
                 cx,
             )
         })
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
-        // should have opened in window2 because that has dir2 visibly open (window1 has it open, but not in the project panel)
-        assert!(cx.update(|cx| cx.active_window().unwrap()) == window2);
     }
 
     #[gpui::test]

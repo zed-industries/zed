@@ -656,13 +656,25 @@ impl From<WorkspaceId> for i64 {
     }
 }
 
-fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, cx: &mut App) {
+fn prompt_and_open_paths(
+    app_state: Arc<AppState>,
+    options: PathPromptOptions,
+    create_new_window: bool,
+    cx: &mut App,
+) {
     if let Some(workspace_window) = local_workspace_windows(cx).into_iter().next() {
         workspace_window
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    prompt_for_open_path_and_open(workspace, app_state, options, true, window, cx);
+                    prompt_for_open_path_and_open(
+                        workspace,
+                        app_state,
+                        options,
+                        create_new_window,
+                        window,
+                        cx,
+                    );
                 });
             })
             .ok();
@@ -682,7 +694,14 @@ fn prompt_and_open_paths(app_state: Arc<AppState>, options: PathPromptOptions, c
                 window.activate_window();
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
-                    prompt_for_open_path_and_open(workspace, app_state, options, true, window, cx);
+                    prompt_for_open_path_and_open(
+                        workspace,
+                        app_state,
+                        options,
+                        create_new_window,
+                        window,
+                        cx,
+                    );
                 });
             })?;
             anyhow::Ok(())
@@ -743,7 +762,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
         .on_action(|_: &Reload, cx| reload(cx))
-        .on_action(|_: &Open, cx: &mut App| {
+        .on_action(|action: &Open, cx: &mut App| {
             let app_state = AppState::global(cx);
             prompt_and_open_paths(
                 app_state,
@@ -753,6 +772,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
+                action.create_new_window,
                 cx,
             );
         })
@@ -767,6 +787,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
+                true,
                 cx,
             );
         });
@@ -7693,11 +7714,6 @@ impl GlobalAnyActiveCall {
     }
 }
 
-pub fn merge_conflict_notification_id() -> NotificationId {
-    struct MergeConflictNotification;
-    NotificationId::unique::<MergeConflictNotification>()
-}
-
 /// Workspace-local view of a remote participant's location.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ParticipantLocation {
@@ -9309,7 +9325,7 @@ pub fn open_workspace_by_id(
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
-    open_options: OpenOptions,
+    mut open_options: OpenOptions,
     cx: &mut App,
 ) -> Task<anyhow::Result<OpenResult>> {
     let abs_paths = abs_paths.to_vec();
@@ -9334,10 +9350,9 @@ pub fn open_paths(
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
                 .into_iter()
-                .filter_map(|result| result.ok().flatten())
-                .collect::<Vec<_>>();
+                .filter_map(|result| result.ok().flatten());
 
-            if all_metadatas.iter().all(|file| !file.is_dir) {
+            if all_metadatas.into_iter().all(|file| !file.is_dir) {
                 cx.update(|cx| {
                     let windows = workspace_windows_for_location(
                         &SerializedWorkspaceLocation::Local,
@@ -9356,6 +9371,35 @@ pub fn open_paths(
                         }
                     }
                 });
+            }
+        }
+
+        // Fallback for directories: when no flag is specified and no existing
+        // workspace matched, add the directory as a new workspace in the
+        // active window's MultiWorkspace (instead of opening a new window).
+        if open_options.open_new_workspace.is_none() && existing.is_none() {
+            let target_window = cx.update(|cx| {
+                let windows = workspace_windows_for_location(
+                    &SerializedWorkspaceLocation::Local,
+                    cx,
+                );
+                let window = cx
+                    .active_window()
+                    .and_then(|window| window.downcast::<MultiWorkspace>())
+                    .filter(|window| windows.contains(window))
+                    .or_else(|| windows.into_iter().next());
+                window.filter(|window| {
+                    window.read(cx).is_ok_and(|mw| mw.multi_workspace_enabled(cx))
+                })
+            });
+
+            if let Some(window) = target_window {
+                open_options.requesting_window = Some(window);
+                window
+                    .update(cx, |multi_workspace, _, cx| {
+                        multi_workspace.open_sidebar(cx);
+                    })
+                    .log_err();
             }
         }
 
