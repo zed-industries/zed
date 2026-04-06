@@ -362,7 +362,7 @@ impl MentionSet {
                     .await;
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
-                        data: image.source.to_string().into(),
+                        data: image.source,
                         format: LanguageModelImage::FORMAT,
                     }))
                 } else {
@@ -796,7 +796,7 @@ pub(crate) async fn insert_images_as_context(
                 drop(tx);
                 if let Some(image) = image {
                     Ok(Mention::Image(MentionImage {
-                        data: image.source.to_string().into(),
+                        data: image.source,
                         format: LanguageModelImage::FORMAT,
                     }))
                 } else {

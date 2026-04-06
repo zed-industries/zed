@@ -269,7 +269,7 @@ pub enum IconOrSvg {
     /// A built-in icon from Zed's icon set.
     Icon(IconName),
     /// Path to a custom SVG icon file.
-    Svg(gpui::SharedString),
+    Svg(SharedString),
 }
 
 impl Default for IconOrSvg {
@@ -305,7 +305,7 @@ pub trait LanguageModelProvider: 'static {
 pub enum ConfigurationViewTargetAgent {
     #[default]
     ZedAgent,
-    Other(gpui::SharedString),
+    Other(SharedString),
 }
 
 pub trait LanguageModelProviderState: 'static {
@@ -337,11 +337,11 @@ pub enum LanguageModelCostInfo {
 }
 
 impl LanguageModelCostInfo {
-    pub fn to_shared_string(&self) -> gpui::SharedString {
+    pub fn to_shared_string(&self) -> SharedString {
         match self {
             LanguageModelCostInfo::RequestCost { cost_per_request } => {
                 let cost_str = format!("{}×", Self::cost_value_to_string(cost_per_request));
-                gpui::SharedString::from(cost_str)
+                SharedString::from(cost_str)
             }
             LanguageModelCostInfo::TokenCost {
                 input_token_cost_per_1m,
@@ -349,16 +349,16 @@ impl LanguageModelCostInfo {
             } => {
                 let input_cost = Self::cost_value_to_string(input_token_cost_per_1m);
                 let output_cost = Self::cost_value_to_string(output_token_cost_per_1m);
-                gpui::SharedString::from(format!("{}$/{}$", input_cost, output_cost))
+                SharedString::from(format!("{}$/{}$", input_cost, output_cost))
             }
         }
     }
 
-    fn cost_value_to_string(cost: &f64) -> gpui::SharedString {
+    fn cost_value_to_string(cost: &f64) -> SharedString {
         if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
-            gpui::SharedString::from(format!("{:.0}", cost))
+            SharedString::from(format!("{:.0}", cost))
         } else {
-            gpui::SharedString::from(format!("{:.2}", cost))
+            SharedString::from(format!("{:.2}", cost))
         }
     }
 }

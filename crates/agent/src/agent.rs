@@ -172,7 +172,7 @@ impl LanguageModels {
     ) -> acp_thread::AgentModelInfo {
         acp_thread::AgentModelInfo {
             id: Self::model_id(model),
-            name: model.name().0.clone(),
+            name: model.name().0,
             description: None,
             icon: Some(match provider.icon() {
                 IconOrSvg::Svg(path) => acp_thread::AgentModelIcon::Path(path),

@@ -3683,12 +3683,10 @@ impl ThreadView {
                 .cloned()
         });
 
-        let label: gpui::SharedString = selected
+        let label: SharedString = selected
             .clone()
             .or(default_effort_level)
-            .map_or("Select Effort".into(), |effort| {
-                effort.name.to_string().into()
-            });
+            .map_or("Select Effort".into(), |effort| effort.name);
 
         let (label_color, icon) = if self.thinking_effort_menu_handle.is_deployed() {
             (Color::Accent, IconName::ChevronUp)
@@ -3750,7 +3748,7 @@ impl ThreadView {
                         let is_selected = selected
                             .as_ref()
                             .is_some_and(|selected| selected.value == effort_level.value);
-                        let entry = ContextMenuEntry::new(effort_level.name.to_string())
+                        let entry = ContextMenuEntry::new(effort_level.name)
                             .toggleable(IconPosition::End, is_selected);
 
                         menu.push_item(entry.handler({
