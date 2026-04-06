@@ -972,8 +972,6 @@ pub trait GitRepository: Send + Sync {
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>>;
-
-    fn stage_all_including_untracked(&self) -> BoxFuture<'_, Result<()>>;
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
 }
@@ -2278,17 +2276,6 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let args: Vec<OsString> = vec!["worktree".into(), "repair".into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
-    }
-
-    fn stage_all_including_untracked(&self) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> = vec!["add".into(), "-A".into()];
                 git_binary?.run(&args).await?;
                 Ok(())
             })
