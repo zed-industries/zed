@@ -1,18 +1,17 @@
-use std::ops::Range;
-use std::sync::Arc;
+use std::{ops::Range, path::Path, sync::Arc};
 
-use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll};
+use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     HighlightStyle, ParentElement, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
     actions, rems,
 };
-use language::{PointUtf16, ToPointUtf16, Unclipped};
+use language::{CodeLabel, PointUtf16, ToPointUtf16, Unclipped};
 use picker::{Picker, PickerDelegate};
 use project::{CallHierarchyItem, Project};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*, vh};
 use util::{ResultExt, paths::PathExt};
 use workspace::{ModalView, Workspace};
@@ -30,6 +29,21 @@ pub enum CallHierarchyMode {
 pub struct Call {
     pub item: CallHierarchyItem,
     pub target: Unclipped<PointUtf16>,
+    pub label: Option<CodeLabel>,
+}
+
+pub async fn make_call(
+    item: CallHierarchyItem,
+    target: Unclipped<PointUtf16>,
+    project: &Entity<Project>,
+    cx: &mut AsyncWindowContext,
+) -> Call {
+    let label = label_for_call_hierarchy_item(&item, project, cx).await;
+    Call {
+        item,
+        target,
+        label,
+    }
 }
 
 pub async fn fetch_calls(
@@ -44,42 +58,68 @@ pub async fn fetch_calls(
             let task = project.update(cx, |project, cx| {
                 project.incoming_calls(buffer, item.clone(), cx)
             });
-            let Some(task) = task.log_err() else {
-                return Vec::new();
-            };
             let Some(calls) = task.await.log_err().flatten() else {
                 return Vec::new();
             };
-            calls
-                .into_iter()
-                .map(|c| Call {
-                    target: c
-                        .from_ranges
-                        .first()
-                        .map_or(c.from.selection_range.start, |r| r.start),
-                    item: c.from,
-                })
-                .collect()
+            let mut labeled_calls = Vec::with_capacity(calls.len());
+            for call in calls {
+                let target = call
+                    .from_ranges
+                    .first()
+                    .map_or(call.from.selection_range.start, |r| r.start);
+                labeled_calls.push(make_call(call.from, target, project, cx).await);
+            }
+            labeled_calls
         }
         CallHierarchyMode::Outgoing => {
             let task = project.update(cx, |project, cx| {
                 project.outgoing_calls(buffer, item.clone(), cx)
             });
-            let Some(task) = task.log_err() else {
-                return Vec::new();
-            };
             let Some(calls) = task.await.log_err().flatten() else {
                 return Vec::new();
             };
-            calls
-                .into_iter()
-                .map(|c| Call {
-                    target: c.to.selection_range.start,
-                    item: c.to,
-                })
-                .collect()
+            let mut labeled_calls = Vec::with_capacity(calls.len());
+            for call in calls {
+                labeled_calls.push(
+                    make_call(call.to.clone(), call.to.selection_range.start, project, cx).await,
+                );
+            }
+            labeled_calls
         }
     }
+}
+
+async fn label_for_call_hierarchy_item(
+    item: &CallHierarchyItem,
+    project: &Entity<Project>,
+    cx: &mut AsyncWindowContext,
+) -> Option<CodeLabel> {
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let file_path = item.uri.to_file_path().ok()?;
+    let file_name = file_path.file_name()?;
+    let language = language_registry
+        .load_language_for_file_path(Path::new(file_name))
+        .await
+        .ok()?;
+    let lsp_adapter = language_registry
+        .lsp_adapters(&language.name())
+        .first()
+        .cloned()?;
+
+    lsp_adapter
+        .labels_for_symbols(
+            &[language::Symbol {
+                name: item.name.clone(),
+                kind: item.kind,
+                container_name: None,
+            }],
+            &language,
+        )
+        .await
+        .log_err()?
+        .into_iter()
+        .next()
+        .flatten()
 }
 
 pub fn init(cx: &mut App) {
@@ -394,8 +434,8 @@ impl PickerDelegate for CallHierarchyDelegate {
                     workspace.active_pane().clone()
                 };
 
-                let editor =
-                    workspace.open_project_item::<Editor>(pane, buffer, true, true, window, cx);
+                let editor = workspace
+                    .open_project_item::<Editor>(pane, buffer, true, true, true, true, window, cx);
 
                 editor.update(cx, |editor, cx| {
                     editor.change_selections(
@@ -493,25 +533,34 @@ pub fn render_item(
         ..Default::default()
     };
 
-    let function_color = cx
-        .theme()
-        .syntax()
-        .get("function")
-        .color
-        .unwrap_or(cx.theme().colors().text);
-
     let highlight_style = HighlightStyle {
         background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
         ..Default::default()
     };
 
-    let mut name_style = base_text_style.clone();
-    name_style.color = function_color;
+    let name_styled = if let Some(label) = call_item.label.as_ref() {
+        let theme = cx.theme();
+        let local_player = theme.players().local();
+        let syntax_runs = styled_runs_for_code_label(label, theme.syntax(), &local_player);
+        let custom_highlights = match_ranges.into_iter().map(|range| {
+            let start = label.filter_range.start + range.start;
+            let end = label.filter_range.start + range.end;
+            (start..end, highlight_style)
+        });
 
-    let name_styled = StyledText::new(name).with_default_highlights(
-        &name_style,
-        match_ranges.into_iter().map(|r| (r, highlight_style)),
-    );
+        StyledText::new(label.text.clone()).with_default_highlights(
+            &base_text_style,
+            gpui::combine_highlights(custom_highlights, syntax_runs),
+        )
+    } else {
+        let mut name_style = base_text_style.clone();
+        name_style.color = cx.theme().colors().text;
+
+        StyledText::new(name).with_default_highlights(
+            &name_style,
+            match_ranges.into_iter().map(|r| (r, highlight_style)),
+        )
+    };
 
     let detail_styled = detail.map(|d| {
         let mut detail_style = base_text_style;
@@ -598,6 +647,7 @@ mod tests {
                 data: None,
             },
             target: Unclipped(PointUtf16::new(line, 3)),
+            label: None,
         }
     }
 

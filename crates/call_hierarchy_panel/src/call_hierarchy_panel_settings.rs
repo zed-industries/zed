@@ -1,4 +1,4 @@
-use editor::EditorSettings;
+use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::{App, Pixels};
 use settings::RegisterSetting;
 pub use settings::{DockSide, Settings, ShowIndentGuides};
@@ -32,6 +32,18 @@ impl ScrollbarVisibility for CallHierarchyPanelSettings {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct CallHierarchyPanelSettingsScrollbarProxy;
+
+impl ScrollbarVisibility for CallHierarchyPanelSettingsScrollbarProxy {
+    fn visibility(&self, cx: &App) -> ShowScrollbar {
+        CallHierarchyPanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
+}
+
 impl Settings for CallHierarchyPanelSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let panel = content.call_hierarchy_panel.as_ref().unwrap();
@@ -52,7 +64,7 @@ impl Settings for CallHierarchyPanelSettings {
                     .scrollbar
                     .as_ref()
                     .and_then(|s| s.show)
-                    .map(Into::into),
+                    .map(ui_scrollbar_settings_from_raw),
             },
         }
     }

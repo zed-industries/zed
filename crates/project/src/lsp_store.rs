@@ -6170,7 +6170,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -6223,7 +6223,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -6276,7 +6276,7 @@ impl LspStore {
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                DEFAULT_LSP_REQUEST_TIMEOUT,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
@@ -13459,10 +13459,10 @@ impl LspStore {
         let buffer = lsp_store
             .update(cx, |lsp_store, cx| {
                 lsp_store.open_local_buffer_via_lsp(uri, server_id, cx)
-            })?
+            })
             .await?;
 
-        let buffer_version = buffer.read_with(cx, |buffer, _| buffer.version())?;
+        let buffer_version = buffer.read_with(cx, |buffer, _| buffer.version());
         let request =
             T::from_proto(proto_request, lsp_store.clone(), buffer.clone(), cx.clone()).await?;
         let key = LspKey {
@@ -13527,7 +13527,7 @@ impl LspStore {
                         .ok();
                 }),
             );
-        })?;
+        });
         Ok(())
     }
 

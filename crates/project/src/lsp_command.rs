@@ -483,10 +483,10 @@ impl LspCommand for PrepareCallHierarchy {
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
-            })?
+            })
             .await?;
         Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
         })
     }
 

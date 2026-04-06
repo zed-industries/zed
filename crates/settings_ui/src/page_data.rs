@@ -5308,7 +5308,11 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("call_hierarchy_panel.button"),
                     pick: |settings_content| {
-                        settings_content.call_hierarchy_panel.as_ref()?.button.as_ref()
+                        settings_content
+                            .call_hierarchy_panel
+                            .as_ref()?
+                            .button
+                            .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
@@ -5326,10 +5330,17 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("call_hierarchy_panel.dock"),
                     pick: |settings_content| {
-                        settings_content.call_hierarchy_panel.as_ref()?.dock.as_ref()
+                        settings_content
+                            .call_hierarchy_panel
+                            .as_ref()?
+                            .dock
+                            .as_ref()
                     },
                     write: |settings_content, value| {
-                        settings_content.call_hierarchy_panel.get_or_insert_default().dock = value;
+                        settings_content
+                            .call_hierarchy_panel
+                            .get_or_insert_default()
+                            .dock = value;
                     },
                 }),
                 metadata: None,
@@ -5363,7 +5374,11 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("call_hierarchy_panel.indent_size"),
                     pick: |settings_content| {
-                        settings_content.call_hierarchy_panel.as_ref()?.indent_size.as_ref()
+                        settings_content
+                            .call_hierarchy_panel
+                            .as_ref()?
+                            .indent_size
+                            .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content

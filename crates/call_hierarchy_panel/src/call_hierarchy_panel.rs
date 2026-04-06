@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use call_hierarchy::{Call, CallHierarchyMode, fetch_calls, render_item};
+use call_hierarchy::{Call, CallHierarchyMode, fetch_calls, make_call, render_item};
 
 use anyhow::Context as _;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::{
     Bias, Editor, SelectionEffects, ShowCallHierarchy, items::entry_label_color, scroll::Autoscroll,
 };
@@ -35,10 +35,13 @@ use ui::{
 use util::ResultExt;
 use workspace::{
     Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelSizeState},
 };
 
-use call_hierarchy_panel_settings::{CallHierarchyPanelSettings, DockSide, ShowIndentGuides};
+use call_hierarchy_panel_settings::{
+    CallHierarchyPanelSettings, CallHierarchyPanelSettingsScrollbarProxy, DockSide,
+    ShowIndentGuides,
+};
 
 actions!(
     call_hierarchy_panel,
@@ -152,7 +155,6 @@ impl<'a> Iterator for VisibleEntryIter<'a> {
 }
 
 pub struct CallHierarchyPanel {
-    width: Option<Pixels>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     active: bool,
@@ -178,6 +180,7 @@ pub struct CallHierarchyPanel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SerializedCallHierarchyPanel {
+    #[serde(default, skip_serializing)]
     width: Option<f32>,
     active: Option<bool>,
 }
@@ -205,21 +208,37 @@ impl CallHierarchyPanel {
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
         let serialization_key = Self::serialization_key();
+        let kvp = cx.update(|_, cx| KeyValueStore::global(cx))?;
         let serialized_panel = cx
-            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
+            .background_spawn(async move { kvp.read_kvp(&serialization_key) })
             .await
             .context("loading call hierarchy panel")
             .log_err()
             .flatten()
-            .and_then(|panel| {
-                serde_json::from_str::<SerializedCallHierarchyPanel>(&panel).log_err()
-            });
+            .map(|panel| serde_json::from_str::<SerializedCallHierarchyPanel>(&panel))
+            .transpose()
+            .log_err()
+            .flatten();
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = CallHierarchyPanel::new(workspace, window, cx);
             if let Some(serialized_panel) = serialized_panel {
+                if let Some(width) = serialized_panel.width
+                    && workspace
+                        .persisted_panel_size_state(CALL_HIERARCHY_PANEL_KEY, cx)
+                        .is_none()
+                {
+                    workspace.persist_panel_size_state(
+                        CALL_HIERARCHY_PANEL_KEY,
+                        PanelSizeState {
+                            size: Some(px(width)),
+                            flex: None,
+                        },
+                        cx,
+                    );
+                }
+
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width.map(gpui::px);
                     panel.active = serialized_panel.active.unwrap_or(false);
                     cx.notify();
                 });
@@ -259,7 +278,6 @@ impl CallHierarchyPanel {
             let focus_handle = cx.focus_handle();
 
             Self {
-                width: None,
                 workspace: workspace_weak,
                 project,
                 active: false,
@@ -368,13 +386,17 @@ impl CallHierarchyPanel {
             let (state, children) =
                 expand(&root_item, &project, &buffer, mode, &panel, &mut cx).await;
 
+            let root_call = make_call(
+                root_item.clone(),
+                root_item.selection_range.start,
+                &project,
+                &mut cx,
+            )
+            .await;
             let root_entry = CallHierarchyEntry {
                 entry: CachedEntry {
                     id: EntryId::next(),
-                    call: Call {
-                        target: root_item.selection_range.start,
-                        item: root_item,
-                    },
+                    call: root_call,
                     state,
                     depth: 0,
                     string_match: None,
@@ -407,17 +429,16 @@ impl CallHierarchyPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        let width = self.width;
         let active = Some(self.active);
         let serialization_key = Self::serialization_key();
+        let kvp = KeyValueStore::global(cx);
 
         self.pending_serialization = cx.background_spawn(async move {
             let serial = SerializedCallHierarchyPanel {
-                width: width.map(|w| w.into()),
+                width: None,
                 active,
             };
-            KEY_VALUE_STORE
-                .write_kvp(serialization_key, serde_json::to_string(&serial).ok()?)
+            kvp.write_kvp(serialization_key, serde_json::to_string(&serial).ok()?)
                 .await
                 .log_err();
             Some(())
@@ -485,13 +506,17 @@ impl CallHierarchyPanel {
             let (state, children) =
                 expand(&root_item, &project, &buffer, mode, &panel, &mut cx).await;
 
+            let root_call = make_call(
+                root_item.clone(),
+                root_item.selection_range.start,
+                &project,
+                &mut cx,
+            )
+            .await;
             let root_entry = CallHierarchyEntry {
                 entry: CachedEntry {
                     id: EntryId::next(),
-                    call: Call {
-                        target: root_item.selection_range.start,
-                        item: root_item,
-                    },
+                    call: root_call,
                     state,
                     depth: 0,
                     string_match: None,
@@ -564,13 +589,17 @@ impl CallHierarchyPanel {
                 return;
             };
 
+            let root_call = make_call(
+                root_item.clone(),
+                root_item.selection_range.start,
+                &project,
+                &mut cx,
+            )
+            .await;
             let mut root_entry = CallHierarchyEntry {
                 entry: CachedEntry {
                     id: EntryId::next(),
-                    call: Call {
-                        target: root_item.selection_range.start,
-                        item: root_item,
-                    },
+                    call: root_call,
                     state: CachedEntryState::Unknown,
                     depth: 0,
                     string_match: None,
@@ -821,8 +850,8 @@ impl CallHierarchyPanel {
                 let position = buffer.read(cx).clip_point_utf16(start, Bias::Left);
                 let pane = workspace.active_pane().clone();
 
-                let editor =
-                    workspace.open_project_item::<Editor>(pane, buffer, true, true, window, cx);
+                let editor = workspace
+                    .open_project_item::<Editor>(pane, buffer, true, true, true, true, window, cx);
 
                 editor.update(cx, |editor, cx| {
                     editor.change_selections(
@@ -847,7 +876,7 @@ impl CallHierarchyPanel {
         }
 
         if self.filter_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
 
         let new_index = match self.selected_index {
@@ -867,7 +896,7 @@ impl CallHierarchyPanel {
         }
 
         if self.filter_editor.focus_handle(cx).is_focused(window) {
-            self.focus_handle.focus(window);
+            self.focus_handle.focus(window, cx);
         }
 
         let new_index = match self.selected_index {
@@ -1269,7 +1298,7 @@ impl CallHierarchyPanel {
                 .size_full()
                 .child(list_contents)
                 .custom_scrollbars(
-                    Scrollbars::for_settings::<CallHierarchyPanelSettings>()
+                    Scrollbars::for_settings::<CallHierarchyPanelSettingsScrollbarProxy>()
                         .tracked_scroll_handle(&self.scroll_handle)
                         .with_track_along(
                             ScrollAxes::Horizontal,
@@ -1559,17 +1588,8 @@ impl Panel for CallHierarchyPanel {
 
     fn set_position(&mut self, _position: DockPosition, _: &mut Window, _cx: &mut Context<Self>) {}
 
-    fn size(&self, _: &Window, cx: &App) -> Pixels {
-        self.width
-            .unwrap_or_else(|| CallHierarchyPanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        self.width = size;
-        cx.notify();
-        cx.defer_in(window, |this, _, cx| {
-            this.serialize(cx);
-        });
+    fn default_size(&self, _: &Window, cx: &App) -> Pixels {
+        CallHierarchyPanelSettings::get_global(cx).default_width
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
@@ -1645,6 +1665,7 @@ mod tests {
                 call: Call {
                     target: item.selection_range.start,
                     item,
+                    label: None,
                 },
                 state,
                 depth: 0,
