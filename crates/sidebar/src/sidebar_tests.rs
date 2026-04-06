@@ -4857,22 +4857,24 @@ async fn test_transient_workspace_lifecycle(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
-    let (fs, project_a) =
-        init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
+    let (fs, project_a) = init_multi_project_test(
+        &["/project-a", "/project-b", "/project-c", "/project-d"],
+        cx,
+    )
+    .await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
     let _sidebar = setup_sidebar(&multi_workspace, cx);
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.sidebar_open()));
 
     // Add B — retained since sidebar is open.
-    add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    let workspace_a = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
         2
     );
 
-    // Switch to A — B survives.
-    let workspace_a =
-        multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
+    // Switch to A — B survives. (Switching from one internal workspace, to another)
     multi_workspace.update_in(cx, |mw, window, cx| mw.activate(workspace_a, window, cx));
     cx.run_until_parked();
     assert_eq!(
@@ -4888,13 +4890,21 @@ async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
         2
     );
 
-    // Add C — added as new transient workspace.
+    // Add C — added as new transient workspace. (switching from retained, to transient)
     let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
         3
     );
     assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
+
+    // Add D — replaces C as the transient workspace (Have retained and transient workspaces, transient workspace is dropped)
+    let workspace_d = add_test_project("/project-d", &fs, &multi_workspace, cx).await;
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        3
+    );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_d));
 }
 
 #[gpui::test]

@@ -2535,6 +2535,10 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
+
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
         });
@@ -4191,6 +4195,10 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
+
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
         });
@@ -4288,6 +4296,10 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
+
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.workspace().update(cx, |ws, _cx| {
                 ws.set_database_id(ws1_id);
@@ -4384,6 +4396,10 @@ mod tests {
 
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
 
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
@@ -4745,6 +4761,10 @@ mod tests {
         // becomes the active workspace.
         let (multi_workspace, cx) = cx
             .add_window_view(|window, cx| MultiWorkspace::test_new(project_2.clone(), window, cx));
+
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
 
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.test_add_workspace(project_1.clone(), window, cx);

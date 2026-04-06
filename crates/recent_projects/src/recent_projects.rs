@@ -2054,6 +2054,11 @@ mod tests {
         let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
                 assert!(!multi_workspace.workspace().read(cx).is_edited())
             })
             .unwrap();
