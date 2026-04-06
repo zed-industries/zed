@@ -10155,10 +10155,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "editor",
+ "fs",
  "gpui",
  "language",
  "log",
  "markdown",
+ "project",
+ "serde_json",
  "settings",
  "tempfile",
  "theme_settings",
