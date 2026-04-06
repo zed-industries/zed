@@ -810,15 +810,9 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
         let agent_id = self.agent.agent_id();
-        let available_commands = thread.read_with(cx, |thread, _cx| {
-            available_commands_for_thread_view(
-                thread.connection().as_ref(),
-                thread.available_commands().to_vec(),
-            )
-        });
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
             thread.read(cx).prompt_capabilities(),
-            available_commands,
+            thread.read(cx).available_commands().to_vec(),
         )));
 
         let action_log = thread.read(cx).action_log().clone();
@@ -1454,20 +1448,13 @@ impl ConversationView {
                 self.emit_token_limit_telemetry_if_needed(thread, cx);
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
-                let available_commands = thread.read_with(cx, |thread, _cx| {
-                    available_commands_for_thread_view(
-                        thread.connection().as_ref(),
-                        available_commands.clone(),
-                    )
-                });
-
                 let has_commands = !available_commands.is_empty();
                 if let Some(thread_view) = self.thread_view(&thread_id) {
                     thread_view.update(cx, |thread_view, _cx| {
                         thread_view
                             .session_capabilities
                             .write()
-                            .set_available_commands(available_commands);
+                            .set_available_commands(available_commands.clone());
                     });
                 }
 
@@ -2348,8 +2335,9 @@ impl ConversationView {
         }
     }
 
+    #[cfg(feature = "audio")]
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
-        let _visible = window.is_window_active()
+        let visible = window.is_window_active()
             && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
                 self.agent_panel_visible(&mw, cx)
             } else {
@@ -2357,10 +2345,8 @@ impl ConversationView {
                     .upgrade()
                     .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
             };
-        #[cfg(feature = "audio")]
         let settings = AgentSettings::get_global(cx);
-        #[cfg(feature = "audio")]
-        if settings.play_sound_when_agent_done.should_play(_visible) {
+        if settings.play_sound_when_agent_done.should_play(visible) {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
@@ -2623,22 +2609,6 @@ fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
     } else {
         format!("Message {} — @ to include context", agent_name)
     }
-}
-
-fn available_commands_for_thread_view(
-    connection: &dyn AgentConnection,
-    mut available_commands: Vec<acp::AvailableCommand>,
-) -> Vec<acp::AvailableCommand> {
-    if connection
-        .auth_methods()
-        .iter()
-        .any(|method| method.id().0.as_ref() == "claude-login")
-    {
-        available_commands.push(acp::AvailableCommand::new("login", "Authenticate"));
-        available_commands.push(acp::AvailableCommand::new("logout", "Authenticate"));
-    }
-
-    available_commands
 }
 
 impl Focusable for ConversationView {
@@ -3059,8 +3029,7 @@ pub(crate) mod tests {
                     thread.handle_session_update(
                         acp::SessionUpdate::AvailableCommandsUpdate(
                             acp::AvailableCommandsUpdate::new(vec![acp::AvailableCommand::new(
-                                "help",
-                                "Get help",
+                                "help", "Get help",
                             )]),
                         ),
                         cx,
@@ -3136,13 +3105,16 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let message_editor = message_editor(&conversation_view, cx);
-        let editor = message_editor.update(cx, |message_editor, _cx| {
-            message_editor.editor().clone()
-        });
+        let editor =
+            message_editor.update(cx, |message_editor, _cx| message_editor.editor().clone());
         let placeholder = editor.update(cx, |editor, cx| editor.placeholder_text(cx));
 
         active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
-            let available_commands = view.session_capabilities.read().available_commands().to_vec();
+            let available_commands = view
+                .session_capabilities
+                .read()
+                .available_commands()
+                .to_vec();
             assert_eq!(available_commands.len(), 1);
             assert_eq!(available_commands[0].name.as_str(), "help");
         });
