@@ -74,10 +74,7 @@ use workspace::{
     DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewTabsSettings,
     SelectedEntry, SplitDirection, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{
-        DetachAndPromptErr, NotificationId, NotifyResultExt, NotifyTaskExt, show_app_notification,
-        simple_message_notification::MessageNotification,
-    },
+    notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
 use worktree::CreatedEntry;
 use zed_actions::{
