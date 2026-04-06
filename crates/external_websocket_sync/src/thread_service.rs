@@ -478,6 +478,16 @@ fn ensure_thread_subscription(
         return;
     }
 
+    let entity_id = thread_entity.entity_id();
+    eprintln!(
+        "🔔 [THREAD_SERVICE] Creating NEW subscription for thread {} on entity {:?}",
+        thread_id, entity_id
+    );
+    log::info!(
+        "🔔 [THREAD_SERVICE] Creating NEW subscription for thread {} on entity {:?}",
+        thread_id, entity_id
+    );
+
     let thread_id_for_sub = thread_id.to_string();
     mark_persistent_subscription(thread_id.to_string());
 
@@ -489,7 +499,13 @@ fn ensure_thread_subscription(
         crate::get_thread_request_id(thread_id).unwrap_or_default()
     );
 
+    let sub_entity_id = entity_id;
     cx.subscribe(thread_entity, move |thread_entity, event, cx| {
+        let current_entity_id = thread_entity.entity_id();
+        eprintln!(
+            "🔔 [THREAD_SERVICE] Subscription FIRED for thread {} on entity {:?} (subscribed to {:?}), event: {:?}",
+            thread_id_for_sub, current_entity_id, sub_entity_id, std::mem::discriminant(event)
+        );
         match event {
             AcpThreadEvent::NewEntry => {
                 let thread = thread_entity.read(cx);

@@ -690,3 +690,4 @@ pub fn get_websocket_connection_status() -> WebSocketConnectionStatus {
         None => WebSocketConnectionStatus::NotInitialized,
     }
 }
+

@@ -1107,6 +1107,12 @@ impl AgentPanel {
                             _ => crate::Agent::NativeAgent,
                         };
 
+                        // Update selected_agent_type so serialization saves the correct type.
+                        // Without this, the panel serializes as NativeAgent, and on next
+                        // startup the restoration check goes through the sqlite path (which
+                        // fails for ACP agents), preventing thread restoration.
+                        this.selected_agent_type = connection_agent.clone().into();
+
                         let server = connection_agent.server(this.fs.clone(), this.thread_store.clone());
 
                         let history = this

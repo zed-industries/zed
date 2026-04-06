@@ -758,6 +758,10 @@ impl ConversationView {
         // Register thread in THREAD_REGISTRY
         {
             let session_id_str = id.to_string();
+            eprintln!(
+                "📋 [CONV_VIEW] from_existing_thread: registering entity {:?} for session {}",
+                thread.entity_id(), session_id_str
+            );
             external_websocket_sync::register_thread(session_id_str, thread);
         }
 
@@ -991,7 +995,12 @@ impl ConversationView {
                         #[cfg(feature = "external_websocket_sync")]
                         {
                             let session_id = current.read(cx).thread.read(cx).session_id().to_string();
-                            external_websocket_sync::register_thread(session_id, current.read(cx).thread.clone());
+                            let entity = current.read(cx).thread.clone();
+                            eprintln!(
+                                "📋 [CONV_VIEW] initial_state: registering entity {:?} for session {} (is_resume={})",
+                                entity.entity_id(), session_id, is_resume
+                            );
+                            external_websocket_sync::register_thread(session_id, entity);
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
