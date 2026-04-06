@@ -84,8 +84,8 @@ use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     WorkspaceDb, delete_unloaded_items,
     model::{
-        DockStructure, ItemId, SerializedMultiWorkspace, SerializedWorkspaceLocation,
-        SessionWorkspace,
+        DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
+        SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces, resolve_worktree_workspaces,
 };
@@ -8621,30 +8621,32 @@ pub async fn last_session_workspace_locations(
         .log_err()
 }
 
-pub struct MultiWorkspaceRestoreResult {
-    pub window_handle: WindowHandle<MultiWorkspace>,
-    pub errors: Vec<anyhow::Error>,
-}
-
 pub async fn restore_multiworkspace(
     multi_workspace: SerializedMultiWorkspace,
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
-) -> anyhow::Result<MultiWorkspaceRestoreResult> {
-    let SerializedMultiWorkspace { workspaces, state } = multi_workspace;
-    let mut group_iter = workspaces.into_iter();
-    let first = group_iter
-        .next()
-        .context("window group must not be empty")?;
+) -> anyhow::Result<WindowHandle<MultiWorkspace>> {
+    let SerializedMultiWorkspace {
+        active_workspace,
+        state,
+    } = multi_workspace;
+    let MultiWorkspaceState {
+        sidebar_open,
+        project_group_keys,
+        sidebar_state,
+        ..
+    } = state;
 
-    let window_handle = if first.paths.is_empty() {
-        cx.update(|cx| open_workspace_by_id(first.workspace_id, app_state.clone(), None, cx))
-            .await?
+    let window_handle = if active_workspace.paths.is_empty() {
+        cx.update(|cx| {
+            open_workspace_by_id(active_workspace.workspace_id, app_state.clone(), None, cx)
+        })
+        .await?
     } else {
         let OpenResult { window, .. } = cx
             .update(|cx| {
                 Workspace::new_local(
-                    first.paths.paths().to_vec(),
+                    active_workspace.paths.paths().to_vec(),
                     app_state.clone(),
                     None,
                     None,
@@ -8657,65 +8659,17 @@ pub async fn restore_multiworkspace(
         window
     };
 
-    let mut errors = Vec::new();
-
-    for session_workspace in group_iter {
-        let error = if session_workspace.paths.is_empty() {
-            cx.update(|cx| {
-                open_workspace_by_id(
-                    session_workspace.workspace_id,
-                    app_state.clone(),
-                    Some(window_handle),
-                    cx,
-                )
-            })
-            .await
-            .err()
-        } else {
-            cx.update(|cx| {
-                Workspace::new_local(
-                    session_workspace.paths.paths().to_vec(),
-                    app_state.clone(),
-                    Some(window_handle),
-                    None,
-                    None,
-                    OpenMode::Add,
-                    cx,
-                )
-            })
-            .await
-            .err()
-        };
-
-        if let Some(error) = error {
-            errors.push(error);
-        }
-    }
-
-    if let Some(target_id) = state.active_workspace_id {
+    if !project_group_keys.is_empty() {
+        let restored_keys: Vec<ProjectGroupKey> =
+            project_group_keys.into_iter().map(Into::into).collect();
         window_handle
-            .update(cx, |multi_workspace, window, cx| {
-                let target_index = multi_workspace
-                    .workspaces()
-                    .iter()
-                    .position(|ws| ws.read(cx).database_id() == Some(target_id));
-                let index = target_index.unwrap_or(0);
-                if let Some(workspace) = multi_workspace.workspaces().get(index).cloned() {
-                    multi_workspace.activate(workspace, window, cx);
-                }
-            })
-            .ok();
-    } else {
-        window_handle
-            .update(cx, |multi_workspace, window, cx| {
-                if let Some(workspace) = multi_workspace.workspaces().first().cloned() {
-                    multi_workspace.activate(workspace, window, cx);
-                }
+            .update(cx, |multi_workspace, _window, _cx| {
+                multi_workspace.restore_project_group_keys(restored_keys);
             })
             .ok();
     }
 
-    if state.sidebar_open {
+    if sidebar_open {
         window_handle
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace.open_sidebar(cx);
@@ -8723,8 +8677,7 @@ pub async fn restore_multiworkspace(
             .ok();
     }
 
-    if let Some(sidebar_state) = &state.sidebar_state {
-        let sidebar_state = sidebar_state.clone();
+    if let Some(sidebar_state) = sidebar_state {
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 if let Some(sidebar) = multi_workspace.sidebar() {
@@ -8741,10 +8694,7 @@ pub async fn restore_multiworkspace(
         })
         .ok();
 
-    Ok(MultiWorkspaceRestoreResult {
-        window_handle,
-        errors,
-    })
+    Ok(window_handle)
 }
 
 actions!(
