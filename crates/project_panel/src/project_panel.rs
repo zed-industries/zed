@@ -4380,6 +4380,20 @@ impl ProjectPanel {
                         this.marked_entries.clear();
                         this.update_visible_entries(new_selection, false, false, window, cx);
                     }
+
+                    let changes: Vec<Change> = opened_entries
+                        .iter()
+                        .filter_map(|entry_id| {
+                            worktree.read(cx).entry_for_id(*entry_id).map(|entry| {
+                                Change::Created(ProjectPath {
+                                    worktree_id,
+                                    path: entry.path.clone(),
+                                })
+                            })
+                        })
+                        .collect();
+
+                    this.undo_manager.record(changes).log_err();
                 })
             }
             .log_err()
