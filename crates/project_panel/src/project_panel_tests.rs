@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, MultiWorkspace, Pane, Workspace,
-    item::{Item, ProjectItem},
+    item::{Item, ProjectItem, test::TestItem},
     register_project_item,
 };
 
@@ -6013,6 +6013,85 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
         ],
         "With no auto reveal, explicit reveal should show the gitignored entry in the project panel"
     );
+
+    // Create a file in a different folder than the one in the project so we can
+    // later open it and ensure that, attempting to reveal it in the project
+    // panel shows a notification and does not focus the project panel.
+    fs.insert_tree(
+        "/external",
+        json!({
+            "file.txt": "External File",
+        }),
+    )
+    .await;
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/external/file.txt", false, cx)
+        })
+        .await
+        .unwrap();
+
+    let entry = worktree.update(cx, |worktree, _| worktree.root_entry().unwrap().id);
+
+    panel.update(cx, |panel, cx| {
+        panel.project.update(cx, |_, cx| {
+            cx.emit(project::Event::RevealInProjectPanel(entry))
+        })
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Project panel should not be focused after attempting to reveal an invisible worktree entry"
+        )
+    });
+
+    workspace.update_in(cx, |workspace, _, cx| {
+        let notifications = workspace.notification_ids();
+        assert_eq!(
+            notifications.len(),
+            1,
+            "A simple notification should be shown when trying to reveal an invisible worktree entry"
+        );
+
+        workspace.dismiss_notification(&notifications[0], cx);
+        assert_eq!(
+            workspace.notification_ids().len(),
+            0,
+            "No notifications should be left after dismissing"
+        );
+    });
+
+    // Create an empty buffer so we can ensure that, attempting to reveal it in
+    // the project panel shows a notification and does not focus the project
+    // panel.
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.update_in(cx, |pane, window, cx| {
+        let item = cx.new(|cx| TestItem::new(cx).with_label("Unsaved buffer"));
+        pane.add_item(Box::new(item), false, false, None, window, cx);
+    });
+
+    cx.dispatch_action(workspace::RevealInProjectPanel::default());
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(
+            !panel.focus_handle(cx).is_focused(window),
+            "Project panel should not be focused after attempting to reveal an unsaved buffer"
+        )
+    });
+
+    workspace.update_in(cx, |workspace, _, cx| {
+        let notifications = workspace.notification_ids();
+        assert_eq!(
+            notifications.len(),
+            1,
+            "A simple notification should be shown when trying to reveal an unsaved buffer"
+        );
+        workspace.dismiss_notification(&notifications[0], cx);
+    });
 }
 
 #[gpui::test]
