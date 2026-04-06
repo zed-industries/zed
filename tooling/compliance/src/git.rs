@@ -428,6 +428,7 @@ mod tests {
             v0.170.2
             v0.171.3
             v0.171.4
+            v0.172.0
             v0.172.8
             v0.172.9
             v0.172.11
@@ -453,38 +454,28 @@ mod tests {
     }
 
     #[test]
-    fn find_previous_minor_resets_patch_to_zero() {
+    fn find_previous_minor_with_major_version_gap() {
         let input = indoc! {"
-            v0.170.1
-            v0.171.3
+            v0.172.0
+            v0.172.9
             v0.172.11
         "};
         let list = VersionTagList::from_str(input).unwrap().sorted();
-        let target = VersionTag::parse("v0.173.0").unwrap();
+        let target = VersionTag::parse("v1.0.0").unwrap();
         let previous = list.find_previous_minor_version(&target).unwrap();
         assert_eq!(previous.to_string(), "v0.172.0");
     }
 
     #[test]
-    fn find_previous_minor_preserves_release_channel() {
+    fn find_previous_minor_requires_zero_patch_version() {
         let input = indoc! {"
-            v0.170.1
-            v0.171.3
-            v0.172.8
+            v0.172.0
+            v0.172.9
+            v0.172.11
         "};
         let list = VersionTagList::from_str(input).unwrap().sorted();
-        let target = VersionTag::parse("v0.173.0-pre").unwrap();
-        let previous = list.find_previous_minor_version(&target).unwrap();
-        assert_eq!(previous.1, ReleaseChannel::Preview);
-        assert_eq!(previous.to_string(), "v0.172.0-pre");
-    }
-
-    #[test]
-    fn find_previous_minor_with_major_version_gap() {
-        let list = VersionTagList::from_str("v0.170.1").unwrap().sorted();
         let target = VersionTag::parse("v1.0.0").unwrap();
-        let previous = list.find_previous_minor_version(&target).unwrap();
-        assert_eq!(previous.to_string(), "v0.170.0");
+        assert!(list.find_previous_minor_version(&target).is_none());
     }
 
     #[test]
