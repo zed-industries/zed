@@ -468,7 +468,7 @@ pub fn get_thread(acp_thread_id: &str) -> Option<WeakEntity<AcpThread>> {
 /// - `NewEntry`: new user/assistant message → send `message_added`
 /// - `EntryUpdated`: streaming tokens / tool call updates → throttled `message_added`
 /// - `Stopped`: turn completed → flush throttle + send `message_completed`
-fn ensure_thread_subscription(
+pub fn ensure_thread_subscription(
     thread_entity: &Entity<AcpThread>,
     thread_id: &str,
     cx: &mut App,

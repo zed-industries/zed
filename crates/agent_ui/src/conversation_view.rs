@@ -1000,7 +1000,26 @@ impl ConversationView {
                                 "📋 [CONV_VIEW] initial_state: registering entity {:?} for session {} (is_resume={})",
                                 entity.entity_id(), session_id, is_resume
                             );
-                            external_websocket_sync::register_thread(session_id, entity);
+                            external_websocket_sync::register_thread(session_id.clone(), entity.clone());
+
+                            // When panel restoration resumes a thread, set up the WebSocket
+                            // sync subscription and send agent_ready. Panel restoration
+                            // bypasses the thread_service path (which normally does both),
+                            // so we must do it here. Without agent_ready, the server waits
+                            // 60s before flushing the open_thread/chat_message queue.
+                            if is_resume {
+                                external_websocket_sync::ensure_thread_subscription(
+                                    &entity, &session_id, cx,
+                                );
+                                let agent_name = match &this.agent {
+                                    agent if agent.agent_id().0.contains("claude") => "claude",
+                                    _ => "zed-agent",
+                                };
+                                external_websocket_sync::send_agent_ready(
+                                    agent_name.to_string(),
+                                    Some(session_id),
+                                );
+                            }
                         }
 
                         let id = current.read(cx).thread.read(cx).session_id().clone();
