@@ -6581,7 +6581,7 @@ impl Repository {
             let state = RepositoryState::Local(state);
             let mut jobs = VecDeque::new();
             loop {
-                while let Ok(Some(next_job)) = job_rx.try_next() {
+                while let Ok(next_job) = job_rx.try_recv() {
                     jobs.push_back(next_job);
                 }
 
@@ -6617,7 +6617,7 @@ impl Repository {
             let state = RepositoryState::Remote(state);
             let mut jobs = VecDeque::new();
             loop {
-                while let Ok(Some(next_job)) = job_rx.try_next() {
+                while let Ok(next_job) = job_rx.try_recv() {
                     jobs.push_back(next_job);
                 }
 

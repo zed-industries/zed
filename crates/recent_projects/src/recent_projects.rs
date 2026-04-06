@@ -1160,7 +1160,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                             .update(cx, |multi_workspace, window, cx| {
                                                 multi_workspace.open_project(
                                                     paths,
-                                                    OpenMode::Replace,
+                                                    OpenMode::Activate,
                                                     window,
                                                     cx,
                                                 )
@@ -2122,14 +2122,12 @@ mod tests {
         cx.dispatch_action(*multi_workspace, menu::Confirm);
         cx.run_until_parked();
 
-        // prepare_to_close triggers a save prompt for the dirty buffer.
-        // Choose "Don't Save" (index 2) to discard and continue replacing.
+        // In multi-workspace mode, the dirty workspace is kept and a new one is
+        // opened alongside it — no save prompt needed.
         assert!(
-            cx.has_pending_prompt(),
-            "Should prompt to save dirty buffer before replacing workspace"
+            !cx.has_pending_prompt(),
+            "Should not prompt in multi-workspace mode — dirty workspace is kept"
         );
-        cx.simulate_prompt_answer("Don't Save");
-        cx.run_until_parked();
 
         multi_workspace
             .update(cx, |multi_workspace, _, cx| {
@@ -2143,8 +2141,8 @@ mod tests {
                 );
 
                 assert!(
-                    !multi_workspace.workspaces().contains(&dirty_workspace),
-                    "The original dirty workspace should have been replaced"
+                    multi_workspace.workspaces().contains(&dirty_workspace),
+                    "The dirty workspace should still be present in multi-workspace mode"
                 );
 
                 assert!(

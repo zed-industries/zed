@@ -6208,9 +6208,9 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     cx.run_until_parked();
 
-    let event = rx.try_next();
+    let event = rx.try_recv();
     assert!(
-        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
         "expected no authorization request for allowed .md file"
     );
 }
@@ -6352,9 +6352,9 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     cx.run_until_parked();
 
-    let event = rx.try_next();
+    let event = rx.try_recv();
     assert!(
-        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
         "expected no authorization request for allowed docs.rs URL"
     );
 }

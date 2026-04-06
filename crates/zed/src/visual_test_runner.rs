@@ -2071,7 +2071,7 @@ fn run_agent_thread_view_test(
     let mut tool_content: Vec<acp::ToolCallContent> = Vec::new();
     let mut tool_locations: Vec<acp::ToolCallLocation> = Vec::new();
 
-    while let Ok(Some(event)) = event_receiver.try_next() {
+    while let Ok(event) = event_receiver.try_recv() {
         if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
             update,
         ))) = event

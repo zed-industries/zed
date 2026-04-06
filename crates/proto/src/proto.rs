@@ -881,6 +881,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
             worktree_id: message.worktree_id,
             root_name: message.root_name.clone(),
             abs_path: message.abs_path.clone(),
+            root_repo_common_dir: message.root_repo_common_dir.clone(),
             updated_entries,
             removed_entries,
             scan_id: message.scan_id,

@@ -831,6 +831,8 @@ impl ConversationView {
 
         let count = thread.read(cx).entries().len();
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(2048.0));
+        list_state.set_follow_mode(gpui::FollowMode::Tail);
+
         entry_view_state.update(cx, |view_state, cx| {
             for ix in 0..count {
                 view_state.sync_entry(ix, &thread, window, cx);
@@ -844,7 +846,7 @@ impl ConversationView {
         if let Some(scroll_position) = thread.read(cx).ui_scroll_position() {
             list_state.scroll_to(scroll_position);
         } else {
-            list_state.set_follow_tail(true);
+            list_state.scroll_to_end();
         }
 
         AgentDiff::set_active_thread(&self.workspace, thread.clone(), window, cx);
@@ -1243,15 +1245,15 @@ impl ConversationView {
                 if let Some(active) = self.thread_view(&thread_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
-                    notify_entry_changed(
-                        &entry_view_state,
-                        &list_state,
-                        index..index,
-                        index,
-                        thread,
-                        window,
-                        cx,
-                    );
+                    entry_view_state.update(cx, |view_state, cx| {
+                        view_state.sync_entry(index, thread, window, cx);
+                        list_state.splice_focusable(
+                            index..index,
+                            [view_state
+                                .entry(index)
+                                .and_then(|entry| entry.focus_handle(cx))],
+                        );
+                    });
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
                     });
@@ -1261,15 +1263,10 @@ impl ConversationView {
                 if let Some(active) = self.thread_view(&thread_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
-                    notify_entry_changed(
-                        &entry_view_state,
-                        &list_state,
-                        *index..*index + 1,
-                        *index,
-                        thread,
-                        window,
-                        cx,
-                    );
+                    entry_view_state.update(cx, |view_state, cx| {
+                        view_state.sync_entry(*index, thread, window, cx);
+                    });
+                    list_state.remeasure_items(*index..*index + 1);
                     active.update(cx, |active, cx| {
                         active.auto_expand_streaming_thought(cx);
                     });
@@ -1313,7 +1310,6 @@ impl ConversationView {
                             active.clear_auto_expand_tracking();
                             if active.list_state.is_following_tail() {
                                 active.list_state.scroll_to_end();
-                                active.list_state.set_follow_tail(false);
                             }
                         }
                         active.sync_generating_indicator(cx);
@@ -1391,7 +1387,6 @@ impl ConversationView {
                             active.thread_retry_status.take();
                             if active.list_state.is_following_tail() {
                                 active.list_state.scroll_to_end();
-                                active.list_state.set_follow_tail(false);
                             }
                         }
                         active.sync_generating_indicator(cx);
@@ -2606,32 +2601,6 @@ impl ConversationView {
             store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
         }
     }
-}
-
-/// Syncs an entry's view state with the latest thread data and splices
-/// the list item so the list knows to re-measure it on the next paint.
-///
-/// Used by both `NewEntry` (splice range `index..index` to insert) and
-/// `EntryUpdated` (splice range `index..index+1` to replace), which is
-/// why the caller provides the splice range.
-fn notify_entry_changed(
-    entry_view_state: &Entity<EntryViewState>,
-    list_state: &ListState,
-    splice_range: std::ops::Range<usize>,
-    index: usize,
-    thread: &Entity<AcpThread>,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    entry_view_state.update(cx, |view_state, cx| {
-        view_state.sync_entry(index, thread, window, cx);
-        list_state.splice_focusable(
-            splice_range,
-            [view_state
-                .entry(index)
-                .and_then(|entry| entry.focus_handle(cx))],
-        );
-    });
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
