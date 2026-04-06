@@ -1,9 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use client::{Client, TelemetrySettings};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{Action, App, ClickEvent, IntoElement, Window};
+use gpui::{
+    Action, Animation, AnimationExt, App, ClickEvent, IntoElement, Window, pulsating_between,
+};
 use project::agent_server_store::AllAgentServersSettings;
 use project::project_settings::ProjectSettings;
 use project::{AgentRegistryStore, RegistryAgent};
@@ -527,21 +530,29 @@ fn render_import_settings_section(tab_index: &mut isize, cx: &mut App) -> impl I
 
 const FEATURED_AGENT_IDS: &[&str] = &["claude-acp", "codex-acp", "github-copilot-cli", "cursor"];
 
+enum AgentCardState {
+    Inactive,
+    Loading,
+    Active,
+}
+
 fn render_onboarding_agent_card(
     element_id: impl Into<ElementId>,
     icon: Icon,
     name: impl Into<SharedString>,
-    active: bool,
+    state: AgentCardState,
     action_label: &'static str,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &mut App,
 ) -> impl IntoElement {
+    let is_clickable = matches!(state, AgentCardState::Inactive);
+
     v_flex()
         .id(element_id)
         .border_1()
         .border_color(cx.theme().colors().border_variant)
         .rounded_sm()
-        .when(!active, |this| {
+        .when(is_clickable, |this| {
             this.cursor_pointer().hover(|s| {
                 s.bg(cx.theme().colors().element_hover)
                     .border_color(cx.theme().colors().border)
@@ -549,10 +560,8 @@ fn render_onboarding_agent_card(
         })
         .child(
             h_flex()
-                .px_1()
-                .py_1p5()
+                .p_1p5()
                 .gap_1()
-                .items_center()
                 .justify_center()
                 .child(icon)
                 .child(Label::new(name).size(LabelSize::Small)),
@@ -565,23 +574,32 @@ fn render_onboarding_agent_card(
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .bg(cx.theme().colors().element_background.opacity(0.5))
-                .map(|this| {
-                    if active {
-                        this.child(
-                            Icon::new(IconName::Check)
-                                .size(IconSize::Small)
-                                .color(Color::Success),
-                        )
-                    } else {
-                        this.child(
-                            Label::new(action_label)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                    }
+                .map(|this| match state {
+                    AgentCardState::Active => this.child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    ),
+                    AgentCardState::Loading => this.child(
+                        Label::new("Signing In…")
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .with_animation(
+                                "signing-in",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                    ),
+                    AgentCardState::Inactive => this.child(
+                        Label::new(action_label)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                    ),
                 }),
         )
-        .when(!active, |this| this.on_click(on_click))
+        .when(is_clickable, |this| this.on_click(on_click))
 }
 
 fn render_registry_agent_button(
@@ -600,11 +618,17 @@ fn render_registry_agent_button(
     .color(Color::Muted);
 
     let fs = <dyn Fs>::global(cx);
+    let state = if installed {
+        AgentCardState::Active
+    } else {
+        AgentCardState::Inactive
+    };
+
     render_onboarding_agent_card(
         element_id,
         icon,
         agent.name().clone(),
-        installed,
+        state,
         "Install",
         move |_, _, cx| {
             let agent_id = agent_id.clone();
@@ -628,7 +652,18 @@ fn render_registry_agent_button(
 
 fn render_zed_agent_button(cx: &mut App) -> impl IntoElement {
     let client = Client::global(cx);
-    let is_signed_in = !client.status().borrow().is_signed_out();
+    let status = client.status().borrow().clone();
+    let sign_in_state = if status.is_signed_out()
+        || matches!(
+            status,
+            client::Status::AuthenticationError | client::Status::ConnectionError
+        ) {
+        AgentCardState::Inactive
+    } else if status.is_signing_in() {
+        AgentCardState::Loading
+    } else {
+        AgentCardState::Active
+    };
 
     render_onboarding_agent_card(
         "zed-agent-onboarding",
@@ -636,8 +671,8 @@ fn render_zed_agent_button(cx: &mut App) -> impl IntoElement {
             .size(IconSize::XSmall)
             .color(Color::Muted),
         "Zed Agent",
-        is_signed_in,
-        "Sign in",
+        sign_in_state,
+        "Start Free Trial",
         move |_, _, cx| {
             let client = Client::global(cx);
             cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, cx).await)
