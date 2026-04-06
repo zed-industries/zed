@@ -56,12 +56,11 @@ impl DockerInspectConfig {
     pub(crate) fn env_as_map(&self) -> Result<HashMap<String, String>, DevContainerError> {
         let mut map = HashMap::new();
         for env_var in &self.env {
-            let parts: Vec<&str> = env_var.split("=").collect();
-            if parts.len() != 2 {
-                log::error!("Unable to parse {env_var} into and environment key-value");
+            let Some((key, value)) = env_var.split_once('=') else {
+                log::error!("Unable to parse {env_var} into an environment key-value");
                 return Err(DevContainerError::DevContainerParseFailed);
-            }
-            map.insert(parts[0].to_string(), parts[1].to_string());
+            };
+            map.insert(key.to_string(), value.to_string());
         }
         Ok(map)
     }
@@ -149,6 +148,12 @@ pub(crate) struct DockerComposeService {
     pub(crate) ports: Vec<DockerComposeServicePort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) network_mode: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_nullable_vec"
+    )]
+    pub(crate) command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
@@ -422,12 +427,8 @@ where
                 values
                     .iter()
                     .filter_map(|v| {
-                        let parts: Vec<&str> = v.split("=").collect();
-                        if parts.len() != 2 {
-                            None
-                        } else {
-                            Some((parts[0].to_string(), parts[1].to_string()))
-                        }
+                        let (key, value) = v.split_once('=')?;
+                        Some((key.to_string(), value.to_string()))
                     })
                     .collect(),
             ))
@@ -457,6 +458,14 @@ where
     }
 
     deserializer.deserialize_any(LabelsVisitor)
+}
+
+fn deserialize_nullable_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<Vec<T>>::deserialize(deserializer).map(|opt| opt.unwrap_or_default())
 }
 
 fn deserialize_nullable_labels<'de, D>(deserializer: D) -> Result<DockerConfigLabels, D::Error>
@@ -532,6 +541,46 @@ mod test {
             DockerComposeVolume, DockerInspect, DockerPs, get_remote_dir_from_config,
         },
     };
+
+    #[test]
+    fn should_parse_simple_env_var() {
+        let config = super::DockerInspectConfig {
+            labels: super::DockerConfigLabels { metadata: None },
+            image_user: None,
+            env: vec!["KEY=value".to_string()],
+        };
+
+        let map = config.env_as_map().unwrap();
+        assert_eq!(map.get("KEY").unwrap(), "value");
+    }
+
+    #[test]
+    fn should_parse_env_var_with_equals_in_value() {
+        let config = super::DockerInspectConfig {
+            labels: super::DockerConfigLabels { metadata: None },
+            image_user: None,
+            env: vec!["COMPLEX=key=val other>=1.0".to_string()],
+        };
+
+        let map = config.env_as_map().unwrap();
+        assert_eq!(map.get("COMPLEX").unwrap(), "key=val other>=1.0");
+    }
+
+    #[test]
+    fn should_parse_simple_label() {
+        let json = r#"{"volumes": [], "labels": ["com.example.key=value"]}"#;
+        let service: DockerComposeService = serde_json_lenient::from_str(json).unwrap();
+        let labels = service.labels.unwrap();
+        assert_eq!(labels.get("com.example.key").unwrap(), "value");
+    }
+
+    #[test]
+    fn should_parse_label_with_equals_in_value() {
+        let json = r#"{"volumes": [], "labels": ["com.example.key=value=with=equals"]}"#;
+        let service: DockerComposeService = serde_json_lenient::from_str(json).unwrap();
+        let labels = service.labels.unwrap();
+        assert_eq!(labels.get("com.example.key").unwrap(), "value=with=equals");
+    }
 
     #[test]
     fn should_create_docker_inspect_command() {
@@ -987,6 +1036,7 @@ mod test {
                 (
                     "app".to_string(),
                     DockerComposeService {
+                        command: vec!["sleep".to_string(), "infinity".to_string()],
                         image: Some(
                             "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
                         ),

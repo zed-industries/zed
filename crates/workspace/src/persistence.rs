@@ -337,15 +337,20 @@ pub fn read_serialized_multi_workspaces(
 
     window_groups
         .into_iter()
-        .map(|group| {
+        .filter_map(|group| {
             let window_id = group.first().and_then(|sw| sw.window_id);
             let state = window_id
                 .map(|wid| read_multi_workspace_state(wid, cx))
                 .unwrap_or_default();
-            model::SerializedMultiWorkspace {
-                workspaces: group,
+            let active_workspace = state
+                .active_workspace_id
+                .and_then(|id| group.iter().position(|ws| ws.workspace_id == id))
+                .or(Some(0))
+                .and_then(|index| group.into_iter().nth(index))?;
+            Some(model::SerializedMultiWorkspace {
+                active_workspace,
                 state,
-            }
+            })
         })
         .collect()
 }
@@ -2488,11 +2493,20 @@ pub fn delete_unloaded_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistence::model::{
-        SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace, SessionWorkspace,
+    use crate::{
+        multi_workspace::MultiWorkspace,
+        persistence::{
+            model::{
+                SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+                SessionWorkspace,
+            },
+            read_multi_workspace_state,
+        },
     };
-    use gpui;
+    use feature_flags::FeatureFlagAppExt;
+    use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
+    use project::{Project, ProjectGroupKey};
     use remote::SshConnectionOptions;
     use serde_json::json;
     use std::{thread, time::Duration};
@@ -2507,12 +2521,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_multi_workspace_serializes_on_add_and_remove(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use crate::persistence::read_multi_workspace_state;
-        use feature_flags::FeatureFlagAppExt;
-        use gpui::AppContext as _;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
@@ -4042,35 +4050,30 @@ mod tests {
 
         let results = cx.update(|cx| read_serialized_multi_workspaces(session_workspaces, cx));
 
-        // Should produce 3 groups: window 10, window 20, and the orphan.
+        // Should produce 3 results: window 10, window 20, and the orphan.
         assert_eq!(results.len(), 3);
 
-        // Window 10 group: 2 workspaces, active_workspace_id = 2, sidebar open.
+        // Window 10: active_workspace_id = 2 picks workspace 2 (paths /b), sidebar open.
         let group_10 = &results[0];
-        assert_eq!(group_10.workspaces.len(), 2);
+        assert_eq!(group_10.active_workspace.workspace_id, WorkspaceId(2));
         assert_eq!(group_10.state.active_workspace_id, Some(WorkspaceId(2)));
         assert_eq!(group_10.state.sidebar_open, true);
 
-        // Window 20 group: 1 workspace, active_workspace_id = 3, sidebar closed.
+        // Window 20: active_workspace_id = 3 picks workspace 3 (paths /c), sidebar closed.
         let group_20 = &results[1];
-        assert_eq!(group_20.workspaces.len(), 1);
+        assert_eq!(group_20.active_workspace.workspace_id, WorkspaceId(3));
         assert_eq!(group_20.state.active_workspace_id, Some(WorkspaceId(3)));
         assert_eq!(group_20.state.sidebar_open, false);
 
-        // Orphan group: no window_id, so state is default.
+        // Orphan: no active_workspace_id, falls back to first workspace (id 4).
         let group_none = &results[2];
-        assert_eq!(group_none.workspaces.len(), 1);
+        assert_eq!(group_none.active_workspace.workspace_id, WorkspaceId(4));
         assert_eq!(group_none.state.active_workspace_id, None);
         assert_eq!(group_none.state.sidebar_open, false);
     }
 
     #[gpui::test]
     async fn test_flush_serialization_completes_before_quit(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
@@ -4116,12 +4119,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_create_workspace_serialization(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use crate::persistence::read_multi_workspace_state;
-        use feature_flags::FeatureFlagAppExt;
-
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
@@ -4179,11 +4176,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_workspace_clears_session_binding(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use gpui::AppContext as _;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
@@ -4271,11 +4263,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_workspace_not_restored_as_zombie(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use gpui::AppContext as _;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
@@ -4378,11 +4365,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_pending_removal_tasks_drained_on_flush(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use gpui::AppContext as _;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
@@ -4484,10 +4466,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_create_workspace_bounds_observer_uses_fresh_id(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
@@ -4545,10 +4523,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_flush_serialization_writes_bounds(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
@@ -4703,5 +4677,220 @@ mod tests {
         // Third entry: non-git project, unchanged.
         assert_eq!(result[2].2.paths(), &[PathBuf::from("/plain-project")]);
         assert_eq!(result[2].0, WorkspaceId(4));
+    }
+
+    #[gpui::test]
+    async fn test_restore_window_with_linked_worktree_and_multiple_project_groups(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Main git repo at /repo
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {
+                    "HEAD": "ref: refs/heads/main",
+                    "worktrees": {
+                        "feature": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        // Linked worktree checkout pointing back to /repo
+        fs.insert_tree(
+            "/worktree-feature",
+            json!({
+                ".git": "gitdir: /repo/.git/worktrees/feature",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        // --- Phase 1: Set up the original multi-workspace window ---
+
+        let project_1 = Project::test(fs.clone(), ["/repo".as_ref()], cx).await;
+        let project_1_linked_worktree =
+            Project::test(fs.clone(), ["/worktree-feature".as_ref()], cx).await;
+
+        // Wait for git discovery to finish.
+        cx.run_until_parked();
+
+        // Create a second, unrelated project so we have two distinct project groups.
+        fs.insert_tree(
+            "/other-project",
+            json!({
+                ".git": { "HEAD": "ref: refs/heads/main" },
+                "readme.md": ""
+            }),
+        )
+        .await;
+        let project_2 = Project::test(fs.clone(), ["/other-project".as_ref()], cx).await;
+        cx.run_until_parked();
+
+        // Create the MultiWorkspace with project_2, then add the main repo
+        // and its linked worktree. The linked worktree is added last and
+        // becomes the active workspace.
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project_2.clone(), window, cx));
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_1.clone(), window, cx);
+        });
+
+        let workspace_worktree = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_1_linked_worktree.clone(), window, cx)
+        });
+
+        // Assign database IDs and set up session bindings so serialization
+        // writes real rows.
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            for workspace in mw.workspaces() {
+                workspace.update(cx, |ws, _cx| {
+                    ws.set_random_database_id();
+                });
+            }
+        });
+
+        // Flush serialization for each individual workspace (writes to SQLite)
+        // and for the MultiWorkspace (writes to KVP).
+        let tasks = multi_workspace.update_in(cx, |mw, window, cx| {
+            let session_id = mw.workspace().read(cx).session_id();
+            let window_id_u64 = window.window_handle().window_id().as_u64();
+
+            let mut tasks: Vec<Task<()>> = Vec::new();
+            for workspace in mw.workspaces() {
+                tasks.push(workspace.update(cx, |ws, cx| ws.flush_serialization(window, cx)));
+                if let Some(db_id) = workspace.read(cx).database_id() {
+                    let db = WorkspaceDb::global(cx);
+                    let session_id = session_id.clone();
+                    tasks.push(cx.background_spawn(async move {
+                        db.set_session_binding(db_id, session_id, Some(window_id_u64))
+                            .await
+                            .log_err();
+                    }));
+                }
+            }
+            mw.serialize(cx);
+            tasks
+        });
+        cx.run_until_parked();
+        for task in tasks {
+            task.await;
+        }
+        cx.run_until_parked();
+
+        let active_db_id = workspace_worktree.read_with(cx, |ws, _| ws.database_id());
+        assert!(
+            active_db_id.is_some(),
+            "Active workspace should have a database ID"
+        );
+
+        // --- Phase 2: Read back and verify the serialized state ---
+
+        let session_id = multi_workspace
+            .read_with(cx, |mw, cx| mw.workspace().read(cx).session_id())
+            .unwrap();
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let session_workspaces = db
+            .last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .expect("should load session workspaces");
+        assert!(
+            !session_workspaces.is_empty(),
+            "Should have at least one session workspace"
+        );
+
+        let multi_workspaces =
+            cx.update(|_, cx| read_serialized_multi_workspaces(session_workspaces, cx));
+        assert_eq!(
+            multi_workspaces.len(),
+            1,
+            "All workspaces share one window, so there should be exactly one multi-workspace"
+        );
+
+        let serialized = &multi_workspaces[0];
+        assert_eq!(
+            serialized.active_workspace.workspace_id,
+            active_db_id.unwrap(),
+        );
+        assert_eq!(serialized.state.project_group_keys.len(), 2,);
+
+        // Verify the serialized project group keys round-trip back to the
+        // originals.
+        let restored_keys: Vec<ProjectGroupKey> = serialized
+            .state
+            .project_group_keys
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect();
+        let expected_keys = vec![
+            ProjectGroupKey::new(None, PathList::new(&["/other-project"])),
+            ProjectGroupKey::new(None, PathList::new(&["/repo"])),
+        ];
+        assert_eq!(
+            restored_keys, expected_keys,
+            "Deserialized project group keys should match the originals"
+        );
+
+        // --- Phase 3: Restore the window and verify the result ---
+
+        let app_state =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).app_state().clone());
+
+        let serialized_mw = multi_workspaces.into_iter().next().unwrap();
+        let restored_handle: gpui::WindowHandle<MultiWorkspace> = cx
+            .update(|_, cx| {
+                cx.spawn(async move |mut cx| {
+                    crate::restore_multiworkspace(serialized_mw, app_state, &mut cx).await
+                })
+            })
+            .await
+            .expect("restore_multiworkspace should succeed");
+
+        cx.run_until_parked();
+
+        // The restored window should have the same project group keys.
+        let restored_keys: Vec<ProjectGroupKey> = restored_handle
+            .read_with(cx, |mw: &MultiWorkspace, _cx| {
+                mw.project_group_keys().cloned().collect()
+            })
+            .unwrap();
+        assert_eq!(
+            restored_keys, expected_keys,
+            "Restored window should have the same project group keys as the original"
+        );
+
+        // The active workspace in the restored window should have the linked
+        // worktree paths.
+        let active_paths: Vec<PathBuf> = restored_handle
+            .read_with(cx, |mw: &MultiWorkspace, cx| {
+                mw.workspace()
+                    .read(cx)
+                    .root_paths(cx)
+                    .into_iter()
+                    .map(|p: Arc<Path>| p.to_path_buf())
+                    .collect()
+            })
+            .unwrap();
+        assert_eq!(
+            active_paths,
+            vec![PathBuf::from("/worktree-feature")],
+            "The restored active workspace should be the linked worktree project"
+        );
     }
 }

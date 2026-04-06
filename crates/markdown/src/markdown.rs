@@ -154,6 +154,8 @@ impl MarkdownStyle {
             base_text_style: text_style.clone(),
             syntax: cx.theme().syntax().clone(),
             selection_background_color: colors.element_selection_background,
+            rule_color: colors.border,
+            block_quote_border_color: colors.border,
             code_block_overflow_x_scroll: true,
             heading_level_styles: Some(HeadingLevelStyles {
                 h1: Some(TextStyleRefinement {
@@ -261,6 +263,8 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
+    search_highlights: Vec<Range<usize>>,
+    active_search_highlight: Option<usize>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -428,6 +432,8 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
+            search_highlights: Vec::new(),
+            active_search_highlight: None,
         };
         this.parse(cx);
         this
@@ -539,6 +545,8 @@ impl Markdown {
         self.autoscroll_request = None;
         self.pending_parse = None;
         self.should_reparse = false;
+        self.search_highlights.clear();
+        self.active_search_highlight = None;
         // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
     }
@@ -572,6 +580,40 @@ impl Markdown {
         } else {
             Some(self.source[self.selection.start..self.selection.end].to_string())
         }
+    }
+
+    pub fn set_search_highlights(
+        &mut self,
+        highlights: Vec<Range<usize>>,
+        active: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.search_highlights = highlights;
+        self.active_search_highlight = active;
+        cx.notify();
+    }
+
+    pub fn clear_search_highlights(&mut self, cx: &mut Context<Self>) {
+        if !self.search_highlights.is_empty() || self.active_search_highlight.is_some() {
+            self.search_highlights.clear();
+            self.active_search_highlight = None;
+            cx.notify();
+        }
+    }
+
+    pub fn set_active_search_highlight(&mut self, active: Option<usize>, cx: &mut Context<Self>) {
+        if self.active_search_highlight != active {
+            self.active_search_highlight = active;
+            cx.notify();
+        }
+    }
+
+    pub fn search_highlights(&self) -> &[Range<usize>] {
+        &self.search_highlights
+    }
+
+    pub fn active_search_highlight(&self) -> Option<usize> {
+        self.active_search_highlight
     }
 
     fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
@@ -1082,18 +1124,18 @@ impl MarkdownElement {
         builder.pop_div();
     }
 
-    fn paint_selection(
-        &self,
+    fn paint_highlight_range(
         bounds: Bounds<Pixels>,
+        start: usize,
+        end: usize,
+        color: Hsla,
         rendered_text: &RenderedText,
         window: &mut Window,
-        cx: &mut App,
     ) {
-        let selection = self.markdown.read(cx).selection.clone();
-        let selection_start = rendered_text.position_for_source_index(selection.start);
-        let selection_end = rendered_text.position_for_source_index(selection.end);
+        let start_pos = rendered_text.position_for_source_index(start);
+        let end_pos = rendered_text.position_for_source_index(end);
         if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
-            selection_start.zip(selection_end)
+            start_pos.zip(end_pos)
         {
             if start_position.y == end_position.y {
                 window.paint_quad(quad(
@@ -1102,7 +1144,7 @@ impl MarkdownElement {
                         point(end_position.x, end_position.y + end_line_height),
                     ),
                     Pixels::ZERO,
-                    self.style.selection_background_color,
+                    color,
                     Edges::default(),
                     Hsla::transparent_black(),
                     BorderStyle::default(),
@@ -1114,7 +1156,7 @@ impl MarkdownElement {
                         point(bounds.right(), start_position.y + start_line_height),
                     ),
                     Pixels::ZERO,
-                    self.style.selection_background_color,
+                    color,
                     Edges::default(),
                     Hsla::transparent_black(),
                     BorderStyle::default(),
@@ -1127,7 +1169,7 @@ impl MarkdownElement {
                             point(bounds.right(), end_position.y),
                         ),
                         Pixels::ZERO,
-                        self.style.selection_background_color,
+                        color,
                         Edges::default(),
                         Hsla::transparent_black(),
                         BorderStyle::default(),
@@ -1140,12 +1182,58 @@ impl MarkdownElement {
                         point(end_position.x, end_position.y + end_line_height),
                     ),
                     Pixels::ZERO,
-                    self.style.selection_background_color,
+                    color,
                     Edges::default(),
                     Hsla::transparent_black(),
                     BorderStyle::default(),
                 ));
             }
+        }
+    }
+
+    fn paint_selection(
+        &self,
+        bounds: Bounds<Pixels>,
+        rendered_text: &RenderedText,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let selection = self.markdown.read(cx).selection.clone();
+        Self::paint_highlight_range(
+            bounds,
+            selection.start,
+            selection.end,
+            self.style.selection_background_color,
+            rendered_text,
+            window,
+        );
+    }
+
+    fn paint_search_highlights(
+        &self,
+        bounds: Bounds<Pixels>,
+        rendered_text: &RenderedText,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let markdown = self.markdown.read(cx);
+        let active_index = markdown.active_search_highlight;
+        let colors = cx.theme().colors();
+
+        for (i, highlight_range) in markdown.search_highlights.iter().enumerate() {
+            let color = if Some(i) == active_index {
+                colors.search_active_match_background
+            } else {
+                colors.search_match_background
+            };
+            Self::paint_highlight_range(
+                bounds,
+                highlight_range.start,
+                highlight_range.end,
+                color,
+                rendered_text,
+                window,
+            );
         }
     }
 
@@ -1953,6 +2041,7 @@ impl Element for MarkdownElement {
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
+        self.paint_search_highlights(bounds, &rendered_markdown.text, window, cx);
         self.paint_selection(bounds, &rendered_markdown.text, window, cx);
     }
 }

@@ -257,13 +257,6 @@ impl DevContainer {
         }
         return DevContainerBuildType::None;
     }
-
-    pub(crate) fn has_features(&self) -> bool {
-        self.features
-            .as_ref()
-            .map(|features| !features.is_empty())
-            .unwrap_or(false)
-    }
 }
 
 // Custom deserializer that parses the entire customizations object as a

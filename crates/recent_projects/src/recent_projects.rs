@@ -2003,7 +2003,7 @@ mod tests {
     use std::path::PathBuf;
 
     use editor::Editor;
-    use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle};
 
     use serde_json::json;
     use settings::SettingsStore;
@@ -2237,6 +2237,71 @@ mod tests {
                 assert!(
                     modal.is_some(),
                     "Dev container modal should be open after dispatching OpenDevContainer"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_dev_container_modal_not_dismissed_on_backdrop_click(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    ".devcontainer": {
+                        "devcontainer.json": "{}"
+                    },
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project"))],
+                app_state,
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        cx.run_until_parked();
+
+        cx.dispatch_action(*multi_workspace, OpenDevContainer);
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                assert!(
+                    multi_workspace
+                        .active_modal::<RemoteServerProjects>(cx)
+                        .is_some(),
+                    "Dev container modal should be open"
+                );
+            })
+            .unwrap();
+
+        // Click outside the modal (on the backdrop) to try to dismiss it
+        let mut vcx = VisualTestContext::from_window(*multi_workspace, cx);
+        vcx.simulate_click(gpui::point(px(1.0), px(1.0)), gpui::Modifiers::default());
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                assert!(
+                    multi_workspace
+                        .active_modal::<RemoteServerProjects>(cx)
+                        .is_some(),
+                    "Dev container modal should remain open during creation"
                 );
             })
             .unwrap();
