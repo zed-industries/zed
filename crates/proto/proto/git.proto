@@ -591,7 +591,7 @@ message Worktree {
 message GitCreateWorktree {
   uint64 project_id = 1;
   uint64 repository_id = 2;
-  optional string name = 3;
+  string name = 3;
   string directory = 4;
   optional string commit = 5;
   bool use_existing_branch = 6;

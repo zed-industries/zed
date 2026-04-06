@@ -2408,7 +2408,7 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let directory = PathBuf::from(envelope.payload.directory);
-        let name = envelope.payload.name.unwrap_or_default();
+        let name = envelope.payload.name;
         let commit = envelope.payload.commit;
         let use_existing_branch = envelope.payload.use_existing_branch;
         let target = if name.is_empty() {
@@ -6008,6 +6008,17 @@ impl Repository {
         target: CreateWorktreeTarget,
         path: PathBuf,
     ) -> oneshot::Receiver<Result<()>> {
+        if matches!(
+            &start_point,
+            CreateWorktreeStartPoint::Branched { name } if name.is_empty()
+        ) {
+            let (sender, receiver) = oneshot::channel();
+            sender
+                .send(Err(anyhow!("branch name cannot be empty")))
+                .ok();
+            return receiver;
+        }
+
         let id = self.id;
         let job_description = match target.branch_name() {
             Some(branch_name) => format!("git worktree add: {branch_name}"),
@@ -6034,7 +6045,7 @@ impl Repository {
                         .request(proto::GitCreateWorktree {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
-                            name,
+                            name: name.unwrap_or_default(),
                             directory: path.to_string_lossy().to_string(),
                             commit,
                             use_existing_branch,
