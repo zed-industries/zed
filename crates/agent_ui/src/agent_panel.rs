@@ -1096,16 +1096,23 @@ impl AgentPanel {
                         // We can't use open_thread() because it creates a new ACP connection
                         // that won't find this thread (thread_service uses a different agent
                         // instance). Instead, wrap the existing Entity<AcpThread> directly.
-                        let server = crate::Agent::NativeAgent
-                            .server(this.fs.clone(), this.thread_store.clone());
+                        //
+                        // Use the correct Agent variant based on which agent created the thread,
+                        // so the UI shows the right name, icon, and session config options
+                        // (e.g. "Bypass Permissions" toggle for Claude Code threads).
+                        let connection_agent = match agent_name.as_deref() {
+                            Some("claude") => crate::Agent::Custom {
+                                id: AgentId(agent_servers::CLAUDE_AGENT_ID.into()),
+                            },
+                            _ => crate::Agent::NativeAgent,
+                        };
 
-                        // Use the ACP-backed ThreadHistory already managed by the connection
-                        // store for NativeAgent. This is backed by AcpSessionList which queries
-                        // the ACP server for session persistence — the correct source of truth.
+                        let server = connection_agent.server(this.fs.clone(), this.thread_store.clone());
+
                         let history = this
                             .connection_store
                             .read(cx)
-                            .entry(&crate::Agent::NativeAgent)
+                            .entry(&connection_agent)
                             .and_then(|entry| entry.read(cx).history().cloned());
 
                         let conversation_view = cx.new(|cx| {
@@ -1113,7 +1120,7 @@ impl AgentPanel {
                                 notification.thread_entity.clone(),
                                 server,
                                 this.connection_store.clone(),
-                                crate::Agent::NativeAgent,
+                                connection_agent,
                                 this.workspace.clone(),
                                 this.project.clone(),
                                 Some(this.thread_store.clone()),
