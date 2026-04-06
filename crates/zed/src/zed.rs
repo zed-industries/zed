@@ -1521,7 +1521,7 @@ fn quit(_: &Quit, cx: &mut App) {
             let window = *window;
             let workspaces = window
                 .update(cx, |multi_workspace, _, _| {
-                    multi_workspace.workspaces().to_vec()
+                    multi_workspace.workspaces().cloned().collect::<Vec<_>>()
                 })
                 .log_err();
 
@@ -2455,7 +2455,6 @@ mod tests {
             .update(cx, |multi_workspace, window, cx| {
                 let mut tasks = multi_workspace
                     .workspaces()
-                    .iter()
                     .map(|workspace| {
                         workspace.update(cx, |workspace, cx| {
                             workspace.flush_serialization(window, cx)
@@ -5534,7 +5533,7 @@ mod tests {
 
         let workspace1 = window
             .read_with(cx, |multi_workspace, _| {
-                multi_workspace.workspaces()[0].clone()
+                multi_workspace.workspaces().next().unwrap().clone()
             })
             .unwrap();
 
@@ -5553,7 +5552,7 @@ mod tests {
         // Verify setup: 3 workspaces, workspace 0 active, still 1 window
         window
             .read_with(cx, |multi_workspace, _| {
-                assert_eq!(multi_workspace.workspaces().len(), 3);
+                assert_eq!(multi_workspace.workspaces().count(), 3);
                 assert_eq!(multi_workspace.workspace(), &workspace1);
             })
             .unwrap();
@@ -6034,7 +6033,7 @@ mod tests {
         // still be active rather than whichever workspace happened to restore last.
         window_a
             .update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspaces()[0].clone();
+                let workspace = multi_workspace.workspaces().next().unwrap().clone();
                 multi_workspace.activate(workspace, window, cx);
             })
             .unwrap();
@@ -6150,7 +6149,7 @@ mod tests {
                         ProjectGroupKey::new(None, PathList::new(&[dir2])),
                     ]
                 );
-                assert_eq!(mw.workspaces().len(), 1);
+                assert_eq!(mw.workspaces().count(), 1);
             })
             .unwrap();
 
@@ -6161,7 +6160,7 @@ mod tests {
                     mw.project_group_keys().cloned().collect::<Vec<_>>(),
                     vec![ProjectGroupKey::new(None, PathList::new(&[dir3]))]
                 );
-                assert_eq!(mw.workspaces().len(), 1);
+                assert_eq!(mw.workspaces().count(), 1);
             })
             .unwrap();
     }

@@ -357,7 +357,6 @@ pub fn init(cx: &mut App) {
                         .update(cx, |multi_workspace, window, cx| {
                             let sibling_workspace_ids: HashSet<WorkspaceId> = multi_workspace
                                 .workspaces()
-                                .iter()
                                 .filter_map(|ws| ws.read(cx).database_id())
                                 .collect();
 
@@ -1113,7 +1112,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                             .update(cx, |multi_workspace, window, cx| {
                                 let workspace = multi_workspace
                                     .workspaces()
-                                    .iter()
                                     .find(|ws| ws.read(cx).database_id() == Some(workspace_id))
                                     .cloned();
                                 if let Some(workspace) = workspace {
@@ -1932,7 +1930,6 @@ impl RecentProjectsDelegate {
                     .update(cx, |multi_workspace, window, cx| {
                         let workspace = multi_workspace
                             .workspaces()
-                            .iter()
                             .find(|ws| ws.read(cx).database_id() == Some(workspace_id))
                             .cloned();
                         if let Some(workspace) = workspace {
@@ -2141,7 +2138,7 @@ mod tests {
                 );
 
                 assert!(
-                    multi_workspace.workspaces().contains(&dirty_workspace),
+                    multi_workspace.workspaces().any(|w| w == &dirty_workspace),
                     "The dirty workspace should still be present in multi-workspace mode"
                 );
 

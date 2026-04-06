@@ -9063,7 +9063,7 @@ pub fn workspace_windows_for_location(
             };
 
             multi_workspace.read(cx).is_ok_and(|multi_workspace| {
-                multi_workspace.workspaces().iter().any(|workspace| {
+                multi_workspace.workspaces().any(|workspace| {
                     match workspace.read(cx).workspace_location(cx) {
                         WorkspaceLocation::Location(location, _) => {
                             match (&location, serialized_location) {
@@ -10710,7 +10710,7 @@ mod tests {
         // Activate workspace A
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                let workspace = mw.workspaces()[0].clone();
+                let workspace = mw.workspaces().next().unwrap().clone();
                 mw.activate(workspace, window, cx);
             })
             .unwrap();
@@ -14480,7 +14480,7 @@ mod tests {
         // Switch to workspace A
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                let workspace = mw.workspaces()[0].clone();
+                let workspace = mw.workspaces().next().unwrap().clone();
                 mw.activate(workspace, window, cx);
             })
             .unwrap();
@@ -14526,7 +14526,7 @@ mod tests {
         // Switch to workspace B
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                let workspace = mw.workspaces()[1].clone();
+                let workspace = mw.workspaces().nth(1).unwrap().clone();
                 mw.activate(workspace, window, cx);
             })
             .unwrap();
@@ -14535,7 +14535,7 @@ mod tests {
         // Switch back to workspace A
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                let workspace = mw.workspaces()[0].clone();
+                let workspace = mw.workspaces().next().unwrap().clone();
                 mw.activate(workspace, window, cx);
             })
             .unwrap();

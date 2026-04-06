@@ -440,7 +440,7 @@ impl MultiWorkspace {
             self.active_workspace = ActiveWorkspace::Persistent(index);
         }
         let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
-        for workspace in &self.workspaces {
+        for workspace in self.workspaces.iter() {
             workspace.update(cx, |workspace, _cx| {
                 workspace.set_sidebar_focus_handle(sidebar_focus_handle.clone());
             });
@@ -451,7 +451,7 @@ impl MultiWorkspace {
 
     pub fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
-        for workspace in &self.workspaces {
+        for workspace in self.workspaces.iter() {
             workspace.update(cx, |workspace, _cx| {
                 workspace.set_sidebar_focus_handle(None);
             });
@@ -466,11 +466,7 @@ impl MultiWorkspace {
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
         cx.spawn_in(window, async move |this, cx| {
             let workspaces = this.update(cx, |multi_workspace, _cx| {
-                let mut all = multi_workspace.workspaces().to_vec();
-                if let Some(transient) = multi_workspace.active_workspace.transient_workspace() {
-                    all.push(transient.clone());
-                }
-                all
+                multi_workspace.workspaces().cloned().collect::<Vec<_>>()
             })?;
 
             for workspace in workspaces {
@@ -744,8 +740,10 @@ impl MultiWorkspace {
         }
     }
 
-    pub fn workspaces(&self) -> &[Entity<Workspace>] {
-        &self.workspaces
+    pub fn workspaces(&self) -> impl Iterator<Item = &Entity<Workspace>> {
+        self.workspaces
+            .iter()
+            .chain(self.active_workspace.transient_workspace())
     }
 
     /// Adds a workspace to this window without changing which workspace is
