@@ -312,7 +312,7 @@ jobs:
         path: ~/.rustup
     - id: run-compliance-check
       name: release::compliance_check::run_compliance_check
-      run: cargo xtask compliance "$GITHUB_REF_NAME" --report-path "$COMPLIANCE_FILE_OUTPUT
+      run: cargo xtask compliance "$GITHUB_REF_NAME" --report-path "$COMPLIANCE_FILE_OUTPUT\"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}

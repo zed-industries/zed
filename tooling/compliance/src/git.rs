@@ -237,7 +237,8 @@ impl FromStr for CommitList {
                         .trim()
                         .split_once(CommitDetails::BODY_DELIMITER)
                         .expect("Missing body delimiter");
-                    CommitDetails::parse(line, body).expect("Parsing from the output should suceed")
+                    CommitDetails::parse(line, body)
+                        .expect("Parsing from the output should succeed")
                 })
                 .collect(),
         ))

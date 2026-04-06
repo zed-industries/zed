@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt, ops::Not};
 
 use anyhow::{Context, Result};
 use derive_more::Deref;
-use futures_util::TryStreamExt as _;
+use futures::TryStreamExt as _;
 use itertools::Itertools;
 use jsonwebtoken::EncodingKey;
 use octocrab::{
