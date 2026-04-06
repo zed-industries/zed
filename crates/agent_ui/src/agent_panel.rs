@@ -851,6 +851,21 @@ impl AgentPanel {
                 })?
                 .await?;
 
+            // Wait for WebSocket to connect before restoring threads.
+            // This ensures the agent_ready → open_thread handshake can complete:
+            // 1. WebSocket connects
+            // 2. Panel restoration loads thread from ACP storage (with shared lock)
+            // 3. Zed sends agent_ready
+            // 4. Server sends open_thread (which is a no-op if same thread, or loads
+            //    a different thread if the server wants to switch)
+            // The connection is local or DC-to-DC so this is fast (~100ms).
+            #[cfg(feature = "external_websocket_sync")]
+            {
+                external_websocket_sync::wait_for_websocket_connected(
+                    std::time::Duration::from_secs(10),
+                ).await;
+            }
+
             let last_active_thread = if let Some(thread_info) = serialized_panel
                 .as_ref()
                 .and_then(|p| p.last_active_thread.as_ref())

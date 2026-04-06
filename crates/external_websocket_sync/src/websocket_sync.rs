@@ -691,3 +691,29 @@ pub fn get_websocket_connection_status() -> WebSocketConnectionStatus {
     }
 }
 
+/// Wait for the WebSocket to connect, with a timeout.
+/// Returns true if connected, false if timed out.
+/// Called during panel deserialization to ensure the WebSocket is ready
+/// before the panel tries to restore threads. This guarantees the
+/// agent_ready → open_thread handshake can complete.
+pub async fn wait_for_websocket_connected(timeout: std::time::Duration) -> bool {
+    let start = std::time::Instant::now();
+    let poll_interval = std::time::Duration::from_millis(50);
+
+    loop {
+        match get_websocket_connection_status() {
+            WebSocketConnectionStatus::Connected => {
+                log::info!("✅ [WEBSOCKET] wait_for_websocket_connected: connected after {:?}", start.elapsed());
+                return true;
+            }
+            _ => {
+                if start.elapsed() >= timeout {
+                    log::warn!("⚠️ [WEBSOCKET] wait_for_websocket_connected: timed out after {:?}", timeout);
+                    return false;
+                }
+                smol::Timer::after(poll_interval).await;
+            }
+        }
+    }
+}
+
