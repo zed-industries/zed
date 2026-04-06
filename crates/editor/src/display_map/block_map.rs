@@ -2043,6 +2043,7 @@ impl BlockMapWriter<'_> {
         multi_buffer: &MultiBuffer,
         cx: &App,
     ) {
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
         let mut ranges = Vec::new();
         let mut companion_buffer_ids = HashSet::default();
         for buffer_id in buffer_ids {
@@ -2051,7 +2052,7 @@ impl BlockMapWriter<'_> {
             } else {
                 self.block_map.folded_buffers.remove(&buffer_id);
             }
-            ranges.extend(multi_buffer.range_for_buffer(buffer_id, cx));
+            ranges.extend(multi_buffer_snapshot.range_for_buffer(buffer_id));
             if let Some(companion) = &self.companion
                 && companion.inverse.is_some()
             {

@@ -155,7 +155,10 @@ async fn test_checkpoints(executor: BackgroundExecutor) {
             .unwrap()
     );
 
-    repository.restore_checkpoint(checkpoint_1).await.unwrap();
+    repository
+        .restore_checkpoint(checkpoint_1.clone())
+        .await
+        .unwrap();
     assert_eq!(
         fs.files_with_contents(Path::new("")),
         [
@@ -164,4 +167,22 @@ async fn test_checkpoints(executor: BackgroundExecutor) {
             (Path::new(path!("/foo/b")).into(), b"ipsum".into())
         ]
     );
+
+    // diff_checkpoints: identical checkpoints produce empty diff
+    let diff = repository
+        .diff_checkpoints(checkpoint_2.clone(), checkpoint_3.clone())
+        .await
+        .unwrap();
+    assert!(
+        diff.is_empty(),
+        "identical checkpoints should produce empty diff"
+    );
+
+    // diff_checkpoints: different checkpoints produce non-empty diff
+    let diff = repository
+        .diff_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
+        .await
+        .unwrap();
+    assert!(diff.contains("b"), "diff should mention changed file 'b'");
+    assert!(diff.contains("c"), "diff should mention added file 'c'");
 }

@@ -26,6 +26,7 @@ cloud_llm_client.workspace = true
 collections.workspace = true
 copilot.workspace = true
 copilot_ui.workspace = true
+credentials_provider.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
@@ -65,6 +66,7 @@ uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
+zed_credentials_provider.workspace = true
 zeta_prompt.workspace = true
 zstd.workspace = true
 

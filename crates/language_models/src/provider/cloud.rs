@@ -1,7 +1,9 @@
 use ai_onboarding::YoungAccountBanner;
 use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
-use client::{Client, UserStore, zed_urls};
+use client::{
+    Client, NeedsLlmTokenRefresh, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls,
+};
 use cloud_api_types::{OrganizationId, Plan};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME,
@@ -24,10 +26,9 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken, NeedsLlmTokenRefresh,
-    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, PaymentRequiredError, RateLimiter,
-    RefreshLlmTokenListener, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID,
-    ZED_CLOUD_PROVIDER_NAME,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken, OPEN_AI_PROVIDER_ID,
+    OPEN_AI_PROVIDER_NAME, PaymentRequiredError, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
+    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -111,7 +112,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-        let llm_api_token = LlmApiToken::global(cx);
+        let llm_api_token = global_llm_token(cx);
         Self {
             client: client.clone(),
             llm_api_token,
@@ -226,7 +227,9 @@ impl State {
         organization_id: Option<OrganizationId>,
     ) -> Result<ListModelsResponse> {
         let http_client = &client.http_client();
-        let token = llm_api_token.acquire(&client, organization_id).await?;
+        let token = client
+            .acquire_llm_token(&llm_api_token, organization_id)
+            .await?;
 
         let request = http_client::Request::builder()
             .method(Method::GET)
@@ -414,8 +417,8 @@ impl CloudLanguageModel {
     ) -> Result<PerformLlmCompletionResponse> {
         let http_client = &client.http_client();
 
-        let mut token = llm_api_token
-            .acquire(&client, organization_id.clone())
+        let mut token = client
+            .acquire_llm_token(&llm_api_token, organization_id.clone())
             .await?;
         let mut refreshed_token = false;
 
@@ -447,8 +450,8 @@ impl CloudLanguageModel {
             }
 
             if !refreshed_token && response.needs_llm_token_refresh() {
-                token = llm_api_token
-                    .refresh(&client, organization_id.clone())
+                token = client
+                    .refresh_llm_token(&llm_api_token, organization_id.clone())
                     .await?;
                 refreshed_token = true;
                 continue;
@@ -713,7 +716,9 @@ impl LanguageModel for CloudLanguageModel {
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
                 async move {
                     let http_client = &client.http_client();
-                    let token = llm_api_token.acquire(&client, organization_id).await?;
+                    let token = client
+                        .acquire_llm_token(&llm_api_token, organization_id)
+                        .await?;
 
                     let request_body = CountTokensBody {
                         provider: cloud_llm_client::LanguageModelProvider::Google,

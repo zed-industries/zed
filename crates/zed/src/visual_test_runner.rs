@@ -201,7 +201,12 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         });
         prompt_store::init(cx);
         let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
-        language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        language_model::init(cx);
+        client::RefreshLlmTokenListener::register(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            cx,
+        );
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
         project::AgentRegistryStore::init_global(
@@ -2066,7 +2071,7 @@ fn run_agent_thread_view_test(
     let mut tool_content: Vec<acp::ToolCallContent> = Vec::new();
     let mut tool_locations: Vec<acp::ToolCallLocation> = Vec::new();
 
-    while let Ok(Some(event)) = event_receiver.try_next() {
+    while let Ok(event) = event_receiver.try_recv() {
         if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
             update,
         ))) = event

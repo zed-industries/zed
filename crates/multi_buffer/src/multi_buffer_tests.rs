@@ -2898,10 +2898,11 @@ struct ReferenceExcerpt {
 struct ReferenceRegion {
     buffer_id: Option<BufferId>,
     range: Range<usize>,
-    buffer_range: Option<Range<Point>>,
+    buffer_range: Range<Point>,
+    // if this is a deleted hunk, the main buffer anchor to which the deleted content is attached
+    deleted_hunk_anchor: Option<text::Anchor>,
     status: Option<DiffHunkStatus>,
-    excerpt_range: Option<Range<text::Anchor>>,
-    excerpt_path_key_index: Option<PathKeyIndex>,
+    excerpt: Option<ReferenceExcerpt>,
 }
 
 impl ReferenceMultibuffer {
@@ -3055,7 +3056,15 @@ impl ReferenceMultibuffer {
         }
     }
 
-    fn expected_content(&self, cx: &App) -> (String, Vec<RowInfo>, HashSet<MultiBufferRow>) {
+    fn expected_content(
+        &self,
+        cx: &App,
+    ) -> (
+        String,
+        Vec<RowInfo>,
+        HashSet<MultiBufferRow>,
+        Vec<ReferenceRegion>,
+    ) {
         use util::maybe;
 
         let mut text = String::new();
@@ -3093,12 +3102,10 @@ impl ReferenceMultibuffer {
                             regions.push(ReferenceRegion {
                                 buffer_id: Some(buffer_id),
                                 range: len..text.len(),
-                                buffer_range: Some(
-                                    (offset..hunk_base_range.start).to_point(&buffer),
-                                ),
+                                buffer_range: (offset..hunk_base_range.start).to_point(&buffer),
                                 status: None,
-                                excerpt_range: Some(excerpt.range.clone()),
-                                excerpt_path_key_index: Some(excerpt.path_key_index),
+                                excerpt: Some(excerpt.clone()),
+                                deleted_hunk_anchor: None,
                             });
                         }
                     }
@@ -3110,10 +3117,10 @@ impl ReferenceMultibuffer {
                         regions.push(ReferenceRegion {
                             buffer_id: Some(buffer_id),
                             range: len..text.len(),
-                            buffer_range: Some(hunk_base_range.to_point(&buffer)),
+                            buffer_range: hunk_base_range.to_point(&buffer),
                             status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
-                            excerpt_range: Some(excerpt.range.clone()),
-                            excerpt_path_key_index: Some(excerpt.path_key_index),
+                            excerpt: Some(excerpt.clone()),
+                            deleted_hunk_anchor: None,
                         });
                     }
 
@@ -3127,10 +3134,10 @@ impl ReferenceMultibuffer {
                 regions.push(ReferenceRegion {
                     buffer_id: Some(buffer_id),
                     range: len..text.len(),
-                    buffer_range: Some((offset..buffer_range.end).to_point(&buffer)),
+                    buffer_range: (offset..buffer_range.end).to_point(&buffer),
                     status: None,
-                    excerpt_range: Some(excerpt.range.clone()),
-                    excerpt_path_key_index: Some(excerpt.path_key_index),
+                    excerpt: Some(excerpt.clone()),
+                    deleted_hunk_anchor: None,
                 });
             } else {
                 let diff = self.diffs.get(&buffer_id).unwrap().read(cx).snapshot(cx);
@@ -3181,10 +3188,10 @@ impl ReferenceMultibuffer {
                             regions.push(ReferenceRegion {
                                 buffer_id: Some(buffer_id),
                                 range: len..text.len(),
-                                buffer_range: Some((offset..hunk_range.start).to_point(&buffer)),
+                                buffer_range: (offset..hunk_range.start).to_point(&buffer),
                                 status: None,
-                                excerpt_range: Some(excerpt.range.clone()),
-                                excerpt_path_key_index: Some(excerpt.path_key_index),
+                                excerpt: Some(excerpt.clone()),
+                                deleted_hunk_anchor: None,
                             });
                         }
 
@@ -3201,12 +3208,10 @@ impl ReferenceMultibuffer {
                             regions.push(ReferenceRegion {
                                 buffer_id: Some(base_buffer.remote_id()),
                                 range: len..text.len(),
-                                buffer_range: Some(
-                                    hunk.diff_base_byte_range.to_point(&base_buffer),
-                                ),
+                                buffer_range: hunk.diff_base_byte_range.to_point(&base_buffer),
                                 status: Some(DiffHunkStatus::deleted(hunk.secondary_status)),
-                                excerpt_range: Some(excerpt.range.clone()),
-                                excerpt_path_key_index: Some(excerpt.path_key_index),
+                                excerpt: Some(excerpt.clone()),
+                                deleted_hunk_anchor: Some(hunk.buffer_range.start),
                             });
                         }
 
@@ -3221,10 +3226,10 @@ impl ReferenceMultibuffer {
                         let region = ReferenceRegion {
                             buffer_id: Some(buffer_id),
                             range,
-                            buffer_range: Some((offset..hunk_range.end).to_point(&buffer)),
+                            buffer_range: (offset..hunk_range.end).to_point(&buffer),
                             status: Some(DiffHunkStatus::added(hunk.secondary_status)),
-                            excerpt_range: Some(excerpt.range.clone()),
-                            excerpt_path_key_index: Some(excerpt.path_key_index),
+                            excerpt: Some(excerpt.clone()),
+                            deleted_hunk_anchor: None,
                         };
                         offset = hunk_range.end;
                         regions.push(region);
@@ -3238,10 +3243,10 @@ impl ReferenceMultibuffer {
                 regions.push(ReferenceRegion {
                     buffer_id: Some(buffer_id),
                     range: len..text.len(),
-                    buffer_range: Some((offset..buffer_range.end).to_point(&buffer)),
+                    buffer_range: (offset..buffer_range.end).to_point(&buffer),
                     status: None,
-                    excerpt_range: Some(excerpt.range.clone()),
-                    excerpt_path_key_index: Some(excerpt.path_key_index),
+                    excerpt: Some(excerpt.clone()),
+                    deleted_hunk_anchor: None,
                 });
             }
         }
@@ -3251,13 +3256,16 @@ impl ReferenceMultibuffer {
             regions.push(ReferenceRegion {
                 buffer_id: None,
                 range: 0..1,
-                buffer_range: Some(Point::new(0, 0)..Point::new(0, 1)),
+                buffer_range: Point::new(0, 0)..Point::new(0, 1),
                 status: None,
-                excerpt_range: None,
-                excerpt_path_key_index: None,
+                excerpt: None,
+                deleted_hunk_anchor: None,
             });
         } else {
             text.pop();
+            let region = regions.last_mut().unwrap();
+            assert!(region.deleted_hunk_anchor.is_none());
+            region.range.end -= 1;
         }
 
         // Retrieve the row info using the region that contains
@@ -3268,37 +3276,38 @@ impl ReferenceMultibuffer {
             .map(|line| {
                 let row_info = regions
                     .iter()
-                    .position(|region| region.range.contains(&ix))
+                    .rposition(|region| {
+                        region.range.contains(&ix) || (ix == text.len() && ix == region.range.end)
+                    })
                     .map_or(RowInfo::default(), |region_ix| {
                         let region = regions[region_ix].clone();
-                        let buffer_row = region.buffer_range.as_ref().map(|buffer_range| {
-                            buffer_range.start.row
-                                + text[region.range.start..ix].matches('\n').count() as u32
-                        });
-                        let main_buffer = self
-                            .excerpts
-                            .iter()
-                            .find(|e| e.range == region.excerpt_range.clone().unwrap())
-                            .map(|e| e.buffer.clone());
+                        let buffer_row = region.buffer_range.start.row
+                            + text[region.range.start..ix].matches('\n').count() as u32;
+                        let main_buffer = region.excerpt.as_ref().map(|e| e.buffer.clone());
+                        let excerpt_range = region.excerpt.as_ref().map(|e| &e.range);
                         let is_excerpt_start = region_ix == 0
-                            || &regions[region_ix - 1].excerpt_range != &region.excerpt_range
+                            || regions[region_ix - 1].excerpt.as_ref().map(|e| &e.range)
+                                != excerpt_range
                             || regions[region_ix - 1].range.is_empty();
                         let mut is_excerpt_end = region_ix == regions.len() - 1
-                            || &regions[region_ix + 1].excerpt_range != &region.excerpt_range;
+                            || regions[region_ix + 1].excerpt.as_ref().map(|e| &e.range)
+                                != excerpt_range;
                         let is_start = !text[region.range.start..ix].contains('\n');
+                        let is_last_region = region_ix == regions.len() - 1;
                         let mut is_end = if region.range.end > text.len() {
                             !text[ix..].contains('\n')
                         } else {
-                            text[ix..region.range.end.min(text.len())]
+                            let remaining_newlines = text[ix..region.range.end.min(text.len())]
                                 .matches('\n')
-                                .count()
-                                == 1
+                                .count();
+                            remaining_newlines == if is_last_region { 0 } else { 1 }
                         };
                         if region_ix < regions.len() - 1
                             && !text[ix..].contains("\n")
                             && (region.status == Some(DiffHunkStatus::added_none())
                                 || region.status.is_some_and(|s| s.is_deleted()))
-                            && regions[region_ix + 1].excerpt_range == region.excerpt_range
+                            && regions[region_ix + 1].excerpt.as_ref().map(|e| &e.range)
+                                == excerpt_range
                             && regions[region_ix + 1].range.start == text.len()
                         {
                             is_end = true;
@@ -3308,7 +3317,6 @@ impl ReferenceMultibuffer {
                             MultiBufferRow(text[..ix].matches('\n').count() as u32);
                         let mut expand_direction = None;
                         if let Some(buffer) = &main_buffer {
-                            let buffer_row = buffer_row.unwrap();
                             let needs_expand_up = is_excerpt_start && is_start && buffer_row > 0;
                             let needs_expand_down = is_excerpt_end
                                 && is_end
@@ -3326,19 +3334,18 @@ impl ReferenceMultibuffer {
                         RowInfo {
                             buffer_id: region.buffer_id,
                             diff_status: region.status,
-                            buffer_row,
+                            buffer_row: Some(buffer_row),
                             wrapped_buffer_row: None,
 
                             multibuffer_row: Some(multibuffer_row),
                             expand_info: maybe!({
                                 let direction = expand_direction?;
-                                let excerpt_range = region.excerpt_range?;
-                                let path_key_index = region.excerpt_path_key_index?;
+                                let excerpt = region.excerpt.as_ref()?;
                                 Some(ExpandInfo {
                                     direction,
                                     start_anchor: Anchor::in_buffer(
-                                        path_key_index,
-                                        excerpt_range.start,
+                                        excerpt.path_key_index,
+                                        excerpt.range.start,
                                     ),
                                 })
                             }),
@@ -3349,7 +3356,7 @@ impl ReferenceMultibuffer {
             })
             .collect();
 
-        (text, row_infos, excerpt_boundary_rows)
+        (text, row_infos, excerpt_boundary_rows, regions)
     }
 
     fn diffs_updated(&mut self, cx: &mut App) {
@@ -3413,6 +3420,95 @@ impl ReferenceMultibuffer {
                     hunk_range.start >= excerpt_range.start && hunk_range.start <= excerpt_range.end
                 })
             });
+    }
+
+    fn anchor_to_offset(&self, anchor: &Anchor, cx: &App) -> Option<MultiBufferOffset> {
+        if anchor.diff_base_anchor().is_some() {
+            panic!("reference multibuffer cannot yet resolve anchors inside deleted hunks");
+        }
+        let (anchor, snapshot, path_key) = self.anchor_to_buffer_anchor(anchor, cx)?;
+        // TODO(cole) can maybe make this and expected content call a common function instead
+        let (text, _, _, regions) = self.expected_content(cx);
+
+        // Locate the first region that contains or is past the putative location of the buffer anchor
+        let ix = regions.partition_point(|region| {
+            let excerpt = region
+                .excerpt
+                .as_ref()
+                .expect("should have no buffers in empty reference multibuffer");
+            excerpt
+                .path_key
+                .cmp(&path_key)
+                .then_with(|| {
+                    if excerpt.range.end.cmp(&anchor, &snapshot).is_lt() {
+                        Ordering::Less
+                    } else if excerpt.range.start.cmp(&anchor, &snapshot).is_gt() {
+                        Ordering::Greater
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .then_with(|| {
+                    if let Some(deleted_hunk_anchor) = region.deleted_hunk_anchor {
+                        deleted_hunk_anchor.cmp(&anchor, &snapshot)
+                    } else {
+                        let point = anchor.to_point(&snapshot);
+                        assert_eq!(region.buffer_id, Some(snapshot.remote_id()));
+                        if region.buffer_range.end < point {
+                            Ordering::Less
+                        } else if region.buffer_range.start > point {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Equal
+                        }
+                    }
+                })
+                .is_lt()
+        });
+
+        let Some(region) = regions.get(ix) else {
+            return Some(MultiBufferOffset(text.len()));
+        };
+
+        let offset = if region.buffer_id == Some(snapshot.remote_id()) {
+            let buffer_offset = anchor.to_offset(&snapshot);
+            let buffer_range = region.buffer_range.to_offset(&snapshot);
+            assert!(buffer_offset <= buffer_range.end);
+            let overshoot = buffer_offset.saturating_sub(buffer_range.start);
+            region.range.start + overshoot
+        } else {
+            region.range.start
+        };
+        Some(MultiBufferOffset(offset))
+    }
+
+    fn anchor_to_buffer_anchor(
+        &self,
+        anchor: &Anchor,
+        cx: &App,
+    ) -> Option<(text::Anchor, BufferSnapshot, PathKey)> {
+        let (excerpt, anchor) = match anchor {
+            Anchor::Min => {
+                let excerpt = self.excerpts.first()?;
+                (excerpt, excerpt.range.start)
+            }
+            Anchor::Excerpt(excerpt_anchor) => (
+                self.excerpts.iter().find(|excerpt| {
+                    excerpt.buffer.read(cx).remote_id() == excerpt_anchor.buffer_id()
+                })?,
+                excerpt_anchor.text_anchor,
+            ),
+            Anchor::Max => {
+                let excerpt = self.excerpts.last()?;
+                (excerpt, excerpt.range.end)
+            }
+        };
+
+        Some((
+            anchor,
+            excerpt.buffer.read(cx).snapshot(),
+            excerpt.path_key.clone(),
+        ))
     }
 }
 
@@ -3791,12 +3887,13 @@ fn mutate_excerpt_ranges(
             _ => {
                 let end_row = rng.random_range(0..=buffer.max_point().row);
                 let start_row = rng.random_range(0..=end_row);
+                let end_col = buffer.line_len(end_row);
                 log::info!(
                     "Inserting excerpt for buffer {:?}, row range {:?}",
                     buffer.remote_id(),
                     start_row..end_row
                 );
-                ranges_to_add.push(Point::new(start_row, 0)..Point::new(end_row, 0));
+                ranges_to_add.push(Point::new(start_row, 0)..Point::new(end_row, end_col));
             }
         }
     }
@@ -3820,8 +3917,36 @@ fn check_multibuffer(
         .collect::<HashSet<_>>();
     let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
 
-    let (expected_text, expected_row_infos, expected_boundary_rows) =
+    let anchors_to_check = anchors
+        .iter()
+        .filter_map(|anchor| {
+            snapshot
+                .anchor_to_buffer_anchor(*anchor)
+                .map(|(anchor, _)| anchor)
+        })
+        // Intentionally mix in some anchors that are (in general) not contained in any excerpt
+        .chain(
+            reference
+                .excerpts
+                .iter()
+                .map(|excerpt| excerpt.buffer.read(cx).remote_id())
+                .dedup()
+                .flat_map(|buffer_id| {
+                    [
+                        text::Anchor::min_for_buffer(buffer_id),
+                        text::Anchor::max_for_buffer(buffer_id),
+                    ]
+                }),
+        )
+        .map(|anchor| snapshot.anchor_in_buffer(anchor).unwrap())
+        .collect::<Vec<_>>();
+
+    let (expected_text, expected_row_infos, expected_boundary_rows, _) =
         reference.expected_content(cx);
+    let expected_anchor_offsets = anchors_to_check
+        .iter()
+        .map(|anchor| reference.anchor_to_offset(anchor, cx).unwrap())
+        .collect::<Vec<_>>();
 
     let has_diff = actual_row_infos
         .iter()
@@ -3948,6 +4073,15 @@ fn check_multibuffer(
             anchor
         );
     }
+
+    let actual_anchor_offsets = anchors_to_check
+        .into_iter()
+        .map(|anchor| anchor.to_offset(&snapshot))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_anchor_offsets, expected_anchor_offsets,
+        "buffer anchor resolves to wrong offset"
+    );
 
     for _ in 0..10 {
         let end_ix = text_rope.clip_offset(rng.random_range(0..=text_rope.len()), Bias::Right);
@@ -5910,4 +6044,105 @@ fn test_cannot_seek_backward_after_excerpt_replacement(cx: &mut TestAppContext) 
         let snapshot = multibuffer.snapshot(cx);
         snapshot.summaries_for_anchors::<Point, _>(&[anchor_in_e_b2, anchor_in_e_b3]);
     });
+}
+
+#[gpui::test]
+fn test_resolving_max_anchor_for_buffer(cx: &mut TestAppContext) {
+    let dock_base_text = indoc! {"
+        0
+        1
+        2
+        3
+        4
+        5
+        6
+        7
+        8
+        9
+        10
+        11
+        12
+    "};
+
+    let dock_text = indoc! {"
+        0
+        4
+        5
+        6
+        10
+        11
+        12
+    "};
+
+    let dock_buffer = cx.new(|cx| Buffer::local(dock_text, cx));
+    let diff = cx.new(|cx| {
+        BufferDiff::new_with_base_text(dock_base_text, &dock_buffer.read(cx).snapshot(), cx)
+    });
+
+    let workspace_text = "second buffer\n";
+    let workspace_buffer = cx.new(|cx| Buffer::local(workspace_text, cx));
+
+    let dock_path = PathKey::with_sort_prefix(0, rel_path("").into_arc());
+    let workspace_path = PathKey::with_sort_prefix(1, rel_path("").into_arc());
+
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpt_ranges_for_path(
+            dock_path,
+            dock_buffer.clone(),
+            &dock_buffer.read(cx).snapshot(),
+            vec![
+                ExcerptRange::new(Point::zero()..Point::new(1, 1)),
+                ExcerptRange::new(Point::new(3, 0)..Point::new(4, 2)),
+            ],
+            cx,
+        );
+        multibuffer.set_excerpt_ranges_for_path(
+            workspace_path,
+            workspace_buffer.clone(),
+            &workspace_buffer.read(cx).snapshot(),
+            vec![ExcerptRange::new(
+                Point::zero()..workspace_buffer.read(cx).max_point(),
+            )],
+            cx,
+        );
+        multibuffer.add_diff(diff, cx);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+    });
+
+    let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    let diff = format_diff(
+        &snapshot.text(),
+        &snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>(),
+        &Default::default(),
+        None,
+    );
+    assert_eq!(
+        diff,
+        indoc! {"
+            0
+          - 1
+          - 2
+          - 3
+            4 [↓]
+            6 [↑]
+          - 7
+          - 8
+          - 9
+            10 [↓]
+            second buffer
+        "}
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        let snapshot = multibuffer.snapshot(cx);
+        let point = snapshot
+            .anchor_in_buffer(text::Anchor::max_for_buffer(
+                dock_buffer.read(cx).remote_id(),
+            ))
+            .unwrap()
+            .to_point(&snapshot);
+        assert_eq!(point, Point::new(10, 0));
+    })
 }

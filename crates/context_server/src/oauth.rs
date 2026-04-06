@@ -2733,10 +2733,7 @@ mod tests {
             assert!(refreshed);
             assert_eq!(provider.access_token().as_deref(), Some("new-access"));
 
-            let notified_session = rx
-                .try_next()
-                .unwrap()
-                .expect("channel should have a session");
+            let notified_session = rx.try_recv().expect("channel should have a session");
             assert_eq!(notified_session.tokens.access_token, "new-access");
             assert_eq!(
                 notified_session.tokens.refresh_token.as_deref(),
@@ -2768,10 +2765,7 @@ mod tests {
             let refreshed = provider.try_refresh().await.unwrap();
             assert!(refreshed);
 
-            let notified_session = rx
-                .try_next()
-                .unwrap()
-                .expect("channel should have a session");
+            let notified_session = rx.try_recv().expect("channel should have a session");
             assert_eq!(notified_session.tokens.access_token, "new-access");
             assert_eq!(
                 notified_session.tokens.refresh_token.as_deref(),
