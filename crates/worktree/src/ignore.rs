@@ -1,5 +1,5 @@
-use ignore::gitignore::Gitignore;
 use git::repository::RepoPath;
+use ignore::gitignore::Gitignore;
 use std::{ffi::OsStr, path::Path, sync::Arc};
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -12,7 +12,9 @@ impl TrackedPaths {
     pub fn new(mut paths: Vec<RepoPath>) -> Self {
         paths.sort();
         paths.dedup();
-        Self { paths: paths.into() }
+        Self {
+            paths: paths.into(),
+        }
     }
 
     pub fn contains(&self, path: &RepoPath) -> bool {
@@ -138,7 +140,7 @@ impl IgnoreStack {
             IgnoreStackEntry::All => true,
             IgnoreStackEntry::Global { ignore } => {
                 let combined_path;
-                let abs_path = if let Some(repo_root) = self.repo_root.as_ref() {
+                let path_for_ignore_match = if let Some(repo_root) = self.repo_root.as_ref() {
                     combined_path = ignore.path().join(
                         abs_path
                             .strip_prefix(repo_root)
@@ -148,7 +150,7 @@ impl IgnoreStack {
                 } else {
                     abs_path
                 };
-                match ignore.matched(abs_path, is_dir) {
+                match ignore.matched(path_for_ignore_match, is_dir) {
                     ignore::Match::None => false,
                     ignore::Match::Ignore(_) => !self.matched_path_is_tracked(abs_path, is_dir),
                     ignore::Match::Whitelist(_) => false,
