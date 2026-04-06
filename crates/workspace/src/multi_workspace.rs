@@ -6,9 +6,7 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
-#[cfg(any(test, feature = "test-support"))]
-use project::Project;
-use project::{DirectoryLister, DisableAiSettings, ProjectGroupKey};
+use project::{DirectoryLister, DisableAiSettings, Project, ProjectGroupKey};
 use settings::Settings;
 pub use settings::SidebarSide;
 use std::future::Future;
