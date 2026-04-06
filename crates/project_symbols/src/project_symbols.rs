@@ -1,4 +1,6 @@
-use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
+use editor::{
+    Anchor, Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label,
+};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, Context, DismissEvent, Entity, HighlightStyle, ParentElement, StyledText, Task, TextStyle,
@@ -140,11 +142,19 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     );
 
                     editor.update(cx, |editor, cx| {
+                        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let Some((excerpt_id, _, buffer_snapshot)) =
+                            multibuffer_snapshot.as_singleton()
+                        else {
+                            return;
+                        };
+                        let text_anchor = buffer_snapshot.anchor_before(position);
+                        let anchor = Anchor::in_buffer(excerpt_id, text_anchor);
                         editor.change_selections(
                             SelectionEffects::scroll(Autoscroll::center()),
                             window,
                             cx,
-                            |s| s.select_ranges([position..position]),
+                            |s| s.select_ranges([anchor..anchor]),
                         );
                     });
                 })?;

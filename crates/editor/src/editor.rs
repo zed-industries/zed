@@ -11741,10 +11741,9 @@ impl Editor {
             buffer_ids.extend(snapshot.buffer_ids_for_range(selection.range()))
         }
 
-        let buffer = self.buffer().read(cx);
         let ranges = buffer_ids
             .into_iter()
-            .flat_map(|buffer_id| buffer.range_for_buffer(buffer_id, cx))
+            .flat_map(|buffer_id| snapshot.range_for_buffer(buffer_id))
             .collect::<Vec<_>>();
 
         self.restore_hunks_in_ranges(ranges, window, cx);

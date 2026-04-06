@@ -317,13 +317,6 @@ impl DevContainerManifest {
         let root_image_tag = self.get_base_image_from_config().await?;
         let root_image = self.docker_client.inspect(&root_image_tag).await?;
 
-        if dev_container.build_type() == DevContainerBuildType::Image
-            && !dev_container.has_features()
-        {
-            log::debug!("No resources to download. Proceeding with just the image");
-            return Ok(());
-        }
-
         let temp_base = std::env::temp_dir().join("devcontainer-zed");
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -701,10 +694,29 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         }
         let dev_container = self.dev_container();
         match dev_container.build_type() {
-            DevContainerBuildType::Image | DevContainerBuildType::Dockerfile => {
+            DevContainerBuildType::Image => {
                 let built_docker_image = self.build_docker_image().await?;
+                let Some(base_image) = dev_container.image.as_ref() else {
+                    log::error!("Dev container is using and image which can't be referenced");
+                    return Err(DevContainerError::DevContainerParseFailed);
+                };
                 let built_docker_image = self
-                    .update_remote_user_uid(built_docker_image, None)
+                    .update_remote_user_uid(built_docker_image, base_image)
+                    .await?;
+
+                let resources = self.build_merged_resources(built_docker_image)?;
+                Ok(DevContainerBuildResources::Docker(resources))
+            }
+            DevContainerBuildType::Dockerfile => {
+                let built_docker_image = self.build_docker_image().await?;
+                let Some(features_build_info) = &self.features_build_info else {
+                    log::error!(
+                        "Can't attempt to build update UID dockerfile before initial docker build"
+                    );
+                    return Err(DevContainerError::DevContainerParseFailed);
+                };
+                let built_docker_image = self
+                    .update_remote_user_uid(built_docker_image, &features_build_info.image_tag)
                     .await?;
 
                 let resources = self.build_merged_resources(built_docker_image)?;
@@ -816,7 +828,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
 
         let (main_service_name, main_service) =
             find_primary_service(&docker_compose_resources, self)?;
-        let built_service_image = if main_service
+        let (built_service_image, built_service_image_tag) = if main_service
             .build
             .as_ref()
             .map(|b| b.dockerfile.as_ref())
@@ -905,16 +917,19 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
             self.docker_client
                 .docker_compose_build(&docker_compose_resources.files, &self.project_name())
                 .await?;
-            self.docker_client
-                .inspect(&features_build_info.image_tag)
-                .await?
+            (
+                self.docker_client
+                    .inspect(&features_build_info.image_tag)
+                    .await?,
+                &features_build_info.image_tag,
+            )
         } else if let Some(image) = &main_service.image {
             if dev_container
                 .features
                 .as_ref()
                 .is_none_or(|features| features.is_empty())
             {
-                self.docker_client.inspect(image).await?
+                (self.docker_client.inspect(image).await?, image)
             } else {
                 if !supports_buildkit {
                     self.build_feature_content_image().await?;
@@ -994,9 +1009,12 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     .docker_compose_build(&docker_compose_resources.files, &self.project_name())
                     .await?;
 
-                self.docker_client
-                    .inspect(&features_build_info.image_tag)
-                    .await?
+                (
+                    self.docker_client
+                        .inspect(&features_build_info.image_tag)
+                        .await?,
+                    &features_build_info.image_tag,
+                )
             }
         } else {
             log::error!("Docker compose must have either image or dockerfile defined");
@@ -1004,7 +1022,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         };
 
         let built_service_image = self
-            .update_remote_user_uid(built_service_image, Some(&features_build_info.image_tag))
+            .update_remote_user_uid(built_service_image, built_service_image_tag)
             .await?;
 
         let resources = self.build_merged_resources(built_service_image)?;
@@ -1312,7 +1330,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     async fn update_remote_user_uid(
         &self,
         image: DockerInspect,
-        _override_tag: Option<&str>,
+        _base_image: &str,
     ) -> Result<DockerInspect, DevContainerError> {
         Ok(image)
     }
@@ -1320,7 +1338,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     async fn update_remote_user_uid(
         &self,
         image: DockerInspect,
-        override_tag: Option<&str>,
+        base_image: &str,
     ) -> Result<DockerInspect, DevContainerError> {
         let dev_container = self.dev_container();
 
@@ -1394,18 +1412,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 DevContainerError::FilesystemError
             })?;
 
-        let updated_image_tag = override_tag
-            .map(|t| t.to_string())
-            .unwrap_or_else(|| format!("{}-uid", features_build_info.image_tag));
+        let updated_image_tag = format!("{}-uid", features_build_info.image_tag);
 
         let mut command = Command::new(self.docker_client.docker_cli());
         command.args(["build"]);
         command.args(["-f", &dockerfile_path.display().to_string()]);
         command.args(["-t", &updated_image_tag]);
-        command.args([
-            "--build-arg",
-            &format!("BASE_IMAGE={}", features_build_info.image_tag),
-        ]);
+        command.args(["--build-arg", &format!("BASE_IMAGE={}", base_image)]);
         command.args(["--build-arg", &format!("REMOTE_USER={}", remote_user)]);
         command.args(["--build-arg", &format!("NEW_UID={}", host_uid)]);
         command.args(["--build-arg", &format!("NEW_GID={}", host_gid)]);
@@ -2384,6 +2397,8 @@ mod test {
     use serde_json_lenient::Value;
     use util::{command::Command, paths::SanitizedPath};
 
+    #[cfg(not(target_os = "windows"))]
+    use crate::docker::DockerComposeServicePort;
     use crate::{
         DevContainerConfig, DevContainerContext,
         command_json::CommandRunner,
@@ -3311,8 +3326,6 @@ chmod +x ./install.sh
     #[cfg(not(target_os = "windows"))]
     #[gpui::test]
     async fn test_spawns_devcontainer_with_docker_compose(cx: &mut TestAppContext) {
-        use crate::docker::DockerComposeServicePort;
-
         cx.executor().allow_parking();
         env_logger::try_init().ok();
         let given_devcontainer_contents = r#"
@@ -4296,6 +4309,175 @@ chmod +x ./install.sh
         }))
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_spawns_devcontainer_with_plain_image(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "cli-${devcontainerId}",
+              "image": "test_image:latest",
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let files = test_dependencies.fs.files();
+        let uid_dockerfile = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile")
+            })
+            .expect("to be found");
+        let uid_dockerfile = test_dependencies.fs.load(uid_dockerfile).await.unwrap();
+
+        assert_eq!(
+            &uid_dockerfile,
+            r#"ARG BASE_IMAGE
+FROM $BASE_IMAGE
+
+USER root
+
+ARG REMOTE_USER
+ARG NEW_UID
+ARG NEW_GID
+SHELL ["/bin/sh", "-c"]
+RUN eval $(sed -n "s/${REMOTE_USER}:[^:]*:\([^:]*\):\([^:]*\):[^:]*:\([^:]*\).*/OLD_UID=\1;OLD_GID=\2;HOME_FOLDER=\3/p" /etc/passwd); \
+	eval $(sed -n "s/\([^:]*\):[^:]*:${NEW_UID}:.*/EXISTING_USER=\1/p" /etc/passwd); \
+	eval $(sed -n "s/\([^:]*\):[^:]*:${NEW_GID}:.*/EXISTING_GROUP=\1/p" /etc/group); \
+	if [ -z "$OLD_UID" ]; then \
+		echo "Remote user not found in /etc/passwd ($REMOTE_USER)."; \
+	elif [ "$OLD_UID" = "$NEW_UID" -a "$OLD_GID" = "$NEW_GID" ]; then \
+		echo "UIDs and GIDs are the same ($NEW_UID:$NEW_GID)."; \
+	elif [ "$OLD_UID" != "$NEW_UID" -a -n "$EXISTING_USER" ]; then \
+		echo "User with UID exists ($EXISTING_USER=$NEW_UID)."; \
+	else \
+		if [ "$OLD_GID" != "$NEW_GID" -a -n "$EXISTING_GROUP" ]; then \
+			FREE_GID=65532; \
+			while grep -q ":[^:]*:${FREE_GID}:" /etc/group; do FREE_GID=$((FREE_GID - 1)); done; \
+			echo "Reassigning group $EXISTING_GROUP from GID $NEW_GID to $FREE_GID."; \
+			sed -i -e "s/\(${EXISTING_GROUP}:[^:]*:\)${NEW_GID}:/\1${FREE_GID}:/" /etc/group; \
+		fi; \
+		echo "Updating UID:GID from $OLD_UID:$OLD_GID to $NEW_UID:$NEW_GID."; \
+		sed -i -e "s/\(${REMOTE_USER}:[^:]*:\)[^:]*:[^:]*/\1${NEW_UID}:${NEW_GID}/" /etc/passwd; \
+		if [ "$OLD_GID" != "$NEW_GID" ]; then \
+			sed -i -e "s/\([^:]*:[^:]*:\)${OLD_GID}:/\1${NEW_GID}:/" /etc/group; \
+		fi; \
+		chown -R $NEW_UID:$NEW_GID $HOME_FOLDER; \
+	fi;
+
+ARG IMAGE_USER
+USER $IMAGE_USER
+
+# Ensure that /etc/profile does not clobber the existing path
+RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
+"#
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_spawns_devcontainer_with_docker_compose_and_plain_image(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "cli-${devcontainerId}",
+              "dockerComposeFile": "docker-compose-plain.yml",
+              "service": "app",
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .atomic_write(
+                PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/docker-compose-plain.yml"),
+                r#"
+services:
+    app:
+        image: test_image:latest
+        command: sleep infinity
+        volumes:
+            - ..:/workspace:cached
+                "#
+                .trim()
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let files = test_dependencies.fs.files();
+        let uid_dockerfile = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "updateUID.Dockerfile")
+            })
+            .expect("to be found");
+        let uid_dockerfile = test_dependencies.fs.load(uid_dockerfile).await.unwrap();
+
+        assert_eq!(
+            &uid_dockerfile,
+            r#"ARG BASE_IMAGE
+FROM $BASE_IMAGE
+
+USER root
+
+ARG REMOTE_USER
+ARG NEW_UID
+ARG NEW_GID
+SHELL ["/bin/sh", "-c"]
+RUN eval $(sed -n "s/${REMOTE_USER}:[^:]*:\([^:]*\):\([^:]*\):[^:]*:\([^:]*\).*/OLD_UID=\1;OLD_GID=\2;HOME_FOLDER=\3/p" /etc/passwd); \
+	eval $(sed -n "s/\([^:]*\):[^:]*:${NEW_UID}:.*/EXISTING_USER=\1/p" /etc/passwd); \
+	eval $(sed -n "s/\([^:]*\):[^:]*:${NEW_GID}:.*/EXISTING_GROUP=\1/p" /etc/group); \
+	if [ -z "$OLD_UID" ]; then \
+		echo "Remote user not found in /etc/passwd ($REMOTE_USER)."; \
+	elif [ "$OLD_UID" = "$NEW_UID" -a "$OLD_GID" = "$NEW_GID" ]; then \
+		echo "UIDs and GIDs are the same ($NEW_UID:$NEW_GID)."; \
+	elif [ "$OLD_UID" != "$NEW_UID" -a -n "$EXISTING_USER" ]; then \
+		echo "User with UID exists ($EXISTING_USER=$NEW_UID)."; \
+	else \
+		if [ "$OLD_GID" != "$NEW_GID" -a -n "$EXISTING_GROUP" ]; then \
+			FREE_GID=65532; \
+			while grep -q ":[^:]*:${FREE_GID}:" /etc/group; do FREE_GID=$((FREE_GID - 1)); done; \
+			echo "Reassigning group $EXISTING_GROUP from GID $NEW_GID to $FREE_GID."; \
+			sed -i -e "s/\(${EXISTING_GROUP}:[^:]*:\)${NEW_GID}:/\1${FREE_GID}:/" /etc/group; \
+		fi; \
+		echo "Updating UID:GID from $OLD_UID:$OLD_GID to $NEW_UID:$NEW_GID."; \
+		sed -i -e "s/\(${REMOTE_USER}:[^:]*:\)[^:]*:[^:]*/\1${NEW_UID}:${NEW_GID}/" /etc/passwd; \
+		if [ "$OLD_GID" != "$NEW_GID" ]; then \
+			sed -i -e "s/\([^:]*:[^:]*:\)${OLD_GID}:/\1${NEW_GID}:/" /etc/group; \
+		fi; \
+		chown -R $NEW_UID:$NEW_GID $HOME_FOLDER; \
+	fi;
+
+ARG IMAGE_USER
+USER $IMAGE_USER
+
+# Ensure that /etc/profile does not clobber the existing path
+RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
+"#
+        );
+    }
+
     pub(crate) struct RecordedExecCommand {
         pub(crate) _container_id: String,
         pub(crate) _remote_folder: String,
@@ -4418,6 +4600,24 @@ chmod +x ./install.sh
                     state: None,
                 });
             }
+            if id == "test_image:latest" {
+                return Ok(DockerInspect {
+                    id: "sha256:610e6cfca95280188b021774f8cf69dd6f49bdb6eebc34c5ee2010f4d51cc104"
+                        .to_string(),
+                    config: DockerInspectConfig {
+                        labels: DockerConfigLabels {
+                            metadata: Some(vec![HashMap::from([(
+                                "remoteUser".to_string(),
+                                Value::String("node".to_string()),
+                            )])]),
+                        },
+                        env: Vec::new(),
+                        image_user: Some("root".to_string()),
+                    },
+                    mounts: None,
+                    state: None,
+                });
+            }
 
             Err(DevContainerError::DockerNotAvailable)
         }
@@ -4470,6 +4670,25 @@ chmod +x ./install.sh
                         "postgres-data".to_string(),
                         DockerComposeVolume::default(),
                     )]),
+                }));
+            }
+            if config_files.len() == 1
+                && config_files.get(0)
+                    == Some(&PathBuf::from(
+                        "/path/to/local/project/.devcontainer/docker-compose-plain.yml",
+                    ))
+            {
+                return Ok(Some(DockerComposeConfig {
+                    name: None,
+                    services: HashMap::from([(
+                        "app".to_string(),
+                        DockerComposeService {
+                            image: Some("test_image:latest".to_string()),
+                            command: vec!["sleep".to_string(), "infinity".to_string()],
+                            ..Default::default()
+                        },
+                    )]),
+                    ..Default::default()
                 }));
             }
             Err(DevContainerError::DockerNotAvailable)

@@ -7516,6 +7516,24 @@ fn ai_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Merge Conflict Indicator",
+                description: "Whether to show the merge conflict indicator in the status bar that offers to resolve conflicts using the agent.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.show_merge_conflict_indicator"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.show_merge_conflict_indicator.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .show_merge_conflict_indicator = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]);
 
         items.into_boxed_slice()

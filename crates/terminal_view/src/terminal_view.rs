@@ -1820,6 +1820,7 @@ impl SearchableItem for TerminalView {
             regex: true,
             replacement: false,
             selection: false,
+            select_all: false,
             find_in_results: false,
         }
     }

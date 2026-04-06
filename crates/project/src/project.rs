@@ -4763,6 +4763,19 @@ impl Project {
         });
     }
 
+    pub fn remove_worktree_for_main_worktree_path(
+        &mut self,
+        path: impl AsRef<Path>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = path.as_ref();
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            if let Some(worktree) = worktree_store.worktree_for_main_worktree_path(path, cx) {
+                worktree_store.remove_worktree(worktree.read(cx).id(), cx);
+            }
+        });
+    }
+
     fn add_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
@@ -6049,11 +6062,7 @@ impl ProjectGroupKey {
     /// Creates a new `ProjectGroupKey` with the given path list.
     ///
     /// The path list should point to the git main worktree paths for a project.
-    ///
-    /// This should be used only in a few places to make sure we can ensure the
-    /// main worktree path invariant. Namely, this should only be called from
-    /// [`Workspace`].
-    pub(crate) fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
+    pub fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
         Self { paths, host }
     }
 

@@ -291,6 +291,7 @@ impl Render for BufferSearchBar {
             regex,
             replacement,
             selection,
+            select_all,
             find_in_results,
         } = self.supported_options(cx);
 
@@ -461,14 +462,16 @@ impl Render for BufferSearchBar {
                         ))
                     });
 
-                el.child(render_action_button(
-                    "buffer-search-nav-button",
-                    IconName::SelectAll,
-                    Default::default(),
-                    "Select All Matches",
-                    &SelectAllMatches,
-                    query_focus,
-                ))
+                el.when(select_all, |el| {
+                    el.child(render_action_button(
+                        "buffer-search-nav-button",
+                        IconName::SelectAll,
+                        Default::default(),
+                        "Select All Matches",
+                        &SelectAllMatches,
+                        query_focus.clone(),
+                    ))
+                })
                 .child(matches_column)
             })
             .when(find_in_results, |el| {
@@ -3406,17 +3409,15 @@ mod tests {
 
         assert_eq!(initial_location, ToolbarItemLocation::Secondary);
 
-        let mut events = cx.events(&search_bar);
+        let mut events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
 
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.dismiss(&Dismiss, window, cx);
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::Hidden
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Hidden))
         );
 
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -3424,10 +3425,8 @@ mod tests {
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::Secondary
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Secondary))
         );
     }
 
@@ -3442,17 +3441,15 @@ mod tests {
 
         assert_eq!(initial_location, ToolbarItemLocation::PrimaryLeft);
 
-        let mut events = cx.events(&search_bar);
+        let mut events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
 
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.dismiss(&Dismiss, window, cx);
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::PrimaryLeft
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::PrimaryLeft))
         );
 
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -3460,10 +3457,8 @@ mod tests {
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::PrimaryLeft
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::PrimaryLeft))
         );
     }
 
@@ -3482,17 +3477,15 @@ mod tests {
 
         assert_eq!(initial_location, ToolbarItemLocation::Hidden);
 
-        let mut events = cx.events(&search_bar);
+        let mut events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
 
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.dismiss(&Dismiss, window, cx);
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::Hidden
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Hidden))
         );
 
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -3500,10 +3493,8 @@ mod tests {
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::Secondary
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Secondary))
         );
     }
 

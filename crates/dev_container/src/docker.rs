@@ -149,6 +149,12 @@ pub(crate) struct DockerComposeService {
     pub(crate) ports: Vec<DockerComposeServicePort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) network_mode: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_nullable_vec"
+    )]
+    pub(crate) command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
@@ -457,6 +463,14 @@ where
     }
 
     deserializer.deserialize_any(LabelsVisitor)
+}
+
+fn deserialize_nullable_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<Vec<T>>::deserialize(deserializer).map(|opt| opt.unwrap_or_default())
 }
 
 fn deserialize_nullable_labels<'de, D>(deserializer: D) -> Result<DockerConfigLabels, D::Error>
@@ -987,6 +1001,7 @@ mod test {
                 (
                     "app".to_string(),
                     DockerComposeService {
+                        command: vec!["sleep".to_string(), "infinity".to_string()],
                         image: Some(
                             "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
                         ),

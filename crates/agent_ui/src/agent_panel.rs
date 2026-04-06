@@ -2076,6 +2076,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(store) = ThreadMetadataStore::try_global(cx) {
+            store.update(cx, |store, cx| store.unarchive(&session_id, cx));
+        }
+
         if let Some(conversation_view) = self.background_threads.remove(&session_id) {
             self.set_active_view(
                 ActiveView::AgentThread { conversation_view },
