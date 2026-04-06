@@ -10,7 +10,7 @@ use std::sync::Arc;
 use workspace::MultiWorkspace;
 
 use crate::project_panel_tests::{self, find_project_entry, select_path};
-use crate::{NewDirectory, NewFile, ProjectPanel, Redo, Rename, Undo};
+use crate::{NewDirectory, NewFile, ProjectPanel, Redo, Rename, Trash, Undo};
 
 struct TestContext {
     panel: Entity<ProjectPanel>,
@@ -217,6 +217,22 @@ impl TestContext {
         self.cx.run_until_parked();
     }
 
+    async fn trash(&mut self, paths: &[&str]) {
+        paths.iter().for_each(|p| {
+            project_panel_tests::select_path_with_mark(
+                &self.panel,
+                &path(format!("workspace/{p}")),
+                &mut self.cx,
+            )
+        });
+
+        self.panel.update_in(&mut self.cx, |panel, window, cx| {
+            panel.trash(&Trash { skip_prompt: true }, window, cx);
+        });
+
+        self.cx.run_until_parked();
+    }
+
     /// The test tree is:
     /// ```txt
     /// a.txt
@@ -388,4 +404,21 @@ async fn undo_without_history(cx: &mut gpui::TestAppContext) {
 
     cx.undo().await;
     cx.assert_fs_state_is(&["a.txt", "b.txt"]) // default tree
+}
+
+#[gpui::test]
+async fn trash_undo_redo(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    cx.trash(&["a.txt", "b.txt"]).await;
+    cx.assert_not_exists("a.txt");
+    cx.assert_not_exists("b.txt");
+
+    cx.undo().await;
+    cx.assert_exists("a.txt");
+    cx.assert_exists("b.txt");
+
+    cx.redo().await;
+    cx.assert_not_exists("a.txt");
+    cx.assert_not_exists("b.txt");
 }

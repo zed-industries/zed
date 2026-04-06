@@ -1745,7 +1745,6 @@ impl LocalWorktree {
         };
 
         let path_buf = fs.restore(trash_entry).await?;
-        dbg!("done restoring");
         let path = path_buf
             .strip_prefix(worktree_abs_path)
             .context("Could not strip prefix")?;

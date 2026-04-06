@@ -2335,6 +2335,7 @@ impl ProjectPanel {
 
                     Some((
                         selection.entry_id,
+                        selection.worktree_id,
                         project_path.path.file_name()?.to_string(),
                     ))
                 })
@@ -2350,7 +2351,7 @@ impl ProjectPanel {
                     "Are you sure you want to permanently delete"
                 };
                 let prompt = match file_paths.first() {
-                    Some((_, path)) if file_paths.len() == 1 => {
+                    Some((_, _, path)) if file_paths.len() == 1 => {
                         let unsaved_warning = if dirty_buffers > 0 {
                             "\n\nIt has unsaved changes, which will be lost."
                         } else {
@@ -2365,7 +2366,7 @@ impl ProjectPanel {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
                             let mut paths = file_paths
                                 .iter()
-                                .map(|(_, path)| path.clone())
+                                .map(|(_, _, path)| path.clone())
                                 .take(CUTOFF_POINT)
                                 .collect::<Vec<_>>();
                             paths.truncate(CUTOFF_POINT);
@@ -2376,7 +2377,7 @@ impl ProjectPanel {
                             }
                             paths
                         } else {
-                            file_paths.iter().map(|(_, path)| path.clone()).collect()
+                            file_paths.iter().map(|(_, _, path)| path.clone()).collect()
                         };
                         let unsaved_warning = if dirty_buffers == 0 {
                             String::new()
@@ -2413,8 +2414,11 @@ impl ProjectPanel {
                 {
                     return anyhow::Ok(());
                 }
-                for (entry_id, _) in file_paths {
-                    panel
+
+                let mut changes = Vec::new();
+
+                for (entry_id, worktree_id, _) in file_paths {
+                    let trashed_entry = panel
                         .update(cx, |panel, cx| {
                             panel
                                 .project
@@ -2422,8 +2426,19 @@ impl ProjectPanel {
                                 .context("no such entry")
                         })??
                         .await?;
+
+                    // Keep track of trashed change so that we can then record
+                    // all of the changes at once, such that undoing and redoing
+                    // restores or trashes all files in batch.
+                    if trash && let Some(trashed_entry) = trashed_entry {
+                        changes.push(Change::Trashed(worktree_id, trashed_entry));
+                    }
                 }
                 panel.update_in(cx, |panel, window, cx| {
+                    if trash {
+                        panel.undo_manager.record(changes).log_err();
+                    }
+
                     if let Some(next_selection) = next_selection {
                         panel.update_visible_entries(
                             Some((next_selection.worktree_id, next_selection.entry_id)),
