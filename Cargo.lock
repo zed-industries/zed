@@ -3328,6 +3328,7 @@ name = "compliance"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "derive_more",
  "futures 0.3.32",
  "itertools 0.14.0",

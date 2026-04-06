@@ -1,31 +1,41 @@
-use std::{collections::HashMap, fmt, ops::Not};
+use std::{collections::HashMap, fmt, ops::Not, rc::Rc};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use derive_more::Deref;
-use futures::TryStreamExt as _;
-use itertools::Itertools;
-use jsonwebtoken::EncodingKey;
-use octocrab::{
-    Octocrab, Page,
-    models::{
-        issues,
-        pulls::{PullRequest, Review},
-    },
-    service::middleware::cache::mem::InMemoryCache,
-};
-use serde::{Deserialize, de::DeserializeOwned};
-use tokio::pin;
+use serde::Deserialize;
 
 use crate::git::CommitSha;
 
-const PAGE_SIZE: u8 = 100;
-const ORG: &str = "zed-industries";
-const REPO: &str = "zed";
-
 pub const PR_REVIEW_LABEL: &str = "PR state:needs review";
 
-pub struct GitHubClient {
-    client: Octocrab,
+#[derive(Debug, Clone)]
+pub struct GitHubUser {
+    pub login: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct PullRequestData {
+    pub number: u64,
+    pub user: Option<GitHubUser>,
+    pub merged_by: Option<GitHubUser>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewState {
+    Approved,
+    Other,
+}
+
+#[derive(Debug, Clone)]
+pub struct PullRequestReview {
+    pub user: Option<GitHubUser>,
+    pub state: Option<ReviewState>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PullRequestComment {
+    pub user: GitHubUser,
+    pub body: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, Deref, PartialEq, Eq)]
@@ -97,196 +107,302 @@ impl CommitAuthors {
 #[derive(Debug, Deserialize, Deref)]
 pub struct AuthorsForCommits(HashMap<CommitSha, CommitAuthors>);
 
+#[async_trait::async_trait(?Send)]
+pub trait GitHubApiClient {
+    async fn get_pull_request(&self, pr_number: u64) -> Result<PullRequestData>;
+    async fn get_pull_request_reviews(&self, pr_number: u64) -> Result<Vec<PullRequestReview>>;
+    async fn get_pull_request_comments(&self, pr_number: u64) -> Result<Vec<PullRequestComment>>;
+    async fn get_commit_authors(&self, commit_shas: &[&CommitSha]) -> Result<AuthorsForCommits>;
+    async fn check_org_membership(&self, login: &GithubLogin) -> Result<bool>;
+    async fn add_label_to_pull_request(&self, label: &str, pr_number: u64) -> Result<()>;
+}
+
+pub struct GitHubClient {
+    api: Rc<dyn GitHubApiClient>,
+}
+
 impl GitHubClient {
+    pub fn new(api: Rc<dyn GitHubApiClient>) -> Self {
+        Self { api }
+    }
+
+    #[cfg(feature = "octo-client")]
     pub async fn for_app(app_id: u64, app_private_key: &str) -> Result<Self> {
-        let octocrab = Octocrab::builder()
-            .cache(InMemoryCache::new())
-            .app(
-                app_id.into(),
-                EncodingKey::from_rsa_pem(app_private_key.as_bytes())?,
-            )
-            .build()?;
-
-        let installations = octocrab
-            .apps()
-            .installations()
-            .send()
-            .await
-            .context("Failed to fetch installations")?
-            .take_items();
-
-        let installation_id = installations
-            .into_iter()
-            .find(|installation| installation.account.login == ORG)
-            .context("Could not find Zed repository in installations")?
-            .id;
-
-        octocrab
-            .installation(installation_id)
-            .map(Self::new)
-            .map_err(Into::into)
+        let client = OctocrabClient::new(app_id, app_private_key).await?;
+        Ok(Self::new(Rc::new(client)))
     }
 
-    fn new(client: Octocrab) -> Self {
-        Self { client }
+    pub async fn get_pull_request(&self, pr_number: u64) -> Result<PullRequestData> {
+        self.api.get_pull_request(pr_number).await
     }
 
-    fn build_co_authors_query<'a>(shas: impl IntoIterator<Item = &'a CommitSha>) -> String {
-        const FRAGMENT: &str = r#"
-            ... on Commit {
-                author {
-                    name
-                    email
-                    user { login }
-                }
-                authors(first: 10) {
-                    nodes {
+    pub async fn get_pull_request_reviews(&self, pr_number: u64) -> Result<Vec<PullRequestReview>> {
+        self.api.get_pull_request_reviews(pr_number).await
+    }
+
+    pub async fn get_pull_request_comments(
+        &self,
+        pr_number: u64,
+    ) -> Result<Vec<PullRequestComment>> {
+        self.api.get_pull_request_comments(pr_number).await
+    }
+
+    pub async fn get_commit_authors<'a>(
+        &self,
+        commit_shas: impl IntoIterator<Item = &'a CommitSha>,
+    ) -> Result<AuthorsForCommits> {
+        let shas: Vec<&CommitSha> = commit_shas.into_iter().collect();
+        self.api.get_commit_authors(&shas).await
+    }
+
+    pub async fn check_org_membership(&self, login: &GithubLogin) -> Result<bool> {
+        self.api.check_org_membership(login).await
+    }
+
+    pub async fn add_label_to_pull_request(&self, label: &str, pr_number: u64) -> Result<()> {
+        self.api.add_label_to_pull_request(label, pr_number).await
+    }
+}
+
+#[cfg(feature = "octo-client")]
+mod octo_client {
+    use anyhow::{Context, Result};
+    use futures::TryStreamExt as _;
+    use itertools::Itertools;
+    use jsonwebtoken::EncodingKey;
+    use octocrab::{
+        Octocrab, Page, models::pulls::ReviewState as OctocrabReviewState,
+        service::middleware::cache::mem::InMemoryCache,
+    };
+    use serde::de::DeserializeOwned;
+    use tokio::pin;
+
+    use crate::git::CommitSha;
+
+    use super::{
+        AuthorsForCommits, GitHubApiClient, GitHubUser, GithubLogin, PullRequestComment,
+        PullRequestData, PullRequestReview, ReviewState,
+    };
+
+    const PAGE_SIZE: u8 = 100;
+    const ORG: &str = "zed-industries";
+    const REPO: &str = "zed";
+
+    pub struct OctocrabClient {
+        client: Octocrab,
+    }
+
+    impl OctocrabClient {
+        pub async fn new(app_id: u64, app_private_key: &str) -> Result<Self> {
+            let octocrab = Octocrab::builder()
+                .cache(InMemoryCache::new())
+                .app(
+                    app_id.into(),
+                    EncodingKey::from_rsa_pem(app_private_key.as_bytes())?,
+                )
+                .build()?;
+
+            let installations = octocrab
+                .apps()
+                .installations()
+                .send()
+                .await
+                .context("Failed to fetch installations")?
+                .take_items();
+
+            let installation_id = installations
+                .into_iter()
+                .find(|installation| installation.account.login == ORG)
+                .context("Could not find Zed repository in installations")?
+                .id;
+
+            let client = octocrab.installation(installation_id)?;
+            Ok(Self { client })
+        }
+
+        fn build_co_authors_query<'a>(shas: impl IntoIterator<Item = &'a CommitSha>) -> String {
+            const FRAGMENT: &str = r#"
+                ... on Commit {
+                    author {
                         name
                         email
                         user { login }
                     }
-                }
-            }
-        "#;
-
-        let objects: String = shas
-            .into_iter()
-            .map(|commit_sha| {
-                format!(
-                    "commit{sha}: object(oid: \"{sha}\") {{ {FRAGMENT} }}",
-                    sha = **commit_sha
-                )
-            })
-            .join("\n");
-
-        format!("{{  repository(owner: \"{ORG}\", name: \"{REPO}\") {{ {objects}  }} }}")
-            .replace("\n", "")
-    }
-
-    pub(crate) async fn get_commit_co_authors(
-        &self,
-        commit_shas: impl IntoIterator<Item = &CommitSha>,
-    ) -> Result<AuthorsForCommits> {
-        let query = Self::build_co_authors_query(commit_shas);
-
-        let query = serde_json::json!({ "query": query });
-
-        let mut response = self.graphql::<serde_json::Value>(&query).await?;
-
-        // TODO speaks for itself
-        response
-            .get_mut("data")
-            .and_then(|data| data.get_mut("repository"))
-            .and_then(|repo| repo.as_object_mut())
-            .ok_or_else(|| anyhow::anyhow!("Unexpected response format!"))
-            .and_then(|commit_data| {
-                let mut response_map = serde_json::Map::with_capacity(commit_data.len());
-
-                for (key, value) in commit_data.iter_mut() {
-                    let key_without_prefix = key.strip_prefix("commit").unwrap_or(key);
-                    if let Some(authors) = value.get_mut("authors") {
-                        if let Some(nodes) = authors.get("nodes") {
-                            *authors = nodes.clone();
+                    authors(first: 10) {
+                        nodes {
+                            name
+                            email
+                            user { login }
                         }
                     }
-
-                    response_map.insert(key_without_prefix.to_owned(), value.clone());
                 }
+            "#;
 
-                serde_json::from_value(serde_json::Value::Object(response_map))
-                    .context("Failed to deserialize commit authors")
+            let objects: String = shas
+                .into_iter()
+                .map(|commit_sha| {
+                    format!(
+                        "commit{sha}: object(oid: \"{sha}\") {{ {FRAGMENT} }}",
+                        sha = **commit_sha
+                    )
+                })
+                .join("\n");
+
+            format!("{{  repository(owner: \"{ORG}\", name: \"{REPO}\") {{ {objects}  }} }}")
+                .replace("\n", "")
+        }
+
+        async fn graphql<R: octocrab::FromResponse>(
+            &self,
+            query: &serde_json::Value,
+        ) -> octocrab::Result<R> {
+            self.client.graphql(query).await
+        }
+
+        async fn get_all<T: DeserializeOwned + 'static>(
+            &self,
+            page: Page<T>,
+        ) -> octocrab::Result<Vec<T>> {
+            self.get_filtered(page, |_| true).await
+        }
+
+        async fn get_filtered<T: DeserializeOwned + 'static>(
+            &self,
+            page: Page<T>,
+            predicate: fn(&T) -> bool,
+        ) -> octocrab::Result<Vec<T>> {
+            let stream = page.into_stream(&self.client);
+            pin!(stream);
+
+            let mut results = Vec::new();
+
+            while let Some(item) = stream.try_next().await?
+                && predicate(&item)
+            {
+                results.push(item);
+            }
+
+            Ok(results)
+        }
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl GitHubApiClient for OctocrabClient {
+        async fn get_pull_request(&self, pr_number: u64) -> Result<PullRequestData> {
+            let pr = self.client.pulls(ORG, REPO).get(pr_number).await?;
+            Ok(PullRequestData {
+                number: pr.number,
+                user: pr.user.map(|user| GitHubUser { login: user.login }),
+                merged_by: pr.merged_by.map(|user| GitHubUser { login: user.login }),
             })
-    }
+        }
 
-    pub(crate) async fn graphql<R: octocrab::FromResponse>(
-        &self,
-        query: &serde_json::Value,
-    ) -> octocrab::Result<R> {
-        self.client.graphql(query).await
-    }
-
-    pub async fn get_pull_request(&self, pr_number: u64) -> octocrab::Result<PullRequest> {
-        self.client.pulls(ORG, REPO).get(pr_number).await
-    }
-
-    pub async fn get_pr_reviews(
-        &self,
-        pr_number: u64,
-    ) -> octocrab::Result<impl Iterator<Item = Review>> {
-        self.get_all(
-            self.client
+        async fn get_pull_request_reviews(&self, pr_number: u64) -> Result<Vec<PullRequestReview>> {
+            let page = self
+                .client
                 .pulls(ORG, REPO)
                 .list_reviews(pr_number)
                 .per_page(PAGE_SIZE)
                 .send()
-                .await?,
-        )
-        .await
-    }
+                .await?;
 
-    pub async fn get_pr_comments(
-        &self,
-        pr_number: u64,
-    ) -> octocrab::Result<impl Iterator<Item = issues::Comment>> {
-        self.get_all(
-            self.client
+            let reviews = self.get_all(page).await?;
+
+            Ok(reviews
+                .into_iter()
+                .map(|review| PullRequestReview {
+                    user: review.user.map(|user| GitHubUser { login: user.login }),
+                    state: review.state.map(|state| match state {
+                        OctocrabReviewState::Approved => ReviewState::Approved,
+                        _ => ReviewState::Other,
+                    }),
+                })
+                .collect())
+        }
+
+        async fn get_pull_request_comments(
+            &self,
+            pr_number: u64,
+        ) -> Result<Vec<PullRequestComment>> {
+            let page = self
+                .client
                 .issues(ORG, REPO)
                 .list_comments(pr_number)
                 .per_page(PAGE_SIZE)
                 .send()
-                .await?,
-        )
-        .await
-    }
+                .await?;
 
-    pub async fn add_label_to_pr(&self, label: &str, pr_number: u64) -> octocrab::Result<()> {
-        self.client
-            .issues(ORG, REPO)
-            .add_labels(pr_number, &[label.to_owned()])
-            .await
-            .map(|_| ())
-    }
+            let comments = self.get_all(page).await?;
 
-    pub async fn check_org_membership(&self, login: &GithubLogin) -> octocrab::Result<bool> {
-        self.get_all(
-            self.client
+            Ok(comments
+                .into_iter()
+                .map(|comment| PullRequestComment {
+                    user: GitHubUser {
+                        login: comment.user.login,
+                    },
+                    body: comment.body,
+                })
+                .collect())
+        }
+
+        async fn get_commit_authors(
+            &self,
+            commit_shas: &[&CommitSha],
+        ) -> Result<AuthorsForCommits> {
+            let query = Self::build_co_authors_query(commit_shas.iter().copied());
+            let query = serde_json::json!({ "query": query });
+            let mut response = self.graphql::<serde_json::Value>(&query).await?;
+
+            response
+                .get_mut("data")
+                .and_then(|data| data.get_mut("repository"))
+                .and_then(|repo| repo.as_object_mut())
+                .ok_or_else(|| anyhow::anyhow!("Unexpected response format!"))
+                .and_then(|commit_data| {
+                    let mut response_map = serde_json::Map::with_capacity(commit_data.len());
+
+                    for (key, value) in commit_data.iter_mut() {
+                        let key_without_prefix = key.strip_prefix("commit").unwrap_or(key);
+                        if let Some(authors) = value.get_mut("authors") {
+                            if let Some(nodes) = authors.get("nodes") {
+                                *authors = nodes.clone();
+                            }
+                        }
+
+                        response_map.insert(key_without_prefix.to_owned(), value.clone());
+                    }
+
+                    serde_json::from_value(serde_json::Value::Object(response_map))
+                        .context("Failed to deserialize commit authors")
+                })
+        }
+
+        async fn check_org_membership(&self, login: &GithubLogin) -> Result<bool> {
+            let page = self
+                .client
                 .orgs(ORG)
                 .list_members()
                 .per_page(PAGE_SIZE)
                 .send()
-                .await?,
-        )
-        .await
-        .map(|members| {
-            members
-                .map(|member| member.login)
-                .any(|member_login| member_login == login.as_str())
-        })
-    }
+                .await?;
 
-    async fn get_all<T: DeserializeOwned + 'static>(
-        &self,
-        page: Page<T>,
-    ) -> octocrab::Result<impl Iterator<Item = T>> {
-        self.get_filtered(page, |_| true).await
-    }
+            let members = self.get_all(page).await?;
 
-    async fn get_filtered<T: DeserializeOwned + 'static>(
-        &self,
-        page: Page<T>,
-        predicate: fn(&T) -> bool,
-    ) -> octocrab::Result<impl Iterator<Item = T>> {
-        let stream = page.into_stream(&self.client);
-        pin!(stream);
-
-        let mut results = Vec::new();
-
-        while let Some(item) = stream.try_next().await?
-            && predicate(&item)
-        {
-            results.push(item);
+            Ok(members
+                .into_iter()
+                .any(|member| member.login == login.as_str()))
         }
 
-        Ok(results.into_iter())
+        async fn add_label_to_pull_request(&self, label: &str, pr_number: u64) -> Result<()> {
+            self.client
+                .issues(ORG, REPO)
+                .add_labels(pr_number, &[label.to_owned()])
+                .await
+                .map(|_| ())
+                .map_err(Into::into)
+        }
     }
 }
+
+#[cfg(feature = "octo-client")]
+pub use octo_client::OctocrabClient;

@@ -1,15 +1,13 @@
 use std::{fmt, ops::Not as _};
 
 use itertools::Itertools as _;
-use octocrab::models::{
-    Author,
-    issues::Comment,
-    pulls::{PullRequest, Review, ReviewState},
-};
 
 use crate::{
     git::{CommitDetails, CommitList},
-    github::{CommitAuthor, GitHubClient, GithubLogin},
+    github::{
+        CommitAuthor, GitHubClient, GitHubUser, GithubLogin, PullRequestComment, PullRequestData,
+        PullRequestReview, ReviewState,
+    },
     report::Report,
 };
 
@@ -18,10 +16,10 @@ const ZED_ZIPPY_GROUP_APPROVAL: &str = "@zed-industries/approved";
 
 #[derive(Debug)]
 pub enum ReviewSuccess {
-    ApprovingComment(Vec<Comment>),
+    ApprovingComment(Vec<PullRequestComment>),
     CoAuthored(Vec<CommitAuthor>),
-    ExternalMergedContribution { merged_by: Box<Author> },
-    PullRequestReviewed(Vec<Review>),
+    ExternalMergedContribution { merged_by: GitHubUser },
+    PullRequestReviewed(Vec<PullRequestReview>),
 }
 
 impl ReviewSuccess {
@@ -37,7 +35,9 @@ impl ReviewSuccess {
                 .iter()
                 .map(|comment| format!("@{}", comment.user.login))
                 .collect_vec(),
-            Self::ExternalMergedContribution { merged_by } => vec![format!("@{}", merged_by.login)],
+            Self::ExternalMergedContribution { merged_by } => {
+                vec![format!("@{}", merged_by.login)]
+            }
         };
 
         let reviewers = reviewers.into_iter().unique().collect_vec();
@@ -149,7 +149,7 @@ impl<'a> Reporter<'a> {
         if commit.co_authors().is_some()
             && let Some(commit_authors) = self
                 .github_client
-                .get_commit_co_authors([commit.sha()])
+                .get_commit_authors([commit.sha()])
                 .await?
                 .get(commit.sha())
                 .and_then(|authors| authors.co_authors())
@@ -178,7 +178,7 @@ impl<'a> Reporter<'a> {
     #[allow(unused)]
     async fn check_external_merged_pr(
         &mut self,
-        pull_request: PullRequest,
+        pull_request: PullRequestData,
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         if let Some(user) = pull_request.user
             && self
@@ -202,13 +202,12 @@ impl<'a> Reporter<'a> {
 
     async fn check_pull_request_approved(
         &mut self,
-        pull_request: &PullRequest,
+        pull_request: &PullRequestData,
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         let pr_reviews = self
             .github_client
-            .get_pr_reviews(pull_request.number)
-            .await?
-            .collect_vec();
+            .get_pull_request_reviews(pull_request.number)
+            .await?;
 
         if !pr_reviews.is_empty() {
             let mut org_approving_reviews = Vec::new();
@@ -241,13 +240,12 @@ impl<'a> Reporter<'a> {
 
     async fn check_approving_pull_request_comment(
         &mut self,
-        pull_request: &PullRequest,
+        pull_request: &PullRequestData,
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         let other_comments = self
             .github_client
-            .get_pr_comments(pull_request.number)
-            .await?
-            .collect_vec();
+            .get_pull_request_comments(pull_request.number)
+            .await?;
 
         if !other_comments.is_empty() {
             let mut org_approving_comments = Vec::new();
