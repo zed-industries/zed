@@ -36,8 +36,8 @@ use crate::{
     LanguageToSettingsMap, LspSettings, LspSettingsMap, SemanticTokenRules, ThemeName,
     UserSettingsContentExt, VsCodeSettings, WorktreeId,
     settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, RootUserSettings, SettingsContent,
-        UserSettingsContent, merge_from::MergeFrom,
+        ExtensionsSettingsContent, ProfileBase, ProjectSettingsContent, RootUserSettings,
+        SettingsContent, UserSettingsContent, merge_from::MergeFrom,
     },
 };
 
@@ -1210,10 +1210,19 @@ impl SettingsStore {
             merged.merge_from_option(self.extension_settings.as_deref());
             merged.merge_from_option(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
-                merged.merge_from(&user_settings.content);
-                merged.merge_from_option(user_settings.for_release_channel());
-                merged.merge_from_option(user_settings.for_os());
-                merged.merge_from_option(user_settings.for_profile(cx));
+                let active_profile = user_settings.for_profile(cx);
+                let should_merge_user_settings =
+                    active_profile.is_none_or(|profile| profile.base == ProfileBase::User);
+
+                if should_merge_user_settings {
+                    merged.merge_from(&user_settings.content);
+                    merged.merge_from_option(user_settings.for_release_channel());
+                    merged.merge_from_option(user_settings.for_os());
+                }
+
+                if let Some(profile) = active_profile {
+                    merged.merge_from(&profile.settings);
+                }
             }
             merged.merge_from_option(self.server_settings.as_deref());
 

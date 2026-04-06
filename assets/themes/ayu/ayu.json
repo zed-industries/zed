@@ -283,7 +283,7 @@
             "font_weight": null
           },
           "preproc": {
-            "color": "#bfbdb6ff",
+            "color": "#ff8f3fff",
             "font_style": null,
             "font_weight": null
           },
@@ -389,6 +389,16 @@
           },
           "variant": {
             "color": "#5ac1feff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#aad94cff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#f07178ff",
             "font_style": null,
             "font_weight": null
           }
@@ -675,7 +685,7 @@
             "font_weight": null
           },
           "preproc": {
-            "color": "#5c6166ff",
+            "color": "#fa8d3eff",
             "font_style": null,
             "font_weight": null
           },
@@ -781,6 +791,16 @@
           },
           "variant": {
             "color": "#3b9ee5ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#6cbf43ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#ff6666ff",
             "font_style": null,
             "font_weight": null
           }
@@ -1067,7 +1087,7 @@
             "font_weight": null
           },
           "preproc": {
-            "color": "#cccac2ff",
+            "color": "#ffad65ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1173,6 +1193,16 @@
           },
           "variant": {
             "color": "#72cffeff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.plus": {
+            "color": "#aad94cff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "diff.minus": {
+            "color": "#f07178ff",
             "font_style": null,
             "font_weight": null
           }

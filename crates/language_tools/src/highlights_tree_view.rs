@@ -420,7 +420,10 @@ impl HighlightsTreeView {
             let highlight_maps: Vec<_> = grammars.iter().map(|g| g.highlight_map()).collect();
 
             for capture in captures {
-                let highlight_id = highlight_maps[capture.grammar_index].get(capture.index);
+                let Some(highlight_id) = highlight_maps[capture.grammar_index].get(capture.index)
+                else {
+                    continue;
+                };
                 let Some(style) = syntax_theme.get(highlight_id).cloned() else {
                     continue;
                 };

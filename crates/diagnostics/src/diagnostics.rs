@@ -624,6 +624,7 @@ impl ProjectDiagnosticsEditor {
                         });
                     })
                 }
+                let buffer_snapshot = buffer.read(cx).snapshot();
                 let excerpt_ranges: Vec<_> = excerpt_ranges
                     .into_iter()
                     .map(|range| ExcerptRange {

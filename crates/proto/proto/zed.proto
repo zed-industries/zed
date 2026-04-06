@@ -467,7 +467,14 @@ message Envelope {
     SpawnKernelResponse spawn_kernel_response = 427;
     KillKernel kill_kernel = 428;
     GitRemoveWorktree git_remove_worktree = 431;
-    GitRenameWorktree git_rename_worktree = 432; // current max
+    GitRenameWorktree git_rename_worktree = 432;
+    GitCreateCheckpoint git_create_checkpoint = 433;
+    GitCreateCheckpointResponse git_create_checkpoint_response = 434;
+    GitRestoreCheckpoint git_restore_checkpoint = 435;
+    GitCompareCheckpoints git_compare_checkpoints = 436;
+    GitCompareCheckpointsResponse git_compare_checkpoints_response = 437;
+    GitDiffCheckpoints git_diff_checkpoints = 438;
+    GitDiffCheckpointsResponse git_diff_checkpoints_response = 439; // current max
   }
 
   reserved 87 to 88;

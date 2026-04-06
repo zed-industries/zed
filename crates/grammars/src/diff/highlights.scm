@@ -3,15 +3,13 @@
 [
   (addition)
   (new_file)
-] @string
+] @string @diff.plus
 
-; TODO: This should eventually be `@diff.plus` with a fallback of `@string`
 [
   (deletion)
   (old_file)
-] @keyword
+] @keyword @diff.minus
 
-; TODO: This should eventually be `@diff.minus` with a fallback of `@keyword`
 (commit) @constant
 
 (location) @attribute

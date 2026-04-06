@@ -1714,51 +1714,25 @@ impl MultiBuffer {
         cursor_shape: CursorShape,
         cx: &mut Context<Self>,
     ) {
+        let snapshot = self.snapshot(cx);
         let mut selections_by_buffer: HashMap<BufferId, Vec<Selection<text::Anchor>>> =
             Default::default();
-        let snapshot = self.snapshot(cx);
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>(());
-        for selection in selections {
-            let start = selection.start.seek_target(&snapshot);
 
-            cursor.seek(&start, Bias::Left);
-            while let Some(excerpt) = cursor.item() {
-                let excerpt_start =
-                    Anchor::in_buffer(excerpt.path_key_index, excerpt.range.context.start);
-                if excerpt_start.cmp(&selection.end, &snapshot).is_gt() {
-                    break;
-                }
-                let buffer = excerpt.buffer_snapshot(&snapshot);
-                let start = *text::Anchor::max(
-                    &excerpt.range.context.start,
-                    &selection
-                        .start
-                        .excerpt_anchor()
-                        .map(|excerpt_anchor| excerpt_anchor.text_anchor())
-                        .unwrap_or(text::Anchor::min_for_buffer(excerpt.buffer_id)),
-                    buffer,
-                );
-                let end = *text::Anchor::min(
-                    &excerpt.range.context.end,
-                    &selection
-                        .end
-                        .excerpt_anchor()
-                        .map(|excerpt_anchor| excerpt_anchor.text_anchor())
-                        .unwrap_or(text::Anchor::max_for_buffer(excerpt.buffer_id)),
-                    buffer,
-                );
+        for selection in selections {
+            for (buffer_snapshot, buffer_range, _) in
+                snapshot.range_to_buffer_ranges(selection.start..selection.end)
+            {
                 selections_by_buffer
-                    .entry(buffer.remote_id())
+                    .entry(buffer_snapshot.remote_id())
                     .or_default()
                     .push(Selection {
                         id: selection.id,
-                        start,
-                        end,
+                        start: buffer_snapshot
+                            .anchor_at(buffer_range.start, selection.start.bias()),
+                        end: buffer_snapshot.anchor_at(buffer_range.end, selection.end.bias()),
                         reversed: selection.reversed,
                         goal: selection.goal,
                     });
-
-                cursor.next();
             }
         }
 
@@ -1858,14 +1832,6 @@ impl MultiBuffer {
         });
         cx.emit(Event::BuffersRemoved { removed_buffer_ids });
         cx.notify();
-    }
-
-    pub fn range_for_buffer(&self, buffer_id: BufferId, cx: &App) -> Option<Range<Point>> {
-        let snapshot = self.read(cx);
-        let path_key = snapshot.path_key_index_for_buffer(buffer_id)?;
-        let start = Anchor::in_buffer(path_key, text::Anchor::min_for_buffer(buffer_id));
-        let end = Anchor::in_buffer(path_key, text::Anchor::max_for_buffer(buffer_id));
-        Some((start..end).to_point(&snapshot))
     }
 
     // If point is at the end of the buffer, the last excerpt is returned
@@ -4818,10 +4784,10 @@ impl MultiBufferSnapshot {
             let mut diff_transforms_cursor = self
                 .diff_transforms
                 .cursor::<Dimensions<ExcerptDimension<MBD>, OutputDimension<MBD>>>(());
-            diff_transforms_cursor.next();
 
             if let Some(excerpt) = item {
                 if !excerpt.contains(anchor, self) {
+                    diff_transforms_cursor.seek(&excerpt_start_position, Bias::Left);
                     return self.summary_for_excerpt_position_without_hunks(
                         Bias::Left,
                         excerpt_start_position,
@@ -4848,9 +4814,7 @@ impl MultiBufferSnapshot {
                     position += summary - excerpt_buffer_start;
                 }
 
-                if diff_transforms_cursor.start().0 < position {
-                    diff_transforms_cursor.seek_forward(&position, Bias::Left);
-                }
+                diff_transforms_cursor.seek(&position, Bias::Left);
                 self.summary_for_anchor_with_excerpt_position(
                     *anchor,
                     position,
@@ -4858,7 +4822,7 @@ impl MultiBufferSnapshot {
                     &buffer_snapshot,
                 )
             } else {
-                diff_transforms_cursor.seek_forward(&excerpt_start_position, Bias::Left);
+                diff_transforms_cursor.seek(&excerpt_start_position, Bias::Left);
                 self.summary_for_excerpt_position_without_hunks(
                     Bias::Right,
                     excerpt_start_position,
@@ -5066,6 +5030,7 @@ impl MultiBufferSnapshot {
             if let Some(excerpt) = cursor.item() {
                 let buffer_snapshot = excerpt.buffer_snapshot(self);
                 if !excerpt.contains(&excerpt_anchor, self) {
+                    diff_transforms_cursor.seek_forward(&excerpt_start_position, Bias::Left);
                     let position = self.summary_for_excerpt_position_without_hunks(
                         Bias::Left,
                         excerpt_start_position,
@@ -6765,6 +6730,13 @@ impl MultiBufferSnapshot {
             .collect::<String>()
             .graphemes(true)
             .count()
+    }
+
+    pub fn range_for_buffer(&self, buffer_id: BufferId) -> Option<Range<Point>> {
+        let path_key = self.path_key_index_for_buffer(buffer_id)?;
+        let start = Anchor::in_buffer(path_key, text::Anchor::min_for_buffer(buffer_id));
+        let end = Anchor::in_buffer(path_key, text::Anchor::max_for_buffer(buffer_id));
+        Some((start..end).to_point(self))
     }
 }
 

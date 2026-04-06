@@ -586,6 +586,43 @@ message GitCreateWorktree {
   optional string commit = 5;
 }
 
+message GitCreateCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitCreateCheckpointResponse {
+  bytes commit_sha = 1;
+}
+
+message GitRestoreCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  bytes commit_sha = 3;
+}
+
+message GitCompareCheckpoints {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  bytes left_commit_sha = 3;
+  bytes right_commit_sha = 4;
+}
+
+message GitCompareCheckpointsResponse {
+  bool equal = 1;
+}
+
+message GitDiffCheckpoints {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  bytes base_commit_sha = 3;
+  bytes target_commit_sha = 4;
+}
+
+message GitDiffCheckpointsResponse {
+  string diff = 1;
+}
+
 message GitRemoveWorktree {
   uint64 project_id = 1;
   uint64 repository_id = 2;

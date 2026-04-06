@@ -98,6 +98,7 @@ watch.workspace = true
 wax.workspace = true
 which.workspace = true
 worktree.workspace = true
+zed_credentials_provider.workspace = true
 zeroize.workspace = true
 zlog.workspace = true
 ztracing.workspace = true
