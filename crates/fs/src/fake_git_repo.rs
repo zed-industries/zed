@@ -6,9 +6,10 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, FetchOptions,
-        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions, DropCommitSupport,
+        FetchOptions, GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint,
+        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RepoPath, ResetMode,
+        SearchCommitArgs, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -218,7 +219,7 @@ impl GitRepository for FakeGitRepository {
         _mode: ResetMode,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        future::ready(Ok(())).boxed()
     }
 
     fn checkout_files(
@@ -227,7 +228,7 @@ impl GitRepository for FakeGitRepository {
         _paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
-        unimplemented!()
+        future::ready(Ok(())).boxed()
     }
 
     fn path(&self) -> PathBuf {
@@ -675,6 +676,59 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn create_branch_at(&self, _sha: String, name: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            state.branches.insert(name);
+            Ok(())
+        })
+    }
+
+    fn create_tag(
+        &self,
+        _sha: String,
+        _name: String,
+        _message: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        future::ready(Ok(())).boxed()
+    }
+
+    fn checkout_commit(&self, _sha: String) -> BoxFuture<'_, Result<()>> {
+        future::ready(Ok(())).boxed()
+    }
+
+    fn cherry_pick(
+        &self,
+        _sha: String,
+        _record_origin: bool,
+        _no_commit: bool,
+    ) -> BoxFuture<'_, Result<()>> {
+        future::ready(Ok(())).boxed()
+    }
+
+    fn revert_commit(&self, _sha: String) -> BoxFuture<'_, Result<()>> {
+        future::ready(Ok(())).boxed()
+    }
+
+    fn drop_commit_support(&self, _sha: String) -> BoxFuture<'_, Result<DropCommitSupport>> {
+        future::ready(Ok(DropCommitSupport {
+            can_drop: true,
+            reason: None,
+        }))
+        .boxed()
+    }
+
+    fn drop_commit(&self, _sha: String) -> BoxFuture<'_, Result<()>> {
+        future::ready(Ok(())).boxed()
+    }
+
+    fn merge_commit(&self, _sha: String) -> BoxFuture<'_, Result<()>> {
+        future::ready(Ok(())).boxed()
+    }
+
+    fn rebase_onto(&self, _sha: String) -> BoxFuture<'_, Result<()>> {
+        future::ready(Ok(())).boxed()
+    }
+
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             if !state.branches.remove(&branch) {
@@ -695,6 +749,10 @@ impl GitRepository for FakeGitRepository {
             }
             Ok(())
         })
+    }
+
+    fn delete_tag(&self, _name: String) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
     }
 
     fn blame(
