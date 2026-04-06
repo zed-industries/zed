@@ -649,7 +649,7 @@ impl MultiWorkspace {
         if let Some(workspace) = self
             .workspaces
             .iter()
-            .find(|ws| ws.read(cx).project_group_key(cx).path_list() == &path_list)
+            .find(|ws| PathList::new(&ws.read(cx).root_paths(cx)) == path_list)
             .cloned()
         {
             self.activate(workspace.clone(), window, cx);
