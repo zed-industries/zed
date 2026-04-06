@@ -314,35 +314,31 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 fn worktree_info_from_thread_paths(
     folder_paths: &PathList,
     group_key: &project::ProjectGroupKey,
-) -> Vec<WorktreeInfo> {
+) -> impl Iterator<Item = WorktreeInfo> {
     let main_paths = group_key.path_list().paths();
-    folder_paths
-        .paths()
-        .iter()
-        .filter_map(|path| {
-            let is_main = main_paths.iter().any(|mp| mp.as_path() == path.as_path());
-            if is_main {
-                let name = path.file_name()?.to_string_lossy().to_string();
-                Some(WorktreeInfo {
-                    name: SharedString::from(name),
-                    full_path: SharedString::from(path.display().to_string()),
-                    highlight_positions: Vec::new(),
-                    kind: ui::WorktreeKind::Main,
-                })
-            } else {
-                let main_path = main_paths
-                    .iter()
-                    .find(|mp| mp.file_name() == path.file_name())
-                    .or(main_paths.first())?;
-                Some(WorktreeInfo {
-                    name: linked_worktree_short_name(main_path, path).unwrap_or_default(),
-                    full_path: SharedString::from(path.display().to_string()),
-                    highlight_positions: Vec::new(),
-                    kind: ui::WorktreeKind::Linked,
-                })
-            }
-        })
-        .collect()
+    folder_paths.paths().iter().filter_map(|path| {
+        let is_main = main_paths.iter().any(|mp| mp.as_path() == path.as_path());
+        if is_main {
+            let name = path.file_name()?.to_string_lossy().to_string();
+            Some(WorktreeInfo {
+                name: SharedString::from(name),
+                full_path: SharedString::from(path.display().to_string()),
+                highlight_positions: Vec::new(),
+                kind: ui::WorktreeKind::Main,
+            })
+        } else {
+            let main_path = main_paths
+                .iter()
+                .find(|mp| mp.file_name() == path.file_name())
+                .or(main_paths.first())?;
+            Some(WorktreeInfo {
+                name: linked_worktree_short_name(main_path, path).unwrap_or_default(),
+                full_path: SharedString::from(path.display().to_string()),
+                highlight_positions: Vec::new(),
+                kind: ui::WorktreeKind::Linked,
+            })
+        }
+    })
 }
 
 /// The sidebar re-derives its entire entry list from scratch on every
@@ -871,7 +867,7 @@ impl Sidebar {
                         is_background: false,
                         is_title_generating: false,
                         highlight_positions: Vec::new(),
-                        worktrees,
+                        worktrees: worktrees.collect(),
                         diff_stats: DiffStats::default(),
                     }
                 };
@@ -1068,7 +1064,9 @@ impl Sidebar {
                     if let Some(ActiveEntry::Draft(draft_ws)) = &self.active_entry {
                         let ws_path_list = workspace_path_list(draft_ws, cx);
                         let worktrees = worktree_info_from_thread_paths(&ws_path_list, &group_key);
-                        entries.push(ListEntry::DraftThread { worktrees });
+                        entries.push(ListEntry::DraftThread {
+                            worktrees: worktrees.collect(),
+                        });
                     }
                 }
 
@@ -1083,7 +1081,6 @@ impl Sidebar {
                         let ws_path_list = workspace_path_list(active_ws, cx);
                         let has_linked_worktrees =
                             worktree_info_from_thread_paths(&ws_path_list, &group_key)
-                                .iter()
                                 .any(|wt| wt.kind == ui::WorktreeKind::Linked);
                         if !has_linked_worktrees {
                             return false;
@@ -1113,6 +1110,7 @@ impl Sidebar {
                                     &workspace_path_list(ws, cx),
                                     &group_key,
                                 )
+                                .collect()
                             })
                             .unwrap_or_default()
                     } else {
