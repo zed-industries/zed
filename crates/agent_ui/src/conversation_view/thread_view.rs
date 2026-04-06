@@ -3095,6 +3095,8 @@ impl ThreadView {
             (IconName::Maximize, "Expand Message Editor")
         };
 
+        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
             .p_2()
@@ -3111,7 +3113,8 @@ impl ThreadView {
                 v_flex()
                     .flex_1()
                     .w_full()
-                    .when(self.zoomed, |this| this.max_w(rems_from_px(750.)).mx_auto())
+                    .max_w(max_content_width)
+                    .mx_auto()
                     .child(
                         v_flex()
                             .relative()
@@ -8562,14 +8565,12 @@ impl Render for ThreadView {
         let has_messages = self.list_state.item_count() > 0;
         let v2_empty_state = cx.has_flag::<AgentV2FeatureFlag>() && !has_messages;
 
+        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+
         let conversation = v_flex()
-            .when(!v2_empty_state, |this| this.flex_1())
-            .when(self.zoomed && !v2_empty_state, |this| {
-                this.max_w(rems_from_px(750.))
-                    .mx_auto()
-                    .flex_1()
-                    .size_full()
-            })
+            .mx_auto()
+            .max_w(max_content_width)
+            .when(!v2_empty_state, |this| this.flex_1().size_full())
             .map(|this| {
                 let this = this.when(self.resumed_without_history, |this| {
                     this.child(Self::render_resume_notice(cx))
