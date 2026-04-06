@@ -899,6 +899,28 @@ impl ConversationView {
 
             telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
 
+            // Acquire the shared thread load lock to prevent racing with
+            // open_existing_thread_sync in thread_service. Only one thread load
+            // can be in progress at a time. Use a drop guard so the lock is
+            // released on all exit paths (success, error, early return).
+            #[cfg(feature = "external_websocket_sync")]
+            struct LoadLockGuard(bool);
+            #[cfg(feature = "external_websocket_sync")]
+            impl Drop for LoadLockGuard {
+                fn drop(&mut self) {
+                    if self.0 {
+                        external_websocket_sync::release_thread_load_lock();
+                    }
+                }
+            }
+            #[cfg(feature = "external_websocket_sync")]
+            let _load_lock_guard = if load_session_id.is_some() {
+                let sid = load_session_id.as_ref().unwrap().0.to_string();
+                LoadLockGuard(external_websocket_sync::try_acquire_thread_load_lock(&sid))
+            } else {
+                LoadLockGuard(false)
+            };
+
             let mut resumed_without_history = false;
             let result = if let Some(session_id) = load_session_id.clone() {
                 cx.update(|_, cx| {
@@ -1011,12 +1033,8 @@ impl ConversationView {
                                 external_websocket_sync::ensure_thread_subscription(
                                     &entity, &session_id, cx,
                                 );
-                                let agent_name = match &this.agent {
-                                    agent if agent.agent_id().0.contains("claude") => "claude",
-                                    _ => "zed-agent",
-                                };
                                 external_websocket_sync::send_agent_ready(
-                                    agent_name.to_string(),
+                                    this.agent.agent_id().0.to_string(),
                                     Some(session_id),
                                 );
                             }
