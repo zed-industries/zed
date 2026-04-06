@@ -1,36 +1,16 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 
-use crate::tasks::compliance::{
+use compliance::{
     checks::Reporter,
     git::{Checkout, CommitsFromVersionToHead, GetVersionTags, GitCommand, VersionTag},
     github::GitHubClient,
     report::ReportReviewSummary,
 };
 
-mod checks;
-mod git;
-mod github;
-mod report;
-
 const PR_REVIEW_LABEL: &str = "PR state:needs review";
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-pub(crate) enum ReleaseChannel {
-    Stable,
-    Preview,
-}
-
-impl ReleaseChannel {
-    pub(crate) fn tag_suffix(&self) -> &'static str {
-        match self {
-            ReleaseChannel::Stable => "",
-            ReleaseChannel::Preview => "-pre",
-        }
-    }
-}
 
 #[derive(Parser)]
 pub struct ComplianceArgs {
@@ -81,12 +61,12 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
         })?;
 
     if !in_workflow_context {
-        GitCommand::run(Checkout(args.version_branch()))?;
+        GitCommand::run(Checkout::new(args.version_branch()))?;
     }
 
     println!("Checking compliance for version {}", tag.version());
 
-    let commits = GitCommand::run(CommitsFromVersionToHead(previous_version))?;
+    let commits = GitCommand::run(CommitsFromVersionToHead::new(previous_version))?;
 
     println!("Found {} commits to check", commits.len());
 

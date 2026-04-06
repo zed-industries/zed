@@ -243,6 +243,7 @@ members = [
     # Tooling
     #
 
+    "tooling/compliance",
     "tooling/perf",
     "tooling/xtask",
 ]
@@ -293,6 +294,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+compliance = { path = "tooling/compliance" }
 component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }

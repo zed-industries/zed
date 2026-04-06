@@ -7,7 +7,7 @@ use octocrab::models::{
     pulls::{PullRequest, Review, ReviewState},
 };
 
-use crate::tasks::compliance::{
+use crate::{
     git::{CommitDetails, CommitList},
     github::{CommitAuthor, GitHubClient, GithubLogin},
     report::Report,
@@ -17,7 +17,7 @@ const ZED_ZIPPY_COMMENT_APPROVAL_PATTERN: &str = "@zed-zippy approve";
 const ZED_ZIPPY_GROUP_APPROVAL: &str = "@zed-industries/approved";
 
 #[derive(Debug)]
-pub(crate) enum ReviewSuccess {
+pub enum ReviewSuccess {
     ApprovingComment(Vec<Comment>),
     CoAuthored(Vec<CommitAuthor>),
     ExternalMergedContribution { merged_by: Box<Author> },
@@ -68,7 +68,7 @@ impl fmt::Display for ReviewSuccess {
 }
 
 #[derive(Debug)]
-pub(crate) enum ReviewFailure {
+pub enum ReviewFailure {
     // todo: We could still query the GitHub API here to search for one
     NoPullRequestFound,
     Unreviewed,
@@ -96,7 +96,7 @@ impl<E: Into<anyhow::Error>> From<E> for ReviewFailure {
     }
 }
 
-pub(crate) struct Reporter<'a> {
+pub struct Reporter<'a> {
     commits: CommitList,
     github_client: &'a GitHubClient,
 }
@@ -279,7 +279,7 @@ impl<'a> Reporter<'a> {
         }
     }
 
-    pub(crate) async fn generate_report(&mut self) -> anyhow::Result<Report> {
+    pub async fn generate_report(&mut self) -> anyhow::Result<Report> {
         let mut report = Report::new();
 
         let commits_to_check = std::mem::take(&mut self.commits);

@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use derive_more::Display;
 use itertools::{Either, Itertools};
 
-use crate::tasks::compliance::{
+use crate::{
     checks::{ReviewFailure, ReviewResult, ReviewSuccess},
     git::CommitDetails,
 };
@@ -67,13 +67,13 @@ impl ReportEntry<ReviewSuccess> {
 
 #[derive(Debug, Default)]
 pub struct ReportSummary {
-    pull_requests: usize,
-    reviewed: usize,
-    pub(crate) not_reviewed: usize,
-    pub(crate) errors: usize,
+    pub pull_requests: usize,
+    pub reviewed: usize,
+    pub not_reviewed: usize,
+    pub errors: usize,
 }
 
-pub(crate) enum ReportReviewSummary {
+pub enum ReportReviewSummary {
     MissingReviews,
     MissingReviewsWithErrors,
     NoIssuesFound,
@@ -126,7 +126,7 @@ enum IssueKind {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Report {
+pub struct Report {
     entries: Vec<ReportEntry<ReviewResult>>,
 }
 
@@ -150,7 +150,7 @@ impl Report {
         ReportSummary::from_entries(&self.entries)
     }
 
-    pub(crate) fn write_markdown(self, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    pub fn write_markdown(self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let path = path.as_ref();
 
         if let Some(parent) = path

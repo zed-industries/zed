@@ -16,7 +16,7 @@ use octocrab::{
 use serde::{Deserialize, de::DeserializeOwned};
 use tokio::pin;
 
-use crate::tasks::compliance::git::CommitSha;
+use crate::git::CommitSha;
 
 const PAGE_SIZE: u8 = 100;
 const ORG: &str = "zed-industries";
@@ -27,7 +27,7 @@ pub struct GitHubClient {
 }
 
 #[derive(Debug, Deserialize, Clone, Deref, PartialEq, Eq)]
-pub(crate) struct GithubLogin {
+pub struct GithubLogin {
     login: String,
 }
 
@@ -44,7 +44,7 @@ impl fmt::Display for GithubLogin {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub(crate) struct CommitAuthor {
+pub struct CommitAuthor {
     name: String,
     email: String,
     user: Option<GithubLogin>,
@@ -75,7 +75,7 @@ impl fmt::Display for CommitAuthor {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct CommitAuthors {
+pub struct CommitAuthors {
     #[serde(rename = "author")]
     primary_author: CommitAuthor,
     #[serde(rename = "authors")]
@@ -83,7 +83,7 @@ pub(crate) struct CommitAuthors {
 }
 
 impl CommitAuthors {
-    pub(crate) fn co_authors(&self) -> Option<impl Iterator<Item = &CommitAuthor>> {
+    pub fn co_authors(&self) -> Option<impl Iterator<Item = &CommitAuthor>> {
         self.co_authors.is_empty().not().then(|| {
             self.co_authors
                 .iter()
@@ -93,7 +93,7 @@ impl CommitAuthors {
 }
 
 #[derive(Debug, Deserialize, Deref)]
-pub(crate) struct AuthorsForCommits(HashMap<CommitSha, CommitAuthors>);
+pub struct AuthorsForCommits(HashMap<CommitSha, CommitAuthors>);
 
 impl GitHubClient {
     pub async fn for_app(app_id: u64, app_private_key: &str) -> Result<Self> {

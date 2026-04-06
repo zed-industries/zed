@@ -3437,6 +3437,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "compliance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "futures-util",
+ "indexmap",
+ "indoc",
+ "itertools 0.14.0",
+ "jsonwebtoken",
+ "log",
+ "octocrab",
+ "regex",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "component"
 version = "0.1.0"
 dependencies = [
@@ -22109,6 +22129,7 @@ dependencies = [
  "cargo_metadata 0.19.2",
  "cargo_toml",
  "clap",
+ "compliance",
  "derive_more",
  "futures-util",
  "gh-workflow",

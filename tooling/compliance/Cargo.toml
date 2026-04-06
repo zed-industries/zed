@@ -1,5 +1,5 @@
 [package]
-name = "xtask"
+name = "compliance"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,16 +9,9 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [dependencies]
-annotate-snippets = "0.12.1"
 anyhow.workspace = true
-backtrace.workspace = true
-cargo_metadata.workspace = true
-cargo_toml.workspace = true
-clap = { workspace = true, features = ["derive"] }
-compliance.workspace = true
 derive_more.workspace = true
 futures-util = "0.3"
-gh-workflow.workspace = true
 indoc.workspace = true
 indexmap.workspace = true
 itertools.workspace = true
@@ -29,9 +22,4 @@ regex.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml = "0.9.34"
-strum.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
-toml.workspace = true
-toml_edit.workspace = true
-url.workspace = true
+tokio.workspace = true

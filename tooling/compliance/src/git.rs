@@ -14,16 +14,14 @@ use regex::Regex;
 use semver::Version;
 use serde::Deserialize;
 
-use crate::tasks::compliance::ReleaseChannel;
-
-pub(crate) trait Subcommand {
+pub trait Subcommand {
     type ParsedOutput: FromStr<Err = anyhow::Error>;
 
     fn args(&self) -> impl IntoIterator<Item = String>;
 }
 
 #[derive(Deref, DerefMut)]
-pub(crate) struct GitCommand<G: Subcommand> {
+pub struct GitCommand<G: Subcommand> {
     #[deref]
     #[deref_mut]
     subcommand: G,
@@ -58,8 +56,23 @@ impl<G: Subcommand> GitCommand<G> {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReleaseChannel {
+    Stable,
+    Preview,
+}
+
+impl ReleaseChannel {
+    pub(crate) fn tag_suffix(&self) -> &'static str {
+        match self {
+            ReleaseChannel::Stable => "",
+            ReleaseChannel::Preview => "-pre",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-pub(crate) struct VersionTag(Version, ReleaseChannel);
+pub struct VersionTag(Version, ReleaseChannel);
 
 impl VersionTag {
     pub fn parse(input: &str) -> Result<Self, anyhow::Error> {
@@ -77,7 +90,7 @@ impl VersionTag {
             .map_err(|_| anyhow::anyhow!("Failed to parse version from tag!"))
     }
 
-    pub(crate) fn version(&self) -> &Version {
+    pub fn version(&self) -> &Version {
         &self.0
     }
 }
@@ -93,16 +106,16 @@ impl ToString for VersionTag {
 }
 
 #[derive(Debug, Deref, FromStr, PartialEq, Eq, Hash, Deserialize)]
-pub(crate) struct CommitSha(pub(crate) String);
+pub struct CommitSha(pub(crate) String);
 
 impl CommitSha {
-    pub(crate) fn short(&self) -> &str {
+    pub fn short(&self) -> &str {
         self.0.as_str().split_at(8).0
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct CommitDetails {
+pub struct CommitDetails {
     sha: CommitSha,
     author: Committer,
     title: String,
@@ -110,13 +123,13 @@ pub(crate) struct CommitDetails {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Committer {
+pub struct Committer {
     name: String,
     email: String,
 }
 
 impl Committer {
-    pub(crate) fn new(name: &str, email: &str) -> Self {
+    pub fn new(name: &str, email: &str) -> Self {
         Self {
             name: name.to_owned(),
             email: email.to_owned(),
@@ -151,7 +164,7 @@ impl CommitDetails {
         })
     }
 
-    pub(crate) fn pr_number(&self) -> Option<u64> {
+    pub fn pr_number(&self) -> Option<u64> {
         // Since we use squash merge, all commit titles end with the '(#12345)' pattern.
         // While we could strictly speaking index into this directly, go for a slightly
         // less prone approach to errors
@@ -200,7 +213,7 @@ impl CommitDetails {
 }
 
 #[derive(Debug, Deref, Default, DerefMut)]
-pub(crate) struct CommitList(Vec<CommitDetails>);
+pub struct CommitList(Vec<CommitDetails>);
 
 impl IntoIterator for CommitList {
     type IntoIter = std::vec::IntoIter<CommitDetails>;
@@ -231,7 +244,7 @@ impl FromStr for CommitList {
     }
 }
 
-pub(crate) struct GetVersionTags;
+pub struct GetVersionTags;
 
 impl Subcommand for GetVersionTags {
     type ParsedOutput = VersionTagList;
@@ -241,15 +254,15 @@ impl Subcommand for GetVersionTags {
     }
 }
 
-pub(crate) struct VersionTagList(Vec<VersionTag>);
+pub struct VersionTagList(Vec<VersionTag>);
 
 impl VersionTagList {
-    pub(crate) fn sorted(mut self) -> Self {
+    pub fn sorted(mut self) -> Self {
         self.0.sort_by(|a, b| a.version().cmp(b.version()));
         self
     }
 
-    pub(crate) fn find_previous_version(&self, version_tag: &VersionTag) -> Option<&VersionTag> {
+    pub fn find_previous_version(&self, version_tag: &VersionTag) -> Option<&VersionTag> {
         self.0
             .iter()
             .take_while(|tag| tag.version() < version_tag.version())
@@ -276,7 +289,13 @@ impl FromStr for VersionTagList {
     }
 }
 
-pub(crate) struct CommitsFromVersionToHead(pub(crate) VersionTag);
+pub struct CommitsFromVersionToHead(pub(crate) VersionTag);
+
+impl CommitsFromVersionToHead {
+    pub fn new(version_tag: VersionTag) -> Self {
+        Self(version_tag)
+    }
+}
 
 impl Subcommand for CommitsFromVersionToHead {
     type ParsedOutput = CommitList;
@@ -290,10 +309,14 @@ impl Subcommand for CommitsFromVersionToHead {
     }
 }
 
-pub(crate) struct Checkout(pub(crate) String);
+pub struct Checkout(pub(crate) String);
 
 impl Checkout {
-    pub(crate) fn previous_branch() -> Self {
+    pub fn new(branch: impl ToOwned<Owned = String>) -> Self {
+        Self(branch.to_owned())
+    }
+
+    pub fn previous_branch() -> Self {
         Self("-".to_owned())
     }
 }
