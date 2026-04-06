@@ -49,8 +49,7 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     let previous_version = GitCommand::run(GetVersionTags)?
         .sorted()
-        .find_previous_version(&tag)
-        .cloned()
+        .find_previous_minor_version(&tag)
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Could not find previous version for tag {tag}",

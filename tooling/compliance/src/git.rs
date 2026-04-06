@@ -262,15 +262,28 @@ impl VersionTagList {
         self
     }
 
-    pub fn find_previous_version(&self, version_tag: &VersionTag) -> Option<&VersionTag> {
+    pub fn find_previous_minor_version(&self, version_tag: &VersionTag) -> Option<VersionTag> {
         self.0
             .iter()
-            .take_while(|tag| tag.version() < version_tag.version())
+            .take_while(|tag| {
+                tag.version().major < version_tag.version().major
+                    || (tag.version().major == version_tag.version().major
+                        && tag.version().minor < version_tag.version().minor)
+            })
             .last()
             .or_else(|| {
                 self.0
                     .last()
                     .filter(|tag| tag.version() < version_tag.version())
+            })
+            .map(|previous_version| {
+                VersionTag(
+                    Version {
+                        patch: 0,
+                        ..previous_version.version().clone()
+                    },
+                    version_tag.1,
+                )
             })
     }
 }
