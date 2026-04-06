@@ -9325,7 +9325,7 @@ pub fn open_workspace_by_id(
 pub fn open_paths(
     abs_paths: &[PathBuf],
     app_state: Arc<AppState>,
-    open_options: OpenOptions,
+    mut open_options: OpenOptions,
     cx: &mut App,
 ) -> Task<anyhow::Result<OpenResult>> {
     let abs_paths = abs_paths.to_vec();
@@ -9350,10 +9350,9 @@ pub fn open_paths(
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
                 .into_iter()
-                .filter_map(|result| result.ok().flatten())
-                .collect::<Vec<_>>();
+                .filter_map(|result| result.ok().flatten());
 
-            if all_metadatas.iter().all(|file| !file.is_dir) {
+            if all_metadatas.into_iter().all(|file| !file.is_dir) {
                 cx.update(|cx| {
                     let windows = workspace_windows_for_location(
                         &SerializedWorkspaceLocation::Local,
@@ -9373,6 +9372,31 @@ pub fn open_paths(
                     }
                 });
             }
+        }
+
+        // Fallback for directories: when no flag is specified and no existing
+        // workspace matched, add the directory as a new workspace in the
+        // active window's MultiWorkspace (instead of opening a new window).
+        if open_options.open_new_workspace.is_none() && existing.is_none() {
+            cx.update(|cx| {
+                let windows = workspace_windows_for_location(
+                    &SerializedWorkspaceLocation::Local,
+                    cx,
+                );
+                let window = cx
+                    .active_window()
+                    .and_then(|window| window.downcast::<MultiWorkspace>())
+                    .filter(|window| windows.contains(window))
+                    .or_else(|| windows.into_iter().next());
+                if let Some(window) = window {
+                    open_options.requesting_window = Some(window);
+                    window
+                        .update(cx, |multi_workspace, _, cx| {
+                            multi_workspace.open_sidebar(cx);
+                        })
+                        .log_err();
+                }
+            });
         }
 
         let open_in_dev_container = open_options.open_in_dev_container;
