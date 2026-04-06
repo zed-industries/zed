@@ -16,12 +16,7 @@ use git_ui::{
     commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon, picker_prompt,
 };
 use gpui::{
-    Action, AnyElement, App, Bounds, ClickEvent, ClipboardItem, Corner, DefiniteLength,
-    DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, PromptLevel, ScrollStrategy,
-    ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
-    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
-    px, uniform_list,
+    Action, AnyElement, App, Bounds, ClickEvent, ClipboardItem, Corner, DefiniteLength, DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, PromptLevel, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*, px, uniform_list
 };
 use language::line_diff;
 use menu::{Cancel, Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -2047,10 +2042,37 @@ impl GitGraph {
     }
 
     fn render_chip(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
-        Chip::new(name.clone())
+        let is_head = name.clone().starts_with("HEAD");
+        let multiplier = if is_head { 4.0 } else { 1.0 };
+        let is_tag = name.clone().starts_with("tag:");
+        let is_stash = name.clone().starts_with("stash@{") || name.clone() == "stash" || name.clone().starts_with("refs/stash");
+
+        // Extract display name: strip "tag: " or "HEAD -> " prefixes
+        let display_name = if is_tag {
+            name.trim_start_matches("tag: ").to_string().into()
+        } else if name.clone().starts_with("HEAD -> ") {
+            name.trim_start_matches("HEAD -> ").to_string().into()
+        } else {
+            name.clone()
+        };
+
+        let mut chip = Chip::new(display_name)
             .label_size(LabelSize::Small)
-            .bg_color(accent_color.opacity(0.1))
-            .border_color(accent_color.opacity(0.5))
+            .bg_color(accent_color.opacity(0.1 * multiplier))
+            .border_color(accent_color.opacity(0.5 * multiplier))
+            .leading_icon(if is_tag {
+                Icon::new(IconName::GitTag)
+            } else if is_stash {
+                Icon::new(IconName::GitStash)
+            } else {
+                Icon::new(IconName::GitBranch)
+            });
+
+        if is_head {
+            chip = chip.weight(FontWeight::SEMIBOLD);
+        }
+
+        chip
     }
 
     fn render_interactive_chip(
