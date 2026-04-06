@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use auto_update::{AutoUpdater, release_notes_url};
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
@@ -170,6 +172,7 @@ struct AnnouncementContent {
     bullet_items: Vec<SharedString>,
     primary_action_label: SharedString,
     primary_action_url: Option<SharedString>,
+    on_dismiss: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
 }
 
 struct ParallelAgentAnnouncement;
@@ -194,6 +197,9 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                     ],
                     primary_action_label: "Learn More".into(),
                     primary_action_url: Some("https://zed.dev/".into()),
+                    on_dismiss: Some(Arc::new(|cx| {
+                        ParallelAgentAnnouncement::set_dismissed(true, cx)
+                    })),
                 })
             }
         }
@@ -211,6 +217,13 @@ impl AnnouncementToastNotification {
         Self {
             focus_handle: cx.focus_handle(),
             content,
+        }
+    }
+
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+        if let Some(on_dismiss) = &self.content.on_dismiss {
+            on_dismiss(cx);
         }
     }
 }
@@ -240,26 +253,26 @@ impl Render for AnnouncementToastNotification {
             .primary_on_click(cx.listener({
                 let url = self.content.primary_action_url.clone();
                 telemetry::event!("Parallel Agent Announcement Main Click");
-                move |_, _, _window, cx| {
+                move |this, _, _window, cx| {
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }
-                    cx.emit(DismissEvent);
+                    this.dismiss(cx);
                 }
             }))
             .secondary_on_click(cx.listener({
                 let url = self.content.primary_action_url.clone();
                 telemetry::event!("Parallel Agent Announcement Secondary Click");
-                move |_, _, _window, cx| {
+                move |this, _, _window, cx| {
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }
-                    cx.emit(DismissEvent);
+                    this.dismiss(cx);
                 }
             }))
-            .dismiss_on_click(cx.listener(|_, _, _window, cx| {
+            .dismiss_on_click(cx.listener(|this, _, _window, cx| {
                 telemetry::event!("Parallel Agent Announcement Dismiss");
-                cx.emit(DismissEvent);
+                this.dismiss(cx);
             }))
     }
 }
