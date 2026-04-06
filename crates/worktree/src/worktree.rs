@@ -1700,9 +1700,9 @@ impl LocalWorktree {
 
         let delete = cx.background_spawn(async move {
             let trashed_entry = match (entry.is_file(), trash) {
-                (true, true) => Some(fs.trash_file(&abs_path, Default::default()).await?),
+                (true, true) => Some(fs.trash(&abs_path, Default::default()).await?),
                 (false, true) => Some(
-                    fs.trash_dir(
+                    fs.trash(
                         &abs_path,
                         RemoveOptions {
                             recursive: true,

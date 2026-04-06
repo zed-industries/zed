@@ -115,20 +115,15 @@ pub trait Fs: Send + Sync {
     /// system trash.
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
 
-    /// Moves a directory to the system trash.
+    /// Moves a file or directory to the system trash.
     /// Returns a [`TrashedEntry`] that can be used to keep track of the
-    /// location of the trashed directory in the system's trash.
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry>;
+    /// location of the trashed item in the system's trash.
+    async fn trash(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry>;
 
     /// Removes a file from the filesystem.
     /// There is no expectation that the file will be preserved in the system
     /// trash.
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-
-    /// Moves a file to the system trash.
-    /// Returns a [`TrashedEntry`] that can be used to keep track of the
-    /// location of the trashed file in the system's trash.
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry>;
 
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
@@ -798,7 +793,7 @@ impl Fs for RealFs {
         }
     }
 
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<TrashedEntry> {
+    async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashedEntry> {
         // We must make the path absolute or trash will make a weird abonimation
         // of the zed working directory (not usually the worktree) and whatever
         // the path variable holds.
@@ -818,10 +813,6 @@ impl Fs for RealFs {
             .context("Tx dropped or fs.restore panicked")?
             .context("Could not trash file or dir")?
             .into())
-    }
-
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry> {
-        self.trash_file(path, options).await // TODO(yara): deduplicate make one trash method.
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -2813,12 +2804,17 @@ impl Fs for FakeFs {
         self.remove_dir_inner(path, options).await.map(|_| ())
     }
 
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry> {
+    async fn trash(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry> {
         let normalized_path = normalize_path(path);
         let parent_path = normalized_path.parent().context("cannot remove the root")?;
         let base_name = normalized_path.file_name().unwrap();
+        let result = if self.is_dir(path).await {
+            self.remove_dir_inner(path, options).await?
+        } else {
+            self.remove_file_inner(path, options).await?
+        };
 
-        match self.remove_dir_inner(path, options).await? {
+        match result {
             Some(fake_entry) => {
                 let trashed_entry = TrashedEntry {
                     id: base_name.to_str().unwrap().into(),
@@ -2836,27 +2832,6 @@ impl Fs for FakeFs {
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.remove_file_inner(path, options).await.map(|_| ())
-    }
-
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry> {
-        let normalized_path = normalize_path(path);
-        let parent_path = normalized_path.parent().context("cannot remove the root")?;
-        let base_name = normalized_path.file_name().unwrap();
-
-        match self.remove_file_inner(path, options).await? {
-            Some(fake_entry) => {
-                let trashed_entry = TrashedEntry {
-                    id: base_name.to_str().unwrap().into(),
-                    name: base_name.to_str().unwrap().into(),
-                    original_parent: parent_path.to_path_buf(),
-                };
-
-                let mut state = self.state.lock();
-                state.trash.push((trashed_entry.clone(), fake_entry));
-                Ok(trashed_entry)
-            }
-            None => anyhow::bail!("{normalized_path:?} does not exist"),
-        }
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
