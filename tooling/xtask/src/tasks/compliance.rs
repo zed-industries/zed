@@ -10,8 +10,6 @@ use compliance::{
     report::ReportReviewSummary,
 };
 
-const PR_REVIEW_LABEL: &str = "PR state:needs review";
-
 #[derive(Parser)]
 pub struct ComplianceArgs {
     #[arg(value_parser = VersionTag::parse)]
@@ -80,7 +78,9 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     for report in report.errors() {
         if let Some(pr_number) = report.commit.pr_number() {
-            client.add_label_to_pr(PR_REVIEW_LABEL, pr_number).await?;
+            client
+                .add_label_to_pr(compliance::github::PR_REVIEW_LABEL, pr_number)
+                .await?;
         }
     }
 

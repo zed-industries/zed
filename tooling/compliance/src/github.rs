@@ -22,6 +22,8 @@ const PAGE_SIZE: u8 = 100;
 const ORG: &str = "zed-industries";
 const REPO: &str = "zed";
 
+pub const PR_REVIEW_LABEL: &str = "PR state:needs review";
+
 pub struct GitHubClient {
     client: Octocrab,
 }
