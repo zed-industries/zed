@@ -1,3 +1,7 @@
+// This module provides infrastructure for showing onboarding banners in the title bar.
+// It's currently not in use but is kept for future feature announcements.
+#![allow(dead_code)]
+
 use gpui::{Action, Entity, Global, Render, SharedString};
 use ui::{ButtonLike, Tooltip, prelude::*};
 use util::ResultExt;
@@ -94,21 +98,21 @@ fn persist_dismissed(source: &str, cx: &mut App) {
 }
 
 pub fn restore_banner(cx: &mut App) {
-    cx.defer(|cx| {
-        cx.global::<BannerGlobal>()
-            .entity
-            .clone()
-            .update(cx, |this, cx| {
+    if let Some(banner_global) = cx.try_global::<BannerGlobal>() {
+        let entity = banner_global.entity.clone();
+        cx.defer(move |cx| {
+            entity.update(cx, |this, cx| {
                 this.dismissed = false;
                 cx.notify();
             });
-    });
+        });
 
-    let source = &cx.global::<BannerGlobal>().entity.read(cx).source;
-    let dismissed_at = dismissed_at_key(source);
-    let kvp = db::kvp::KeyValueStore::global(cx);
-    cx.spawn(async move |_| kvp.delete_kvp(dismissed_at).await)
-        .detach_and_log_err(cx);
+        let source = &cx.global::<BannerGlobal>().entity.read(cx).source;
+        let dismissed_at = dismissed_at_key(source);
+        let kvp = db::kvp::KeyValueStore::global(cx);
+        cx.spawn(async move |_| kvp.delete_kvp(dismissed_at).await)
+            .detach_and_log_err(cx);
+    }
 }
 
 impl Render for OnboardingBanner {

@@ -81,11 +81,14 @@ pub enum SidebarSide {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingBlockDisplay {
+    /// Thinking blocks fully expand during streaming, then auto-collapse
+    /// when the model finishes thinking. Users can re-expand after collapse.
+    #[default]
+    Auto,
     /// Thinking blocks auto-expand with a height constraint during streaming,
     /// then remain in their constrained state when complete. Users can click
     /// to fully expand or collapse.
-    #[default]
-    Automatic,
+    Preview,
     /// Thinking blocks are always fully expanded by default (no height constraint).
     AlwaysExpanded,
     /// Thinking blocks are always collapsed by default.
@@ -146,10 +149,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: write
     pub default_profile: Option<Arc<str>>,
-    /// Which view type to show by default in the agent panel.
-    ///
-    /// Default: "thread"
-    pub default_view: Option<DefaultAgentView>,
     /// Where new threads should start by default.
     ///
     /// Default: "local_project"
@@ -160,10 +159,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: "primary_screen"
     pub notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
-    /// Whether to play a sound when the agent has either completed its response, or needs user input.
+    /// When to play a sound when the agent has either completed its response, or needs user input.
     ///
-    /// Default: false
-    pub play_sound_when_agent_done: Option<bool>,
+    /// Default: never
+    pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: true
@@ -327,14 +326,6 @@ pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
 }
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-#[serde(rename_all = "snake_case")]
-pub enum DefaultAgentView {
-    #[default]
-    Thread,
-    TextThread,
-}
-
 #[derive(
     Copy,
     Clone,
@@ -354,6 +345,37 @@ pub enum NotifyWhenAgentWaiting {
     PrimaryScreen,
     AllScreens,
     Never,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaySoundWhenAgentDone {
+    #[default]
+    Never,
+    WhenHidden,
+    Always,
+}
+
+impl PlaySoundWhenAgentDone {
+    pub fn should_play(&self, visible: bool) -> bool {
+        match self {
+            PlaySoundWhenAgentDone::Never => false,
+            PlaySoundWhenAgentDone::WhenHidden => !visible,
+            PlaySoundWhenAgentDone::Always => true,
+        }
+    }
 }
 
 #[with_fallible_options]

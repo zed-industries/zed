@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::{Client, EditPredictionUsage, UserStore};
+use client::{Client, EditPredictionUsage, NeedsLlmTokenRefresh, UserStore, global_llm_token};
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
     PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
@@ -11,6 +11,7 @@ use cloud_llm_client::{
 };
 use collections::{HashMap, HashSet};
 use copilot::{Copilot, Reinstall, SignIn, SignOut};
+use credentials_provider::CredentialsProvider;
 use db::kvp::{Dismissable, KeyValueStore};
 use edit_prediction_context::{RelatedExcerptStore, RelatedExcerptStoreEvent, RelatedFile};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
@@ -30,7 +31,7 @@ use heapless::Vec as ArrayVec;
 use language::language_settings::all_language_settings;
 use language::{Anchor, Buffer, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
 use language::{BufferSnapshot, OffsetRangeExt};
-use language_model::{LlmApiToken, NeedsLlmTokenRefresh};
+use language_model::LlmApiToken;
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -150,6 +151,7 @@ pub struct EditPredictionStore {
     rated_predictions: HashSet<EditPredictionId>,
     #[cfg(test)]
     settled_event_callback: Option<Box<dyn Fn(EditPredictionId, String)>>,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 pub(crate) struct EditPredictionRejectionPayload {
@@ -746,7 +748,7 @@ impl EditPredictionStore {
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let data_collection_choice = Self::load_data_collection_choice(cx);
 
-        let llm_token = LlmApiToken::global(cx);
+        let llm_token = global_llm_token(cx);
 
         let (reject_tx, reject_rx) = mpsc::unbounded();
         cx.background_spawn({
@@ -787,6 +789,8 @@ impl EditPredictionStore {
             .log_err();
         });
 
+        let credentials_provider = zed_credentials_provider::global(cx);
+
         let this = Self {
             projects: HashMap::default(),
             client,
@@ -807,6 +811,8 @@ impl EditPredictionStore {
             shown_predictions: Default::default(),
             #[cfg(test)]
             settled_event_callback: None,
+
+            credentials_provider,
         };
 
         this
@@ -871,7 +877,9 @@ impl EditPredictionStore {
             let experiments = cx
                 .background_spawn(async move {
                     let http_client = client.http_client();
-                    let token = llm_token.acquire(&client, organization_id).await?;
+                    let token = client
+                        .acquire_llm_token(&llm_token, organization_id.clone())
+                        .await?;
                     let url = http_client.build_zed_llm_url("/edit_prediction_experiments", &[])?;
                     let request = http_client::Request::builder()
                         .method(Method::GET)
@@ -1676,7 +1684,7 @@ impl EditPredictionStore {
             buffer.pending_predictions.push(PendingSettledPrediction {
                 request_id: request_id,
                 editable_anchor_range: edited_buffer_snapshot
-                    .anchor_range_around(editable_offset_range),
+                    .anchor_range_inside(editable_offset_range),
                 example,
                 e2e_latency,
                 enqueued_at: now,
@@ -2315,7 +2323,10 @@ impl EditPredictionStore {
                 zeta::request_prediction_with_zeta(self, inputs, capture_data, cx)
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
-            EditPredictionModel::Mercury => self.mercury.request_prediction(inputs, cx),
+            EditPredictionModel::Mercury => {
+                self.mercury
+                    .request_prediction(inputs, self.credentials_provider.clone(), cx)
+            }
         };
 
         cx.spawn(async move |this, cx| {
@@ -2351,7 +2362,10 @@ impl EditPredictionStore {
         cx: &mut AsyncApp,
     ) -> Result<Option<(Entity<Buffer>, language::Anchor)>> {
         let collaborator_cursor_rows: Vec<u32> = active_buffer_snapshot
-            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+            .selections_in_range(
+                Anchor::min_max_range_for_buffer(active_buffer_snapshot.remote_id()),
+                false,
+            )
             .flat_map(|(_, _, _, selections)| {
                 selections.map(|s| s.head().to_point(active_buffer_snapshot).row)
             })
@@ -2427,7 +2441,10 @@ impl EditPredictionStore {
                     candidate_buffer.read_with(cx, |buffer, _cx| {
                         let snapshot = buffer.snapshot();
                         let has_collaborators = snapshot
-                            .selections_in_range(Anchor::MIN..Anchor::MAX, false)
+                            .selections_in_range(
+                                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                                false,
+                            )
                             .next()
                             .is_some();
                         let position = buffer
@@ -2530,12 +2547,15 @@ impl EditPredictionStore {
         Res: DeserializeOwned,
     {
         let http_client = client.http_client();
-
         let mut token = if require_auth {
-            Some(llm_token.acquire(&client, organization_id.clone()).await?)
+            Some(
+                client
+                    .acquire_llm_token(&llm_token, organization_id.clone())
+                    .await?,
+            )
         } else {
-            llm_token
-                .acquire(&client, organization_id.clone())
+            client
+                .acquire_llm_token(&llm_token, organization_id.clone())
                 .await
                 .ok()
         };
@@ -2579,7 +2599,11 @@ impl EditPredictionStore {
                 return Ok((serde_json::from_slice(&body)?, usage));
             } else if !did_retry && token.is_some() && response.needs_llm_token_refresh() {
                 did_retry = true;
-                token = Some(llm_token.refresh(&client, organization_id.clone()).await?);
+                token = Some(
+                    client
+                        .refresh_llm_token(&llm_token, organization_id.clone())
+                        .await?,
+                );
             } else {
                 let mut body = String::new();
                 response.body_mut().read_to_string(&mut body).await?;
@@ -2761,7 +2785,7 @@ fn collaborator_edit_overlaps_locality_region(
         (position..position).to_point(snapshot),
         COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS,
     );
-    let locality_anchor_range = snapshot.anchor_range_around(locality_point_range);
+    let locality_anchor_range = snapshot.anchor_range_inside(locality_point_range);
 
     edit_range.overlaps(&locality_anchor_range, snapshot)
 }

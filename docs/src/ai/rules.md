@@ -74,11 +74,4 @@ The new rules system replaces the Prompt Library except in a few specific cases,
 ### Slash Commands in Rules
 
 Previously, it was possible to use slash commands (now @-mentions) in custom prompts (now rules).
-There is currently no support for using @-mentions in rules files, however, slash commands are supported in rules files when used with text threads.
-See the documentation for using [slash commands in rules](./text-threads.md#slash-commands-in-rules) for more information.
-
-### Prompt templates
-
-Zed maintains backwards compatibility with its original template system, which allows you to customize prompts used throughout the application, including the inline assistant.
-While the Rules Library is now the primary way to manage prompts, you can still use these legacy templates to override default prompts.
-For more details, see the [Rules Templates](./text-threads.md#rule-templates) section under [Text Threads](./text-threads.md).
+There is currently no support for using @-mentions in rules files.

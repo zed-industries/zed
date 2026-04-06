@@ -5,6 +5,7 @@ mod filter_languages;
 mod format_prompt;
 mod git;
 mod headless;
+mod kept_rate;
 mod load_project;
 mod metrics;
 mod openai_client;

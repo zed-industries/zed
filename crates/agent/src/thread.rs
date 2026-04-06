@@ -295,9 +295,6 @@ impl UserMessage {
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }
-                        MentionUri::TextThread { .. } => {
-                            write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
                         MentionUri::Rule { .. } => {
                             write!(
                                 &mut rules_context,
