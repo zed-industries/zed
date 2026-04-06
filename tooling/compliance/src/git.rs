@@ -286,11 +286,6 @@ impl VersionTagList {
                         && tag.version().minor < version_tag.version().minor))
                     && tag.version().patch == 0
             })
-            .or_else(|| {
-                self.0
-                    .last()
-                    .filter(|tag| tag.version() < version_tag.version())
-            })
     }
 }
 
