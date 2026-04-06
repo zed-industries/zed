@@ -99,6 +99,10 @@ async fn test_project_group_keys_initial(cx: &mut TestAppContext) {
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+
     multi_workspace.read_with(cx, |mw, _cx| {
         let keys: Vec<&ProjectGroupKey> = mw.project_group_keys().collect();
         assert_eq!(keys.len(), 1, "should have exactly one key on creation");
@@ -124,6 +128,10 @@ async fn test_project_group_keys_add_workspace(cx: &mut TestAppContext) {
 
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
 
     multi_workspace.read_with(cx, |mw, _cx| {
         assert_eq!(mw.project_group_keys().count(), 1);
@@ -162,6 +170,10 @@ async fn test_project_group_keys_duplicate_not_added(cx: &mut TestAppContext) {
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
 
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(project_a2, window, cx);
     });
@@ -188,6 +200,10 @@ async fn test_project_group_keys_on_worktree_added(cx: &mut TestAppContext) {
 
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
 
     // Add a second worktree to the same project.
     let (worktree, _) = project
@@ -231,6 +247,10 @@ async fn test_project_group_keys_on_worktree_removed(cx: &mut TestAppContext) {
 
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
 
     // Remove one worktree.
     let worktree_b_id = project.read_with(cx, |project, cx| {
@@ -281,6 +301,10 @@ async fn test_project_group_keys_across_multiple_workspaces_and_worktree_changes
 
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
 
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(project_b, window, cx);
