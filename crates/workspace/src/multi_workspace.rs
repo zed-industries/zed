@@ -306,12 +306,15 @@ impl MultiWorkspace {
             }
         });
         let quit_subscription = cx.on_app_quit(Self::app_will_quit);
-        let settings_subscription =
-            cx.observe_global_in::<settings::SettingsStore>(window, |this, window, cx| {
-                if DisableAiSettings::get_global(cx).disable_ai {
+        let settings_subscription = cx.observe_global_in::<settings::SettingsStore>(window, {
+            let mut previous_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+            move |this, window, cx| {
+                if DisableAiSettings::get_global(cx).disable_ai != previous_disable_ai {
                     this.collapse_to_single_workspace(window, cx);
+                    previous_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
                 }
-            });
+            }
+        });
         Self::subscribe_to_workspace(&workspace, window, cx);
         let weak_self = cx.weak_entity();
         workspace.update(cx, |workspace, cx| {
@@ -746,8 +749,10 @@ impl MultiWorkspace {
             .chain(self.active_workspace.transient_workspace())
     }
 
-    /// Adds a workspace to this window without changing which workspace is
-    /// active.
+    /// Adds a workspace to this window as persistent without changing which
+    /// workspace is active. Unlike `activate()`, this always inserts into the
+    /// persistent list regardless of sidebar state — it's used for system-
+    /// initiated additions like deserialization and worktree discovery.
     pub fn add(&mut self, workspace: Entity<Workspace>, window: &Window, cx: &mut Context<Self>) {
         self.insert_workspace(workspace, window, cx);
     }
@@ -759,8 +764,8 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Re-activating the current transient workspace is a no-op.
-        if self.active_workspace.transient_workspace() == Some(&workspace) {
+        // Re-activating the current workspace is a no-op.
+        if self.workspace() == &workspace {
             self.focus_active_workspace(window, cx);
             return;
         }
