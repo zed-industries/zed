@@ -13,7 +13,12 @@ use crate::{
     Pixels, Style, StyleRefinement, Styled, Window, px,
 };
 use refineable::Refineable;
+#[cfg(feature = "webview")]
 use std::collections::HashMap;
+#[cfg(all(
+    feature = "webview",
+    any(target_os = "linux", target_os = "freebsd")
+))]
 use std::sync::Mutex;
 
 #[cfg(feature = "webview")]
@@ -483,24 +488,27 @@ fn create_child_webview(
     scale_factor: f32,
     window: &Window,
 ) {
-    CHILD_WEBVIEWS.with(|children| {
-        if children.borrow().contains_key(&id) {
-            return;
-        }
+    let already_exists = CHILD_WEBVIEWS.with(|children| children.borrow().contains_key(&id));
+    if already_exists {
+        return;
+    }
 
-        let builder = match content {
-            WebViewContent::Html(html) => wry::WebViewBuilder::new().with_html(html),
-            WebViewContent::Url(url) => wry::WebViewBuilder::new().with_url(url),
-        };
+    let builder = match content {
+        WebViewContent::Html(html) => wry::WebViewBuilder::new().with_html(html),
+        WebViewContent::Url(url) => wry::WebViewBuilder::new().with_url(url),
+    };
 
-        match builder
-            .with_bounds(to_wry_bounds(bounds, scale_factor))
-            .with_transparent(true)
-            .build_as_child(window)
-        {
-            Ok(webview) => {
-                log::info!("WebView #{} created (child)", id);
-                ACTIVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // build_as_child may process platform messages synchronously (e.g.
+    // WebView2 on Windows), so the RefCell must not be borrowed here.
+    match builder
+        .with_bounds(to_wry_bounds(bounds, scale_factor))
+        .with_transparent(true)
+        .build_as_child(window)
+    {
+        Ok(webview) => {
+            log::info!("WebView #{} created (child)", id);
+            ACTIVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            CHILD_WEBVIEWS.with(|children| {
                 children.borrow_mut().insert(
                     id,
                     ChildWebView {
@@ -508,12 +516,12 @@ fn create_child_webview(
                         last_bounds: bounds,
                     },
                 );
-            }
-            Err(error) => {
-                log::error!("WebView #{}: build_as_child failed: {}", id, error);
-            }
+            });
         }
-    });
+        Err(error) => {
+            log::error!("WebView #{}: build_as_child failed: {}", id, error);
+        }
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
