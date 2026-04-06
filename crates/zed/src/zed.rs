@@ -502,12 +502,15 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         let line_ending_indicator =
             cx.new(|_| line_ending_selector::LineEndingIndicator::default());
+        let merge_conflict_indicator =
+            cx.new(|cx| git_ui::MergeConflictIndicator::new(workspace, cx));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(active_file_name, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
+            status_bar.add_left_item(merge_conflict_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
             status_bar.add_right_item(active_buffer_encoding, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
@@ -2603,18 +2606,33 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.read(|cx| cx.windows().len()), 2);
-
-        // Replace existing windows
-        let window = cx
-            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+        cx.run_until_parked();
+        multi_workspace_1
+            .update(cx, |multi_workspace, _window, cx| {
+                assert_eq!(multi_workspace.workspaces().len(), 2);
+                assert!(multi_workspace.sidebar_open());
+                let workspace = multi_workspace.workspace().read(cx);
+                assert_eq!(
+                    workspace
+                        .worktrees(cx)
+                        .map(|w| w.read(cx).abs_path())
+                        .collect::<Vec<_>>(),
+                    &[
+                        Path::new(path!("/root/c")).into(),
+                        Path::new(path!("/root/d")).into(),
+                    ]
+                );
+            })
             .unwrap();
+
+        // Opening with -n (open_new_workspace: Some(true)) still creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
-                    requesting_window: Some(window),
+                    open_new_workspace: Some(true),
                     ..Default::default()
                 },
                 cx,
@@ -2624,23 +2642,6 @@ mod tests {
         .unwrap();
         cx.background_executor.run_until_parked();
         assert_eq!(cx.read(|cx| cx.windows().len()), 2);
-        let multi_workspace_1 = cx
-            .update(|cx| cx.windows()[0].downcast::<MultiWorkspace>())
-            .unwrap();
-        multi_workspace_1
-            .update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspace().read(cx);
-                assert_eq!(
-                    workspace
-                        .worktrees(cx)
-                        .map(|w| w.read(cx).abs_path())
-                        .collect::<Vec<_>>(),
-                    &[Path::new(path!("/root/e")).into()]
-                );
-                assert!(workspace.right_dock().read(cx).is_open());
-                assert!(workspace.active_pane().focus_handle(cx).is_focused(window));
-            })
-            .unwrap();
     }
 
     #[gpui::test]
@@ -2721,7 +2722,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-        let window1 = cx.update(|cx| cx.active_window().unwrap());
 
         cx.update(|cx| {
             open_paths(
@@ -2735,6 +2735,8 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
+        // Opening a directory with default options adds to the existing window
+        // rather than creating a new one.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir2"))],
@@ -2745,25 +2747,23 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
-        let window2 = cx.update(|cx| cx.active_window().unwrap());
-        assert!(window1 != window2);
-        cx.update_window(window1, |_, window, _| window.activate_window())
-            .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
+        // Opening a directory with -n creates a new window.
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(path!("/root/dir2/c"))],
+                &[PathBuf::from(path!("/root/dir2"))],
                 app_state.clone(),
-                workspace::OpenOptions::default(),
+                workspace::OpenOptions {
+                    open_new_workspace: Some(true),
+                    ..Default::default()
+                },
                 cx,
             )
         })
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
-        // should have opened in window2 because that has dir2 visibly open (window1 has it open, but not in the project panel)
-        assert!(cx.update(|cx| cx.active_window().unwrap()) == window2);
     }
 
     #[gpui::test]
@@ -5957,7 +5957,9 @@ mod tests {
     #[gpui::test]
     async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
         use collections::HashMap;
+        use project::ProjectGroupKey;
         use session::Session;
+        use util::path_list::PathList;
         use workspace::{OpenMode, Workspace, WorkspaceId};
 
         let app_state = init_test(cx);
@@ -6117,94 +6119,50 @@ mod tests {
                 .filter_map(|window| window.downcast::<MultiWorkspace>())
                 .collect()
         });
+        assert_eq!(restored_windows.len(), 2,);
 
-        assert_eq!(
-            restored_windows.len(),
-            2,
-            "expected 2 restored windows, got {}",
-            restored_windows.len()
-        );
-
-        let workspace_counts: Vec<usize> = restored_windows
-            .iter()
-            .map(|window| {
-                window
-                    .read_with(cx, |multi_workspace, _| multi_workspace.workspaces().len())
-                    .unwrap()
-            })
-            .collect();
-        let mut sorted_counts = workspace_counts.clone();
-        sorted_counts.sort();
-        assert_eq!(
-            sorted_counts,
-            vec![1, 2],
-            "expected one window with 1 workspace and one with 2, got {workspace_counts:?}"
-        );
-
-        let dir1_path: Arc<Path> = Path::new(dir1).into();
-        let dir2_path: Arc<Path> = Path::new(dir2).into();
-        let dir3_path: Arc<Path> = Path::new(dir3).into();
-
-        let all_restored_paths: Vec<Vec<Vec<Arc<Path>>>> = restored_windows
-            .iter()
-            .map(|window| {
-                window
-                    .read_with(cx, |multi_workspace, cx| {
-                        multi_workspace
-                            .workspaces()
-                            .iter()
-                            .map(|ws| ws.read(cx).root_paths(cx))
-                            .collect()
-                    })
-                    .unwrap()
-            })
-            .collect();
-
-        let two_ws_window = all_restored_paths
-            .iter()
-            .find(|paths| paths.len() == 2)
-            .expect("expected a window with 2 workspaces");
-        assert!(
-            two_ws_window.iter().any(|p| p.contains(&dir1_path)),
-            "2-workspace window should contain dir1, got {two_ws_window:?}"
-        );
-        assert!(
-            two_ws_window.iter().any(|p| p.contains(&dir2_path)),
-            "2-workspace window should contain dir2, got {two_ws_window:?}"
-        );
-
-        let one_ws_window = all_restored_paths
-            .iter()
-            .find(|paths| paths.len() == 1)
-            .expect("expected a window with 1 workspace");
-        assert!(
-            one_ws_window[0].contains(&dir3_path),
-            "1-workspace window should contain dir3, got {one_ws_window:?}"
-        );
-
-        // --- Verify the active workspace is preserved ---
-        for window in &restored_windows {
-            let (active_paths, workspace_count) = window
-                .read_with(cx, |multi_workspace, cx| {
-                    let active = multi_workspace.workspace();
-                    (
-                        active.read(cx).root_paths(cx),
-                        multi_workspace.workspaces().len(),
-                    )
-                })
-                .unwrap();
-
-            if workspace_count == 2 {
-                assert!(
-                    active_paths.contains(&dir1_path),
-                    "2-workspace window should have dir1 active, got {active_paths:?}"
-                );
-            } else {
-                assert!(
-                    active_paths.contains(&dir3_path),
-                    "1-workspace window should have dir3 active, got {active_paths:?}"
-                );
+        // Identify restored windows by their active workspace root paths.
+        let (restored_a, restored_b) = {
+            let (mut with_dir1, mut with_dir3) = (None, None);
+            for window in &restored_windows {
+                let active_paths = window
+                    .read_with(cx, |mw, cx| mw.workspace().read(cx).root_paths(cx))
+                    .unwrap();
+                if active_paths.iter().any(|p| p.as_ref() == Path::new(dir1)) {
+                    with_dir1 = Some(window);
+                } else {
+                    with_dir3 = Some(window);
+                }
             }
-        }
+            (
+                with_dir1.expect("expected a window with dir1 active"),
+                with_dir3.expect("expected a window with dir3 active"),
+            )
+        };
+
+        // Window A (dir1+dir2): 1 workspace restored, but 2 project group keys.
+        restored_a
+            .read_with(cx, |mw, _| {
+                assert_eq!(
+                    mw.project_group_keys().cloned().collect::<Vec<_>>(),
+                    vec![
+                        ProjectGroupKey::new(None, PathList::new(&[dir1])),
+                        ProjectGroupKey::new(None, PathList::new(&[dir2])),
+                    ]
+                );
+                assert_eq!(mw.workspaces().len(), 1);
+            })
+            .unwrap();
+
+        // Window B (dir3): 1 workspace, 1 project group key.
+        restored_b
+            .read_with(cx, |mw, _| {
+                assert_eq!(
+                    mw.project_group_keys().cloned().collect::<Vec<_>>(),
+                    vec![ProjectGroupKey::new(None, PathList::new(&[dir3]))]
+                );
+                assert_eq!(mw.workspaces().len(), 1);
+            })
+            .unwrap();
     }
 }

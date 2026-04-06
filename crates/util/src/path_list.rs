@@ -65,6 +65,16 @@ impl PathList {
         self.paths.is_empty()
     }
 
+    /// Returns a new `PathList` with the given path removed.
+    pub fn without_path(&self, path_to_remove: &Path) -> PathList {
+        let paths: Vec<PathBuf> = self
+            .ordered_paths()
+            .filter(|p| p.as_path() != path_to_remove)
+            .cloned()
+            .collect();
+        PathList::new(&paths)
+    }
+
     /// Get the paths in lexicographic order.
     pub fn paths(&self) -> &[PathBuf] {
         self.paths.as_ref()

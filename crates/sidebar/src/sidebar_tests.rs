@@ -4759,6 +4759,120 @@ async fn test_linked_worktree_workspace_shows_main_worktree_threads(cx: &mut Tes
     );
 }
 
+#[gpui::test]
+async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/wt-feature-a",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-a",
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-a"),
+            ref_name: Some("refs/heads/feature-a".into()),
+            sha: "abc".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    // Only a linked worktree workspace is open — no workspace for /project.
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+        MultiWorkspace::test_new(worktree_project.clone(), window, cx)
+    });
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Save a legacy thread: folder_paths = main repo, main_worktree_paths = empty.
+    let legacy_session = acp::SessionId::new(Arc::from("legacy-main-thread"));
+    cx.update(|_, cx| {
+        let metadata = ThreadMetadata {
+            session_id: legacy_session.clone(),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: "Legacy Main Thread".into(),
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            created_at: None,
+            folder_paths: PathList::new(&[PathBuf::from("/project")]),
+            main_worktree_paths: PathList::default(),
+            archived: false,
+        };
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx));
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    // The legacy thread should appear in the sidebar under the project group.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries.iter().any(|e| e.contains("Legacy Main Thread")),
+        "legacy thread should be visible: {entries:?}",
+    );
+
+    // Verify only 1 workspace before clicking.
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        1,
+    );
+
+    // Focus and select the legacy thread, then confirm.
+    open_and_focus_sidebar(&sidebar, cx);
+    let thread_index = sidebar.read_with(cx, |sidebar, _| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|e| e.session_id().is_some_and(|id| id == &legacy_session))
+            .expect("legacy thread should be in entries")
+    });
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(thread_index);
+    });
+    cx.dispatch_action(Confirm);
+    cx.run_until_parked();
+
+    let new_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let new_path_list =
+        new_workspace.read_with(cx, |_, cx| workspace_path_list(&new_workspace, cx));
+    assert_eq!(
+        new_path_list,
+        PathList::new(&[PathBuf::from("/project")]),
+        "the new workspace should be for the main repo, not the linked worktree",
+    );
+}
+
 mod property_test {
     use super::*;
 

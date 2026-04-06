@@ -4448,7 +4448,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
 
     // Assert no new language server started
     cx.executor().run_until_parked();
-    assert!(fake_servers.try_next().is_err());
+    assert!(fake_servers.try_recv().is_err());
 
     assert_eq!(definitions.len(), 1);
     let definition = definitions.pop().unwrap();
@@ -11161,7 +11161,7 @@ async fn test_odd_events_for_ignored_dirs(
     assert_eq!(
         repository_updates.lock().drain(..).collect::<Vec<_>>(),
         vec![
-            RepositoryEvent::BranchChanged,
+            RepositoryEvent::HeadChanged,
             RepositoryEvent::StatusesChanged,
             RepositoryEvent::StatusesChanged,
         ],

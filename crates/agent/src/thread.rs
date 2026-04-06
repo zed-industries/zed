@@ -253,7 +253,7 @@ impl UserMessage {
                             )
                             .ok();
                         }
-                        MentionUri::PastedImage => {
+                        MentionUri::PastedImage { .. } => {
                             debug_panic!("pasted image URI should not be used in mention content")
                         }
                         MentionUri::Directory { .. } => {
