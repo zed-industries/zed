@@ -154,6 +154,8 @@ impl MarkdownStyle {
             base_text_style: text_style.clone(),
             syntax: cx.theme().syntax().clone(),
             selection_background_color: colors.element_selection_background,
+            rule_color: colors.border,
+            block_quote_border_color: colors.border,
             code_block_overflow_x_scroll: true,
             heading_level_styles: Some(HeadingLevelStyles {
                 h1: Some(TextStyleRefinement {
