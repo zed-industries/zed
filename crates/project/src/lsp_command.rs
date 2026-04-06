@@ -42,6 +42,11 @@ use util::{ResultExt as _, debug_panic};
 
 pub use signature_help::SignatureHelp;
 
+const TAILWIND_LANGUAGE_SERVER_NAMES: [&str; 2] = [
+    "tailwindcss-language-server",
+    "tailwindcss-intellisense-css",
+];
+
 fn code_action_kind_matches(requested: &lsp::CodeActionKind, actual: &lsp::CodeActionKind) -> bool {
     let requested_str = requested.as_str();
     let actual_str = actual.as_str();
@@ -2290,6 +2295,9 @@ impl LspCommand for GetCompletions {
             .and_then(|list| list.item_defaults.clone())
             .map(Arc::new);
 
+        let should_fallback_for_invalid_completion_range =
+            is_tailwind_completion_server(&language_server_adapter);
+
         let mut completion_edits = Vec::new();
         buffer.update(&mut cx, |buffer, _cx| {
             let snapshot = buffer.snapshot();
@@ -2328,72 +2336,38 @@ impl LspCommand for GetCompletions {
                     // If the language server provides a range to overwrite, then
                     // check that the range is valid.
                     Some(completion_text_edit) => {
+                        let replacement_text = completion_text_edit_new_text(&completion_text_edit);
                         match parse_completion_text_edit(&completion_text_edit, &snapshot) {
                             Some(edit) => edit,
+                            None if should_fallback_for_invalid_completion_range => {
+                                match infer_completion_edit(
+                                    lsp_completion,
+                                    Some(replacement_text),
+                                    self.position,
+                                    clipped_position,
+                                    &snapshot,
+                                    &mut range_for_token,
+                                ) {
+                                    Some(edit) => edit,
+                                    None => return false,
+                                }
+                            }
                             None => return false,
                         }
                     }
                     // If the language server does not provide a range, then infer
                     // the range based on the syntax tree.
-                    None => {
-                        if self.position != clipped_position {
-                            log::info!("completion out of expected range ");
-                            return false;
-                        }
-
-                        let default_edit_range = lsp_defaults.as_ref().and_then(|lsp_defaults| {
-                            lsp_defaults
-                                .edit_range
-                                .as_ref()
-                                .and_then(|range| match range {
-                                    CompletionListItemDefaultsEditRange::Range(r) => Some(r),
-                                    _ => None,
-                                })
-                        });
-
-                        let range = if let Some(range) = default_edit_range {
-                            let range = range_from_lsp(*range);
-                            let start = snapshot.clip_point_utf16(range.start, Bias::Left);
-                            let end = snapshot.clip_point_utf16(range.end, Bias::Left);
-                            if start != range.start.0 || end != range.end.0 {
-                                log::info!("completion out of expected range");
-                                return false;
-                            }
-
-                            snapshot.anchor_before(start)..snapshot.anchor_after(end)
-                        } else {
-                            range_for_token
-                                .get_or_insert_with(|| {
-                                    let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(
-                                        offset,
-                                        Some(CharScopeContext::Completion),
-                                    );
-                                    let range = if kind == Some(CharKind::Word) {
-                                        range
-                                    } else {
-                                        offset..offset
-                                    };
-
-                                    snapshot.anchor_before(range.start)
-                                        ..snapshot.anchor_after(range.end)
-                                })
-                                .clone()
-                        };
-
-                        // We already know text_edit is None here
-                        let text = lsp_completion
-                            .insert_text
-                            .as_ref()
-                            .unwrap_or(&lsp_completion.label)
-                            .clone();
-
-                        ParsedCompletionEdit {
-                            replace_range: range,
-                            insert_range: None,
-                            new_text: text,
-                        }
-                    }
+                    None => match infer_completion_edit(
+                        lsp_completion,
+                        None,
+                        self.position,
+                        clipped_position,
+                        &snapshot,
+                        &mut range_for_token,
+                    ) {
+                        Some(edit) => edit,
+                        None => return false,
+                    },
                 };
 
                 completion_edits.push(edit);
@@ -2539,6 +2513,61 @@ pub struct ParsedCompletionEdit {
     pub replace_range: Range<Anchor>,
     pub insert_range: Option<Range<Anchor>>,
     pub new_text: String,
+}
+
+fn is_tailwind_completion_server(language_server_adapter: &CachedLspAdapter) -> bool {
+    TAILWIND_LANGUAGE_SERVER_NAMES.contains(&language_server_adapter.name.as_ref())
+}
+
+fn infer_completion_edit(
+    lsp_completion: &lsp::CompletionItem,
+    replacement_text: Option<String>,
+    position: PointUtf16,
+    clipped_position: PointUtf16,
+    snapshot: &BufferSnapshot,
+    range_for_token: &mut Option<Range<Anchor>>,
+) -> Option<ParsedCompletionEdit> {
+    if position != clipped_position {
+        log::info!("completion out of expected range ");
+        return None;
+    }
+
+    let range = range_for_token
+        .get_or_insert_with(|| {
+            let offset = position.to_offset(snapshot);
+            let (range, kind) =
+                snapshot.surrounding_word(offset, Some(CharScopeContext::Completion));
+            let range = if kind == Some(CharKind::Word) {
+                range
+            } else {
+                offset..offset
+            };
+
+            snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end)
+        })
+        .clone();
+
+    let text = replacement_text.unwrap_or_else(|| {
+        lsp_completion
+            .text_edit_text
+            .as_ref()
+            .or(lsp_completion.insert_text.as_ref())
+            .unwrap_or(&lsp_completion.label)
+            .clone()
+    });
+
+    Some(ParsedCompletionEdit {
+        replace_range: range,
+        insert_range: None,
+        new_text: text,
+    })
+}
+
+fn completion_text_edit_new_text(edit: &lsp::CompletionTextEdit) -> String {
+    match edit {
+        lsp::CompletionTextEdit::Edit(edit) => edit.new_text.clone(),
+        lsp::CompletionTextEdit::InsertAndReplace(edit) => edit.new_text.clone(),
+    }
 }
 
 pub(crate) fn parse_completion_text_edit(
