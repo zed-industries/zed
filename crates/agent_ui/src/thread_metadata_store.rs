@@ -452,6 +452,28 @@ impl ThreadMetadataStore {
         }
     }
 
+    pub fn complete_worktree_restore(
+        &mut self,
+        session_id: &acp::SessionId,
+        path_replacements: &[(PathBuf, PathBuf)],
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.threads.get(session_id).cloned() {
+            let mut paths: Vec<PathBuf> = thread.folder_paths.paths().to_vec();
+            for (old_path, new_path) in path_replacements {
+                if let Some(pos) = paths.iter().position(|p| p == old_path) {
+                    paths[pos] = new_path.clone();
+                }
+            }
+            let new_folder_paths = PathList::new(&paths);
+            self.save_internal(ThreadMetadata {
+                folder_paths: new_folder_paths,
+                ..thread
+            });
+            cx.notify();
+        }
+    }
+
     pub fn create_archived_worktree(
         &self,
         worktree_path: String,
@@ -527,6 +549,15 @@ impl ThreadMetadataStore {
         })
     }
 
+    pub fn all_session_ids_for_path<'a>(
+        &'a self,
+        path_list: &PathList,
+    ) -> impl Iterator<Item = &'a acp::SessionId> {
+        self.threads_by_paths
+            .get(path_list)
+            .into_iter()
+            .flat_map(|session_ids| session_ids.iter())
+    }
     fn update_archived(
         &mut self,
         session_id: &acp::SessionId,
@@ -2315,6 +2346,142 @@ mod tests {
         assert_eq!(wt1.len(), 1);
         assert_eq!(wt2.len(), 1);
         assert_eq!(wt1[0].id, wt2[0].id);
+    }
+
+    // Verifies that all_session_ids_for_path returns both archived and
+    // unarchived threads. This is intentional: the method is used during
+    // archival to find every thread referencing a worktree so they can
+    // all be linked to the archived worktree record.
+    #[gpui::test]
+    async fn test_all_session_ids_for_path(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+        let paths = PathList::new(&[Path::new("/project-x")]);
+
+        let meta1 = ThreadMetadata {
+            session_id: acp::SessionId::new("session-1"),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: "Thread 1".into(),
+            updated_at: Utc::now(),
+            created_at: Some(Utc::now()),
+            folder_paths: paths.clone(),
+            main_worktree_paths: PathList::default(),
+            archived: false,
+        };
+        let meta2 = ThreadMetadata {
+            session_id: acp::SessionId::new("session-2"),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: "Thread 2".into(),
+            updated_at: Utc::now(),
+            created_at: Some(Utc::now()),
+            folder_paths: paths.clone(),
+            main_worktree_paths: PathList::default(),
+            archived: true,
+        };
+
+        store.update(cx, |store, _cx| {
+            store.save_internal(meta1);
+            store.save_internal(meta2);
+        });
+
+        let ids: HashSet<acp::SessionId> = store.read_with(cx, |store, _cx| {
+            store.all_session_ids_for_path(&paths).cloned().collect()
+        });
+
+        assert!(ids.contains(&acp::SessionId::new("session-1")));
+        assert!(ids.contains(&acp::SessionId::new("session-2")));
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_complete_worktree_restore_multiple_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let original_paths = PathList::new(&[
+            Path::new("/projects/worktree-a"),
+            Path::new("/projects/worktree-b"),
+            Path::new("/other/unrelated"),
+        ]);
+        let meta = make_metadata("session-multi", "Multi Thread", Utc::now(), original_paths);
+
+        store.update(cx, |store, cx| {
+            store.save_manually(meta, cx);
+        });
+
+        let replacements = vec![
+            (
+                PathBuf::from("/projects/worktree-a"),
+                PathBuf::from("/restored/worktree-a"),
+            ),
+            (
+                PathBuf::from("/projects/worktree-b"),
+                PathBuf::from("/restored/worktree-b"),
+            ),
+        ];
+
+        store.update(cx, |store, cx| {
+            store.complete_worktree_restore(
+                &acp::SessionId::new("session-multi"),
+                &replacements,
+                cx,
+            );
+        });
+
+        let entry = store.read_with(cx, |store, _cx| {
+            store.entry(&acp::SessionId::new("session-multi")).cloned()
+        });
+        let entry = entry.unwrap();
+        let paths = entry.folder_paths.paths();
+        assert_eq!(paths.len(), 3);
+        assert!(paths.contains(&PathBuf::from("/restored/worktree-a")));
+        assert!(paths.contains(&PathBuf::from("/restored/worktree-b")));
+        assert!(paths.contains(&PathBuf::from("/other/unrelated")));
+    }
+
+    #[gpui::test]
+    async fn test_complete_worktree_restore_preserves_unmatched_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let original_paths =
+            PathList::new(&[Path::new("/projects/worktree-a"), Path::new("/other/path")]);
+        let meta = make_metadata("session-partial", "Partial", Utc::now(), original_paths);
+
+        store.update(cx, |store, cx| {
+            store.save_manually(meta, cx);
+        });
+
+        let replacements = vec![
+            (
+                PathBuf::from("/projects/worktree-a"),
+                PathBuf::from("/new/worktree-a"),
+            ),
+            (
+                PathBuf::from("/nonexistent/path"),
+                PathBuf::from("/should/not/appear"),
+            ),
+        ];
+
+        store.update(cx, |store, cx| {
+            store.complete_worktree_restore(
+                &acp::SessionId::new("session-partial"),
+                &replacements,
+                cx,
+            );
+        });
+
+        let entry = store.read_with(cx, |store, _cx| {
+            store
+                .entry(&acp::SessionId::new("session-partial"))
+                .cloned()
+        });
+        let entry = entry.unwrap();
+        let paths = entry.folder_paths.paths();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&PathBuf::from("/new/worktree-a")));
+        assert!(paths.contains(&PathBuf::from("/other/path")));
+        assert!(!paths.contains(&PathBuf::from("/should/not/appear")));
     }
 
     #[gpui::test]
