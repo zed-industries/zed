@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn find_previous_minor_requires_zero_patch_version() {
         let input = indoc! {"
-            v0.172.0
+            v0.172.1
             v0.172.9
             v0.172.11
         "};
