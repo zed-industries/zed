@@ -1,11 +1,11 @@
 use ai_onboarding::YoungAccountBanner;
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
+use cloud_api_client::LlmApiToken;
 use cloud_api_types::Plan;
 use futures::StreamExt;
 use futures::future::BoxFuture;
 use gpui::{AnyElement, AnyView, App, Context, Entity, Subscription, Task};
-use cloud_api_client::LlmApiToken;
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
