@@ -78,6 +78,18 @@ fn setup_sidebar(
     multi_workspace: &Entity<MultiWorkspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Entity<Sidebar> {
+    let sidebar = setup_sidebar_closed(multi_workspace, cx);
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.toggle_sidebar(window, cx);
+    });
+    cx.run_until_parked();
+    sidebar
+}
+
+fn setup_sidebar_closed(
+    multi_workspace: &Entity<MultiWorkspace>,
+    cx: &mut gpui::VisualTestContext,
+) -> Entity<Sidebar> {
     let multi_workspace = multi_workspace.clone();
     let sidebar =
         cx.update(|window, cx| cx.new(|cx| Sidebar::new(multi_workspace.clone(), window, cx)));
@@ -172,16 +184,7 @@ fn save_thread_metadata(
     cx.run_until_parked();
 }
 
-fn open_and_focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
-    let multi_workspace = sidebar.read_with(cx, |s, _| s.multi_workspace.upgrade());
-    if let Some(multi_workspace) = multi_workspace {
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            if !mw.sidebar_open() {
-                mw.toggle_sidebar(window, cx);
-            }
-        });
-    }
-    cx.run_until_parked();
+fn focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
     sidebar.update_in(cx, |_, window, cx| {
         cx.focus_self(window);
     });
@@ -604,7 +607,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
     assert!(entries.iter().any(|e| e.contains("View More")));
 
     // Focus and navigate to View More, then confirm to expand by one batch
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     for _ in 0..7 {
         cx.dispatch_action(SelectNext);
     }
@@ -915,7 +918,7 @@ async fn test_keyboard_select_next_and_previous(cx: &mut TestAppContext) {
     // Entries: [header, thread3, thread2, thread1]
     // Focusing the sidebar does not set a selection; select_next/select_previous
     // handle None gracefully by starting from the first or last entry.
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
     // First SelectNext from None starts at index 0
@@ -970,7 +973,7 @@ async fn test_keyboard_select_first_and_last(cx: &mut TestAppContext) {
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
 
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
 
     // SelectLast jumps to the end
     cx.dispatch_action(SelectLast);
@@ -993,7 +996,7 @@ async fn test_keyboard_focus_in_does_not_set_selection(cx: &mut TestAppContext) 
 
     // Open the sidebar so it's rendered, then focus it to trigger focus_in.
     // focus_in no longer sets a default selection.
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
     // Manually set a selection, blur, then refocus — selection should be preserved
@@ -1030,7 +1033,7 @@ async fn test_keyboard_confirm_on_project_header_toggles_collapse(cx: &mut TestA
     );
 
     // Focus the sidebar and select the header (index 0)
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(0);
     });
@@ -1071,7 +1074,7 @@ async fn test_keyboard_confirm_on_view_more_expands(cx: &mut TestAppContext) {
     assert!(entries.iter().any(|e| e.contains("View More")));
 
     // Focus sidebar (selection starts at None), then navigate down to the "View More" entry (index 6)
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     for _ in 0..7 {
         cx.dispatch_action(SelectNext);
     }
@@ -1105,7 +1108,7 @@ async fn test_keyboard_expand_and_collapse_selected_entry(cx: &mut TestAppContex
     );
 
     // Focus sidebar and manually select the header (index 0). Press left to collapse.
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(0);
     });
@@ -1144,7 +1147,7 @@ async fn test_keyboard_collapse_from_child_selects_parent(cx: &mut TestAppContex
     cx.run_until_parked();
 
     // Focus sidebar (selection starts at None), then navigate down to the thread (child)
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     cx.dispatch_action(SelectNext);
     cx.dispatch_action(SelectNext);
     assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
@@ -1179,7 +1182,7 @@ async fn test_keyboard_navigation_on_empty_list(cx: &mut TestAppContext) {
     );
 
     // Focus sidebar — focus_in does not set a selection
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     assert_eq!(sidebar.read_with(cx, |s, _| s.selection), None);
 
     // First SelectNext from None starts at index 0 (header)
@@ -1211,7 +1214,7 @@ async fn test_selection_clamps_after_entry_removal(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // Focus sidebar (selection starts at None), navigate down to the thread (index 1)
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     cx.dispatch_action(SelectNext);
     cx.dispatch_action(SelectNext);
     assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
@@ -1492,7 +1495,7 @@ async fn test_escape_clears_search_and_restores_full_list(cx: &mut TestAppContex
     );
 
     // User types a search query to filter down.
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     type_in_search(&sidebar, "alpha", cx);
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
@@ -1764,7 +1767,7 @@ async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppConte
 
     // User focuses the sidebar and collapses the group using keyboard:
     // manually select the header, then press SelectParent to collapse.
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(0);
     });
@@ -1807,7 +1810,7 @@ async fn test_search_then_keyboard_navigate_and_confirm(cx: &mut TestAppContext)
     }
     cx.run_until_parked();
 
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
 
     // User types "fix" — two threads match.
     type_in_search(&sidebar, "fix", cx);
@@ -1856,6 +1859,10 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
     });
     cx.run_until_parked();
 
+    let (workspace_0, workspace_1) = multi_workspace.read_with(cx, |mw, _| {
+        (mw.workspaces()[0].clone(), mw.workspaces()[1].clone())
+    });
+
     save_thread_metadata(
         acp::SessionId::new(Arc::from("hist-1")),
         "Historical Thread".into(),
@@ -1880,8 +1887,8 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
     });
     cx.run_until_parked();
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        1
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_1
     );
 
     // Confirm on the historical (non-live) thread at index 1.
@@ -1895,8 +1902,8 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
     cx.run_until_parked();
 
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        0
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_0
     );
 }
 
@@ -2477,6 +2484,8 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
 
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
     let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
@@ -2488,8 +2497,6 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
         let workspace = mw.workspaces()[1].clone();
         mw.activate(workspace, window, cx);
     });
-
-    let sidebar = setup_sidebar(&multi_workspace, cx);
 
     // Create a non-empty thread in the worktree workspace.
     let connection = StubAgentConnection::new();
@@ -3027,6 +3034,8 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
 
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
     let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
@@ -3040,8 +3049,6 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
         let workspace = mw.workspaces()[0].clone();
         mw.activate(workspace, window, cx);
     });
-
-    let sidebar = setup_sidebar(&multi_workspace, cx);
 
     // Start a thread in the worktree workspace's panel and keep it
     // generating (don't resolve it).
@@ -3127,6 +3134,8 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
 
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
     let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
@@ -3137,8 +3146,6 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
         let workspace = mw.workspaces()[0].clone();
         mw.activate(workspace, window, cx);
     });
-
-    let sidebar = setup_sidebar(&multi_workspace, cx);
 
     let connection = StubAgentConnection::new();
     open_thread_with_connection(&worktree_panel, connection.clone(), cx);
@@ -3236,7 +3243,7 @@ async fn test_clicking_worktree_thread_opens_workspace_when_none_exists(cx: &mut
     );
 
     // Focus the sidebar and select the worktree thread.
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(1); // index 0 is header, 1 is the thread
     });
@@ -3318,7 +3325,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
         vec!["v [project]", "  WT Thread {wt-feature-a}"],
     );
 
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(1); // index 0 is header, 1 is the thread
     });
@@ -3444,17 +3451,18 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
 
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
     let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
 
     // Activate the main workspace before setting up the sidebar.
-    multi_workspace.update_in(cx, |mw, window, cx| {
+    let main_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         let workspace = mw.workspaces()[0].clone();
-        mw.activate(workspace, window, cx);
+        mw.activate(workspace.clone(), window, cx);
+        workspace
     });
-
-    let sidebar = setup_sidebar(&multi_workspace, cx);
 
     save_named_thread_metadata("thread-main", "Main Thread", &main_project, cx).await;
     save_named_thread_metadata("thread-wt", "WT Thread", &worktree_project, cx).await;
@@ -3475,13 +3483,13 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
         .expect("should find the worktree thread entry");
 
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        0,
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        main_workspace,
         "main workspace should be active initially"
     );
 
     // Focus the sidebar and select the absorbed worktree thread.
-    open_and_focus_sidebar(&sidebar, cx);
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, _window, _cx| {
         sidebar.selection = Some(wt_thread_index);
     });
@@ -3491,9 +3499,7 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
     cx.run_until_parked();
 
     // The worktree workspace should now be active, not the main one.
-    let active_workspace = multi_workspace.read_with(cx, |mw, _| {
-        mw.workspaces()[mw.active_workspace_index()].clone()
-    });
+    let active_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     assert_eq!(
         active_workspace, worktree_workspace,
         "clicking an absorbed worktree thread should activate the worktree workspace"
@@ -3520,11 +3526,12 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
 
-    multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.test_add_workspace(project_b.clone(), window, cx);
-    });
-
     let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx)
+    });
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspaces()[0].clone());
 
     // Save a thread with path_list pointing to project-b.
     let session_id = acp::SessionId::new(Arc::from("archived-1"));
@@ -3537,8 +3544,8 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
     });
     cx.run_until_parked();
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        0
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_a
     );
 
     // Call activate_archived_thread – should resolve saved paths and
@@ -3562,8 +3569,8 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
     cx.run_until_parked();
 
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        1,
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_b,
         "should have activated the workspace matching the saved path_list"
     );
 }
@@ -3588,11 +3595,12 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
 
-    multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.test_add_workspace(project_b, window, cx);
-    });
-
     let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspaces()[0].clone());
 
     // Start with workspace A active.
     multi_workspace.update_in(cx, |mw, window, cx| {
@@ -3601,8 +3609,8 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
     });
     cx.run_until_parked();
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        0
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_a
     );
 
     // No thread saved to the store – cwd is the only path hint.
@@ -3625,8 +3633,8 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
     cx.run_until_parked();
 
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        1,
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_b,
         "should have activated the workspace matching the cwd"
     );
 }
@@ -3651,11 +3659,11 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
 
-    multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.test_add_workspace(project_b, window, cx);
-    });
-
     let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
 
     // Activate workspace B (index 1) to make it the active one.
     multi_workspace.update_in(cx, |mw, window, cx| {
@@ -3664,8 +3672,8 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
     });
     cx.run_until_parked();
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        1
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_b
     );
 
     // No saved thread, no cwd – should fall back to the active workspace.
@@ -3688,8 +3696,8 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
     cx.run_until_parked();
 
     assert_eq!(
-        multi_workspace.read_with(cx, |mw, _| mw.active_workspace_index()),
-        1,
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_b,
         "should have stayed on the active workspace when no path info is available"
     );
 }
@@ -3768,6 +3776,10 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
         cx.add_window(|window, cx| MultiWorkspace::test_new(project_b, window, cx));
 
     let multi_workspace_a_entity = multi_workspace_a.root(cx).unwrap();
+    let multi_workspace_b_entity = multi_workspace_b.root(cx).unwrap();
+
+    let cx_b = &mut gpui::VisualTestContext::from_window(multi_workspace_b.into(), cx);
+    let _sidebar_b = setup_sidebar(&multi_workspace_b_entity, cx_b);
 
     let cx_a = &mut gpui::VisualTestContext::from_window(multi_workspace_a.into(), cx);
     let sidebar = setup_sidebar(&multi_workspace_a_entity, cx_a);
@@ -3921,6 +3933,10 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
         cx.add_window(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
 
     let multi_workspace_a_entity = multi_workspace_a.root(cx).unwrap();
+    let multi_workspace_b_entity = multi_workspace_b.root(cx).unwrap();
+
+    let cx_b = &mut gpui::VisualTestContext::from_window(multi_workspace_b.into(), cx);
+    let _sidebar_b = setup_sidebar(&multi_workspace_b_entity, cx_b);
 
     let cx_a = &mut gpui::VisualTestContext::from_window(multi_workspace_a.into(), cx);
     let sidebar_a = setup_sidebar(&multi_workspace_a_entity, cx_a);
@@ -4029,6 +4045,8 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
 
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
     let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
@@ -4038,8 +4056,6 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
         let workspace = mw.workspaces()[0].clone();
         mw.activate(workspace, window, cx);
     });
-
-    let sidebar = setup_sidebar(&multi_workspace, cx);
 
     let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspaces()[0].clone());
     let main_panel = add_agent_panel(&main_workspace, cx);
@@ -4195,10 +4211,10 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
 
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_only.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(multi_root.clone(), window, cx);
     });
-    let sidebar = setup_sidebar(&multi_workspace, cx);
 
     // Save a thread under the linked worktree path.
     save_named_thread_metadata("wt-thread", "Worktree Thread", &worktree_project, cx).await;
@@ -4313,8 +4329,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     // so all three have last_accessed_at set.
     // Access order is: A (most recent), B, C (oldest).
 
-    // ── 1. Open switcher: threads sorted by last_accessed_at ───────────
-    open_and_focus_sidebar(&sidebar, cx);
+    // ── 1. Open switcher: threads sorted by last_accessed_at ─────────────────
+    focus_sidebar(&sidebar, cx);
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
     });
@@ -4757,6 +4773,159 @@ async fn test_linked_worktree_workspace_shows_main_worktree_threads(cx: &mut Tes
         entries.iter().any(|e| e.contains("Worktree Thread")),
         "expected worktree thread to be visible, got: {entries:?}"
     );
+}
+
+async fn init_multi_project_test(
+    paths: &[&str],
+    cx: &mut TestAppContext,
+) -> (Arc<FakeFs>, Entity<project::Project>) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        cx.update_flags(false, vec!["agent-v2".into()]);
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+    let fs = FakeFs::new(cx.executor());
+    for path in paths {
+        fs.insert_tree(path, serde_json::json!({ ".git": {}, "src": {} }))
+            .await;
+    }
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let project =
+        project::Project::test(fs.clone() as Arc<dyn fs::Fs>, [paths[0].as_ref()], cx).await;
+    (fs, project)
+}
+
+async fn add_test_project(
+    path: &str,
+    fs: &Arc<FakeFs>,
+    multi_workspace: &Entity<MultiWorkspace>,
+    cx: &mut gpui::VisualTestContext,
+) -> Entity<Workspace> {
+    let project = project::Project::test(fs.clone() as Arc<dyn fs::Fs>, [path.as_ref()], cx).await;
+    let workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project, window, cx)
+    });
+    cx.run_until_parked();
+    workspace
+}
+
+#[gpui::test]
+async fn test_transient_workspace_lifecycle(cx: &mut TestAppContext) {
+    let (fs, project_a) =
+        init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    let _sidebar = setup_sidebar_closed(&multi_workspace, cx);
+
+    // Sidebar starts closed. Initial workspace A is transient.
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    assert!(!multi_workspace.read_with(cx, |mw, _| mw.sidebar_open()));
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        0
+    );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_a));
+
+    // Add B — replaces A as the transient workspace.
+    let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        0
+    );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_b));
+
+    // Add C — replaces B as the transient workspace.
+    let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        0
+    );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
+}
+
+#[gpui::test]
+async fn test_transient_workspace_retained(cx: &mut TestAppContext) {
+    let (fs, project_a) =
+        init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    let _sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Add B — retained since sidebar is open.
+    add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        2
+    );
+
+    // Switch to A — B survives.
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspaces()[0].clone());
+    multi_workspace.update_in(cx, |mw, window, cx| mw.activate(workspace_a, window, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        2
+    );
+
+    // Close sidebar — both A and B remain retained.
+    multi_workspace.update_in(cx, |mw, window, cx| mw.close_sidebar(window, cx));
+    cx.run_until_parked();
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        2
+    );
+
+    // Add C — added as new transient workspace.
+    let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        3
+    );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
+}
+
+#[gpui::test]
+async fn test_transient_workspace_promotion(cx: &mut TestAppContext) {
+    let (fs, project_a) =
+        init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    setup_sidebar_closed(&multi_workspace, cx);
+
+    // Add B — replaces A as the transient workspace (A is discarded).
+    let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        0
+    );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_b));
+
+    // Open sidebar — promotes the transient B to retained.
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.toggle_sidebar(window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        1
+    );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspaces().contains(&workspace_b)));
+
+    // Close sidebar — the retained B remains.
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.toggle_sidebar(window, cx);
+    });
+
+    // Add C — added as new transient workspace.
+    let workspace_c = add_test_project("/project-c", &fs, &multi_workspace, cx).await;
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().len()),
+        2
+    );
+    assert!(multi_workspace.read_with(cx, |mw, _| mw.workspace() == &workspace_c));
 }
 
 mod property_test {
