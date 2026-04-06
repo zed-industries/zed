@@ -287,6 +287,7 @@ pub struct RepositorySnapshot {
     pub original_repo_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
+    pub branch_list: Arc<[Branch]>,
     pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
     pub merge: MergeDetails,
@@ -428,7 +429,8 @@ pub enum GitGraphEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     StatusesChanged,
-    BranchChanged,
+    HeadChanged,
+    BranchListChanged,
     StashEntriesChanged,
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
@@ -3686,6 +3688,7 @@ impl RepositorySnapshot {
                 .unwrap_or_else(|| work_directory_abs_path.clone()),
             work_directory_abs_path,
             branch: None,
+            branch_list: Arc::from([]),
             head_commit: None,
             scan_id: 0,
             merge: Default::default(),
@@ -4048,9 +4051,15 @@ impl Repository {
             .shared();
 
         cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
-            RepositoryEvent::BranchChanged => {
+            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
                 if this.scan_id > 1 {
                     this.initial_graph_data.clear();
+                }
+            }
+            RepositoryEvent::StashEntriesChanged => {
+                if this.scan_id > 1 {
+                    this.initial_graph_data
+                        .retain(|(log_source, _), _| *log_source != LogSource::All);
                 }
             }
             _ => {}
@@ -5594,7 +5603,7 @@ impl Repository {
                             log::info!("head branch after scan is {branch:?}");
                             let snapshot = this.update(&mut cx, |this, cx| {
                                 this.snapshot.branch = branch;
-                                cx.emit(RepositoryEvent::BranchChanged);
+                                cx.emit(RepositoryEvent::HeadChanged);
                                 this.snapshot.clone()
                             })?;
                             if let Some(updates_tx) = updates_tx {
@@ -6380,7 +6389,7 @@ impl Repository {
             .as_ref()
             .map(proto_to_commit_details);
         if self.snapshot.branch != new_branch || self.snapshot.head_commit != new_head_commit {
-            cx.emit(RepositoryEvent::BranchChanged)
+            cx.emit(RepositoryEvent::HeadChanged)
         }
         self.snapshot.branch = new_branch;
         self.snapshot.head_commit = new_head_commit;
@@ -7318,7 +7327,8 @@ async fn compute_snapshot(
             }
         })
         .await?;
-    let branch = branches.into_iter().find(|branch| branch.is_head);
+    let branch = branches.iter().find(|branch| branch.is_head).cloned();
+    let branch_list: Arc<[Branch]> = branches.into();
 
     let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
         .into_iter()
@@ -7341,14 +7351,16 @@ async fn compute_snapshot(
         .await?;
 
     let snapshot = this.update(cx, |this, cx| {
-        let branch_changed =
+        let head_changed =
             branch != this.snapshot.branch || head_commit != this.snapshot.head_commit;
+        let branch_list_changed = *branch_list != *this.snapshot.branch_list;
         let worktrees_changed = *linked_worktrees != *this.snapshot.linked_worktrees;
 
         this.snapshot = RepositorySnapshot {
             id,
             work_directory_abs_path,
             branch,
+            branch_list: branch_list.clone(),
             head_commit,
             remote_origin_url,
             remote_upstream_url,
@@ -7357,8 +7369,12 @@ async fn compute_snapshot(
             ..prev_snapshot
         };
 
-        if branch_changed {
-            cx.emit(RepositoryEvent::BranchChanged);
+        if head_changed {
+            cx.emit(RepositoryEvent::HeadChanged);
+        }
+
+        if branch_list_changed {
+            cx.emit(RepositoryEvent::BranchListChanged);
         }
 
         if worktrees_changed {

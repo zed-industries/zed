@@ -3670,6 +3670,11 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.click_count() == 2 {
+                    window.dispatch_action(this.double_click_dispatch_action.boxed_clone(), cx);
+                }
+            }))
     }
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
@@ -4917,14 +4922,17 @@ impl Render for DraggedTab {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, iter::zip, num::NonZero};
+    use std::{cell::Cell, iter::zip, num::NonZero, rc::Rc};
 
     use super::*;
     use crate::{
         Member,
         item::test::{TestItem, TestProjectItem},
     };
-    use gpui::{AppContext, Axis, TestAppContext, VisualTestContext, size};
+    use gpui::{
+        AppContext, Axis, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+        TestAppContext, VisualTestContext, size,
+    };
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
@@ -6649,8 +6657,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_drag_tab_to_middle_tab_with_mouse_events(cx: &mut TestAppContext) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -6702,8 +6708,6 @@ mod tests {
     async fn test_drag_pinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6779,8 +6783,6 @@ mod tests {
     async fn test_drag_unpinned_tab_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6833,8 +6835,6 @@ mod tests {
     async fn test_drag_mixed_tabs_when_show_pinned_tabs_in_separate_row_enabled(
         cx: &mut TestAppContext,
     ) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent};
-
         init_test(cx);
         set_pinned_tabs_separate_row(cx, true);
         let fs = FakeFs::new(cx.executor());
@@ -6900,8 +6900,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_middle_click_pinned_tab_does_not_close(cx: &mut TestAppContext) {
-        use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseUpEvent};
-
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -6969,6 +6967,74 @@ mod tests {
         cx.run_until_parked();
 
         assert_item_labels(&pane, ["A*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_double_click_pinned_tab_bar_empty_space_creates_new_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // The real NewFile handler lives in editor::init, which isn't initialized
+        // in workspace tests. Register a global action handler that sets a flag so
+        // we can verify the action is dispatched without depending on the editor crate.
+        // TODO: If editor::init is ever available in workspace tests, remove this
+        // flag and assert the resulting tab bar state directly instead.
+        let new_file_dispatched = Rc::new(Cell::new(false));
+        cx.update(|_, cx| {
+            let new_file_dispatched = new_file_dispatched.clone();
+            cx.on_action(move |_: &NewFile, _cx| {
+                new_file_dispatched.set(true);
+            });
+        });
+
+        set_pinned_tabs_separate_row(cx, true);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane
+                .index_for_item_id(item_a.item_id())
+                .expect("item A should exist");
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*"], cx);
+        cx.run_until_parked();
+
+        let pinned_drop_target_bounds = cx
+            .debug_bounds("pinned_tabs_border")
+            .expect("pinned_tabs_border should have debug bounds");
+
+        cx.simulate_event(MouseDownEvent {
+            position: pinned_drop_target_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 2,
+            first_mouse: false,
+        });
+
+        cx.run_until_parked();
+
+        cx.simulate_event(MouseUpEvent {
+            position: pinned_drop_target_bounds.center(),
+            button: MouseButton::Left,
+            modifiers: Modifiers::default(),
+            click_count: 2,
+        });
+
+        cx.run_until_parked();
+
+        // TODO: If editor::init is ever available in workspace tests, replace this
+        // with an assert_item_labels check that verifies a new tab is actually created.
+        assert!(
+            new_file_dispatched.get(),
+            "Double-clicking pinned tab bar empty space should dispatch the new file action"
+        );
     }
 
     #[gpui::test]
