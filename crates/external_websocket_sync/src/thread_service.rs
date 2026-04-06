@@ -165,6 +165,46 @@ fn init_streaming_throttle() {
     }
 }
 
+/// Flush pending throttled content for all entries in a thread OTHER than the
+/// specified entry index. Called from the NewEntry handler to ensure the
+/// preceding text entry's content is sent before a new entry (e.g. tool_call).
+fn flush_stale_pending_for_thread(acp_thread_id: &str, exclude_entry_idx: usize) {
+    init_streaming_throttle();
+    let thread_prefix = format!("{}:", acp_thread_id);
+    let exclude_key = format!("{}:{}", acp_thread_id, exclude_entry_idx);
+    let now = Instant::now();
+
+    let mut stale_pending: Vec<PendingMessage> = Vec::new();
+    {
+        let throttle_map = STREAMING_THROTTLE.lock();
+        let Some(map) = throttle_map.as_ref() else { return };
+        let mut map = map.write();
+
+        for (k, state) in map.iter_mut() {
+            if k.starts_with(&thread_prefix) && *k != exclude_key {
+                if let Some(pending) = state.pending_content.take() {
+                    state.last_sent = now;
+                    stale_pending.push(pending);
+                }
+            }
+        }
+    }
+
+    for pending in stale_pending {
+        let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
+            acp_thread_id: pending.acp_thread_id,
+            message_id: pending.message_id,
+            role: pending.role,
+            content: pending.content,
+            request_id: pending.request_id,
+            entry_type: pending.entry_type,
+            tool_name: pending.tool_name,
+            tool_status: pending.tool_status,
+            timestamp: chrono::Utc::now().timestamp(),
+        });
+    }
+}
+
 /// Throttled send of message_added events. Only sends if enough time has passed
 /// since the last send for this entry. Otherwise, stores the content as pending.
 /// Returns true if the event was sent, false if throttled.
@@ -211,7 +251,12 @@ fn throttled_send_message_added(
             pending_content: None,
         });
 
-        if now.duration_since(state.last_sent) >= STREAMING_THROTTLE_INTERVAL {
+        // Tool call entries bypass the throttle — they're infrequent and must
+        // arrive promptly so the preceding text entry's stale-pending flush
+        // reaches the API before the tool call does.
+        if now.duration_since(state.last_sent) >= STREAMING_THROTTLE_INTERVAL
+            || entry_type == "tool_call"
+        {
             state.last_sent = now;
             state.pending_content = None;
             current_to_send = Some(PendingMessage {
@@ -479,6 +524,49 @@ fn ensure_thread_subscription(
                     if role == "assistant" {
                         *turn_request_id.borrow_mut() = rid.clone();
                     }
+                    // Re-send preceding entries FROM THE CURRENT TURN with their
+                    // current content. flush_streaming_text() was called right before
+                    // push_entry(), so all Markdown entities have their complete text.
+                    // Only send entries after the last UserMessage to avoid leaking
+                    // old turn entries into the current interaction on the Go side.
+                    let entries = thread.entries();
+                    let turn_start = entries.iter().enumerate().rev()
+                        .find_map(|(i, e)| matches!(e, acp_thread::AgentThreadEntry::UserMessage(_)).then_some(i + 1))
+                        .unwrap_or(0);
+                    for prev_idx in turn_start..latest_idx {
+                        if let Some(prev_entry) = thread.entries().get(prev_idx) {
+                            let (prev_role, prev_content, prev_entry_type) = match prev_entry {
+                                acp_thread::AgentThreadEntry::UserMessage(msg) => {
+                                    ("user", msg.content.to_markdown(cx).to_string(), "text")
+                                }
+                                acp_thread::AgentThreadEntry::AssistantMessage(msg) => {
+                                    ("assistant", msg.content_only(cx), "text")
+                                }
+                                acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
+                                    ("assistant", tool_call.to_markdown(cx), "tool_call")
+                                }
+                                _ => continue,
+                            };
+                            let (prev_tool_name, prev_tool_status) = match prev_entry {
+                                acp_thread::AgentThreadEntry::ToolCall(tool_call) => {
+                                    (tool_call.label.read(cx).source().to_string(), tool_call.status.to_string())
+                                }
+                                _ => (String::new(), String::new()),
+                            };
+                            let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
+                                acp_thread_id: thread_id_for_sub.clone(),
+                                message_id: prev_idx.to_string(),
+                                role: prev_role.to_string(),
+                                content: prev_content,
+                                request_id: rid.clone(),
+                                entry_type: prev_entry_type.to_string(),
+                                tool_name: prev_tool_name,
+                                tool_status: prev_tool_status,
+                                timestamp: chrono::Utc::now().timestamp(),
+                            });
+                        }
+                    }
+
                     let _ = crate::send_websocket_event(SyncEvent::MessageAdded {
                         acp_thread_id: thread_id_for_sub.clone(),
                         message_id: latest_idx.to_string(),
