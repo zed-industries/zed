@@ -1448,26 +1448,23 @@ impl ConversationView {
                 self.emit_token_limit_telemetry_if_needed(thread, cx);
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
-                let has_commands = !available_commands.is_empty();
                 if let Some(thread_view) = self.thread_view(&thread_id) {
-                    thread_view.update(cx, |thread_view, _cx| {
+                    let has_commands = !available_commands.is_empty();
+
+                    let agent_display_name = self
+                        .agent_server_store
+                        .read(cx)
+                        .agent_display_name(&self.agent.agent_id())
+                        .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
+
+                    let new_placeholder =
+                        placeholder_text(agent_display_name.as_ref(), has_commands);
+
+                    thread_view.update(cx, |thread_view, cx| {
                         thread_view
                             .session_capabilities
                             .write()
                             .set_available_commands(available_commands.clone());
-                    });
-                }
-
-                let agent_display_name = self
-                    .agent_server_store
-                    .read(cx)
-                    .agent_display_name(&self.agent.agent_id())
-                    .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
-
-                if let Some(thread_view) = self.thread_view(&thread_id) {
-                    let new_placeholder =
-                        placeholder_text(agent_display_name.as_ref(), has_commands);
-                    thread_view.update(cx, |thread_view, cx| {
                         thread_view.message_editor.update(cx, |editor, cx| {
                             editor.set_placeholder_text(&new_placeholder, window, cx);
                         });
@@ -3117,6 +3114,7 @@ pub(crate) mod tests {
                 .to_vec();
             assert_eq!(available_commands.len(), 1);
             assert_eq!(available_commands[0].name.as_str(), "help");
+            assert_eq!(available_commands[0].description.as_str(), "Get help");
         });
 
         assert_eq!(
