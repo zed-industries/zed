@@ -7,7 +7,7 @@ use std::{
 };
 
 use collections::{HashMap, HashSet};
-use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, ScrollHandle, WeakEntity};
+use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity};
 
 use project::{
     WorktreeId,
@@ -29,8 +29,6 @@ pub struct SecurityModal {
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
     focus_handle: FocusHandle,
-    project_list_scroll_handle: ScrollHandle,
-    body_scroll_handle: ScrollHandle,
     trusted: Option<bool>,
 }
 
@@ -65,7 +63,7 @@ impl ModalView for SecurityModal {
 }
 
 impl Render for SecurityModal {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.restricted_paths.is_empty() {
             self.dismiss(cx);
             return v_flex().into_any_element();
@@ -78,39 +76,6 @@ impl Render for SecurityModal {
         };
 
         let trust_label = self.build_trust_label();
-        let restricted_project_entries = self
-            .restricted_paths
-            .values()
-            .filter_map(|restricted_path| {
-                let abs_path = if restricted_path.is_file {
-                    restricted_path.abs_path.parent()
-                } else {
-                    Some(restricted_path.abs_path.as_ref())
-                }?;
-                let label = match &restricted_path.host {
-                    Some(remote_host) => match &remote_host.user_name {
-                        Some(user_name) => format!(
-                            "{} ({}@{})",
-                            self.shorten_path(abs_path).display(),
-                            user_name,
-                            remote_host.host_identifier
-                        ),
-                        None => format!(
-                            "{} ({})",
-                            self.shorten_path(abs_path).display(),
-                            remote_host.host_identifier
-                        ),
-                    },
-                    None => self.shorten_path(abs_path).display().to_string(),
-                };
-                Some(
-                    h_flex()
-                        .pl(IconSize::default().rems() + rems(0.5))
-                        .child(Label::new(label).color(Color::Muted))
-                        .into_any_element(),
-                )
-            })
-            .collect::<Vec<_>>();
 
         AlertModal::new("security-modal")
             .width(rems(40.))
@@ -137,69 +102,72 @@ impl Render for SecurityModal {
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(Label::new(header_label)),
                     )
-                    .child(
-                        div()
-                            .id("security-modal-project-list")
-                            .max_h(vh(0.4, window))
-                            .overflow_y_scroll()
-                            .track_scroll(&self.project_list_scroll_handle)
-                            .child(v_flex().children(restricted_project_entries)),
-                    ),
+                    .children(self.restricted_paths.values().filter_map(|restricted_path| {
+                        let abs_path = if restricted_path.is_file {
+                            restricted_path.abs_path.parent()
+                        } else {
+                            Some(restricted_path.abs_path.as_ref())
+                        }?;
+                        let label = match &restricted_path.host {
+                            Some(remote_host) => match &remote_host.user_name {
+                                Some(user_name) => format!(
+                                    "{} ({}@{})",
+                                    self.shorten_path(abs_path).display(),
+                                    user_name,
+                                    remote_host.host_identifier
+                                ),
+                                None => format!(
+                                    "{} ({})",
+                                    self.shorten_path(abs_path).display(),
+                                    remote_host.host_identifier
+                                ),
+                            },
+                            None => self.shorten_path(abs_path).display().to_string(),
+                        };
+                        Some(h_flex()
+                            .pl(IconSize::default().rems() + rems(0.5))
+                            .child(Label::new(label).color(Color::Muted)))
+                    })),
             )
             .child(
-                div()
-                    .id("security-modal-body")
-                    .max_h(vh(0.3, window))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.body_scroll_handle)
+                v_flex()
+                    .gap_2()
                     .child(
                         v_flex()
-                            .gap_2()
                             .child(
-                                v_flex()
-                                    .child(
-                                        Label::new(
-                                            "Untrusted projects are opened in Restricted Mode to protect your system.",
-                                        )
-                                        .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(
-                                            "Review .zed/settings.json for any extensions or commands configured by this project.",
-                                        )
-                                        .color(Color::Muted),
-                                    ),
-                            )
-                            .child(
-                                v_flex()
-                                    .child(
-                                        Label::new("Restricted Mode prevents:").color(Color::Muted),
-                                    )
-                                    .child(ListBulletItem::new(
-                                        "Project settings from being applied",
-                                    ))
-                                    .child(ListBulletItem::new("Language servers from running"))
-                                    .child(ListBulletItem::new(
-                                        "MCP Server integrations from installing",
-                                    )),
-                            )
-                            .when_some(trust_label, |this, trust_label| {
-                                this.child(
-                                    Checkbox::new(
-                                        "trust-parents",
-                                        ToggleState::from(self.trust_parents),
-                                    )
-                                    .label(trust_label)
-                                    .on_click(cx.listener(
-                                        |security_modal, state: &ToggleState, _, cx| {
-                                            security_modal.trust_parents = state.selected();
-                                            cx.notify();
-                                            cx.stop_propagation();
-                                        },
-                                    )),
+                                Label::new(
+                                    "Untrusted projects are opened in Restricted Mode to protect your system.",
                                 )
-                            }),
-                    ),
+                                .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new(
+                                    "Review .zed/settings.json for any extensions or commands configured by this project.",
+                                )
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .child(Label::new("Restricted Mode prevents:").color(Color::Muted))
+                            .child(ListBulletItem::new("Project settings from being applied"))
+                            .child(ListBulletItem::new("Language servers from running"))
+                            .child(ListBulletItem::new("MCP Server integrations from installing")),
+                    )
+                    .map(|this| match trust_label {
+                        Some(trust_label) => this.child(
+                            Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
+                                .label(trust_label)
+                                .on_click(cx.listener(
+                                    |security_modal, state: &ToggleState, _, cx| {
+                                        security_modal.trust_parents = state.selected();
+                                        cx.notify();
+                                        cx.stop_propagation();
+                                    },
+                                )),
+                        ),
+                        None => this,
+                    }),
             )
             .footer(
                 h_flex()
@@ -251,8 +219,6 @@ impl SecurityModal {
             remote_host: remote_host.map(|host| host.into()),
             restricted_paths: HashMap::default(),
             focus_handle: cx.focus_handle(),
-            project_list_scroll_handle: ScrollHandle::new(),
-            body_scroll_handle: ScrollHandle::new(),
             trust_parents: false,
             home_dir: std::env::home_dir(),
             trusted: None,
@@ -366,100 +332,5 @@ impl SecurityModal {
             self.restricted_paths.clear();
             cx.notify();
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fs::FakeFs;
-    use gpui::{
-        Bounds, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, px, size,
-    };
-    use project::worktree_store::WorktreeIdCounter;
-    use settings::SettingsStore;
-    use theme::LoadThemes;
-
-    #[gpui::test]
-    fn test_security_modal_project_list_scrolls_when_many_projects_are_restricted(
-        cx: &mut TestAppContext,
-    ) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            theme_settings::init(LoadThemes::JustBase, cx);
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        let worktree_store =
-            cx.new(|_| WorktreeStore::local(false, fs, WorktreeIdCounter::default()));
-        let restricted_paths = (0..60)
-            .map(|index| {
-                let path = Arc::<Path>::from(
-                    PathBuf::from(format!("/tmp/project-{index:02}")).into_boxed_path(),
-                );
-                (
-                    WorktreeId::from_usize(index + 1),
-                    RestrictedPath {
-                        abs_path: path,
-                        is_file: false,
-                        host: None,
-                    },
-                )
-            })
-            .collect::<HashMap<_, _>>();
-
-        let window = cx.update(|cx| {
-            cx.open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                        point(px(0.), px(0.)),
-                        size(px(720.), px(620.)),
-                    ))),
-                    ..Default::default()
-                },
-                |_, cx| {
-                    cx.new(|cx| SecurityModal {
-                        restricted_paths,
-                        home_dir: None,
-                        trust_parents: false,
-                        worktree_store: worktree_store.downgrade(),
-                        remote_host: None,
-                        focus_handle: cx.focus_handle(),
-                        project_list_scroll_handle: ScrollHandle::new(),
-                        body_scroll_handle: ScrollHandle::new(),
-                        trusted: None,
-                    })
-                },
-            )
-            .unwrap()
-        });
-
-        let mut cx = VisualTestContext::from_window(window.into(), cx);
-        let modal = window.root(&mut cx).unwrap();
-
-        let (project_list_max_offset, project_list_height, body_height) =
-            modal.read_with(&cx, |modal, _| {
-                (
-                    modal.project_list_scroll_handle.max_offset().y,
-                    modal.project_list_scroll_handle.bounds().size.height,
-                    modal.body_scroll_handle.bounds().size.height,
-                )
-            });
-
-        assert!(
-            project_list_max_offset > px(0.),
-            "expected the restricted project list to overflow and become scrollable",
-        );
-        assert!(
-            project_list_height < px(300.),
-            "expected the project list viewport to stay bounded, got {:?}",
-            project_list_height,
-        );
-        assert!(
-            body_height < px(220.),
-            "expected the modal body viewport to stay bounded, got {:?}",
-            body_height,
-        );
     }
 }
