@@ -2394,9 +2394,8 @@ impl GitGraph {
         let local_y = position_y - canvas_bounds.origin.y;
 
         if local_y >= px(0.) && local_y < canvas_bounds.size.height {
-            let row_in_viewport = (local_y / self.row_height).floor() as usize;
-            let scroll_rows = (scroll_offset_y / self.row_height).floor() as usize;
-            let absolute_row = scroll_rows + row_in_viewport;
+            let absolute_y = local_y + scroll_offset_y;
+            let absolute_row = (absolute_y / self.row_height).floor() as usize;
 
             if absolute_row < self.graph_data.commits.len() {
                 return Some(absolute_row);
@@ -4068,5 +4067,77 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(reloaded_shas, vec![updated_head, updated_stash]);
+    }
+
+    #[gpui::test]
+    async fn test_git_graph_row_at_position_rounding(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            assert!(
+                graph.graph_data.commits.len() >= 10,
+                "graph should load dummy commits"
+            );
+
+            graph.row_height = px(20.0);
+            let origin_y = px(100.0);
+            graph.graph_canvas_bounds.set(Some(Bounds {
+                origin: point(px(0.0), origin_y),
+                size: gpui::size(px(100.0), px(1000.0)),
+            }));
+
+            graph.table_interaction_state.update(cx, |state, _| {
+                state.set_scroll_offset(point(px(0.0), px(-15.0)))
+            });
+            let pos_y = origin_y + px(10.0);
+            let absolute_calc_row = graph.row_at_position(pos_y, cx);
+
+            assert_eq!(
+                absolute_calc_row,
+                Some(1),
+                "Row calculation should yield absolute row exactly"
+            );
+        });
     }
 }
