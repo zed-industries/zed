@@ -1223,6 +1223,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "client",
+ "db",
  "editor",
  "gpui",
  "markdown_preview",

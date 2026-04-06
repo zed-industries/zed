@@ -1,4 +1,5 @@
 use auto_update::{AutoUpdater, release_notes_url};
+use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window, actions, prelude::*,
@@ -171,21 +172,31 @@ struct AnnouncementContent {
     primary_action_url: Option<SharedString>,
 }
 
-fn announcement_for_version(version: &Version) -> Option<AnnouncementContent> {
-    #[allow(clippy::match_single_binding)]
+struct ParallelAgentAnnouncement;
+
+impl Dismissable for ParallelAgentAnnouncement {
+    const KEY: &'static str = "parallel-agent-announcement";
+}
+
+fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementContent> {
     match (version.major, version.minor, version.patch) {
-        // TODO: Add real version when we have it
-        // (0, 225, 0) => Some(AnnouncementContent {
-        //     heading: "What's new in Zed 0.225".into(),
-        //     description: "This release includes some exciting improvements.".into(),
-        //     bullet_items: vec![
-        //         "Improved agent performance".into(),
-        //         "New agentic features".into(),
-        //         "Better agent capabilities".into(),
-        //     ],
-        //     primary_action_label: "Learn More".into(),
-        //     primary_action_url: Some("https://zed.dev/".into()),
-        // }),
+        (0, 232, _) => {
+            if ParallelAgentAnnouncement::dismissed(cx) {
+                None
+            } else {
+                Some(AnnouncementContent {
+                    heading: "What's new in Zed 0.232".into(),
+                    description: "This release includes some exciting improvements.".into(),
+                    bullet_items: vec![
+                        "Improved agent performance".into(),
+                        "New agentic features".into(),
+                        "Better agent capabilities".into(),
+                    ],
+                    primary_action_label: "Learn More".into(),
+                    primary_action_url: Some("https://zed.dev/".into()),
+                })
+            }
+        }
         _ => None,
     }
 }
@@ -277,7 +288,7 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
                 version.build = semver::BuildMetadata::EMPTY;
                 let app_name = ReleaseChannel::global(cx).display_name();
 
-                if let Some(content) = announcement_for_version(&version) {
+                if let Some(content) = announcement_for_version(&version, cx) {
                     show_app_notification(
                         NotificationId::unique::<UpdateNotification>(),
                         cx,
