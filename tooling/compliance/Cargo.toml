@@ -31,3 +31,7 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, optional = true }
+
+[dev-dependencies]
+indoc.workspace = true
+tokio = { workspace = true, features = ["rt", "macros"] }

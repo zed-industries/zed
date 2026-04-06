@@ -294,3 +294,153 @@ fn escape_markdown_table_text(input: &str) -> String {
         .replace('\r', "")
         .replace('\n', "<br>")
 }
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use crate::{
+        checks::{ReviewFailure, ReviewSuccess},
+        git::{CommitDetails, CommitList},
+        github::{GitHubUser, PullRequestReview, ReviewState},
+    };
+
+    use super::{Report, ReportReviewSummary};
+
+    fn make_commit(
+        sha: &str,
+        author_name: &str,
+        author_email: &str,
+        title: &str,
+        body: &str,
+    ) -> CommitDetails {
+        let formatted = format!(
+            "{sha}|field-delimiter|{author_name}|field-delimiter|{author_email}|field-delimiter|{title}|body-delimiter|{body}|commit-delimiter|"
+        );
+        CommitList::from_str(&formatted)
+            .expect("test commit should parse")
+            .into_iter()
+            .next()
+            .expect("should have one commit")
+    }
+
+    fn reviewed() -> ReviewSuccess {
+        ReviewSuccess::PullRequestReviewed(vec![PullRequestReview {
+            user: Some(GitHubUser {
+                login: "reviewer".to_owned(),
+            }),
+            state: Some(ReviewState::Approved),
+        }])
+    }
+
+    #[test]
+    fn report_summary_counts_are_accurate() {
+        let mut report = Report::new();
+
+        report.add(
+            make_commit(
+                "aaa",
+                "Alice",
+                "alice@test.com",
+                "Reviewed commit (#100)",
+                "",
+            ),
+            Ok(reviewed()),
+        );
+        report.add(
+            make_commit("bbb", "Bob", "bob@test.com", "Unreviewed commit (#200)", ""),
+            Err(ReviewFailure::Unreviewed),
+        );
+        report.add(
+            make_commit("ccc", "Carol", "carol@test.com", "No PR commit", ""),
+            Err(ReviewFailure::NoPullRequestFound),
+        );
+        report.add(
+            make_commit("ddd", "Dave", "dave@test.com", "Error commit (#300)", ""),
+            Err(ReviewFailure::Other(anyhow::anyhow!("some error"))),
+        );
+
+        let summary = report.summary();
+        assert_eq!(summary.pull_requests, 3);
+        assert_eq!(summary.reviewed, 1);
+        assert_eq!(summary.not_reviewed, 2);
+        assert_eq!(summary.errors, 1);
+    }
+
+    #[test]
+    fn report_summary_all_reviewed_is_no_issues() {
+        let mut report = Report::new();
+
+        report.add(
+            make_commit("aaa", "Alice", "alice@test.com", "First (#100)", ""),
+            Ok(reviewed()),
+        );
+        report.add(
+            make_commit("bbb", "Bob", "bob@test.com", "Second (#200)", ""),
+            Ok(reviewed()),
+        );
+
+        let summary = report.summary();
+        assert!(matches!(
+            summary.review_summary(),
+            ReportReviewSummary::NoIssuesFound
+        ));
+    }
+
+    #[test]
+    fn report_summary_missing_reviews_only() {
+        let mut report = Report::new();
+
+        report.add(
+            make_commit("aaa", "Alice", "alice@test.com", "Reviewed (#100)", ""),
+            Ok(reviewed()),
+        );
+        report.add(
+            make_commit("bbb", "Bob", "bob@test.com", "Unreviewed (#200)", ""),
+            Err(ReviewFailure::Unreviewed),
+        );
+
+        let summary = report.summary();
+        assert!(matches!(
+            summary.review_summary(),
+            ReportReviewSummary::MissingReviews
+        ));
+    }
+
+    #[test]
+    fn report_summary_errors_and_missing_reviews() {
+        let mut report = Report::new();
+
+        report.add(
+            make_commit("aaa", "Alice", "alice@test.com", "Unreviewed (#100)", ""),
+            Err(ReviewFailure::Unreviewed),
+        );
+        report.add(
+            make_commit("bbb", "Bob", "bob@test.com", "Errored (#200)", ""),
+            Err(ReviewFailure::Other(anyhow::anyhow!("check failed"))),
+        );
+
+        let summary = report.summary();
+        assert!(matches!(
+            summary.review_summary(),
+            ReportReviewSummary::MissingReviewsWithErrors
+        ));
+    }
+
+    #[test]
+    fn report_summary_deduplicates_pull_requests() {
+        let mut report = Report::new();
+
+        report.add(
+            make_commit("aaa", "Alice", "alice@test.com", "First change (#100)", ""),
+            Ok(reviewed()),
+        );
+        report.add(
+            make_commit("bbb", "Bob", "bob@test.com", "Second change (#100)", ""),
+            Ok(reviewed()),
+        );
+
+        let summary = report.summary();
+        assert_eq!(summary.pull_requests, 1);
+    }
+}

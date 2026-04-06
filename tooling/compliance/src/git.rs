@@ -343,3 +343,259 @@ impl FromStr for NoOutput {
         Ok(NoOutput)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indoc::indoc;
+
+    #[test]
+    fn parse_stable_version_tag() {
+        let tag = VersionTag::parse("v0.172.8").unwrap();
+        assert_eq!(tag.version().major, 0);
+        assert_eq!(tag.version().minor, 172);
+        assert_eq!(tag.version().patch, 8);
+        assert_eq!(tag.1, ReleaseChannel::Stable);
+    }
+
+    #[test]
+    fn parse_preview_version_tag() {
+        let tag = VersionTag::parse("v0.172.1-pre").unwrap();
+        assert_eq!(tag.version().major, 0);
+        assert_eq!(tag.version().minor, 172);
+        assert_eq!(tag.version().patch, 1);
+        assert_eq!(tag.1, ReleaseChannel::Preview);
+    }
+
+    #[test]
+    fn parse_version_tag_without_v_prefix() {
+        let tag = VersionTag::parse("0.172.8").unwrap();
+        assert_eq!(tag.version().major, 0);
+        assert_eq!(tag.version().minor, 172);
+        assert_eq!(tag.version().patch, 8);
+    }
+
+    #[test]
+    fn parse_invalid_version_tag() {
+        let result = VersionTag::parse("vConradTest");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn version_tag_stable_roundtrip() {
+        let tag = VersionTag::parse("v0.172.8").unwrap();
+        assert_eq!(tag.to_string(), "v0.172.8");
+    }
+
+    #[test]
+    fn version_tag_preview_roundtrip() {
+        let tag = VersionTag::parse("v0.172.1-pre").unwrap();
+        assert_eq!(tag.to_string(), "v0.172.1-pre");
+    }
+
+    #[test]
+    fn sorted_orders_by_semver() {
+        let input = indoc! {"
+            v0.172.8
+            v0.170.1
+            v0.171.4
+            v0.170.2
+            v0.172.11
+            v0.171.3
+            v0.172.9
+        "};
+        let list = VersionTagList::from_str(input).unwrap().sorted();
+        for window in list.0.windows(2) {
+            assert!(
+                window[0].version() <= window[1].version(),
+                "{} should come before {}",
+                window[0].to_string(),
+                window[1].to_string()
+            );
+        }
+        assert_eq!(list.0[0].to_string(), "v0.170.1");
+        assert_eq!(list.0[list.0.len() - 1].to_string(), "v0.172.11");
+    }
+
+    #[test]
+    fn find_previous_minor_for_173_returns_172() {
+        let input = indoc! {"
+            v0.170.1
+            v0.170.2
+            v0.171.3
+            v0.171.4
+            v0.172.8
+            v0.172.9
+            v0.172.11
+        "};
+        let list = VersionTagList::from_str(input).unwrap().sorted();
+        let target = VersionTag::parse("v0.173.0").unwrap();
+        let previous = list.find_previous_minor_version(&target).unwrap();
+        assert_eq!(previous.version().major, 0);
+        assert_eq!(previous.version().minor, 172);
+        assert_eq!(previous.version().patch, 0);
+    }
+
+    #[test]
+    fn find_previous_minor_skips_same_minor() {
+        let input = indoc! {"
+            v0.172.8
+            v0.172.9
+            v0.172.11
+        "};
+        let list = VersionTagList::from_str(input).unwrap().sorted();
+        let target = VersionTag::parse("v0.172.8").unwrap();
+        assert!(list.find_previous_minor_version(&target).is_none());
+    }
+
+    #[test]
+    fn find_previous_minor_resets_patch_to_zero() {
+        let input = indoc! {"
+            v0.170.1
+            v0.171.3
+            v0.172.11
+        "};
+        let list = VersionTagList::from_str(input).unwrap().sorted();
+        let target = VersionTag::parse("v0.173.0").unwrap();
+        let previous = list.find_previous_minor_version(&target).unwrap();
+        assert_eq!(previous.to_string(), "v0.172.0");
+    }
+
+    #[test]
+    fn find_previous_minor_preserves_release_channel() {
+        let input = indoc! {"
+            v0.170.1
+            v0.171.3
+            v0.172.8
+        "};
+        let list = VersionTagList::from_str(input).unwrap().sorted();
+        let target = VersionTag::parse("v0.173.0-pre").unwrap();
+        let previous = list.find_previous_minor_version(&target).unwrap();
+        assert_eq!(previous.1, ReleaseChannel::Preview);
+        assert_eq!(previous.to_string(), "v0.172.0-pre");
+    }
+
+    #[test]
+    fn find_previous_minor_with_major_version_gap() {
+        let list = VersionTagList::from_str("v0.170.1").unwrap().sorted();
+        let target = VersionTag::parse("v1.0.0").unwrap();
+        let previous = list.find_previous_minor_version(&target).unwrap();
+        assert_eq!(previous.to_string(), "v0.170.0");
+    }
+
+    #[test]
+    fn parse_tag_list_from_real_tags() {
+        let input = indoc! {"
+            v0.9999-temporary
+            vConradTest
+            v0.172.8
+        "};
+        let list = VersionTagList::from_str(input).unwrap();
+        assert_eq!(list.0.len(), 1);
+        assert_eq!(list.0[0].to_string(), "v0.172.8");
+    }
+
+    #[test]
+    fn parse_empty_tag_list_fails() {
+        let result = VersionTagList::from_str("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pr_number_from_squash_merge_title() {
+        let line = format!(
+            "abc123{d}Author Name{d}author@email.com{d}Add cool feature (#12345)",
+            d = CommitDetails::FIELD_DELIMITER
+        );
+        let commit = CommitDetails::parse(&line, "").unwrap();
+        assert_eq!(commit.pr_number(), Some(12345));
+    }
+
+    #[test]
+    fn pr_number_missing() {
+        let line = format!(
+            "abc123{d}Author Name{d}author@email.com{d}Some commit without PR ref",
+            d = CommitDetails::FIELD_DELIMITER
+        );
+        let commit = CommitDetails::parse(&line, "").unwrap();
+        assert_eq!(commit.pr_number(), None);
+    }
+
+    #[test]
+    fn pr_number_takes_last_match() {
+        let line = format!(
+            "abc123{d}Author Name{d}author@email.com{d}Fix (#123) and refactor (#456)",
+            d = CommitDetails::FIELD_DELIMITER
+        );
+        let commit = CommitDetails::parse(&line, "").unwrap();
+        assert_eq!(commit.pr_number(), Some(456));
+    }
+
+    #[test]
+    fn co_authors_parsed_from_body() {
+        let line = format!(
+            "abc123{d}Author Name{d}author@email.com{d}Some title",
+            d = CommitDetails::FIELD_DELIMITER
+        );
+        let body = indoc! {"
+            Co-authored-by: Alice Smith <alice@example.com>
+            Co-authored-by: Bob Jones <bob@example.com>
+        "};
+        let commit = CommitDetails::parse(&line, body).unwrap();
+        let co_authors = commit.co_authors().unwrap();
+        assert_eq!(co_authors.len(), 2);
+        assert_eq!(
+            co_authors[0],
+            Committer::new("Alice Smith", "alice@example.com")
+        );
+        assert_eq!(
+            co_authors[1],
+            Committer::new("Bob Jones", "bob@example.com")
+        );
+    }
+
+    #[test]
+    fn no_co_authors_returns_none() {
+        let line = format!(
+            "abc123{d}Author Name{d}author@email.com{d}Some title",
+            d = CommitDetails::FIELD_DELIMITER
+        );
+        let commit = CommitDetails::parse(&line, "").unwrap();
+        assert!(commit.co_authors().is_none());
+    }
+
+    #[test]
+    fn commit_sha_short_returns_first_8_chars() {
+        let sha = CommitSha("abcdef1234567890abcdef1234567890abcdef12".into());
+        assert_eq!(sha.short(), "abcdef12");
+    }
+
+    #[test]
+    fn parse_commit_list_from_git_log_format() {
+        let fd = CommitDetails::FIELD_DELIMITER;
+        let bd = CommitDetails::BODY_DELIMITER;
+        let cd = CommitDetails::COMMIT_DELIMITER;
+
+        let input = format!(
+            "sha111{fd}Alice{fd}alice@test.com{fd}First commit (#100){bd}First body{cd}sha222{fd}Bob{fd}bob@test.com{fd}Second commit (#200){bd}Second body{cd}"
+        );
+
+        let list = CommitList::from_str(&input).unwrap();
+        assert_eq!(list.0.len(), 2);
+
+        assert_eq!(list.0[0].sha().0, "sha111");
+        assert_eq!(
+            list.0[0].author(),
+            &Committer::new("Alice", "alice@test.com")
+        );
+        assert_eq!(list.0[0].title(), "First commit (#100)");
+        assert_eq!(list.0[0].pr_number(), Some(100));
+        assert_eq!(list.0[0].body, "First body");
+
+        assert_eq!(list.0[1].sha().0, "sha222");
+        assert_eq!(list.0[1].author(), &Committer::new("Bob", "bob@test.com"));
+        assert_eq!(list.0[1].title(), "Second commit (#200)");
+        assert_eq!(list.0[1].pr_number(), Some(200));
+        assert_eq!(list.0[1].body, "Second body");
+    }
+}
