@@ -4404,42 +4404,59 @@ impl Render for Pane {
                         .map(ProjectEntryId::from_proto)
                         .or_else(|| active_item.as_ref()?.project_entry_ids(cx).first().copied());
 
-                    match entry_id {
-                        Some(entry_id) => {
-                            pane.project
-                                .update(cx, |_, cx| {
-                                    cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                                })
-                                .ok();
-                        }
-                        None => {
-                            // When working with an unsaved buffer, display a
-                            // toast informing the user that the buffer is not
-                            // present in any of the open projects.
-                            pane.project
-                                .update(cx, |_, cx| cx.emit(project::Event::ActivateProjectPanel))
-                                .ok();
-                            let display_name = active_item
-                                .as_ref()
-                                .map(|item| {
-                                    item.tab_tooltip_text(cx)
-                                        .unwrap_or_else(|| item.tab_content_text(0, cx))
-                                })
-                                .unwrap_or_else(|| "Unsave buffer".into());
-                            let notification_id =
-                                NotificationId::Named("ProjectPanel::reveal_entry".into());
-                            show_app_notification(notification_id, cx, move |cx| {
-                                cx.new(|cx| {
-                                    let message = format!(
-                                        "\"{display_name}\" is not part of any open projects."
-                                    );
+                    let show_reveal_error_toast = |display_name: &str, cx: &mut App| {
+                        let notification_id = NotificationId::unique::<RevealInProjectPanel>();
+                        let message = SharedString::from(format!(
+                            "\"{display_name}\" is not part of any open projects."
+                        ));
 
-                                    MessageNotification::new("Reveal in Project Panel", cx)
-                                        .primary_message(message)
-                                })
-                            });
-                        }
+                        show_app_notification(notification_id, cx, move |cx| {
+                            let message = message.clone();
+                            cx.new(|cx| MessageNotification::new(message, cx))
+                        });
+                    };
+
+                    let Some(entry_id) = entry_id else {
+                        // When working with an unsaved buffer, display a toast
+                        // informing the user that the buffer is not present in
+                        // any of the open projects and stop execution, as we
+                        // don't want to open the project panel.
+                        let display_name = active_item
+                            .as_ref()
+                            .map(|item| {
+                                item.tab_tooltip_text(cx)
+                                    .unwrap_or_else(|| item.tab_content_text(0, cx))
+                            })
+                            .unwrap_or_else(|| "Unsaved buffer".into());
+
+                        return show_reveal_error_toast(&display_name, cx);
+                    };
+
+                    // We'll now check whether the entry belongs to a visible
+                    // worktree and, if that's not the case, it means the user
+                    // is interacting with a file that does not belong to any of
+                    // the open projects, so we'll show a toast informing them
+                    // of this and stop execution.
+                    let display_name = pane
+                        .project
+                        .read_with(cx, |project, cx| {
+                            project
+                                .worktree_for_entry(entry_id, cx)
+                                .filter(|worktree| !worktree.read(cx).is_visible())
+                                .map(|worktree| worktree.read(cx).root_name_str().to_string())
+                        })
+                        .ok()
+                        .flatten();
+
+                    if let Some(display_name) = display_name {
+                        return show_reveal_error_toast(&display_name, cx);
                     }
+
+                    pane.project
+                        .update(cx, |_, cx| {
+                            cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                        })
+                        .log_err();
                 }),
             )
             .on_action(cx.listener(|_, _: &menu::Cancel, window, cx| {

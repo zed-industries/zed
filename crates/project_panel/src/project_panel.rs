@@ -703,7 +703,8 @@ impl ProjectPanel {
                         // invisible worktree, for example, opening a file that
                         // is not present in any of the open projects, display a
                         // toast informing the user that the file is not present
-                        // in any of the open projects.
+                        // in any of the open projects and stop executing, as we
+                        // don't want to open the project panel.
                         if let Some(worktree) = project
                             .read(cx)
                             .worktree_for_entry(*entry_id, cx)
@@ -713,14 +714,14 @@ impl ProjectPanel {
                             let file_name = worktree.root_name_str().to_string();
                             let notification_id =
                                 NotificationId::Named("ProjectPanel::reveal_entry".into());
-                            show_app_notification(notification_id, cx, move |cx| {
+
+                            return show_app_notification(notification_id, cx, move |cx| {
                                 cx.new(|cx| {
                                     let message = format!(
                                         "\"{file_name}\" is not part of any open projects."
                                     );
 
-                                    MessageNotification::new("Reveal in Project Panel", cx)
-                                        .primary_message(message)
+                                    MessageNotification::new(message, cx)
                                 })
                             });
                         }
