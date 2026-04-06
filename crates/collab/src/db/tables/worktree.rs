@@ -15,6 +15,7 @@ pub struct Model {
     pub scan_id: i64,
     /// The last scan that fully completed.
     pub completed_scan_id: i64,
+    pub root_repo_common_dir: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

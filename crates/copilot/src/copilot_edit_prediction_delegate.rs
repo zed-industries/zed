@@ -1045,7 +1045,7 @@ mod tests {
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        assert!(copilot_requests.try_next().is_err());
+        assert!(copilot_requests.try_recv().is_err());
 
         _ = editor.update(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -1055,7 +1055,7 @@ mod tests {
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        assert!(copilot_requests.try_next().is_ok());
+        assert!(copilot_requests.try_recv().is_ok());
     }
 
     fn handle_copilot_completion_request(

@@ -44,6 +44,9 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyResultExt},
 };
 
+const FILTER_OCCUPIED_CHANNELS_KEY: &str = "filter_occupied_channels";
+const FAVORITE_CHANNELS_KEY: &str = "favorite_channels";
+
 actions!(
     collab_panel,
     [
@@ -244,7 +247,9 @@ pub struct CollabPanel {
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     channel_clipboard: Option<ChannelMoveClipboard>,
-    pending_serialization: Task<Option<()>>,
+    pending_panel_serialization: Task<Option<()>>,
+    pending_favorites_serialization: Task<Option<()>>,
+    pending_filter_serialization: Task<Option<()>>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     list_state: ListState,
     filter_editor: Entity<Editor>,
@@ -260,7 +265,7 @@ pub struct CollabPanel {
     subscriptions: Vec<Subscription>,
     collapsed_sections: Vec<Section>,
     collapsed_channels: Vec<ChannelId>,
-    filter_active_channels: bool,
+    filter_occupied_channels: bool,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -378,7 +383,9 @@ impl CollabPanel {
                 focus_handle: cx.focus_handle(),
                 channel_clipboard: None,
                 fs: workspace.app_state().fs.clone(),
-                pending_serialization: Task::ready(None),
+                pending_panel_serialization: Task::ready(None),
+                pending_favorites_serialization: Task::ready(None),
+                pending_filter_serialization: Task::ready(None),
                 context_menu: None,
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
                 channel_name_editor,
@@ -393,7 +400,7 @@ impl CollabPanel {
                 match_candidates: Vec::default(),
                 collapsed_sections: vec![Section::Offline],
                 collapsed_channels: Vec::default(),
-                filter_active_channels: false,
+                filter_occupied_channels: false,
                 workspace: workspace.weak_handle(),
                 client: workspace.app_state().client.clone(),
             };
@@ -474,8 +481,22 @@ impl CollabPanel {
                 });
             }
 
+            let filter_occupied_channels = KeyValueStore::global(cx)
+                .read_kvp(FILTER_OCCUPIED_CHANNELS_KEY)
+                .ok()
+                .flatten()
+                .is_some();
+
+            panel.update(cx, |panel, cx| {
+                panel.filter_occupied_channels = filter_occupied_channels;
+
+                if filter_occupied_channels {
+                    panel.update_entries(false, cx);
+                }
+            });
+
             let favorites: Vec<ChannelId> = KeyValueStore::global(cx)
-                .read_kvp("favorite_channels")
+                .read_kvp(FAVORITE_CHANNELS_KEY)
                 .ok()
                 .flatten()
                 .and_then(|json| serde_json::from_str::<Vec<u64>>(&json).ok())
@@ -520,7 +541,7 @@ impl CollabPanel {
         };
 
         let kvp = KeyValueStore::global(cx);
-        self.pending_serialization = cx.background_spawn(
+        self.pending_panel_serialization = cx.background_spawn(
             async move {
                 kvp.write_kvp(
                     serialization_key,
@@ -780,14 +801,14 @@ impl CollabPanel {
 
             channels.retain(|chan| channel_ids_of_matches_or_parents.contains(&chan.id));
 
-            if self.filter_active_channels {
-                let active_channel_ids_or_ancestors: HashSet<_> = channel_store
+            if self.filter_occupied_channels {
+                let occupied_channel_ids_or_ancestors: HashSet<_> = channel_store
                     .ordered_channels()
                     .map(|(_, channel)| channel)
                     .filter(|channel| !channel_store.channel_participants(channel.id).is_empty())
                     .flat_map(|channel| channel.parent_path.iter().copied().chain(Some(channel.id)))
                     .collect();
-                channels.retain(|channel| active_channel_ids_or_ancestors.contains(&channel.id));
+                channels.retain(|channel| occupied_channel_ids_or_ancestors.contains(&channel.id));
             }
 
             if let Some(state) = &self.channel_editing_state
@@ -796,7 +817,7 @@ impl CollabPanel {
                 self.entries.push(ListEntry::ChannelEditor { depth: 0 });
             }
 
-            let should_respect_collapse = query.is_empty() && !self.filter_active_channels;
+            let should_respect_collapse = query.is_empty() && !self.filter_occupied_channels;
             let mut collapse_depth = None;
 
             for (idx, channel) in channels.into_iter().enumerate() {
@@ -1970,6 +1991,26 @@ impl CollabPanel {
         self.channel_store.read(cx).is_channel_favorited(channel_id)
     }
 
+    fn persist_filter_occupied_channels(&mut self, cx: &mut Context<Self>) {
+        let is_enabled = self.filter_occupied_channels;
+        let kvp_store = KeyValueStore::global(cx);
+        self.pending_filter_serialization = cx.background_spawn(
+            async move {
+                if is_enabled {
+                    kvp_store
+                        .write_kvp(FILTER_OCCUPIED_CHANNELS_KEY.to_string(), "1".to_string())
+                        .await?;
+                } else {
+                    kvp_store
+                        .delete_kvp(FILTER_OCCUPIED_CHANNELS_KEY.to_string())
+                        .await?;
+                }
+                anyhow::Ok(())
+            }
+            .log_err(),
+        );
+    }
+
     fn persist_favorites(&mut self, cx: &mut Context<Self>) {
         let favorite_ids: Vec<u64> = self
             .channel_store
@@ -1979,11 +2020,11 @@ impl CollabPanel {
             .map(|id| id.0)
             .collect();
         let kvp_store = KeyValueStore::global(cx);
-        self.pending_serialization = cx.background_spawn(
+        self.pending_favorites_serialization = cx.background_spawn(
             async move {
                 let json = serde_json::to_string(&favorite_ids)?;
                 kvp_store
-                    .write_kvp("favorite_channels".to_string(), json)
+                    .write_kvp(FAVORITE_CHANNELS_KEY.to_string(), json)
                     .await?;
                 anyhow::Ok(())
             }
@@ -2843,14 +2884,15 @@ impl CollabPanel {
                 Some(
                     h_flex()
                         .child(
-                            IconButton::new("filter-active-channels", IconName::ListFilter)
+                            IconButton::new("filter-occupied-channels", IconName::ListFilter)
                                 .icon_size(IconSize::Small)
-                                .toggle_state(self.filter_active_channels)
+                                .toggle_state(self.filter_occupied_channels)
                                 .on_click(cx.listener(|this, _, _window, cx| {
-                                    this.filter_active_channels = !this.filter_active_channels;
+                                    this.filter_occupied_channels = !this.filter_occupied_channels;
                                     this.update_entries(true, cx);
+                                    this.persist_filter_occupied_channels(cx);
                                 }))
-                                .tooltip(Tooltip::text(if self.filter_active_channels {
+                                .tooltip(Tooltip::text(if self.filter_occupied_channels {
                                     "Show All Channels"
                                 } else {
                                     "Show Occupied Channels"

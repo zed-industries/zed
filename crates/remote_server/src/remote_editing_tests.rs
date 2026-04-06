@@ -11,6 +11,7 @@ use languages::rust_lang;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
+use git::repository::Worktree as GitWorktree;
 use gpui::{AppContext as _, Entity, SharedString, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
@@ -1537,6 +1538,87 @@ async fn test_copy_file_into_remote_project(
             .unwrap(),
         ""
     );
+}
+
+#[gpui::test]
+async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "main_repo": {
+                ".git": {},
+                "file.txt": "content",
+            },
+            "no_git": {
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+
+    // Create a linked worktree that points back to main_repo's .git.
+    fs.add_linked_worktree_for_repo(
+        Path::new("/code/main_repo/.git"),
+        false,
+        GitWorktree {
+            path: PathBuf::from("/code/linked_worktree"),
+            ref_name: Some("refs/heads/feature-branch".into()),
+            sha: "abc123".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    // Main repo: root_repo_common_dir should be the .git directory itself.
+    let (worktree_main, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/main_repo", true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let common_dir = worktree_main.read_with(cx, |worktree, _| {
+        worktree.snapshot().root_repo_common_dir().cloned()
+    });
+    assert_eq!(
+        common_dir.as_deref(),
+        Some(Path::new("/code/main_repo/.git")),
+    );
+
+    // Linked worktree: root_repo_common_dir should point to the main repo's .git.
+    let (worktree_linked, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/linked_worktree", true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let common_dir = worktree_linked.read_with(cx, |worktree, _| {
+        worktree.snapshot().root_repo_common_dir().cloned()
+    });
+    assert_eq!(
+        common_dir.as_deref(),
+        Some(Path::new("/code/main_repo/.git")),
+    );
+
+    // No git repo: root_repo_common_dir should be None.
+    let (worktree_no_git, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/no_git", true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let common_dir = worktree_no_git.read_with(cx, |worktree, _| {
+        worktree.snapshot().root_repo_common_dir().cloned()
+    });
+    assert_eq!(common_dir, None);
 }
 
 #[gpui::test]
