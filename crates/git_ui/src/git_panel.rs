@@ -780,7 +780,7 @@ impl GitPanel {
                 move |this, _git_store, event, window, cx| match event {
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged | RepositoryEvent::BranchChanged,
+                        RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
