@@ -205,10 +205,10 @@ impl TestContext {
 
     /// Only supports files in root (otherwise would need toggle_expand_dir).
     /// For undo redo the paths themselves do not matter so this is fine
-    async fn paste(&mut self, file: &str) {
+    async fn paste(&mut self, directory: &str) {
         select_path(
             &self.panel,
-            &path(format!("workspace/{file}")),
+            &path(format!("workspace/{directory}")),
             &mut self.cx,
         );
         self.panel.update_in(&mut self.cx, |panel, window, cx| {
@@ -284,7 +284,6 @@ async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
     cx.assert_not_exists("new.txt");
 
     cx.redo().await;
-    // THIS IS FAILING ▼▼▼▼▼▼▼▼
     cx.assert_exists("new.txt");
 }
 
@@ -302,12 +301,19 @@ async fn create_dir_undo(cx: &mut gpui::TestAppContext) {
 async fn cut_paste_undo(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
+    cx.create_directory("files").await;
     cx.cut("a.txt").await;
-    cx.paste("a.txt").await;
-    cx.assert_exists("a.txt");
+    cx.paste("files").await;
+    cx.assert_not_exists("a.txt");
+    cx.assert_exists("files/a.txt");
 
     cx.undo().await;
+    cx.assert_exists("a.txt");
+    cx.assert_not_exists("files/a.txt");
+
+    cx.redo().await;
     cx.assert_not_exists("a.txt");
+    cx.assert_exists("files/a.txt");
 }
 
 #[gpui::test]
