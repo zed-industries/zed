@@ -4416,7 +4416,7 @@ impl Repository {
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
         let abs_path = self.snapshot.repo_path_to_abs_path(path);
         let abs_path = SanitizedPath::new(&abs_path);
-        let (worktree, relative_path) = worktree_store.find_worktree(abs_path.as_path(), cx)?;
+        let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
         Some(ProjectPath {
             worktree_id: worktree.read(cx).id(),
             path: relative_path,
@@ -6857,7 +6857,7 @@ impl Repository {
             match state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     let committed_text = backend.load_committed_text(repo_path.clone()).await;
-                    let staged_text = backend.load_index_text(repo_path.clone()).await;
+                    let staged_text = backend.load_index_text(repo_path).await;
                     let diff_bases_change = if committed_text == staged_text {
                         DiffBasesChange::SetBoth(committed_text)
                     } else {
