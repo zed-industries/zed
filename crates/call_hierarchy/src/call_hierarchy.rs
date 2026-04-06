@@ -501,13 +501,42 @@ fn extract_call_display_info(call: &Call) -> (String, Option<String>, Option<Str
         .as_ref()
         .map(|p| format!("{}:{}", p.compact().to_string_lossy(), line_number));
 
-    let detail = call
-        .item
-        .detail
-        .as_ref()
-        .map_or(file_with_line.clone(), |d| Some(d.replace('\n', "↵")));
+    let detail = extract_call_detail(call).or(file_with_line.clone());
 
     (name, detail, file_with_line)
+}
+
+fn extract_call_detail(call: &Call) -> Option<String> {
+    if let Some(label) = call.label.as_ref()
+        && let Some(detail) = detail_from_label_suffix(label)
+    {
+        return Some(detail);
+    }
+
+    call.item
+        .detail
+        .as_deref()
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty())
+        .map(|detail| detail.replace('\n', "↵"))
+        .and_then(|detail| trim_detail_after_symbol_name(&detail, &call.item.name).or(Some(detail)))
+}
+
+fn detail_from_label_suffix(label: &CodeLabel) -> Option<String> {
+    label
+        .text
+        .get(label.filter_range.end..)
+        .map(str::trim)
+        .filter(|suffix| !suffix.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn trim_detail_after_symbol_name(detail: &str, symbol_name: &str) -> Option<String> {
+    let suffix = detail
+        .find(symbol_name)
+        .and_then(|name_start| detail.get(name_start + symbol_name.len()..))?
+        .trim();
+    (!suffix.is_empty()).then(|| suffix.to_owned())
 }
 
 /// Renders call item name and detail as styled text, matching the outline panel's style.
@@ -729,6 +758,55 @@ mod tests {
         assert_eq!(name, "helper");
         assert_eq!(detail.as_deref(), Some("fn helper() -> i32"));
         assert_eq!(file_with_line.as_deref(), Some(expected_path));
+    }
+
+    #[gpui::test]
+    async fn test_extract_call_display_info_prefers_label_suffix(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": ""}}))
+            .await;
+
+        let test_uri = lsp::Uri::from_file_path(path!("/test/src/lib.rs")).unwrap();
+
+        let mut call = make_call(
+            "helper",
+            test_uri,
+            5,
+            Some("fn helper(&self) -> i32".to_string()),
+        );
+        call.label = Some(CodeLabel::new(
+            "fn helper(&self) -> i32".to_string(),
+            3..9,
+            Vec::new(),
+        ));
+
+        let (_, detail, _) = extract_call_display_info(&call);
+        assert_eq!(detail.as_deref(), Some("(&self) -> i32"));
+    }
+
+    #[gpui::test]
+    async fn test_extract_call_display_info_trims_raw_detail_after_symbol_name(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": ""}}))
+            .await;
+
+        let test_uri = lsp::Uri::from_file_path(path!("/test/src/lib.rs")).unwrap();
+
+        let call = make_call(
+            "helper",
+            test_uri,
+            5,
+            Some("fn helper(&self, arg: i32) -> i32".to_string()),
+        );
+
+        let (_, detail, _) = extract_call_display_info(&call);
+        assert_eq!(detail.as_deref(), Some("(&self, arg: i32) -> i32"));
     }
 
     #[gpui::test]
