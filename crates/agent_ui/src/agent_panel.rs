@@ -1817,12 +1817,6 @@ impl AgentPanel {
         // ThreadView may have been replaced (e.g. navigating between threads).
         self._active_view_observation = match &self.active_view {
             ActiveView::AgentThread { conversation_view } => {
-                if let Some(thread_view) = conversation_view.read(cx).active_thread().cloned() {
-                    thread_view.update(cx, |view, cx| {
-                        view.zoomed = self.zoomed;
-                        cx.notify();
-                    });
-                }
                 self._thread_view_subscription =
                     Self::subscribe_to_active_thread_view(conversation_view, window, cx);
                 let focus_handle = conversation_view.focus_handle(cx);
@@ -1837,12 +1831,6 @@ impl AgentPanel {
                     |this, server_view, window, cx| {
                         this._thread_view_subscription =
                             Self::subscribe_to_active_thread_view(&server_view, window, cx);
-                        if let Some(thread_view) = server_view.read(cx).active_thread().cloned() {
-                            thread_view.update(cx, |view, cx| {
-                                view.zoomed = this.zoomed;
-                                cx.notify();
-                            });
-                        }
                         cx.emit(AgentPanelEvent::ActiveViewChanged);
                         this.serialize(cx);
                         cx.notify();
@@ -2914,12 +2902,6 @@ impl Panel for AgentPanel {
 
     fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
         self.zoomed = zoomed;
-        if let Some(thread_view) = self.active_thread_view(cx) {
-            thread_view.update(cx, |view, cx| {
-                view.zoomed = zoomed;
-                cx.notify();
-            });
-        }
         cx.notify();
     }
 }

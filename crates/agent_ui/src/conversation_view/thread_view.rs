@@ -293,7 +293,6 @@ pub struct ThreadView {
     pub generating_indicator_in_list: bool,
     pub history: Option<Entity<ThreadHistory>>,
     pub _history_subscription: Option<Subscription>,
-    pub(crate) zoomed: bool,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -534,7 +533,6 @@ impl ThreadView {
             _history_subscription: history_subscription,
             show_codex_windows_warning,
             generating_indicator_in_list: false,
-            zoomed: false,
         };
 
         this.sync_generating_indicator(cx);
