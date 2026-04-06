@@ -2609,7 +2609,7 @@ mod tests {
         cx.run_until_parked();
         multi_workspace_1
             .update(cx, |multi_workspace, _window, cx| {
-                assert_eq!(multi_workspace.workspaces().len(), 2);
+                assert_eq!(multi_workspace.workspaces().count(), 2);
                 assert!(multi_workspace.sidebar_open());
                 let workspace = multi_workspace.workspace().read(cx);
                 assert_eq!(
