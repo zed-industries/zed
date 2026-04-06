@@ -11,6 +11,7 @@ mod autofix_pr;
 mod bump_patch_version;
 mod cherry_pick;
 mod compare_perf;
+mod compliance_check;
 mod danger;
 mod deploy_collab;
 mod extension_auto_bump;
@@ -204,6 +205,7 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
         WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
+        WorkflowFile::zed(compliance_check::compliance_check),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),
         WorkflowFile::zed(run_agent_evals::run_cron_unit_evals),
