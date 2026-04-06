@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use collections::HashSet;
-use fs::FakeFs;
+use fs::{FakeFs, Fs};
 use gpui::{Entity, VisualTestContext};
 use project::Project;
 use serde_json::{Value, json};
@@ -62,13 +62,9 @@ impl TestContext {
 
         let dirs: HashSet<_> = state
             .iter()
-            .map(|p| {
-                if p.extension().is_some() {
-                    p.parent().unwrap_or(Path::new(&path("/"))).to_owned()
-                } else {
-                    // TODO!(dino): Make this prettier please!
-                    p.clone()
-                }
+            .map(|p| match p.extension() {
+                Some(_) => p.parent().unwrap_or(Path::new(&path("/"))).to_owned(),
+                None => p.clone(),
             })
             .collect();
 
@@ -163,16 +159,6 @@ impl TestContext {
 
     /// Drags the `files` to the provided `directory`.
     fn drag(&mut self, files: &[&str], directory: &str) {
-        // TODO do we need this?
-        // for dir in files
-        //     .iter()
-        //     .map(|p| path(format!("workspace/{p}")))
-        //     .filter_map(|p| Path::new(&p).parent().map(Path::to_owned))
-        //     .map(|p| p.display().to_string())
-        // {
-        //     project_panel_tests::toggle_expand_dir(&self.panel, &dir, &mut self.cx);
-        // }
-
         self.panel
             .update(&mut self.cx, |panel, _| panel.marked_entries.clear());
         files.into_iter().for_each(|file| {
@@ -274,33 +260,35 @@ async fn rename_undo_redo(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
     cx.rename("a.txt", "renamed.txt").await;
-    cx.assert_exists("renamed.txt");
-    cx.assert_not_exists("a.txt");
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
 
     cx.undo().await;
-    cx.assert_exists("a.txt");
-    cx.assert_not_exists("renamed.txt");
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
 
     cx.redo().await;
-    cx.assert_exists("renamed.txt");
-    cx.assert_not_exists("a.txt");
+    cx.assert_fs_state_is(&["b.txt", "renamed.txt"]);
 }
 
-// TODO(dino): Would be nice if this test also actually confirmed that, if
-// `new.txt` has some content before removal, that same content is preserved
-// when restoring the file.
 #[gpui::test]
 async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
+    let path = path("/workspace/c.txt");
 
-    cx.create_file("new.txt").await;
-    cx.assert_exists("new.txt");
+    cx.create_file("c.txt").await;
+    cx.assert_exists("c.txt");
+
+    // We'll now insert some content into `c.txt` in order to ensure that, after
+    // undoing the trash operation, i.e., when the file is restored, the actual
+    // file's contents are preserved instead of a new one with the same path
+    // being created.
+    cx.fs.write(Path::new(&path), b"Hello!").await.unwrap();
 
     cx.undo().await;
-    cx.assert_not_exists("new.txt");
+    cx.assert_not_exists("c.txt");
 
     cx.redo().await;
-    cx.assert_exists("new.txt");
+    cx.assert_exists("c.txt");
+    assert_eq!(cx.fs.load(Path::new(&path)).await.unwrap(), "Hello!");
 }
 
 #[gpui::test]
@@ -320,16 +308,13 @@ async fn cut_paste_undo(cx: &mut gpui::TestAppContext) {
     cx.create_directory("files").await;
     cx.cut("a.txt").await;
     cx.paste("files").await;
-    cx.assert_not_exists("a.txt");
-    cx.assert_exists("files/a.txt");
+    cx.assert_fs_state_is(&["b.txt", "files/", "files/a.txt"]);
 
     cx.undo().await;
-    cx.assert_exists("a.txt");
-    cx.assert_not_exists("files/a.txt");
+    cx.assert_fs_state_is(&["a.txt", "b.txt", "files/"]);
 
     cx.redo().await;
-    cx.assert_not_exists("a.txt");
-    cx.assert_exists("files/a.txt");
+    cx.assert_fs_state_is(&["b.txt", "files/", "files/a.txt"]);
 }
 
 #[gpui::test]
@@ -338,18 +323,16 @@ async fn drag_undo_redo(cx: &mut gpui::TestAppContext) {
 
     cx.create_directory("src").await;
     cx.create_file("src/a.rs").await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt", "src/", "src/a.rs"]);
 
     cx.drag(&["src/a.rs"], "");
-    cx.assert_exists("a.rs");
-    cx.assert_not_exists("src/a.rs");
+    cx.assert_fs_state_is(&["a.txt", "b.txt", "a.rs", "src/"]);
 
     cx.undo().await;
-    cx.assert_exists("src/a.rs");
-    cx.assert_not_exists("a.rs");
+    cx.assert_fs_state_is(&["a.txt", "b.txt", "src/", "src/a.rs"]);
 
     cx.redo().await;
-    cx.assert_exists("a.rs");
-    cx.assert_not_exists("src/a.rs");
+    cx.assert_fs_state_is(&["a.txt", "b.txt", "a.rs", "src/"]);
 }
 
 #[gpui::test]
@@ -362,24 +345,12 @@ async fn drag_multiple_undo_redo(cx: &mut gpui::TestAppContext) {
 
     cx.drag(&["src/x.rs", "src/y.rs"], "");
     cx.assert_fs_state_is(&["a.txt", "b.txt", "x.rs", "y.rs", "src/"]);
-    // cx.assert_exists("x.rs");
-    // cx.assert_not_exists("src/x.rs");
-    // cx.assert_exists("b.rs");
-    // cx.assert_not_exists("src/b.rs");
 
     cx.undo().await;
     cx.assert_fs_state_is(&["a.txt", "b.txt", "src/", "src/x.rs", "src/y.rs"]);
-    // cx.assert_exists("src/x.rs");
-    // cx.assert_not_exists("x.rs");
-    // cx.assert_exists("src/b.rs");
-    // cx.assert_not_exists("b.rs");
 
     cx.redo().await;
     cx.assert_fs_state_is(&["a.txt", "b.txt", "x.rs", "y.rs", "src/"]);
-    // cx.assert_exists("a.rs");
-    // cx.assert_not_exists("src/a.rs");
-    // cx.assert_exists("b.rs");
-    // cx.assert_not_exists("src/b.rs");
 }
 
 #[gpui::test]
@@ -388,22 +359,23 @@ async fn two_sequential_undos(cx: &mut gpui::TestAppContext) {
 
     cx.rename("a.txt", "x.txt").await;
     cx.create_file("y.txt").await;
-
-    cx.undo().await; // TODO(yara) should we have an assert fs state instead?
-    cx.assert_not_exists("y.txt");
-    cx.assert_exists("x.txt");
+    cx.assert_fs_state_is(&["b.txt", "x.txt", "y.txt"]);
 
     cx.undo().await;
-    cx.assert_not_exists("x.txt");
-    cx.assert_exists("a.txt");
+    cx.assert_fs_state_is(&["b.txt", "x.txt"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
 }
 
 #[gpui::test]
 async fn undo_without_history(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
+    // Undoing without any history should just result in the filesystem state
+    // remaining unchanged.
     cx.undo().await;
-    cx.assert_fs_state_is(&["a.txt", "b.txt"]) // default tree
+    cx.assert_fs_state_is(&["a.txt", "b.txt"])
 }
 
 #[gpui::test]
@@ -411,14 +383,11 @@ async fn trash_undo_redo(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
     cx.trash(&["a.txt", "b.txt"]).await;
-    cx.assert_not_exists("a.txt");
-    cx.assert_not_exists("b.txt");
+    cx.assert_fs_state_is(&[]);
 
     cx.undo().await;
-    cx.assert_exists("a.txt");
-    cx.assert_exists("b.txt");
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
 
     cx.redo().await;
-    cx.assert_not_exists("a.txt");
-    cx.assert_not_exists("b.txt");
+    cx.assert_fs_state_is(&[]);
 }

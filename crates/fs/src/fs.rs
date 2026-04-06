@@ -214,9 +214,9 @@ impl TrashedEntry {
             id: self.id,
             name: self.name,
             original_parent: self.original_parent,
-            // TODO!: Figure out if `time_deleted` is relevant for the restore
-            // functionality, in which case we probably want to also preserve it
-            // in the `From<trash::TrashItem> for TrashedEntry` implementation.
+            // Since the `time_deleted` field is not used by the `trash` crate's
+            // restore logic, we don't need to preserve it in `TrashedEntry`, so
+            // here we just default to 0.
             time_deleted: 0,
         }
     }
@@ -798,10 +798,8 @@ impl Fs for RealFs {
         }
     }
 
-    // TODO(yara) blocking -> async here or where it's used?
-    // Note this is done the other way round for restore... so we need to align that
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<TrashedEntry> {
-        // We must make the path absolute or trash will make a wierd abonimation
+        // We must make the path absolute or trash will make a weird abonimation
         // of the zed working directory (not usually the worktree) and whatever
         // the path variable holds.
         let path = self

@@ -876,8 +876,6 @@ impl Worktree {
             // TODO!(dino): Add support for restoring entries in remote worktrees.
             Err(anyhow!("Unsupported"))
         }
-
-        // TODO(yara) do we need to emit events, test and see if it works without doing that.
     }
 
     fn get_children_ids_recursive(&self, path: &RelPath, ids: &mut Vec<ProjectEntryId>) {
