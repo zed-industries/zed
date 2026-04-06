@@ -3002,21 +3002,36 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 ## Profiles
 
-- Description: Configuration profiles that can be applied on top of existing settings
+- Description: Configuration profiles that can be temporarily applied on top of existing settings or Zed's defaults.
 - Setting: `profiles`
 - Default: `{}`
 
 **Options**
 
-Configuration object for defining settings profiles. Example:
+Each profile is an object with the following optional fields:
+
+- `base`: What settings to start from before applying the profile's overrides.
+  - `"user"` (default): Apply on top of your current user settings.
+  - `"default"`: Apply on top of Zed's default settings, ignoring user customizations.
+- `settings`: The settings overrides for this profile.
+
+Examples:
 
 ```json [settings]
 {
   "profiles": {
-    "presentation": {
-      "buffer_font_size": 20,
-      "ui_font_size": 18,
-      "theme": "One Light"
+    "Presentation": {
+      "settings": {
+        "buffer_font_size": 20,
+        "ui_font_size": 18,
+        "theme": "One Light"
+      }
+    },
+    "Clean Slate": {
+      "base": "default",
+      "settings": {
+        "theme": "Ayu Dark"
+      }
     }
   }
 }
@@ -5332,12 +5347,12 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Settings Profiles
 
-- Description: Configure any number of settings profiles that are temporarily applied on top of your existing user settings when selected from `settings profile selector: toggle`.
+- Description: Configure any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.
 - Setting: `profiles`
 - Default: `{}`
 
 In your `settings.json` file, add the `profiles` object.
-Each key within this object is the name of a settings profile, and each value is an object that can include any of Zed's settings.
+Each key within this object is the name of a settings profile. Each profile has an optional `base` field (`"user"` or `"default"`) and a `settings` object containing any of Zed's settings.
 
 Example:
 
@@ -5345,24 +5360,30 @@ Example:
 {
   "profiles": {
     "Presenting (Dark)": {
-      "agent_buffer_font_size": 18.0,
-      "buffer_font_size": 18.0,
-      "theme": "One Dark",
-      "ui_font_size": 18.0
+      "settings": {
+        "agent_buffer_font_size": 18.0,
+        "buffer_font_size": 18.0,
+        "theme": "One Dark",
+        "ui_font_size": 18.0
+      }
     },
     "Presenting (Light)": {
-      "agent_buffer_font_size": 18.0,
-      "buffer_font_size": 18.0,
-      "theme": "One Light",
-      "ui_font_size": 18.0
+      "settings": {
+        "agent_buffer_font_size": 18.0,
+        "buffer_font_size": 18.0,
+        "theme": "One Light",
+        "ui_font_size": 18.0
+      }
     },
     "Writing": {
-      "agent_buffer_font_size": 15.0,
-      "buffer_font_size": 15.0,
-      "theme": "Catppuccin Frappé - No Italics",
-      "ui_font_size": 15.0,
-      "tab_bar": { "show": false },
-      "toolbar": { "breadcrumbs": false }
+      "settings": {
+        "agent_buffer_font_size": 15.0,
+        "buffer_font_size": 15.0,
+        "theme": "Catppuccin Frappé - No Italics",
+        "ui_font_size": 15.0,
+        "tab_bar": { "show": false },
+        "toolbar": { "breadcrumbs": false }
+      }
     }
   }
 }

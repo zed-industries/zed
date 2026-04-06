@@ -364,7 +364,7 @@ impl WorktreeListDelegate {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_workspace_for_paths(
-                            OpenMode::Replace,
+                            OpenMode::Activate,
                             vec![new_worktree_path],
                             window,
                             cx,
@@ -418,7 +418,7 @@ impl WorktreeListDelegate {
             return;
         };
         let open_mode = if replace_current_window {
-            OpenMode::Replace
+            OpenMode::Activate
         } else {
             OpenMode::NewWindow
         };
@@ -754,7 +754,7 @@ impl PickerDelegate for WorktreeListDelegate {
         if entry.is_new {
             self.create_worktree(&entry.worktree.display_name(), secondary, None, window, cx);
         } else {
-            self.open_worktree(&entry.worktree.path, secondary, window, cx);
+            self.open_worktree(&entry.worktree.path, !secondary, window, cx);
         }
 
         cx.emit(DismissEvent);

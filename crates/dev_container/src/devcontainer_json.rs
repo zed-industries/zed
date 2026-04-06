@@ -72,7 +72,11 @@ impl Display for MountDefinition {
             f,
             "type={},source={},target={},consistency=cached",
             self.mount_type.clone().unwrap_or_else(|| {
-                if self.source.starts_with('/') {
+                if self.source.starts_with('/')
+                    || self.source.starts_with("\\\\")
+                    || self.source.get(1..3) == Some(":\\")
+                    || self.source.get(1..3) == Some(":/")
+                {
                     "bind".to_string()
                 } else {
                     "volume".to_string()
@@ -1354,5 +1358,53 @@ mod test {
         );
 
         assert_eq!(devcontainer.build_type(), DevContainerBuildType::Dockerfile);
+    }
+
+    #[test]
+    fn mount_definition_should_use_bind_type_for_unix_absolute_paths() {
+        let mount = MountDefinition {
+            source: "/home/user/project".to_string(),
+            target: "/workspaces/project".to_string(),
+            mount_type: None,
+        };
+
+        let rendered = mount.to_string();
+
+        assert!(
+            rendered.starts_with("type=bind,"),
+            "Expected mount type 'bind' for Unix absolute path, but got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn mount_definition_should_use_bind_type_for_windows_unc_paths() {
+        let mount = MountDefinition {
+            source: "\\\\server\\share\\project".to_string(),
+            target: "/workspaces/project".to_string(),
+            mount_type: None,
+        };
+
+        let rendered = mount.to_string();
+
+        assert!(
+            rendered.starts_with("type=bind,"),
+            "Expected mount type 'bind' for Windows UNC path, but got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn mount_definition_should_use_bind_type_for_windows_absolute_paths() {
+        let mount = MountDefinition {
+            source: "C:\\Users\\mrg\\cli".to_string(),
+            target: "/workspaces/cli".to_string(),
+            mount_type: None,
+        };
+
+        let rendered = mount.to_string();
+
+        assert!(
+            rendered.starts_with("type=bind,"),
+            "Expected mount type 'bind' for Windows absolute path, but got: {rendered}"
+        );
     }
 }

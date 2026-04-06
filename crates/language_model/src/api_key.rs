@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
+use env_var::EnvVar;
 use futures::{FutureExt, future};
 use gpui::{AsyncApp, Context, SharedString, Task};
 use std::{
@@ -7,7 +8,6 @@ use std::{
     sync::Arc,
 };
 use util::ResultExt as _;
-use zed_env_vars::EnvVar;
 
 use crate::AuthenticateError;
 
@@ -101,6 +101,7 @@ impl ApiKeyState {
         url: SharedString,
         key: Option<String>,
         get_this: impl Fn(&mut Ent) -> &mut Self + 'static,
+        provider: Arc<dyn CredentialsProvider>,
         cx: &Context<Ent>,
     ) -> Task<Result<()>> {
         if self.is_from_env_var() {
@@ -108,18 +109,14 @@ impl ApiKeyState {
                 "bug: attempted to store API key in system keychain when API key is from env var",
             )));
         }
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |ent, cx| {
             if let Some(key) = &key {
-                credentials_provider
+                provider
                     .write_credentials(&url, "Bearer", key.as_bytes(), cx)
                     .await
                     .log_err();
             } else {
-                credentials_provider
-                    .delete_credentials(&url, cx)
-                    .await
-                    .log_err();
+                provider.delete_credentials(&url, cx).await.log_err();
             }
             ent.update(cx, |ent, cx| {
                 let this = get_this(ent);
@@ -144,12 +141,13 @@ impl ApiKeyState {
         &mut self,
         url: SharedString,
         get_this: impl Fn(&mut Ent) -> &mut Self + Clone + 'static,
+        provider: Arc<dyn CredentialsProvider>,
         cx: &mut Context<Ent>,
     ) {
         if url != self.url {
             if !self.is_from_env_var() {
                 // loading will continue even though this result task is dropped
-                let _task = self.load_if_needed(url, get_this, cx);
+                let _task = self.load_if_needed(url, get_this, provider, cx);
             }
         }
     }
@@ -163,6 +161,7 @@ impl ApiKeyState {
         &mut self,
         url: SharedString,
         get_this: impl Fn(&mut Ent) -> &mut Self + Clone + 'static,
+        provider: Arc<dyn CredentialsProvider>,
         cx: &mut Context<Ent>,
     ) -> Task<Result<(), AuthenticateError>> {
         if let LoadStatus::Loaded { .. } = &self.load_status
@@ -185,7 +184,7 @@ impl ApiKeyState {
         let task = if let Some(load_task) = &self.load_task {
             load_task.clone()
         } else {
-            let load_task = Self::load(url.clone(), get_this.clone(), cx).shared();
+            let load_task = Self::load(url.clone(), get_this.clone(), provider, cx).shared();
             self.url = url;
             self.load_status = LoadStatus::NotPresent;
             self.load_task = Some(load_task.clone());
@@ -206,14 +205,13 @@ impl ApiKeyState {
     fn load<Ent: 'static>(
         url: SharedString,
         get_this: impl Fn(&mut Ent) -> &mut Self + 'static,
+        provider: Arc<dyn CredentialsProvider>,
         cx: &Context<Ent>,
     ) -> Task<()> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn({
             async move |ent, cx| {
                 let load_status =
-                    ApiKey::load_from_system_keychain_impl(&url, credentials_provider.as_ref(), cx)
-                        .await;
+                    ApiKey::load_from_system_keychain_impl(&url, provider.as_ref(), cx).await;
                 ent.update(cx, |ent, cx| {
                     let this = get_this(ent);
                     this.url = url;

@@ -760,7 +760,7 @@ impl EditSession {
                     {
                         if let Some(match_range) = matcher.push(chunk, None) {
                             let anchor_range = self.buffer.read_with(cx, |buffer, _cx| {
-                                buffer.anchor_range_between(match_range.clone())
+                                buffer.anchor_range_outside(match_range.clone())
                             });
                             self.diff
                                 .update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
@@ -795,7 +795,7 @@ impl EditSession {
 
                     let anchor_range = self
                         .buffer
-                        .read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
+                        .read_with(cx, |buffer, _cx| buffer.anchor_range_outside(range.clone()));
                     self.diff
                         .update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
 
@@ -953,7 +953,7 @@ fn apply_char_operations(
             }
             CharOperation::Delete { bytes } => {
                 let delete_end = *edit_cursor + bytes;
-                let anchor_range = snapshot.anchor_range_around(*edit_cursor..delete_end);
+                let anchor_range = snapshot.anchor_range_inside(*edit_cursor..delete_end);
                 agent_edit_buffer(&buffer, [(anchor_range, "")], action_log, cx);
                 *edit_cursor = delete_end;
             }

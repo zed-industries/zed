@@ -161,9 +161,7 @@ impl CsvPreviewView {
                 editor,
                 |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
                     match event {
-                        EditorEvent::Edited { .. }
-                        | EditorEvent::DirtyChanged
-                        | EditorEvent::ExcerptsEdited { .. } => {
+                        EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
                             this.parse_csv_from_active_editor(true, cx);
                         }
                         _ => {}

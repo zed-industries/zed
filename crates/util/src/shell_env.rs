@@ -2,8 +2,20 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result};
 use collections::HashMap;
+use serde::Deserialize;
 
 use crate::shell::ShellKind;
+
+fn parse_env_map_from_noisy_output(output: &str) -> Result<collections::HashMap<String, String>> {
+    for (position, _) in output.match_indices('{') {
+        let candidate = &output[position..];
+        let mut deserializer = serde_json::Deserializer::from_str(candidate);
+        if let Ok(env_map) = HashMap::<String, String>::deserialize(&mut deserializer) {
+            return Ok(env_map);
+        }
+    }
+    anyhow::bail!("Failed to find JSON in shell output: {output}")
+}
 
 pub fn print_env() {
     let env_vars: HashMap<String, String> = std::env::vars().collect();
@@ -109,10 +121,9 @@ async fn capture_unix(
     );
 
     // Parse the JSON output from zed --printenv
-    let env_map: collections::HashMap<String, String> = serde_json::from_str(&env_output)
-        .with_context(|| {
-            format!("Failed to deserialize environment variables from json: {env_output}")
-        })?;
+    let env_map = parse_env_map_from_noisy_output(&env_output).with_context(|| {
+        format!("Failed to deserialize environment variables from json: {env_output}")
+    })?;
     Ok(env_map)
 }
 
@@ -213,14 +224,10 @@ async fn capture_windows(
                 &format!("cd {}; {} --printenv", quoted_directory, zed_command),
             ])
         }
-        ShellKind::Cmd => cmd.args([
-            "/c",
-            "cd",
-            &directory_string,
-            "&&",
-            &zed_path_string,
-            "--printenv",
-        ]),
+        ShellKind::Cmd => {
+            let dir = directory_string.trim_end_matches('\\');
+            cmd.args(["/d", "/c", "cd", dir, "&&", &zed_path_string, "--printenv"])
+        }
     }
     .stdin(Stdio::null())
     .stdout(Stdio::piped())
@@ -238,8 +245,7 @@ async fn capture_windows(
     );
     let env_output = String::from_utf8_lossy(&output.stdout);
 
-    // Parse the JSON output from zed --printenv
-    serde_json::from_str(&env_output).with_context(|| {
+    parse_env_map_from_noisy_output(&env_output).with_context(|| {
         format!("Failed to deserialize environment variables from json: {env_output}")
     })
 }

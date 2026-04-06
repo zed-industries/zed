@@ -295,7 +295,7 @@ impl MarkdownPreviewView {
                     EditorEvent::Edited { .. }
                     | EditorEvent::BufferEdited { .. }
                     | EditorEvent::DirtyChanged
-                    | EditorEvent::ExcerptsEdited { .. } => {
+                    | EditorEvent::BuffersEdited { .. } => {
                         this.update_markdown_from_active_editor(true, false, window, cx);
                     }
                     EditorEvent::SelectionsChanged { .. } => {
