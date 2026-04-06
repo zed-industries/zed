@@ -15,10 +15,7 @@ use crate::{
 use refineable::Refineable;
 #[cfg(feature = "webview")]
 use std::collections::HashMap;
-#[cfg(all(
-    feature = "webview",
-    any(target_os = "linux", target_os = "freebsd")
-))]
+#[cfg(all(feature = "webview", any(target_os = "linux", target_os = "freebsd")))]
 use std::sync::Mutex;
 
 #[cfg(feature = "webview")]
@@ -480,48 +477,101 @@ mod x11_child_thread {
 
 // On macOS/Windows, build_as_child runs on the main thread (no GTK needed).
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+struct RawHandle {
+    window: raw_window_handle::RawWindowHandle,
+    display: raw_window_handle::RawDisplayHandle,
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+unsafe impl Send for RawHandle {}
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+unsafe impl Sync for RawHandle {}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+impl raw_window_handle::HasWindowHandle for RawHandle {
+    fn window_handle(
+        &self,
+    ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+        unsafe { Ok(raw_window_handle::WindowHandle::borrow_raw(self.window)) }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+impl raw_window_handle::HasDisplayHandle for RawHandle {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        unsafe { Ok(raw_window_handle::DisplayHandle::borrow_raw(self.display)) }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 #[cfg(feature = "webview")]
 fn create_child_webview(
     id: usize,
-    content: &WebViewContent,
+    content: WebViewContent,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
-    window: &Window,
+    window: &mut Window,
+    cx: &mut App,
 ) {
     let already_exists = CHILD_WEBVIEWS.with(|children| children.borrow().contains_key(&id));
     if already_exists {
         return;
     }
 
-    let builder = match content {
-        WebViewContent::Html(html) => wry::WebViewBuilder::new().with_html(html),
-        WebViewContent::Url(url) => wry::WebViewBuilder::new().with_url(url),
+    use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+    let raw_window_handle = window.window_handle().unwrap().as_raw();
+    let display_handle = window.display_handle().unwrap().as_raw();
+    let handle = RawHandle {
+        window: raw_window_handle,
+        display: display_handle,
     };
 
-    // build_as_child may process platform messages synchronously (e.g.
-    // WebView2 on Windows), so the RefCell must not be borrowed here.
-    match builder
-        .with_bounds(to_wry_bounds(bounds, scale_factor))
-        .with_transparent(true)
-        .build_as_child(window)
-    {
-        Ok(webview) => {
-            log::info!("WebView #{} created (child)", id);
-            ACTIVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            CHILD_WEBVIEWS.with(|children| {
-                children.borrow_mut().insert(
-                    id,
-                    ChildWebView {
-                        webview,
-                        last_bounds: bounds,
-                    },
-                );
-            });
-        }
-        Err(error) => {
-            log::error!("WebView #{}: build_as_child failed: {}", id, error);
-        }
-    }
+    let mut cx = cx.to_async();
+    cx.clone()
+        .foreground_executor()
+        .spawn(async move {
+            let already_exists =
+                CHILD_WEBVIEWS.with(|children| children.borrow().contains_key(&id));
+            if already_exists {
+                return;
+            }
+
+            let builder = match content {
+                WebViewContent::Html(html) => wry::WebViewBuilder::new().with_html(html),
+                WebViewContent::Url(url) => wry::WebViewBuilder::new().with_url(url),
+            };
+
+            // build_as_child may process platform messages synchronously (e.g.
+            // WebView2 on Windows), so the RefCell must not be borrowed here.
+            let result = builder
+                .with_bounds(to_wry_bounds(bounds, scale_factor))
+                .with_transparent(true)
+                .build_as_child(&handle);
+
+            match result {
+                Ok(webview) => {
+                    log::info!("WebView #{} created (child)", id);
+                    ACTIVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    CHILD_WEBVIEWS.with(|children| {
+                        children.borrow_mut().insert(
+                            id,
+                            ChildWebView {
+                                webview,
+                                last_bounds: bounds,
+                            },
+                        );
+                    });
+
+                    let _ = cx.update(|cx| cx.refresh_windows());
+                }
+                Err(error) => {
+                    log::error!("WebView #{}: build_as_child failed: {}", id, error);
+                }
+            }
+        })
+        .detach();
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -750,7 +800,7 @@ impl Element for WebView {
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) {
         #[cfg(feature = "webview")]
         {
@@ -779,7 +829,14 @@ impl Element for WebView {
                     if exists {
                         update_child_bounds(self.id, bounds, scale_factor);
                     } else {
-                        create_child_webview(self.id, &self.content, bounds, scale_factor, window);
+                        create_child_webview(
+                            self.id,
+                            self.content.clone(),
+                            bounds,
+                            scale_factor,
+                            window,
+                            cx,
+                        );
                     }
                 }
             }

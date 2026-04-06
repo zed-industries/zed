@@ -214,7 +214,7 @@ impl Render for WebViewExample {
                                     })),
                             ),
                     )
-                    .child(webview.w_full().flex_1()),
+                    .child(webview.w_full().flex_1().bg(gpui::rgba(0x00000000))),
             );
         }
 
