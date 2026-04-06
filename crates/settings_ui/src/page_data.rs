@@ -3336,9 +3336,98 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
+    fn auto_open_files_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Auto Open Files"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "On Create",
+                description: "Whether to automatically open newly created files in the editor.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.auto_open.on_create"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .auto_open
+                            .as_ref()?
+                            .on_create
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .auto_open
+                            .get_or_insert_default()
+                            .on_create = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "On Paste",
+                description: "Whether to automatically open files after pasting or duplicating them.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.auto_open.on_paste"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .auto_open
+                            .as_ref()?
+                            .on_paste
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .auto_open
+                            .get_or_insert_default()
+                            .on_paste = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "On Drop",
+                description: "Whether to automatically open files dropped from external sources.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.auto_open.on_drop"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .auto_open
+                            .as_ref()?
+                            .on_drop
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .auto_open
+                            .get_or_insert_default()
+                            .on_drop = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     SettingsPage {
         title: "Search & Files",
-        items: concat_sections![search_section(), file_finder_section(), file_scan_section()],
+        items: concat_sections![
+            search_section(),
+            file_finder_section(),
+            file_scan_section(),
+            auto_open_files_section(),
+        ],
     }
 }
 
@@ -4433,7 +4522,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 24] {
+    fn project_panel_section() -> [SettingsPageItem; 25] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4914,6 +5003,24 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Sort Mode",
+                description: "Sort order for entries in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.sort_mode"),
+                    pick: |settings_content| {
+                        settings_content.project_panel.as_ref()?.sort_mode.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .sort_mode = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Hidden Files",
                 description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
                 field: Box::new(
@@ -4928,108 +5035,6 @@ fn panels_page() -> SettingsPage {
                     }
                     .unimplemented(),
                 ),
-                metadata: None,
-                files: USER,
-            }),
-        ]
-    }
-
-    fn auto_open_files_section() -> [SettingsPageItem; 5] {
-        [
-            SettingsPageItem::SectionHeader("Auto Open Files"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "On Create",
-                description: "Whether to automatically open newly created files in the editor.",
-                field: Box::new(SettingField {
-                    json_path: Some("project_panel.auto_open.on_create"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project_panel
-                            .as_ref()?
-                            .auto_open
-                            .as_ref()?
-                            .on_create
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project_panel
-                            .get_or_insert_default()
-                            .auto_open
-                            .get_or_insert_default()
-                            .on_create = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "On Paste",
-                description: "Whether to automatically open files after pasting or duplicating them.",
-                field: Box::new(SettingField {
-                    json_path: Some("project_panel.auto_open.on_paste"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project_panel
-                            .as_ref()?
-                            .auto_open
-                            .as_ref()?
-                            .on_paste
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project_panel
-                            .get_or_insert_default()
-                            .auto_open
-                            .get_or_insert_default()
-                            .on_paste = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "On Drop",
-                description: "Whether to automatically open files dropped from external sources.",
-                field: Box::new(SettingField {
-                    json_path: Some("project_panel.auto_open.on_drop"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project_panel
-                            .as_ref()?
-                            .auto_open
-                            .as_ref()?
-                            .on_drop
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project_panel
-                            .get_or_insert_default()
-                            .auto_open
-                            .get_or_insert_default()
-                            .on_drop = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Sort Mode",
-                description: "Sort order for entries in the project panel.",
-                field: Box::new(SettingField {
-                    pick: |settings_content| {
-                        settings_content.project_panel.as_ref()?.sort_mode.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project_panel
-                            .get_or_insert_default()
-                            .sort_mode = value;
-                    },
-                    json_path: Some("project_panel.sort_mode"),
-                }),
                 metadata: None,
                 files: USER,
             }),
@@ -5807,7 +5812,6 @@ fn panels_page() -> SettingsPage {
         title: "Panels",
         items: concat_sections![
             project_panel_section(),
-            auto_open_files_section(),
             terminal_panel_section(),
             outline_panel_section(),
             git_panel_section(),
