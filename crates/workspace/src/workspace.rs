@@ -9378,7 +9378,7 @@ pub fn open_paths(
         // workspace matched, add the directory as a new workspace in the
         // active window's MultiWorkspace (instead of opening a new window).
         if open_options.open_new_workspace.is_none() && existing.is_none() {
-            cx.update(|cx| {
+            let target_window = cx.update(|cx| {
                 let windows = workspace_windows_for_location(
                     &SerializedWorkspaceLocation::Local,
                     cx,
@@ -9388,15 +9388,19 @@ pub fn open_paths(
                     .and_then(|window| window.downcast::<MultiWorkspace>())
                     .filter(|window| windows.contains(window))
                     .or_else(|| windows.into_iter().next());
-                if let Some(window) = window {
-                    open_options.requesting_window = Some(window);
-                    window
-                        .update(cx, |multi_workspace, _, cx| {
-                            multi_workspace.open_sidebar(cx);
-                        })
-                        .log_err();
-                }
+                window.filter(|window| {
+                    window.read(cx).is_ok_and(|mw| mw.multi_workspace_enabled(cx))
+                })
             });
+
+            if let Some(window) = target_window {
+                open_options.requesting_window = Some(window);
+                window
+                    .update(cx, |multi_workspace, _, cx| {
+                        multi_workspace.open_sidebar(cx);
+                    })
+                    .log_err();
+            }
         }
 
         let open_in_dev_container = open_options.open_in_dev_container;
