@@ -4159,7 +4159,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn layout_section() -> [SettingsPageItem; 4] {
+    fn layout_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Layout"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4222,6 +4222,52 @@ fn window_and_layout_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Focus Follows Mouse",
+                description: "Whether to change focus to a pane when the mouse hovers over it.",
+                field: Box::new(SettingField {
+                    json_path: Some("focus_follows_mouse.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .focus_follows_mouse
+                            .as_ref()
+                            .and_then(|s| s.enabled.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .workspace
+                            .focus_follows_mouse
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Focus Follows Mouse Debounce ms",
+                description: "Amount of time to wait before changing focus.",
+                field: Box::new(SettingField {
+                    json_path: Some("focus_follows_mouse.debounce_ms"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .focus_follows_mouse
+                            .as_ref()
+                            .and_then(|s| s.debounce_ms.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .workspace
+                            .focus_follows_mouse
+                            .get_or_insert_default()
+                            .debounce_ms = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }
@@ -4990,7 +5036,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn terminal_panel_section() -> [SettingsPageItem; 3] {
+    fn terminal_panel_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Terminal Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5001,6 +5047,19 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.terminal.as_ref()?.dock.as_ref(),
                     write: |settings_content, value| {
                         settings_content.terminal.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Terminal Panel Flexible Sizing",
+                description: "Whether the terminal panel should use flexible (proportional) sizing when docked to the left or right.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.flexible"),
+                    pick: |settings_content| settings_content.terminal.as_ref()?.flexible.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.terminal.get_or_insert_default().flexible = value;
                     },
                 }),
                 metadata: None,
@@ -5666,7 +5725,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 5] {
+    fn agent_panel_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5690,6 +5749,19 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| settings_content.agent.as_ref()?.dock.as_ref(),
                     write: |settings_content, value| {
                         settings_content.agent.get_or_insert_default().dock = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent Panel Flexible Sizing",
+                description: "Whether the agent panel should use flexible (proportional) sizing when docked to the left or right.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.flexible"),
+                    pick: |settings_content| settings_content.agent.as_ref()?.flexible.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.agent.get_or_insert_default().flexible = value;
                     },
                 }),
                 metadata: None,
@@ -7278,7 +7350,7 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Play Sound When Agent Done",
-                description: "Whether to play a sound when the agent has either completed its response, or needs user input.",
+                description: "When to play a sound when the agent has either completed its response, or needs user input.",
                 field: Box::new(SettingField {
                     json_path: Some("agent.play_sound_when_agent_done"),
                     pick: |settings_content| {
@@ -7340,7 +7412,7 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Thinking Display",
-                description: "How thinking blocks should be displayed by default. 'Automatic' auto-expands with a height constraint during streaming. 'Always Expanded' shows full content. 'Always Collapsed' keeps them collapsed.",
+                description: "How thinking blocks should be displayed by default. 'Auto' fully expands during streaming, then auto-collapses when done. 'Preview' auto-expands with a height constraint during streaming. 'Always Expanded' shows full content. 'Always Collapsed' keeps them collapsed.",
                 field: Box::new(SettingField {
                     json_path: Some("agent.thinking_display"),
                     pick: |settings_content| {
@@ -7444,6 +7516,24 @@ fn ai_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Merge Conflict Indicator",
+                description: "Whether to show the merge conflict indicator in the status bar that offers to resolve conflicts using the agent.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.show_merge_conflict_indicator"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.show_merge_conflict_indicator.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .show_merge_conflict_indicator = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]);
 
         items.into_boxed_slice()
@@ -7470,61 +7560,33 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 2] {
-        [
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Display Mode",
-                description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
-                field: Box::new(SettingField {
-                    json_path: Some("edit_prediction.display_mode"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .as_ref()?
-                            .mode
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .get_or_insert_default()
-                            .mode = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 1] {
+        [SettingsPageItem::SettingItem(SettingItem {
+            title: "Display Mode",
+            description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
+            field: Box::new(SettingField {
+                json_path: Some("edit_prediction.display_mode"),
+                pick: |settings_content| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .mode
+                        .as_ref()
+                },
+                write: |settings_content, value| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .mode = value;
+                },
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Display In Text Threads",
-                description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
-                field: Box::new(SettingField {
-                    json_path: Some("edit_prediction.in_text_threads"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .as_ref()?
-                            .enabled_in_text_threads
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .get_or_insert_default()
-                            .enabled_in_text_threads = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
+            metadata: None,
+            files: USER,
+        })]
     }
 
     SettingsPage {

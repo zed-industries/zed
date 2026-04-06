@@ -20,11 +20,11 @@ anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 credentials_provider.workspace = true
 base64.workspace = true
-client.workspace = true
 cloud_api_client.workspace = true
 cloud_api_types.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
+env_var.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
@@ -34,15 +34,12 @@ log.workspace = true
 open_ai = { workspace = true, features = ["schemars"] }
 open_router.workspace = true
 parking_lot.workspace = true
-proto.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
 smol.workspace = true
 thiserror.workspace = true
 util.workspace = true
-zed_env_vars.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

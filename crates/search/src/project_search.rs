@@ -11,8 +11,8 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSettings, ExcerptId, MAX_TAB_TITLE_LEN, MultiBuffer,
-    PathKey, SelectionEffects,
+    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
+    SelectionEffects,
     actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
     multibuffer_context_lines,
@@ -342,41 +342,32 @@ impl ProjectSearch {
     }
 
     fn remove_deleted_buffers(&mut self, cx: &mut Context<Self>) {
-        let (deleted_paths, removed_excerpt_ids) = {
-            let excerpts = self.excerpts.read(cx);
-            let deleted_paths: Vec<PathKey> = excerpts
-                .paths()
-                .filter(|path| {
-                    excerpts.buffer_for_path(path, cx).is_some_and(|buffer| {
-                        buffer
-                            .read(cx)
-                            .file()
-                            .is_some_and(|file| file.disk_state().is_deleted())
-                    })
-                })
-                .cloned()
-                .collect();
+        let deleted_buffer_ids = self
+            .excerpts
+            .read(cx)
+            .all_buffers_iter()
+            .filter(|buffer| {
+                buffer
+                    .read(cx)
+                    .file()
+                    .is_some_and(|file| file.disk_state().is_deleted())
+            })
+            .map(|buffer| buffer.read(cx).remote_id())
+            .collect::<Vec<_>>();
 
-            let removed_excerpt_ids: collections::HashSet<ExcerptId> = deleted_paths
-                .iter()
-                .flat_map(|path| excerpts.excerpts_for_path(path))
-                .collect();
-
-            (deleted_paths, removed_excerpt_ids)
-        };
-
-        if deleted_paths.is_empty() {
+        if deleted_buffer_ids.is_empty() {
             return;
         }
 
-        self.excerpts.update(cx, |excerpts, cx| {
-            for path in deleted_paths {
-                excerpts.remove_excerpts_for_path(path, cx);
+        let snapshot = self.excerpts.update(cx, |excerpts, cx| {
+            for buffer_id in deleted_buffer_ids {
+                excerpts.remove_excerpts_for_buffer(buffer_id, cx);
             }
+            excerpts.snapshot(cx)
         });
 
         self.match_ranges
-            .retain(|range| !removed_excerpt_ids.contains(&range.start.excerpt_id));
+            .retain(|range| snapshot.anchor_to_buffer_anchor(range.start).is_some());
 
         cx.notify();
     }
@@ -2990,7 +2981,13 @@ pub mod tests {
                     .read(cx)
                     .buffer()
                     .read(cx)
-                    .excerpt_buffer_ids()[0]
+                    .snapshot(cx)
+                    .excerpts()
+                    .next()
+                    .unwrap()
+                    .context
+                    .start
+                    .buffer_id
             })
             .expect("should read buffer ids");
 

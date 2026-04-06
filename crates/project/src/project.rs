@@ -150,6 +150,8 @@ pub use fs::*;
 pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
+#[cfg(any(test, feature = "test-support"))]
+pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
 pub use task_inventory::{
     BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, Inventory, TaskContexts,
     TaskSourceKind,
@@ -1030,6 +1032,8 @@ impl DirectoryLister {
     }
 }
 
+pub const CURRENT_PROJECT_FEATURES: &[&str] = &["new-style-anchors"];
+
 #[cfg(feature = "test-support")]
 pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
@@ -1226,12 +1230,23 @@ impl Project {
                 )
             });
 
+            let git_store = cx.new(|cx| {
+                GitStore::local(
+                    &worktree_store,
+                    buffer_store.clone(),
+                    environment.clone(),
+                    fs.clone(),
+                    cx,
+                )
+            });
+
             let task_store = cx.new(|cx| {
                 TaskStore::local(
                     buffer_store.downgrade(),
                     worktree_store.clone(),
                     toolchain_store.read(cx).as_language_toolchain_store(),
                     environment.clone(),
+                    git_store.clone(),
                     cx,
                 )
             });
@@ -1262,16 +1277,6 @@ impl Project {
                     manifest_tree,
                     languages.clone(),
                     client.http_client(),
-                    fs.clone(),
-                    cx,
-                )
-            });
-
-            let git_store = cx.new(|cx| {
-                GitStore::local(
-                    &worktree_store,
-                    buffer_store.clone(),
-                    environment.clone(),
                     fs.clone(),
                     cx,
                 )
@@ -1411,30 +1416,6 @@ impl Project {
                 )
             });
 
-            let task_store = cx.new(|cx| {
-                TaskStore::remote(
-                    buffer_store.downgrade(),
-                    worktree_store.clone(),
-                    toolchain_store.read(cx).as_language_toolchain_store(),
-                    remote.read(cx).proto_client(),
-                    REMOTE_SERVER_PROJECT_ID,
-                    cx,
-                )
-            });
-
-            let settings_observer = cx.new(|cx| {
-                SettingsObserver::new_remote(
-                    fs.clone(),
-                    worktree_store.clone(),
-                    task_store.clone(),
-                    Some(remote_proto.clone()),
-                    false,
-                    cx,
-                )
-            });
-            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
-                .detach();
-
             let context_server_store = cx.new(|cx| {
                 ContextServerStore::remote(
                     rpc::proto::REMOTE_SERVER_PROJECT_ID,
@@ -1498,6 +1479,31 @@ impl Project {
                     cx,
                 )
             });
+
+            let task_store = cx.new(|cx| {
+                TaskStore::remote(
+                    buffer_store.downgrade(),
+                    worktree_store.clone(),
+                    toolchain_store.read(cx).as_language_toolchain_store(),
+                    remote.read(cx).proto_client(),
+                    REMOTE_SERVER_PROJECT_ID,
+                    git_store.clone(),
+                    cx,
+                )
+            });
+
+            let settings_observer = cx.new(|cx| {
+                SettingsObserver::new_remote(
+                    fs.clone(),
+                    worktree_store.clone(),
+                    task_store.clone(),
+                    Some(remote_proto.clone()),
+                    false,
+                    cx,
+                )
+            });
+            cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+                .detach();
 
             let agent_server_store = cx.new(|_| {
                 AgentServerStore::remote(
@@ -1642,6 +1648,10 @@ impl Project {
                 project_id: remote_id,
                 committer_email: committer.email,
                 committer_name: committer.name,
+                features: CURRENT_PROJECT_FEATURES
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect(),
             })
             .await?;
         Self::from_join_project_response(
@@ -1724,6 +1734,17 @@ impl Project {
             )
         });
 
+        let git_store = cx.new(|cx| {
+            GitStore::remote(
+                // In this remote case we pass None for the environment
+                &worktree_store,
+                buffer_store.clone(),
+                client.clone().into(),
+                remote_id,
+                cx,
+            )
+        });
+
         let task_store = cx.new(|cx| {
             if run_tasks {
                 TaskStore::remote(
@@ -1732,6 +1753,7 @@ impl Project {
                     Arc::new(EmptyToolchainStore),
                     client.clone().into(),
                     remote_id,
+                    git_store.clone(),
                     cx,
                 )
             } else {
@@ -1746,17 +1768,6 @@ impl Project {
                 task_store.clone(),
                 None,
                 true,
-                cx,
-            )
-        });
-
-        let git_store = cx.new(|cx| {
-            GitStore::remote(
-                // In this remote case we pass None for the environment
-                &worktree_store,
-                buffer_store.clone(),
-                client.clone().into(),
-                remote_id,
                 cx,
             )
         });
@@ -2336,6 +2347,22 @@ impl Project {
     pub fn worktree_for_root_name(&self, root_name: &str, cx: &App) -> Option<Entity<Worktree>> {
         self.visible_worktrees(cx)
             .find(|tree| tree.read(cx).root_name() == root_name)
+    }
+
+    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
+        let roots = self
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let snapshot = worktree.read(cx).snapshot();
+                snapshot
+                    .root_repo_common_dir()
+                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
+                    .unwrap_or(snapshot.abs_path().to_path_buf())
+            })
+            .collect::<Vec<_>>();
+        let host = self.remote_connection_options(cx);
+        let path_list = PathList::new(&roots);
+        ProjectGroupKey::new(host, path_list)
     }
 
     #[inline]
@@ -4736,6 +4763,19 @@ impl Project {
         });
     }
 
+    pub fn remove_worktree_for_main_worktree_path(
+        &mut self,
+        path: impl AsRef<Path>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = path.as_ref();
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            if let Some(worktree) = worktree_store.worktree_for_main_worktree_path(path, cx) {
+                worktree_store.remove_worktree(worktree.read(cx).id(), cx);
+            }
+        });
+    }
+
     fn add_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
@@ -6004,6 +6044,49 @@ impl Project {
             .map_or(false, |worktree| {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
+    }
+}
+
+/// Identifies a project group by a set of paths the workspaces in this group
+/// have.
+///
+/// Paths are mapped to their main worktree path first so we can group
+/// workspaces by main repos.
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct ProjectGroupKey {
+    paths: PathList,
+    host: Option<RemoteConnectionOptions>,
+}
+
+impl ProjectGroupKey {
+    /// Creates a new `ProjectGroupKey` with the given path list.
+    ///
+    /// The path list should point to the git main worktree paths for a project.
+    pub fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
+        Self { paths, host }
+    }
+
+    pub fn display_name(&self) -> SharedString {
+        let mut names = Vec::with_capacity(self.paths.paths().len());
+        for abs_path in self.paths.paths() {
+            if let Some(name) = abs_path.file_name() {
+                names.push(name.to_string_lossy().to_string());
+            }
+        }
+        if names.is_empty() {
+            // TODO: Can we do something better in this case?
+            "Empty Workspace".into()
+        } else {
+            names.join(", ").into()
+        }
+    }
+
+    pub fn path_list(&self) -> &PathList {
+        &self.paths
+    }
+
+    pub fn host(&self) -> Option<RemoteConnectionOptions> {
+        self.host.clone()
     }
 }
 

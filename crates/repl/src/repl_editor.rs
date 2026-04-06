@@ -87,6 +87,7 @@ pub fn install_ipykernel_and_assign(
 
     let python_path = env_spec.path.clone();
     let env_name = env_spec.name.clone();
+    let is_uv = env_spec.is_uv();
     let env_spec = env_spec.clone();
 
     struct IpykernelInstall;
@@ -109,11 +110,25 @@ pub fn install_ipykernel_and_assign(
     let window_handle = window.window_handle();
 
     let install_task = cx.background_spawn(async move {
-        let output = util::command::new_command(python_path.to_string_lossy().as_ref())
-            .args(&["-m", "pip", "install", "ipykernel"])
-            .output()
-            .await
-            .context("failed to run pip install ipykernel")?;
+        let output = if is_uv {
+            util::command::new_command("uv")
+                .args(&[
+                    "pip",
+                    "install",
+                    "ipykernel",
+                    "--python",
+                    &python_path.to_string_lossy(),
+                ])
+                .output()
+                .await
+                .context("failed to run uv pip install ipykernel")?
+        } else {
+            util::command::new_command(python_path.to_string_lossy().as_ref())
+                .args(&["-m", "pip", "install", "ipykernel"])
+                .output()
+                .await
+                .context("failed to run pip install ipykernel")?
+        };
 
         if output.status.success() {
             anyhow::Ok(())
@@ -146,6 +161,11 @@ pub fn install_ipykernel_and_assign(
 
                 window_handle
                     .update(cx, |_, window, cx| {
+                        let store = ReplStore::global(cx);
+                        store.update(cx, |store, cx| {
+                            store.mark_ipykernel_installed(cx, &env_spec);
+                        });
+
                         let updated_spec =
                             KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
                                 has_ipykernel: true,

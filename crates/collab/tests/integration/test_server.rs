@@ -356,7 +356,6 @@ impl TestServer {
                 settings::KeymapFile::load_asset_allow_partial_failure(os_keymap, cx).unwrap(),
             );
             language_model::LanguageModelRegistry::test(cx);
-            assistant_text_thread::init(client.clone(), cx);
         });
 
         client

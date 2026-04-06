@@ -7,7 +7,7 @@ use std::{
 };
 
 use collections::{HashMap, HashSet};
-use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity};
+use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, ScrollHandle, WeakEntity};
 
 use project::{
     WorktreeId,
@@ -17,7 +17,8 @@ use project::{
 use smallvec::SmallVec;
 use theme::ActiveTheme;
 use ui::{
-    AlertModal, Checkbox, FluentBuilder, KeyBinding, ListBulletItem, ToggleState, prelude::*,
+    AlertModal, Checkbox, FluentBuilder, KeyBinding, ListBulletItem, ToggleState, WithScrollbar,
+    prelude::*,
 };
 
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
@@ -29,6 +30,7 @@ pub struct SecurityModal {
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
     focus_handle: FocusHandle,
+    project_list_scroll_handle: ScrollHandle,
     trusted: Option<bool>,
 }
 
@@ -63,16 +65,17 @@ impl ModalView for SecurityModal {
 }
 
 impl Render for SecurityModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.restricted_paths.is_empty() {
             self.dismiss(cx);
             return v_flex().into_any_element();
         }
 
-        let header_label = if self.restricted_paths.len() == 1 {
-            "Unrecognized Project"
+        let restricted_count = self.restricted_paths.len();
+        let header_label: SharedString = if restricted_count == 1 {
+            "Unrecognized Project".into()
         } else {
-            "Unrecognized Projects"
+            format!("Unrecognized Projects ({})", restricted_count).into()
         };
 
         let trust_label = self.build_trust_label();
@@ -102,32 +105,61 @@ impl Render for SecurityModal {
                             .child(Icon::new(IconName::Warning).color(Color::Warning))
                             .child(Label::new(header_label)),
                     )
-                    .children(self.restricted_paths.values().filter_map(|restricted_path| {
-                        let abs_path = if restricted_path.is_file {
-                            restricted_path.abs_path.parent()
-                        } else {
-                            Some(restricted_path.abs_path.as_ref())
-                        }?;
-                        let label = match &restricted_path.host {
-                            Some(remote_host) => match &remote_host.user_name {
-                                Some(user_name) => format!(
-                                    "{} ({}@{})",
-                                    self.shorten_path(abs_path).display(),
-                                    user_name,
-                                    remote_host.host_identifier
-                                ),
-                                None => format!(
-                                    "{} ({})",
-                                    self.shorten_path(abs_path).display(),
-                                    remote_host.host_identifier
-                                ),
-                            },
-                            None => self.shorten_path(abs_path).display().to_string(),
-                        };
-                        Some(h_flex()
-                            .pl(IconSize::default().rems() + rems(0.5))
-                            .child(Label::new(label).color(Color::Muted)))
-                    })),
+                    .child(
+                        div()
+                            .size_full()
+                            .vertical_scrollbar_for(&self.project_list_scroll_handle, window, cx)
+                            .child(
+                                v_flex()
+                                    .id("paths_container")
+                                    .max_h_24()
+                                    .overflow_y_scroll()
+                                    .track_scroll(&self.project_list_scroll_handle)
+                                    .children(
+                                        self.restricted_paths.values().filter_map(
+                                            |restricted_path| {
+                                                let abs_path = if restricted_path.is_file {
+                                                    restricted_path.abs_path.parent()
+                                                } else {
+                                                    Some(restricted_path.abs_path.as_ref())
+                                                }?;
+                                                let label = match &restricted_path.host {
+                                                    Some(remote_host) => {
+                                                        match &remote_host.user_name {
+                                                            Some(user_name) => format!(
+                                                                "{} ({}@{})",
+                                                                self.shorten_path(abs_path)
+                                                                    .display(),
+                                                                user_name,
+                                                                remote_host.host_identifier
+                                                            ),
+                                                            None => format!(
+                                                                "{} ({})",
+                                                                self.shorten_path(abs_path)
+                                                                    .display(),
+                                                                remote_host.host_identifier
+                                                            ),
+                                                        }
+                                                    }
+                                                    None => self
+                                                        .shorten_path(abs_path)
+                                                        .display()
+                                                        .to_string(),
+                                                };
+                                                Some(
+                                                    h_flex()
+                                                        .pl(
+                                                            IconSize::default().rems() + rems(0.5),
+                                                        )
+                                                        .child(
+                                                            Label::new(label).color(Color::Muted),
+                                                        ),
+                                                )
+                                            },
+                                        ),
+                                    ),
+                            ),
+                    ),
             )
             .child(
                 v_flex()
@@ -219,6 +251,7 @@ impl SecurityModal {
             remote_host: remote_host.map(|host| host.into()),
             restricted_paths: HashMap::default(),
             focus_handle: cx.focus_handle(),
+            project_list_scroll_handle: ScrollHandle::new(),
             trust_parents: false,
             home_dir: std::env::home_dir(),
             trusted: None,

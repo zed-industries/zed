@@ -103,7 +103,7 @@ use language::{
 };
 
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
+    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16,
     MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
 use project::project_settings::DiagnosticSeverity;
@@ -125,7 +125,7 @@ use std::{
     fmt::Debug,
     iter,
     num::NonZeroU32,
-    ops::{self, Add, Bound, Range, Sub},
+    ops::{self, Add, Range, Sub},
     sync::Arc,
 };
 
@@ -195,10 +195,9 @@ pub struct CompanionExcerptPatch {
 }
 
 pub type ConvertMultiBufferRows = fn(
-    &HashMap<ExcerptId, ExcerptId>,
     &MultiBufferSnapshot,
     &MultiBufferSnapshot,
-    (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
+    Range<MultiBufferPoint>,
 ) -> Vec<CompanionExcerptPatch>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -240,8 +239,6 @@ pub(crate) struct Companion {
     rhs_display_map_id: EntityId,
     rhs_buffer_to_lhs_buffer: HashMap<BufferId, BufferId>,
     lhs_buffer_to_rhs_buffer: HashMap<BufferId, BufferId>,
-    rhs_excerpt_to_lhs_excerpt: HashMap<ExcerptId, ExcerptId>,
-    lhs_excerpt_to_rhs_excerpt: HashMap<ExcerptId, ExcerptId>,
     rhs_rows_to_lhs_rows: ConvertMultiBufferRows,
     lhs_rows_to_rhs_rows: ConvertMultiBufferRows,
     rhs_custom_block_to_balancing_block: RefCell<HashMap<CustomBlockId, CustomBlockId>>,
@@ -258,8 +255,6 @@ impl Companion {
             rhs_display_map_id,
             rhs_buffer_to_lhs_buffer: Default::default(),
             lhs_buffer_to_rhs_buffer: Default::default(),
-            rhs_excerpt_to_lhs_excerpt: Default::default(),
-            lhs_excerpt_to_rhs_excerpt: Default::default(),
             rhs_rows_to_lhs_rows,
             lhs_rows_to_rhs_rows,
             rhs_custom_block_to_balancing_block: Default::default(),
@@ -287,14 +282,14 @@ impl Companion {
         display_map_id: EntityId,
         companion_snapshot: &MultiBufferSnapshot,
         our_snapshot: &MultiBufferSnapshot,
-        bounds: (Bound<MultiBufferPoint>, Bound<MultiBufferPoint>),
+        bounds: Range<MultiBufferPoint>,
     ) -> Vec<CompanionExcerptPatch> {
-        let (excerpt_map, convert_fn) = if self.is_rhs(display_map_id) {
-            (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
+        let convert_fn = if self.is_rhs(display_map_id) {
+            self.rhs_rows_to_lhs_rows
         } else {
-            (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
+            self.lhs_rows_to_rhs_rows
         };
-        convert_fn(excerpt_map, companion_snapshot, our_snapshot, bounds)
+        convert_fn(companion_snapshot, our_snapshot, bounds)
     }
 
     pub(crate) fn convert_point_from_companion(
@@ -304,20 +299,15 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         point: MultiBufferPoint,
     ) -> Range<MultiBufferPoint> {
-        let (excerpt_map, convert_fn) = if self.is_rhs(display_map_id) {
-            (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
+        let convert_fn = if self.is_rhs(display_map_id) {
+            self.lhs_rows_to_rhs_rows
         } else {
-            (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
+            self.rhs_rows_to_lhs_rows
         };
 
-        let excerpt = convert_fn(
-            excerpt_map,
-            our_snapshot,
-            companion_snapshot,
-            (Bound::Included(point), Bound::Included(point)),
-        )
-        .into_iter()
-        .next();
+        let excerpt = convert_fn(our_snapshot, companion_snapshot, point..point)
+            .into_iter()
+            .next();
 
         let Some(excerpt) = excerpt else {
             return Point::zero()..our_snapshot.max_point();
@@ -332,20 +322,15 @@ impl Companion {
         companion_snapshot: &MultiBufferSnapshot,
         point: MultiBufferPoint,
     ) -> Range<MultiBufferPoint> {
-        let (excerpt_map, convert_fn) = if self.is_rhs(display_map_id) {
-            (&self.rhs_excerpt_to_lhs_excerpt, self.rhs_rows_to_lhs_rows)
+        let convert_fn = if self.is_rhs(display_map_id) {
+            self.rhs_rows_to_lhs_rows
         } else {
-            (&self.lhs_excerpt_to_rhs_excerpt, self.lhs_rows_to_rhs_rows)
+            self.lhs_rows_to_rhs_rows
         };
 
-        let excerpt = convert_fn(
-            excerpt_map,
-            companion_snapshot,
-            our_snapshot,
-            (Bound::Included(point), Bound::Included(point)),
-        )
-        .into_iter()
-        .next();
+        let excerpt = convert_fn(companion_snapshot, our_snapshot, point..point)
+            .into_iter()
+            .next();
 
         let Some(excerpt) = excerpt else {
             return Point::zero()..companion_snapshot.max_point();
@@ -353,53 +338,11 @@ impl Companion {
         excerpt.patch.edit_for_old_position(point).new
     }
 
-    pub(crate) fn companion_excerpt_to_excerpt(
-        &self,
-        display_map_id: EntityId,
-    ) -> &HashMap<ExcerptId, ExcerptId> {
-        if self.is_rhs(display_map_id) {
-            &self.lhs_excerpt_to_rhs_excerpt
-        } else {
-            &self.rhs_excerpt_to_lhs_excerpt
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn excerpt_mappings(
-        &self,
-    ) -> (
-        &HashMap<ExcerptId, ExcerptId>,
-        &HashMap<ExcerptId, ExcerptId>,
-    ) {
-        (
-            &self.lhs_excerpt_to_rhs_excerpt,
-            &self.rhs_excerpt_to_lhs_excerpt,
-        )
-    }
-
     fn buffer_to_companion_buffer(&self, display_map_id: EntityId) -> &HashMap<BufferId, BufferId> {
         if self.is_rhs(display_map_id) {
             &self.rhs_buffer_to_lhs_buffer
         } else {
             &self.lhs_buffer_to_rhs_buffer
-        }
-    }
-
-    pub(crate) fn add_excerpt_mapping(&mut self, lhs_id: ExcerptId, rhs_id: ExcerptId) {
-        self.lhs_excerpt_to_rhs_excerpt.insert(lhs_id, rhs_id);
-        self.rhs_excerpt_to_lhs_excerpt.insert(rhs_id, lhs_id);
-    }
-
-    pub(crate) fn remove_excerpt_mappings(
-        &mut self,
-        lhs_ids: impl IntoIterator<Item = ExcerptId>,
-        rhs_ids: impl IntoIterator<Item = ExcerptId>,
-    ) {
-        for id in lhs_ids {
-            self.lhs_excerpt_to_rhs_excerpt.remove(&id);
-        }
-        for id in rhs_ids {
-            self.rhs_excerpt_to_lhs_excerpt.remove(&id);
         }
     }
 
@@ -457,10 +400,13 @@ impl DisplayMap {
         diagnostics_max_severity: DiagnosticSeverity,
         cx: &mut Context<Self>,
     ) -> Self {
-        let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-
         let tab_size = Self::tab_size(&buffer, cx);
+        // Important: obtain the snapshot BEFORE creating the subscription.
+        // snapshot() may call sync() which publishes edits. If we subscribe first,
+        // those edits would be captured but the InlayMap would already be at the
+        // post-edit state, causing a desync.
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let crease_map = CreaseMap::new(&buffer_snapshot);
         let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
@@ -540,8 +486,7 @@ impl DisplayMap {
                 .wrap_map
                 .update(cx, |wrap_map, cx| wrap_map.sync(snapshot, edits, cx));
 
-            let (snapshot, edits) =
-                writer.unfold_intersecting([Anchor::min()..Anchor::max()], true);
+            let (snapshot, edits) = writer.unfold_intersecting([Anchor::Min..Anchor::Max], true);
             let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
             let (snapshot, _edits) = self
                 .wrap_map
@@ -630,18 +575,6 @@ impl DisplayMap {
 
     pub(crate) fn companion(&self) -> Option<&Entity<Companion>> {
         self.companion.as_ref().map(|(_, c)| c)
-    }
-
-    pub(crate) fn companion_excerpt_to_my_excerpt(
-        &self,
-        their_id: ExcerptId,
-        cx: &App,
-    ) -> Option<ExcerptId> {
-        let (_, companion) = self.companion.as_ref()?;
-        let c = companion.read(cx);
-        c.companion_excerpt_to_excerpt(self.entity_id)
-            .get(&their_id)
-            .copied()
     }
 
     fn sync_through_wrap(&mut self, cx: &mut App) -> (WrapSnapshot, WrapPatch) {
@@ -1054,17 +987,10 @@ impl DisplayMap {
             return;
         }
 
-        let excerpt_ids = snapshot
-            .excerpts()
-            .filter(|(_, buf, _)| buf.remote_id() == buffer_id)
-            .map(|(id, _, _)| id)
-            .collect::<Vec<_>>();
-
         let base_placeholder = self.fold_placeholder.clone();
         let creases = ranges.into_iter().filter_map(|folding_range| {
-            let mb_range = excerpt_ids.iter().find_map(|&id| {
-                snapshot.anchor_range_in_excerpt(id, folding_range.range.clone())
-            })?;
+            let mb_range =
+                snapshot.buffer_anchor_range_to_anchor_range(folding_range.range.clone())?;
             let placeholder = if let Some(collapsed_text) = folding_range.collapsed_text {
                 FoldPlaceholder {
                     render: Arc::new({
@@ -4155,5 +4081,65 @@ pub mod tests {
             "compound emoji should not be split into multiple chunks, got: {:?}",
             chunks,
         );
+    }
+
+    /// Regression test: Creating a DisplayMap when the MultiBuffer has pending
+    /// unsynced changes should not cause a desync between the subscription edits
+    /// and the InlayMap's buffer state.
+    ///
+    /// The bug occurred because:
+    /// 1. DisplayMap::new created a subscription first
+    /// 2. Then called snapshot() which synced and published edits
+    /// 3. InlayMap was created with the post-sync snapshot
+    /// 4. But the subscription captured the sync edits, leading to double-application
+    #[gpui::test]
+    fn test_display_map_subscription_ordering(cx: &mut gpui::App) {
+        init_test(cx, &|_| {});
+
+        // Create a buffer with some initial text
+        let buffer = cx.new(|cx| Buffer::local("initial", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+        // Edit the buffer. This sets buffer_changed_since_sync = true.
+        // Importantly, do NOT call multibuffer.snapshot() yet.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "prefix ")], None, cx);
+        });
+
+        // Create the DisplayMap. In the buggy code, this would:
+        // 1. Create subscription (empty)
+        // 2. Call snapshot() which syncs and publishes edits E1
+        // 3. Create InlayMap with post-E1 snapshot
+        // 4. Subscription now has E1, but InlayMap is already at post-E1 state
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                multibuffer.clone(),
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        // Verify initial state is correct
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(snapshot.text(), "prefix initial");
+
+        // Make another edit
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(7..7, "more ")], None, cx);
+        });
+
+        // This would crash in the buggy code because:
+        // - InlayMap expects edits from V1 to V2
+        // - But subscription has E1 ∘ E2 (from V0 to V2)
+        // - The calculation `buffer_edit.new.end + (cursor.end().0 - buffer_edit.old.end)`
+        //   would produce an offset exceeding the buffer length
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(snapshot.text(), "prefix more initial");
     }
 }

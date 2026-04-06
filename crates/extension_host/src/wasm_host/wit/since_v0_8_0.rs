@@ -40,8 +40,12 @@ pub const MIN_VERSION: Version = Version::new(0, 8, 0);
 pub const MAX_VERSION: Version = Version::new(0, 8, 0);
 
 wasmtime::component::bindgen!({
-    async: true,
-    trappable_imports: true,
+    imports: {
+        default: async | trappable,
+    },
+    exports: {
+        default: async,
+    },
     path: "../extension_api/wit/since_v0.8.0",
     with: {
          "worktree": ExtensionWorktree,
@@ -65,7 +69,11 @@ pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBo
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
+    LINKER.get_or_init(|| {
+        super::new_linker(executor, |linker| {
+            Extension::add_to_linker::<_, WasmState>(linker, |s| s)
+        })
+    })
 }
 
 impl From<Range> for std::ops::Range<usize> {

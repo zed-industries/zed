@@ -13,9 +13,6 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant_slash_command",
-    "crates/assistant_slash_commands",
-    "crates/assistant_text_thread",
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_helper",
@@ -64,6 +61,7 @@ members = [
     "crates/edit_prediction_ui",
     "crates/editor",
     "crates/encoding_selector",
+    "crates/env_var",
     "crates/etw_tracing",
     "crates/eval_cli",
     "crates/eval_utils",
@@ -187,6 +185,7 @@ members = [
     "crates/sum_tree",
     "crates/svg_preview",
     "crates/system_specs",
+    "crates/syntax_theme",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -222,6 +221,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zed_credentials_provider",
     "crates/zed_env_vars",
     "crates/zeta_prompt",
     "crates/zlog",
@@ -236,7 +236,6 @@ members = [
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
-    "extensions/slash-commands-example",
     "extensions/test-extension",
 
     #
@@ -270,9 +269,6 @@ ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant_text_thread = { path = "crates/assistant_text_thread" }
-assistant_slash_command = { path = "crates/assistant_slash_command" }
-assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
@@ -315,6 +311,7 @@ dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 encoding_selector = { path = "crates/encoding_selector" }
+env_var = { path = "crates/env_var" }
 etw_tracing = { path = "crates/etw_tracing" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
@@ -435,6 +432,7 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
+syntax_theme = { path = "crates/syntax_theme" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
@@ -470,6 +468,7 @@ worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 edit_prediction = { path = "crates/edit_prediction" }
 zeta_prompt = { path = "crates/zeta_prompt" }
@@ -609,6 +608,7 @@ nbformat = "1.2.0"
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
+objc2-app-kit = { version = "0.3", default-features = false, features = [ "NSGraphics" ] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
@@ -737,7 +737,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
     "serde",
 ] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.26", features = ["wasm"] }
+tree-sitter = { version = "0.26.8", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -772,7 +772,7 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
-wasmtime = { version = "33", default-features = false, features = [
+wasmtime = { version = "36", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
@@ -781,7 +781,7 @@ wasmtime = { version = "33", default-features = false, features = [
     "incremental-cache",
     "parallel-compilation",
 ] }
-wasmtime-wasi = "33"
+wasmtime-wasi = "36"
 wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.113"
@@ -826,6 +826,7 @@ features = [
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
+    "Win32_System_Diagnostics_Debug",
     "Win32_System_DataExchange",
     "Win32_System_IO",
     "Win32_System_LibraryLoader",

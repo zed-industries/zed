@@ -982,13 +982,11 @@ mod tests {
             "Expected private path validation error, got: {error}"
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested when validation fails before listing",
         );
@@ -1030,13 +1028,11 @@ mod tests {
             "Normal path should succeed without authorization"
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested for normal paths",
         );
@@ -1087,13 +1083,11 @@ mod tests {
             "Intra-project symlink should succeed without authorization: {result:?}",
         );
 
-        let event = event_rx.try_next();
+        let event = event_rx.try_recv();
         assert!(
             !matches!(
                 event,
-                Ok(Some(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(
-                    _
-                ))))
+                Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested for intra-project symlinks",
         );

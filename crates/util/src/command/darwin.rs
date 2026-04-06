@@ -104,6 +104,10 @@ impl Command {
         self
     }
 
+    pub fn get_args(&self) -> impl Iterator<Item = &OsStr> {
+        self.args.iter().map(|s| s.as_os_str())
+    }
+
     pub fn env(&mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> &mut Self {
         self.envs
             .insert(key.as_ref().to_owned(), Some(val.as_ref().to_owned()));
@@ -216,6 +220,10 @@ impl Command {
     pub async fn status(&mut self) -> io::Result<ExitStatus> {
         let mut child = self.spawn()?;
         child.status().await
+    }
+
+    pub fn get_program(&self) -> &OsStr {
+        self.program.as_os_str()
     }
 }
 

@@ -143,6 +143,21 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @variable.parameter      | Captures function/method parameters    |
 | @variant                 | Captures variants                      |
 
+#### Fallback captures
+
+A single Tree-sitter pattern can specify multiple captures on the same node to define fallback highlights.
+Zed resolves them right-to-left: It first tries the rightmost capture, and if the current theme has no style for it, falls back to the next capture to the left, and so on.
+
+For example:
+
+```scheme
+(type_identifier) @type @variable
+```
+
+Here Zed will first try to resolve `@variable` from the theme. If the theme defines a style for `@variable`, that style is used. Otherwise, Zed falls back to `@type`.
+
+This is useful when a language wants to provide a preferred highlight that not all themes may support, while still falling back to a more common capture that most themes define.
+
 ### Bracket matching
 
 The `brackets.scm` file defines matching brackets.

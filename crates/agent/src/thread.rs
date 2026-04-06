@@ -253,7 +253,7 @@ impl UserMessage {
                             )
                             .ok();
                         }
-                        MentionUri::PastedImage => {
+                        MentionUri::PastedImage { .. } => {
                             debug_panic!("pasted image URI should not be used in mention content")
                         }
                         MentionUri::Directory { .. } => {
@@ -293,9 +293,6 @@ impl UserMessage {
                             .ok();
                         }
                         MentionUri::Thread { .. } => {
-                            write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
-                        MentionUri::TextThread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }
                         MentionUri::Rule { .. } => {

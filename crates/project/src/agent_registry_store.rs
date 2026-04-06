@@ -168,6 +168,12 @@ impl AgentRegistryStore {
         store
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_agents(&mut self, agents: Vec<RegistryAgent>, cx: &mut Context<Self>) {
+        self.agents = agents;
+        cx.notify();
+    }
+
     pub fn agents(&self) -> &[RegistryAgent] {
         &self.agents
     }

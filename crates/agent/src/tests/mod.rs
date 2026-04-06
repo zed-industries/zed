@@ -6,7 +6,7 @@ use acp_thread::{
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
-use client::{Client, UserStore};
+use client::{Client, RefreshLlmTokenListener, UserStore};
 use collections::IndexMap;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use feature_flags::FeatureFlagAppExt as _;
@@ -3253,7 +3253,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         let clock = Arc::new(clock::FakeSystemClock::new());
         let client = Client::new(clock, http_client, cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        language_model::init(user_store.clone(), client.clone(), cx);
+        language_model::init(cx);
+        RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
         language_models::init(user_store, client.clone(), cx);
         LanguageModelRegistry::test(cx);
     });
@@ -3982,7 +3983,8 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                 cx.set_http_client(Arc::new(http_client));
                 let client = Client::production(cx);
                 let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-                language_model::init(user_store.clone(), client.clone(), cx);
+                language_model::init(cx);
+                RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
                 language_models::init(user_store, client.clone(), cx);
             }
         };
@@ -6206,9 +6208,9 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     cx.run_until_parked();
 
-    let event = rx.try_next();
+    let event = rx.try_recv();
     assert!(
-        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
         "expected no authorization request for allowed .md file"
     );
 }
@@ -6350,9 +6352,9 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     cx.run_until_parked();
 
-    let event = rx.try_next();
+    let event = rx.try_recv();
     assert!(
-        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
         "expected no authorization request for allowed docs.rs URL"
     );
 }

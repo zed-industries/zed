@@ -337,6 +337,14 @@ pub fn tests_pass(jobs: &[NamedJob], extra_job_names: &[&str]) -> NamedJob {
 pub(crate) const DETECT_CHANGED_EXTENSIONS_SCRIPT: &str = indoc::indoc! {r#"
     # Detect changed extension directories (excluding extensions/workflows)
     CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
+    # Filter out deleted extensions
+    EXISTING_EXTENSIONS=""
+    for ext in $CHANGED_EXTENSIONS; do
+        if [ -f "$ext/extension.toml" ]; then
+            EXISTING_EXTENSIONS=$(printf '%s\n%s' "$EXISTING_EXTENSIONS" "$ext")
+        fi
+    done
+    CHANGED_EXTENSIONS=$(echo "$EXISTING_EXTENSIONS" | sed '/^$/d')
     if [ -n "$CHANGED_EXTENSIONS" ]; then
         EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
     else
@@ -587,6 +595,9 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             })
             .when(!filter_packages, |job| {
                 job.add_step(steps::cargo_nextest(platform))
+            })
+            .when(platform == Platform::Mac, |job| {
+                job.add_step(steps::cargo_build_visual_tests())
             })
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
