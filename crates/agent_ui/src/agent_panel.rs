@@ -946,6 +946,19 @@ impl AgentPanel {
                             );
                         }
                     });
+                    // agent_ready is sent by initial_state's completion handler
+                    // when the thread load finishes (see conversation_view.rs)
+                } else {
+                    // No thread to restore — send agent_ready immediately so
+                    // the server knows Zed is ready and can flush its queue.
+                    // Without this, the server waits 60s for agent_ready.
+                    #[cfg(feature = "external_websocket_sync")]
+                    {
+                        external_websocket_sync::send_agent_ready(
+                            "zed-agent".to_string(),
+                            None,
+                        );
+                    }
                 }
                 panel
             })?;
