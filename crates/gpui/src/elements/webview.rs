@@ -26,8 +26,14 @@ static ACTIVE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicU
 // storage. All GPUI paint calls happen on the main thread.
 #[cfg(feature = "webview")]
 thread_local! {
-    static CHILD_WEBVIEWS: std::cell::RefCell<HashMap<usize, wry::WebView>> =
+    static CHILD_WEBVIEWS: std::cell::RefCell<HashMap<usize, ChildWebView>> =
         std::cell::RefCell::new(HashMap::new());
+}
+
+#[cfg(feature = "webview")]
+struct ChildWebView {
+    webview: wry::WebView,
+    last_bounds: Bounds<Pixels>,
 }
 
 #[cfg(all(
@@ -219,53 +225,264 @@ fn is_wayland() -> bool {
 }
 
 #[cfg(feature = "webview")]
-fn to_wry_bounds(bounds: Bounds<Pixels>) -> wry::Rect {
+fn to_wry_bounds(bounds: Bounds<Pixels>, scale_factor: f32) -> wry::Rect {
+    // GPUI bounds are in logical pixels. Convert to physical pixels for
+    // the native child window since wry positions relative to the parent
+    // window's pixel coordinates.
+    let x = (bounds.origin.x.0 * scale_factor) as i32;
+    let y = (bounds.origin.y.0 * scale_factor) as i32;
+    let width = (bounds.size.width.0 * scale_factor) as u32;
+    let height = (bounds.size.height.0 * scale_factor) as u32;
     wry::Rect {
-        position: wry::dpi::Position::Logical(wry::dpi::LogicalPosition::new(
-            bounds.origin.x.0 as f64,
-            bounds.origin.y.0 as f64,
-        )),
-        size: wry::dpi::Size::Logical(wry::dpi::LogicalSize::new(
-            bounds.size.width.0 as f64,
-            bounds.size.height.0 as f64,
-        )),
+        position: wry::dpi::Position::Physical(wry::dpi::PhysicalPosition::new(x, y)),
+        size: wry::dpi::Size::Physical(wry::dpi::PhysicalSize::new(width, height)),
     }
 }
 
-#[cfg(feature = "webview")]
-fn ensure_gtk_init_for_x11() {
-    #[cfg(all(feature = "gtk", any(target_os = "linux", target_os = "freebsd")))]
-    {
-        // wry's build_as_child on X11 internally creates GTK widgets via
-        // gdk_x11_window_foreign_new_for_display, so GTK must be initialized.
-        static INIT: std::sync::Once = std::sync::Once::new();
-        INIT.call_once(|| {
-            if let Err(error) = gtk::init() {
-                log::error!("Failed to initialize GTK for X11 webview: {}", error);
-            }
+// On X11, wry's build_as_child internally creates GTK widgets that need
+// their own event loop. We run this on a dedicated thread to avoid blocking
+// GPUI's render loop. The main thread extracts raw window IDs and sends
+// them to this thread.
+#[cfg(all(feature = "webview", any(target_os = "linux", target_os = "freebsd")))]
+mod x11_child_thread {
+    use super::*;
+
+    // wry only accepts Xlib handles but GPUI provides Xcb. The X11 window
+    // ID is the same u32 in both, so we store it and present as Xlib.
+    struct RawXlibHandle {
+        window_id: std::ffi::c_ulong,
+        screen: i32,
+    }
+
+    // Safety: the window ID and screen are plain integers copied from the
+    // main thread. They reference an X11 window that outlives this struct.
+    unsafe impl Send for RawXlibHandle {}
+    unsafe impl Sync for RawXlibHandle {}
+
+    impl raw_window_handle::HasWindowHandle for RawXlibHandle {
+        fn window_handle(
+            &self,
+        ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
+            let handle = raw_window_handle::XlibWindowHandle::new(self.window_id);
+            Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(handle.into()) })
+        }
+    }
+
+    impl raw_window_handle::HasDisplayHandle for RawXlibHandle {
+        fn display_handle(
+            &self,
+        ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+            let handle = raw_window_handle::XlibDisplayHandle::new(None, self.screen);
+            Ok(unsafe { raw_window_handle::DisplayHandle::borrow_raw(handle.into()) })
+        }
+    }
+
+    enum ChildMessage {
+        Create {
+            id: usize,
+            content: WebViewContent,
+            window_id: std::ffi::c_ulong,
+            screen: i32,
+            bounds: wry::Rect,
+        },
+        SetBounds {
+            id: usize,
+            bounds: wry::Rect,
+        },
+        Close {
+            id: usize,
+        },
+    }
+
+    static CREATED: std::sync::LazyLock<Mutex<std::collections::HashSet<usize>>> =
+        std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+    // wry::WebView isn't Send, so we store them on the GTK thread.
+    thread_local! {
+        static WEBVIEWS: std::cell::RefCell<HashMap<usize, wry::WebView>> =
+            std::cell::RefCell::new(HashMap::new());
+    }
+
+    static CHILD_SENDER: std::sync::LazyLock<Mutex<std::sync::mpsc::Sender<ChildMessage>>> =
+        std::sync::LazyLock::new(|| {
+            let (sender, receiver) = std::sync::mpsc::channel::<ChildMessage>();
+
+            std::thread::spawn(move || {
+                if let Err(error) = gtk::init() {
+                    log::error!("X11 child thread: GTK init failed: {}", error);
+                    return;
+                }
+
+                let receiver = std::cell::RefCell::new(receiver);
+                glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
+                    while let Ok(message) = receiver.borrow().try_recv() {
+                        match message {
+                            ChildMessage::Create {
+                                id,
+                                content,
+                                window_id,
+                                screen,
+                                bounds,
+                            } => {
+                                create_child(id, content, window_id, screen, bounds);
+                            }
+                            ChildMessage::SetBounds { id, bounds } => {
+                                WEBVIEWS.with(|webviews| {
+                                    if let Some(webview) = webviews.borrow().get(&id) {
+                                        if let Err(error) = webview.set_bounds(bounds) {
+                                            log::error!(
+                                                "WebView #{}: set_bounds failed: {}",
+                                                id,
+                                                error
+                                            );
+                                        }
+                                    }
+                                });
+                            }
+                            ChildMessage::Close { id } => {
+                                WEBVIEWS.with(|webviews| {
+                                    webviews.borrow_mut().remove(&id);
+                                });
+                            }
+                        }
+                    }
+                    glib::ControlFlow::Continue
+                });
+
+                gtk::main();
+            });
+
+            Mutex::new(sender)
         });
-    }
-}
 
-#[cfg(feature = "webview")]
-fn pump_gtk_events_for_x11() {
-    #[cfg(all(feature = "gtk", any(target_os = "linux", target_os = "freebsd")))]
-    {
-        while gtk::events_pending() {
-            gtk::main_iteration();
+    fn create_child(
+        id: usize,
+        content: WebViewContent,
+        window_id: std::ffi::c_ulong,
+        screen: i32,
+        bounds: wry::Rect,
+    ) {
+        let handle = RawXlibHandle { window_id, screen };
+
+        let builder = match &content {
+            WebViewContent::Html(html) => wry::WebViewBuilder::new().with_html(html),
+            WebViewContent::Url(url) => wry::WebViewBuilder::new().with_url(url),
+        };
+
+        match builder
+            .with_bounds(bounds)
+            .with_transparent(true)
+            .build_as_child(&handle)
+        {
+            Ok(webview) => {
+                log::info!("WebView #{} created (X11 child)", id);
+                ACTIVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                WEBVIEWS.with(|webviews| {
+                    webviews.borrow_mut().insert(id, webview);
+                });
+            }
+            Err(error) => {
+                log::error!("WebView #{}: build_as_child failed: {}", id, error);
+            }
+        }
+    }
+
+    pub fn request_create(id: usize, content: &WebViewContent, bounds: wry::Rect, window: &Window) {
+        let mut created = CREATED.lock().unwrap_or_else(|poison| poison.into_inner());
+        if created.contains(&id) {
+            return;
+        }
+        created.insert(id);
+        drop(created);
+
+        let (window_id, screen) = match raw_window_handle::HasWindowHandle::window_handle(window) {
+            Ok(handle) => match handle.as_raw() {
+                raw_window_handle::RawWindowHandle::Xcb(xcb) => {
+                    (xcb.window.get() as std::ffi::c_ulong, 0i32)
+                }
+                _ => {
+                    log::error!("WebView #{}: expected Xcb window handle", id);
+                    return;
+                }
+            },
+            Err(error) => {
+                log::error!("WebView #{}: failed to get window handle: {}", id, error);
+                return;
+            }
+        };
+
+        let sender = CHILD_SENDER
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Err(error) = sender.send(ChildMessage::Create {
+            id,
+            content: content.clone(),
+            window_id,
+            screen,
+            bounds,
+        }) {
+            log::error!(
+                "WebView #{}: failed to send to X11 child thread: {}",
+                id,
+                error
+            );
+        }
+    }
+
+    // Track last bounds per webview on the main thread to avoid sending
+    // redundant SetBounds messages every paint frame.
+    static LAST_BOUNDS: std::sync::LazyLock<Mutex<HashMap<usize, Bounds<Pixels>>>> =
+        std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    pub fn request_set_bounds(id: usize, bounds: Bounds<Pixels>, scale_factor: f32) {
+        let mut last = LAST_BOUNDS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if last.get(&id) == Some(&bounds) {
+            return;
+        }
+        last.insert(id, bounds);
+        drop(last);
+
+        let sender = CHILD_SENDER
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Err(error) = sender.send(ChildMessage::SetBounds {
+            id,
+            bounds: super::to_wry_bounds(bounds, scale_factor),
+        }) {
+            log::error!("WebView #{}: failed to send set_bounds: {}", id, error);
+        }
+    }
+
+    pub fn remove_created(id: usize) {
+        CREATED
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&id);
+        LAST_BOUNDS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&id);
+        let sender = CHILD_SENDER
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Err(error) = sender.send(ChildMessage::Close { id }) {
+            log::error!("WebView #{}: failed to send close: {}", id, error);
         }
     }
 }
 
+// On macOS/Windows, build_as_child runs on the main thread (no GTK needed).
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 #[cfg(feature = "webview")]
 fn create_child_webview(
     id: usize,
     content: &WebViewContent,
     bounds: Bounds<Pixels>,
+    scale_factor: f32,
     window: &Window,
 ) {
-    ensure_gtk_init_for_x11();
-
     CHILD_WEBVIEWS.with(|children| {
         if children.borrow().contains_key(&id) {
             return;
@@ -277,14 +494,20 @@ fn create_child_webview(
         };
 
         match builder
-            .with_bounds(to_wry_bounds(bounds))
+            .with_bounds(to_wry_bounds(bounds, scale_factor))
             .with_transparent(true)
             .build_as_child(window)
         {
             Ok(webview) => {
                 log::info!("WebView #{} created (child)", id);
                 ACTIVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                children.borrow_mut().insert(id, webview);
+                children.borrow_mut().insert(
+                    id,
+                    ChildWebView {
+                        webview,
+                        last_bounds: bounds,
+                    },
+                );
             }
             Err(error) => {
                 log::error!("WebView #{}: build_as_child failed: {}", id, error);
@@ -293,11 +516,19 @@ fn create_child_webview(
     });
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 #[cfg(feature = "webview")]
-fn update_child_bounds(id: usize, bounds: Bounds<Pixels>) {
+fn update_child_bounds(id: usize, bounds: Bounds<Pixels>, scale_factor: f32) {
     CHILD_WEBVIEWS.with(|children| {
-        if let Some(webview) = children.borrow().get(&id) {
-            if let Err(error) = webview.set_bounds(to_wry_bounds(bounds)) {
+        if let Some(child) = children.borrow_mut().get_mut(&id) {
+            if child.last_bounds == bounds {
+                return;
+            }
+            child.last_bounds = bounds;
+            if let Err(error) = child
+                .webview
+                .set_bounds(to_wry_bounds(bounds, scale_factor))
+            {
                 log::error!("WebView #{}: set_bounds failed: {}", id, error);
             }
         }
@@ -391,15 +622,22 @@ impl WebView {
     pub fn remove(id: usize) {
         #[cfg(feature = "webview")]
         {
-            CHILD_WEBVIEWS.with(|children| {
-                if children.borrow_mut().remove(&id).is_some() {
-                    ACTIVE_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-                }
-            });
+            // macOS/Windows: child webview on main thread
+            let was_child =
+                CHILD_WEBVIEWS.with(|children| children.borrow_mut().remove(&id).is_some());
+            if was_child {
+                ACTIVE_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                return;
+            }
 
             #[cfg(all(feature = "gtk", any(target_os = "linux", target_os = "freebsd")))]
             {
-                gtk_thread::remove_created(id);
+                if is_wayland() {
+                    gtk_thread::remove_created(id);
+                } else {
+                    x11_child_thread::remove_created(id);
+                    ACTIVE_COUNT.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+                }
             }
         }
 
@@ -513,15 +751,29 @@ impl Element for WebView {
                 #[cfg(all(feature = "gtk", any(target_os = "linux", target_os = "freebsd")))]
                 gtk_thread::ensure_created(self.id, &self.content);
             } else {
-                // macOS, Windows, X11: embed as child of the GPUI window
-                let exists =
-                    CHILD_WEBVIEWS.with(|children| children.borrow().contains_key(&self.id));
-                if exists {
-                    update_child_bounds(self.id, bounds);
-                } else {
-                    create_child_webview(self.id, &self.content, bounds, window);
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                {
+                    let scale_factor = window.scale_factor();
+                    x11_child_thread::request_create(
+                        self.id,
+                        &self.content,
+                        to_wry_bounds(bounds, scale_factor),
+                        window,
+                    );
+                    x11_child_thread::request_set_bounds(self.id, bounds, scale_factor);
                 }
-                pump_gtk_events_for_x11();
+
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                {
+                    let scale_factor = window.scale_factor();
+                    let exists =
+                        CHILD_WEBVIEWS.with(|children| children.borrow().contains_key(&self.id));
+                    if exists {
+                        update_child_bounds(self.id, bounds, scale_factor);
+                    } else {
+                        create_child_webview(self.id, &self.content, bounds, scale_factor, window);
+                    }
+                }
             }
         }
     }
