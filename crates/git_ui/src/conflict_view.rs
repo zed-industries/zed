@@ -545,7 +545,11 @@ impl MergeConflictIndicator {
                 | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
         );
 
-        if !AgentSettings::get_global(cx).enabled(cx) || !conflicts_changed {
+        let agent_settings = AgentSettings::get_global(cx);
+        if !agent_settings.enabled(cx)
+            || !agent_settings.show_merge_conflict_indicator
+            || !conflicts_changed
+        {
             return;
         }
 
@@ -589,7 +593,12 @@ impl MergeConflictIndicator {
 
 impl Render for MergeConflictIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.conflicted_paths.is_empty() || self.dismissed {
+        let agent_settings = AgentSettings::get_global(cx);
+        if !agent_settings.enabled(cx)
+            || !agent_settings.show_merge_conflict_indicator
+            || self.conflicted_paths.is_empty()
+            || self.dismissed
+        {
             return Empty.into_any_element();
         }
 
