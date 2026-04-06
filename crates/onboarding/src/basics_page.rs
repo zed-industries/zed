@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use client::TelemetrySettings;
+use client::{Client, TelemetrySettings};
 use collections::HashMap;
 use fs::Fs;
 use gpui::{Action, App, IntoElement};
@@ -606,6 +606,68 @@ fn render_agent_button(agent: &RegistryAgent, installed: bool, cx: &mut App) -> 
         })
 }
 
+fn render_zed_agent_button(cx: &mut App) -> impl IntoElement {
+    let client = Client::global(cx);
+    let is_signed_in = !client.status().borrow().is_signed_out();
+
+    v_flex()
+        .id("zed-agent-onboarding")
+        .border_1()
+        .border_color(cx.theme().colors().border_variant)
+        .rounded_sm()
+        .when(!is_signed_in, |this| {
+            this.cursor_pointer().hover(|s| {
+                s.bg(cx.theme().colors().element_hover)
+                    .border_color(cx.theme().colors().border)
+            })
+        })
+        .child(
+            h_flex()
+                .px_1()
+                .py_1p5()
+                .gap_1()
+                .items_center()
+                .justify_center()
+                .child(
+                    Icon::new(IconName::ZedAgent)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                )
+                .child(Label::new("Zed Agent").size(LabelSize::Small)),
+        )
+        .child(
+            h_flex()
+                .p_0p5()
+                .h_full()
+                .justify_center()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().element_background.opacity(0.5))
+                .map(|this| {
+                    if is_signed_in {
+                        this.child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success),
+                        )
+                    } else {
+                        this.child(
+                            Label::new("Sign in")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    }
+                }),
+        )
+        .when(!is_signed_in, |this| {
+            this.on_click(move |_, _, cx| {
+                let client = Client::global(cx);
+                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, cx).await)
+                    .detach_and_log_err(cx);
+            })
+        })
+}
+
 fn render_ai_section(cx: &mut App) -> impl IntoElement {
     let registry_agents = AgentRegistryStore::try_global(cx)
         .map(|store| store.read(cx).agents().to_vec())
@@ -616,13 +678,16 @@ fn render_ai_section(cx: &mut App) -> impl IntoElement {
         .get::<AllAgentServersSettings>(None)
         .clone();
 
+    let column_count = 1 + FEATURED_AGENT_IDS.len() as u16;
+
     let grid = FEATURED_AGENT_IDS.iter().fold(
         div()
             .w_full()
             .mt_1p5()
             .grid()
-            .grid_cols(FEATURED_AGENT_IDS.len() as u16)
-            .gap_2(),
+            .grid_cols(column_count)
+            .gap_2()
+            .child(render_zed_agent_button(cx)),
         |grid, agent_id| {
             let Some(agent) = registry_agents
                 .iter()
