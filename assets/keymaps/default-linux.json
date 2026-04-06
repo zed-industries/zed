@@ -598,6 +598,7 @@
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
       "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
       "alt-shift-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "alt-ctrl-shift-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
@@ -1275,6 +1276,8 @@
       "alt-down": "markdown::ScrollDownByItem",
       "ctrl-home": "markdown::ScrollToTop",
       "ctrl-end": "markdown::ScrollToBottom",
+      "find": "buffer_search::Deploy",
+      "ctrl-f": "buffer_search::Deploy",
     },
   },
   {

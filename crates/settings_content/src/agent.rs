@@ -209,6 +209,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
+    /// Whether to show the merge conflict indicator in the status bar
+    /// that offers to resolve conflicts using the agent.
+    ///
+    /// Default: true
+    pub show_merge_conflict_indicator: Option<bool>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
