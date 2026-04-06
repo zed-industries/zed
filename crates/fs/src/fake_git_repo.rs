@@ -673,7 +673,6 @@ impl GitRepository for FakeGitRepository {
                     }
                 })??;
             }
-
             Ok(())
         }
         .boxed()
@@ -1179,6 +1178,34 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn create_archive_checkpoint(&self) -> BoxFuture<'_, Result<(String, String)>> {
+        let executor = self.executor.clone();
+        let fs = self.fs.clone();
+        let checkpoints = self.checkpoints.clone();
+        let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
+        async move {
+            executor.simulate_random_delay().await;
+            let staged_oid = git::Oid::random(&mut *executor.rng().lock());
+            let unstaged_oid = git::Oid::random(&mut *executor.rng().lock());
+            let entry = fs.entry(&repository_dir_path)?;
+            checkpoints.lock().insert(staged_oid, entry.clone());
+            checkpoints.lock().insert(unstaged_oid, entry);
+            Ok((staged_oid.to_string(), unstaged_oid.to_string()))
+        }
+        .boxed()
+    }
+
+    fn restore_archive_checkpoint(
+        &self,
+        _staged_sha: String,
+        unstaged_sha: String,
+    ) -> BoxFuture<'_, Result<()>> {
+        let checkpoint = GitRepositoryCheckpoint {
+            commit_sha: unstaged_sha.parse().unwrap(),
+        };
+        self.restore_checkpoint(checkpoint)
+    }
+
     fn compare_checkpoints(
         &self,
         left: GitRepositoryCheckpoint,
@@ -1412,7 +1439,6 @@ impl GitRepository for FakeGitRepository {
             Ok(())
         })
     }
-
     fn set_trusted(&self, trusted: bool) {
         self.is_trusted
             .store(trusted, std::sync::atomic::Ordering::Release);

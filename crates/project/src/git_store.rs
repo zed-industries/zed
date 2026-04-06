@@ -6141,6 +6141,42 @@ impl Repository {
         })
     }
 
+    pub fn create_archive_checkpoint(&mut self) -> oneshot::Receiver<Result<(String, String)>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.create_archive_checkpoint().await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!(
+                        "create_archive_checkpoint is not supported for remote repositories"
+                    )
+                }
+            }
+        })
+    }
+
+    pub fn restore_archive_checkpoint(
+        &mut self,
+        staged_sha: String,
+        unstaged_sha: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend
+                        .restore_archive_checkpoint(staged_sha, unstaged_sha)
+                        .await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!(
+                        "restore_archive_checkpoint is not supported for remote repositories"
+                    )
+                }
+            }
+        })
+    }
+
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
