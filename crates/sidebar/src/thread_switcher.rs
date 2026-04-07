@@ -240,7 +240,7 @@ impl Render for ThreadSwitcher {
                                 this.removed(entry.diff_stats.lines_removed as usize)
                             })
                             .selected(ix == selected_index)
-                            .base_bg(cx.theme().colors().surface_background),
+                            .base_bg(cx.theme().colors().elevated_surface_background),
                     )
                     .into_any_element()
             }))
