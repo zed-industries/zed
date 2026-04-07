@@ -6,6 +6,7 @@ env:
 on:
   schedule:
   - cron: 30 17 * * 2
+  workflow_dispatch: {}
 jobs:
   scheduled_compliance_check:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

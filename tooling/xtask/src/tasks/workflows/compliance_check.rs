@@ -1,4 +1,4 @@
-use gh_workflow::{Event, Expression, Job, Run, Schedule, Step, Workflow};
+use gh_workflow::{Event, Expression, Job, Run, Schedule, Step, Workflow, WorkflowDispatch};
 
 use crate::tasks::workflows::{
     runners,
@@ -10,7 +10,9 @@ pub fn compliance_check() -> Workflow {
     let check = scheduled_compliance_check();
 
     named::workflow()
-        .on(Event::default().schedule([Schedule::new("30 17 * * 2")]))
+        .on(Event::default()
+            .schedule([Schedule::new("30 17 * * 2")])
+            .workflow_dispatch(WorkflowDispatch::default()))
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_job(check.name, check.job)
 }
