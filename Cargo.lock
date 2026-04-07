@@ -17736,6 +17736,7 @@ dependencies = [
  "gpui",
  "log",
  "picker",
+ "project_panel",
  "serde",
  "settings",
  "telemetry",

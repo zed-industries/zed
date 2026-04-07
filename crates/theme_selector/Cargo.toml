@@ -18,6 +18,7 @@ fuzzy.workspace = true
 gpui.workspace = true
 log.workspace = true
 picker.workspace = true
+project_panel.workspace = true
 serde.workspace = true
 settings.workspace = true
 telemetry.workspace = true

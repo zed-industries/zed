@@ -13,6 +13,7 @@ use theme::{Appearance, SystemAppearance, Theme, ThemeMeta, ThemeRegistry};
 use theme_settings::{
     ThemeAppearanceMode, ThemeName, ThemeSelection, ThemeSettings, appearance_to_mode,
 };
+use project_panel::ProjectPanel;
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
@@ -67,6 +68,8 @@ fn toggle_icon_theme_selector(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    workspace.open_panel::<ProjectPanel>(window, cx);
+
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {
         let delegate = IconThemeSelectorDelegate::new(
