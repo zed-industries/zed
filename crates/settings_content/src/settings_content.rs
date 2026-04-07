@@ -763,6 +763,7 @@ pub struct VimSettingsContent {
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
+    pub use_regex_search: Option<bool>,
     /// When enabled, the `:substitute` command replaces all matches in a line
     /// by default. The 'g' flag then toggles this behavior.,
     pub gdefault: Option<bool>,

@@ -354,7 +354,8 @@ impl WslRunningKernel {
                 "",
                 &session_id,
             )
-            .await?;
+            .await
+            .context("Failed to create iopub connection. Is `ipykernel` installed in the WSL environment? Try running `pip install ipykernel` inside your WSL distribution.")?;
 
             let peer_identity = runtimelib::peer_identity_for_session(&session_id)?;
             let shell_socket = runtimelib::create_client_shell_connection_with_identity(

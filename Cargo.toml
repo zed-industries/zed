@@ -78,6 +78,7 @@ members = [
     "crates/fs",
     "crates/fs_benchmarks",
     "crates/fuzzy",
+    "crates/fuzzy_nucleo",
     "crates/git",
     "crates/git_graph",
     "crates/git_hosting_providers",
@@ -242,6 +243,7 @@ members = [
     # Tooling
     #
 
+    "tooling/compliance",
     "tooling/perf",
     "tooling/xtask",
 ]
@@ -289,6 +291,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+compliance = { path = "tooling/compliance" }
 component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
@@ -323,6 +326,7 @@ file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fuzzy = { path = "crates/fuzzy" }
+fuzzy_nucleo = { path = "crates/fuzzy_nucleo" }
 git = { path = "crates/git" }
 git_graph = { path = "crates/git_graph" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
@@ -547,6 +551,7 @@ derive_more = { version = "2.1.1", features = [
     "add_assign",
     "deref",
     "deref_mut",
+    "display",
     "from_str",
     "mul",
     "mul_assign",
@@ -596,7 +601,7 @@ linkify = "0.10.0"
 libwebrtc = "0.3.26"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "a4f410987660bf560d1e617cb78117c6b6b9f599" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c7396459fefc7886b4adfa3b596832405ae1e880" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.33"
@@ -606,6 +611,7 @@ naga = { version = "29.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
+nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
 objc2-app-kit = { version = "0.3", default-features = false, features = [ "NSGraphics" ] }
