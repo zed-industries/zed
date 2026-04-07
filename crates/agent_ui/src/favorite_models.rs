@@ -11,6 +11,7 @@ fn language_model_to_selection(model: &Arc<dyn LanguageModel>) -> LanguageModelS
         model: model.id().0.to_string(),
         enable_thinking: false,
         effort: None,
+        speed: None,
     }
 }
 

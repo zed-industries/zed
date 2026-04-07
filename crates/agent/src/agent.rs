@@ -1363,6 +1363,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
                         model,
                         enable_thinking,
                         effort,
+                        speed: None,
                     });
             },
         );
