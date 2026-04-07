@@ -5737,7 +5737,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 6] {
+    fn agent_panel_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5807,6 +5807,24 @@ fn panels_page() -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .default_height = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent Panel Max Content Width",
+                description: "Maximum content width in pixels. Content will be centered when the panel is wider than this value.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.max_content_width"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.max_content_width.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .max_content_width = value;
                     },
                 }),
                 metadata: None,

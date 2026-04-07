@@ -3186,16 +3186,10 @@ impl AgentPanel {
 
     fn render_panel_options_menu(
         &self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
-
-        let full_screen_label = if self.is_zoomed(window, cx) {
-            "Disable Full Screen"
-        } else {
-            "Enable Full Screen"
-        };
 
         let conversation_view = match &self.active_view {
             ActiveView::AgentThread { conversation_view } => Some(conversation_view.clone()),
@@ -3272,8 +3266,7 @@ impl AgentPanel {
                             .action("Profiles", Box::new(ManageProfiles::default()))
                             .action("Settings", Box::new(OpenSettings))
                             .separator()
-                            .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar))
-                            .action(full_screen_label, Box::new(ToggleZoom));
+                            .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
 
                         if has_auth_methods {
                             menu = menu.action("Reauthenticate", Box::new(ReauthenticateAgent))
@@ -3709,21 +3702,37 @@ impl AgentPanel {
         );
 
         let is_full_screen = self.is_zoomed(window, cx);
+        let full_screen_button = if is_full_screen {
+            IconButton::new("disable-full-screen", IconName::Minimize)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.toggle_zoom(&ToggleZoom, window, cx);
+                }))
+        } else {
+            IconButton::new("enable-full-screen", IconName::Maximize)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| Tooltip::for_action("Enable Full Screen", &ToggleZoom, cx))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.toggle_zoom(&ToggleZoom, window, cx);
+                }))
+        };
 
         let use_v2_empty_toolbar = has_v2_flag && is_empty_state && !is_in_history_or_config;
 
+        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+
         let base_container = h_flex()
-            .id("agent-panel-toolbar")
-            .h(Tab::container_height(cx))
-            .max_w_full()
+            .size_full()
+            // TODO: This is only until we remove Agent settings from the panel.
+            .when(!is_in_history_or_config, |this| {
+                this.max_w(max_content_width).mx_auto()
+            })
             .flex_none()
             .justify_between()
-            .gap_2()
-            .bg(cx.theme().colors().tab_bar_background)
-            .border_b_1()
-            .border_color(cx.theme().colors().border);
+            .gap_2();
 
-        if use_v2_empty_toolbar {
+        let toolbar_content = if use_v2_empty_toolbar {
             let (chevron_icon, icon_color, label_color) =
                 if self.new_thread_menu_handle.is_deployed() {
                     (IconName::ChevronUp, Color::Accent, Color::Accent)
@@ -3805,20 +3814,7 @@ impl AgentPanel {
                                 cx,
                             ))
                         })
-                        .when(is_full_screen, |this| {
-                            this.child(
-                                IconButton::new("disable-full-screen", IconName::Minimize)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(move |_, cx| {
-                                        Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx)
-                                    })
-                                    .on_click({
-                                        cx.listener(move |_, _, window, cx| {
-                                            window.dispatch_action(ToggleZoom.boxed_clone(), cx);
-                                        })
-                                    }),
-                            )
-                        })
+                        .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
                 .into_any_element()
@@ -3871,24 +3867,21 @@ impl AgentPanel {
                                 cx,
                             ))
                         })
-                        .when(is_full_screen, |this| {
-                            this.child(
-                                IconButton::new("disable-full-screen", IconName::Minimize)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(move |_, cx| {
-                                        Tooltip::for_action("Disable Full Screen", &ToggleZoom, cx)
-                                    })
-                                    .on_click({
-                                        cx.listener(move |_, _, window, cx| {
-                                            window.dispatch_action(ToggleZoom.boxed_clone(), cx);
-                                        })
-                                    }),
-                            )
-                        })
+                        .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
                 .into_any_element()
-        }
+        };
+
+        h_flex()
+            .id("agent-panel-toolbar")
+            .h(Tab::container_height(cx))
+            .flex_shrink_0()
+            .max_w_full()
+            .bg(cx.theme().colors().tab_bar_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(toolbar_content)
     }
 
     fn render_worktree_creation_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {

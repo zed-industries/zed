@@ -742,6 +742,7 @@ mod tests {
             flexible: true,
             default_width: px(300.),
             default_height: px(600.),
+            max_content_width: px(850.),
             default_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
