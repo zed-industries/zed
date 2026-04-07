@@ -1524,7 +1524,7 @@ fn quit(_: &Quit, cx: &mut App) {
             let window = *window;
             let workspaces = window
                 .update(cx, |multi_workspace, _, _| {
-                    multi_workspace.workspaces().to_vec()
+                    multi_workspace.workspaces().cloned().collect::<Vec<_>>()
                 })
                 .log_err();
 
@@ -2458,7 +2458,6 @@ mod tests {
             .update(cx, |multi_workspace, window, cx| {
                 let mut tasks = multi_workspace
                     .workspaces()
-                    .iter()
                     .map(|workspace| {
                         workspace.update(cx, |workspace, cx| {
                             workspace.flush_serialization(window, cx)
@@ -2610,7 +2609,7 @@ mod tests {
         cx.run_until_parked();
         multi_workspace_1
             .update(cx, |multi_workspace, _window, cx| {
-                assert_eq!(multi_workspace.workspaces().len(), 2);
+                assert_eq!(multi_workspace.workspaces().count(), 2);
                 assert!(multi_workspace.sidebar_open());
                 let workspace = multi_workspace.workspace().read(cx);
                 assert_eq!(
@@ -5512,6 +5511,11 @@ mod tests {
             let project = project1.clone();
             |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
 
         cx.run_until_parked();
         assert_eq!(cx.windows().len(), 1, "Should start with 1 window");
@@ -5534,7 +5538,7 @@ mod tests {
 
         let workspace1 = window
             .read_with(cx, |multi_workspace, _| {
-                multi_workspace.workspaces()[0].clone()
+                multi_workspace.workspaces().next().unwrap().clone()
             })
             .unwrap();
 
@@ -5543,8 +5547,8 @@ mod tests {
                 multi_workspace.activate(workspace2.clone(), window, cx);
                 multi_workspace.activate(workspace3.clone(), window, cx);
                 // Switch back to workspace1 for test setup
-                multi_workspace.activate(workspace1, window, cx);
-                assert_eq!(multi_workspace.active_workspace_index(), 0);
+                multi_workspace.activate(workspace1.clone(), window, cx);
+                assert_eq!(multi_workspace.workspace(), &workspace1);
             })
             .unwrap();
 
@@ -5553,8 +5557,8 @@ mod tests {
         // Verify setup: 3 workspaces, workspace 0 active, still 1 window
         window
             .read_with(cx, |multi_workspace, _| {
-                assert_eq!(multi_workspace.workspaces().len(), 3);
-                assert_eq!(multi_workspace.active_workspace_index(), 0);
+                assert_eq!(multi_workspace.workspaces().count(), 3);
+                assert_eq!(multi_workspace.workspace(), &workspace1);
             })
             .unwrap();
         assert_eq!(cx.windows().len(), 1);
@@ -5577,8 +5581,8 @@ mod tests {
         window
             .read_with(cx, |multi_workspace, cx| {
                 assert_eq!(
-                    multi_workspace.active_workspace_index(),
-                    2,
+                    multi_workspace.workspace(),
+                    &workspace3,
                     "Should have switched to workspace 3 which contains /dir3"
                 );
                 let active_item = multi_workspace
@@ -5611,8 +5615,8 @@ mod tests {
         window
             .read_with(cx, |multi_workspace, cx| {
                 assert_eq!(
-                    multi_workspace.active_workspace_index(),
-                    1,
+                    multi_workspace.workspace(),
+                    &workspace2,
                     "Should have switched to workspace 2 which contains /dir2"
                 );
                 let active_item = multi_workspace
@@ -5660,8 +5664,8 @@ mod tests {
         window
             .read_with(cx, |multi_workspace, cx| {
                 assert_eq!(
-                    multi_workspace.active_workspace_index(),
-                    0,
+                    multi_workspace.workspace(),
+                    &workspace1,
                     "Should have switched back to workspace 0 which contains /dir1"
                 );
                 let active_item = multi_workspace
@@ -5711,6 +5715,11 @@ mod tests {
             let project = project1.clone();
             |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
+        window1
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
 
         cx.run_until_parked();
 
@@ -5737,6 +5746,11 @@ mod tests {
             let project = project3.clone();
             |window, cx| MultiWorkspace::test_new(project, window, cx)
         });
+        window2
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
 
         cx.run_until_parked();
         assert_eq!(cx.windows().len(), 2);
@@ -5771,7 +5785,7 @@ mod tests {
         // Verify workspace1_1 is active
         window1
             .read_with(cx, |multi_workspace, _| {
-                assert_eq!(multi_workspace.active_workspace_index(), 0);
+                assert_eq!(multi_workspace.workspace(), &workspace1_1);
             })
             .unwrap();
 
@@ -5837,7 +5851,7 @@ mod tests {
         // Verify workspace1_1 is still active (not workspace1_2 with dirty item)
         window1
             .read_with(cx, |multi_workspace, _| {
-                assert_eq!(multi_workspace.active_workspace_index(), 0);
+                assert_eq!(multi_workspace.workspace(), &workspace1_1);
             })
             .unwrap();
 
@@ -5848,8 +5862,8 @@ mod tests {
         window1
             .read_with(cx, |multi_workspace, _| {
                 assert_eq!(
-                    multi_workspace.active_workspace_index(),
-                    1,
+                    multi_workspace.workspace(),
+                    &workspace1_2,
                     "Case 2: Non-active workspace should be activated when it has dirty item"
                 );
             })
@@ -6003,6 +6017,12 @@ mod tests {
             .expect("failed to open first workspace");
 
         window_a
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        window_a
             .update(cx, |multi_workspace, window, cx| {
                 multi_workspace.open_project(vec![dir2.into()], OpenMode::Activate, window, cx)
             })
@@ -6028,13 +6048,19 @@ mod tests {
             .await
             .expect("failed to open third workspace");
 
+        window_b
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
         // Currently dir2 is active because it was added last.
         // So, switch window_a's active workspace to dir1 (index 0).
         // This sets up a non-trivial assertion: after restore, dir1 should
         // still be active rather than whichever workspace happened to restore last.
         window_a
             .update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspaces()[0].clone();
+                let workspace = multi_workspace.workspaces().next().unwrap().clone();
                 multi_workspace.activate(workspace, window, cx);
             })
             .unwrap();
@@ -6150,7 +6176,7 @@ mod tests {
                         ProjectGroupKey::new(None, PathList::new(&[dir2])),
                     ]
                 );
-                assert_eq!(mw.workspaces().len(), 1);
+                assert_eq!(mw.workspaces().count(), 1);
             })
             .unwrap();
 
@@ -6161,7 +6187,7 @@ mod tests {
                     mw.project_group_keys().cloned().collect::<Vec<_>>(),
                     vec![ProjectGroupKey::new(None, PathList::new(&[dir3]))]
                 );
-                assert_eq!(mw.workspaces().len(), 1);
+                assert_eq!(mw.workspaces().count(), 1);
             })
             .unwrap();
     }

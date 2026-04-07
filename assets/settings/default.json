@@ -965,6 +965,9 @@
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
+    // Maximum content width when the agent panel is wider than this value.
+    // Content will be centered within the panel.
+    "max_content_width": 850,
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
@@ -2417,6 +2420,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "use_regex_search": true,
     "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},

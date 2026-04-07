@@ -2447,7 +2447,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn vim_settings_section() -> [SettingsPageItem; 12] {
+    fn vim_settings_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Vim"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2551,6 +2551,24 @@ fn editor_page() -> SettingsPage {
                             .vim
                             .get_or_insert_default()
                             .highlight_on_yank_duration = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Regex Search",
+                description: "Use regex search by default in Vim search.",
+                field: Box::new(SettingField {
+                    json_path: Some("vim.use_regex_search"),
+                    pick: |settings_content| {
+                        settings_content.vim.as_ref()?.use_regex_search.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .use_regex_search = value;
                     },
                 }),
                 metadata: None,
@@ -5719,7 +5737,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 6] {
+    fn agent_panel_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5789,6 +5807,24 @@ fn panels_page() -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .default_height = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent Panel Max Content Width",
+                description: "Maximum content width in pixels. Content will be centered when the panel is wider than this value.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.max_content_width"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.max_content_width.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .max_content_width = value;
                     },
                 }),
                 metadata: None,

@@ -218,6 +218,13 @@ impl ThreadsArchiveView {
         handle.focus(window, cx);
     }
 
+    pub fn is_filter_editor_focused(&self, window: &Window, cx: &App) -> bool {
+        self.filter_editor
+            .read(cx)
+            .focus_handle(cx)
+            .is_focused(window)
+    }
+
     fn update_items(&mut self, cx: &mut Context<Self>) {
         let sessions = ThreadMetadataStore::global(cx)
             .read(cx)
@@ -346,7 +353,6 @@ impl ThreadsArchiveView {
             .map(|mw| {
                 mw.read(cx)
                     .workspaces()
-                    .iter()
                     .filter_map(|ws| ws.read(cx).database_id())
                     .collect()
             })
