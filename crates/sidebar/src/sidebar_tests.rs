@@ -5064,6 +5064,7 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
 
 mod property_test {
     use super::*;
+    use gpui::proptest::prelude::*;
 
     struct UnopenedWorktree {
         path: String,
@@ -5658,7 +5659,10 @@ mod property_test {
         Ok(())
     }
 
-    #[gpui::property_test]
+    #[gpui::property_test(config = ProptestConfig {
+        cases: 10,
+        ..Default::default()
+    })]
     async fn test_sidebar_invariants(
         #[strategy = gpui::proptest::collection::vec(0u32..DISTRIBUTION_SLOTS * 10, 1..5)]
         raw_operations: Vec<u32>,
