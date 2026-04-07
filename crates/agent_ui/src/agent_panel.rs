@@ -2531,8 +2531,8 @@ impl AgentPanel {
                 }
             }
 
-            // Force filesystem cleanup for the worktree directory, regardless
-            // of whether the git-level removal succeeded.
+            // `git worktree remove` normally removes this directory, but since
+            // `git worktree remove` failed, manually rm the directory.
             if let Err(fs_err) = fs
                 .remove_dir(
                     &path,
