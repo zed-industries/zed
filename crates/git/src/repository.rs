@@ -643,6 +643,7 @@ pub enum LogSource {
     #[default]
     All,
     Branch(SharedString),
+    Branches(Vec<SharedString>),
     Sha(Oid),
     Filtered {
         source: Box<LogSource>,
@@ -682,10 +683,19 @@ impl LogSource {
         }
     }
 
+    fn is_empty(&self) -> bool {
+        match self {
+            LogSource::Branches(branches) => branches.is_empty(),
+            LogSource::Filtered { source, .. } => source.is_empty(),
+            _ => false,
+        }
+    }
+
     fn get_args(&self) -> Result<Vec<String>> {
         match self {
             LogSource::All => Ok(vec!["--all".to_string()]),
             LogSource::Branch(branch) => Ok(vec![branch.to_string()]),
+            LogSource::Branches(branches) => Ok(branches.iter().map(ToString::to_string).collect()),
             LogSource::Sha(oid) => Ok(vec![
                 str::from_utf8(oid.as_bytes())
                     .context("Failed to build str from sha")?
@@ -3112,6 +3122,10 @@ impl GitRepository for RealGitRepository {
         async move {
             let git = git_binary?;
 
+            if log_source.is_empty() {
+                return Ok(());
+            }
+
             let mut args = vec![
                 "log".to_string(),
                 GRAPH_COMMIT_FORMAT.to_string(),
@@ -3176,6 +3190,10 @@ impl GitRepository for RealGitRepository {
 
         async move {
             let git = git_binary?;
+
+            if log_source.is_empty() {
+                return Ok(());
+            }
 
             let mut args = vec!["log".to_string(), SEARCH_COMMIT_FORMAT.to_string()];
             args.extend(log_source.get_args()?);
