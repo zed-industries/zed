@@ -3705,7 +3705,7 @@ impl ThreadView {
                 .cloned()
         });
 
-        let label: SharedString = selected
+        let label = selected
             .clone()
             .or(default_effort_level)
             .map_or("Select Effort".into(), |effort| effort.name);

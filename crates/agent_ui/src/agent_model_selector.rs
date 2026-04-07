@@ -88,7 +88,7 @@ impl AgentModelSelector {
 impl Render for AgentModelSelector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let model = self.selector.read(cx).delegate.active_model(cx);
-        let model_name: SharedString = model
+        let model_name = model
             .as_ref()
             .map(|model| model.model.name().0)
             .unwrap_or_else(|| SharedString::from("Select a Model"));
