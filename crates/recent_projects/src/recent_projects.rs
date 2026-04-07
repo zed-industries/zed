@@ -1356,6 +1356,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             ProjectPickerEntry::OpenProject(hit) => {
                 let (workspace_id, location, paths, _) = self.workspaces.get(hit.candidate_id)?;
                 let workspace_id = *workspace_id;
+                let is_current = self.is_current_workspace(workspace_id, cx);
                 let ordered_paths: Vec<_> = paths
                     .ordered_paths()
                     .map(|p| p.compact().to_string_lossy().to_string())
@@ -1395,6 +1396,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     prefix,
                     match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
                     paths,
+                    active: is_current,
                 };
 
                 let icon = icon_for_remote_connection(match location {

@@ -374,6 +374,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths: Vec::new(),
+            active: false,
         };
 
         let icon = icon_for_remote_connection(match location {
