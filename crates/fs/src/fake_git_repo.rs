@@ -268,6 +268,10 @@ impl GitRepository for FakeGitRepository {
                     state.head_contents = snapshot.head_contents;
                     state.index_contents = state.head_contents.clone();
                 }
+                ResetMode::Hard => {
+                    state.head_contents = snapshot.head_contents.clone();
+                    state.index_contents = snapshot.head_contents.clone();
+                }
             }
 
             state.refs.insert("HEAD".into(), snapshot.sha);

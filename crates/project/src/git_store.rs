@@ -2615,10 +2615,11 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let is_remote = envelope.payload.is_remote;
         let branch_name = envelope.payload.branch_name;
+        let force_delete = envelope.payload.force_delete;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.delete_branch(is_remote, branch_name, false)
+                repository_handle.delete_branch(is_remote, branch_name, force_delete)
             })
             .await??;
 
@@ -6665,6 +6666,7 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 is_remote,
                                 branch_name,
+                                force_delete,
                             })
                             .await?;
 
