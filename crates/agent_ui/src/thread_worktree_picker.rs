@@ -14,8 +14,8 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::RepositoryId};
 use settings::{NewThreadLocation, Settings, update_settings_file};
 use ui::{
-    Divider, DocumentationAside, DocumentationSide, HighlightedLabel, Label, LabelCommon, ListItem,
-    ListItemSpacing, Tooltip, prelude::*,
+    Divider, DocumentationAside, HighlightedLabel, Label, LabelCommon, ListItem, ListItemSpacing,
+    Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::paths::PathExt;
@@ -598,12 +598,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
             _ => None,
         }?;
 
-        let side = match AgentSettings::get_global(cx).dock {
-            settings::DockPosition::Left => DocumentationSide::Right,
-            settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                DocumentationSide::Left
-            }
-        };
+        let side = crate::ui::documentation_aside_side(cx);
 
         Some(DocumentationAside::new(
             side,

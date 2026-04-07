@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use agent_settings::AgentSettings;
 use collections::HashSet as CollectionsHashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,10 +13,9 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
-use settings::Settings;
 use ui::{
-    Divider, DocumentationAside, DocumentationSide, HighlightedLabel, Icon, IconName, Label,
-    LabelCommon, ListItem, ListItemSpacing, prelude::*,
+    Divider, DocumentationAside, HighlightedLabel, Icon, IconName, Label, LabelCommon, ListItem,
+    ListItemSpacing, prelude::*,
 };
 use util::ResultExt as _;
 
@@ -291,6 +289,25 @@ impl ThreadBranchPickerDelegate {
             Some("A new local branch will be created from this remote branch.".into())
         } else {
             None
+        }
+    }
+
+    fn entry_aside_text(&self, entry: &ThreadBranchEntry) -> Option<SharedString> {
+        match entry {
+            ThreadBranchEntry::CurrentBranch => Some(SharedString::from(
+                "A new branch will be created from the current branch.",
+            )),
+            ThreadBranchEntry::DefaultBranch => {
+                let default_branch_name = self
+                    .default_branch_name
+                    .as_ref()
+                    .filter(|name| *name != &self.current_branch_name)?;
+                self.branch_aside_text(default_branch_name, false)
+            }
+            ThreadBranchEntry::ExistingBranch { branch, .. } => {
+                self.branch_aside_text(branch.name(), branch.is_remote())
+            }
+            _ => None,
         }
     }
 
@@ -725,30 +742,8 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<DocumentationAside> {
         let entry = self.matches.get(self.selected_index)?;
-
-        let aside_text = match entry {
-            ThreadBranchEntry::CurrentBranch => Some(SharedString::from(
-                "A new branch will be created from the current branch.",
-            )),
-            ThreadBranchEntry::DefaultBranch => {
-                let default_branch_name = self
-                    .default_branch_name
-                    .as_ref()
-                    .filter(|name| *name != &self.current_branch_name)?;
-                self.branch_aside_text(default_branch_name, false)
-            }
-            ThreadBranchEntry::ExistingBranch { branch, .. } => {
-                self.branch_aside_text(branch.name(), branch.is_remote())
-            }
-            _ => None,
-        }?;
-
-        let side = match AgentSettings::get_global(cx).dock {
-            settings::DockPosition::Left => DocumentationSide::Right,
-            settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                DocumentationSide::Left
-            }
-        };
+        let aside_text = self.entry_aside_text(entry)?;
+        let side = crate::ui::documentation_aside_side(cx);
 
         Some(DocumentationAside::new(
             side,
@@ -758,27 +753,6 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
 
     fn documentation_aside_index(&self) -> Option<usize> {
         let entry = self.matches.get(self.selected_index)?;
-        match entry {
-            ThreadBranchEntry::CurrentBranch => Some(self.selected_index),
-            ThreadBranchEntry::DefaultBranch => {
-                let default_branch_name = self
-                    .default_branch_name
-                    .as_ref()
-                    .filter(|name| *name != &self.current_branch_name)?;
-                if self.is_branch_occupied(default_branch_name) {
-                    Some(self.selected_index)
-                } else {
-                    None
-                }
-            }
-            ThreadBranchEntry::ExistingBranch { branch, .. } => {
-                if self.is_branch_occupied(branch.name()) || branch.is_remote() {
-                    Some(self.selected_index)
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        }
+        self.entry_aside_text(entry).map(|_| self.selected_index)
     }
 }
