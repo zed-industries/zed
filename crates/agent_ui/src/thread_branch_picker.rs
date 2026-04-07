@@ -223,7 +223,7 @@ enum ThreadBranchEntry {
     ExistingBranch {
         branch: GitBranch,
         positions: Vec<usize>,
-        disabled_reason: Option<String>,
+        occupied_reason: Option<String>,
     },
     CreateNamed {
         name: String,
@@ -272,19 +272,41 @@ impl ThreadBranchPickerDelegate {
 
     fn current_branch_label(&self) -> SharedString {
         if self.has_multiple_repositories {
-            SharedString::from("from current(current branches)")
+            SharedString::from("New branch from: current branches")
         } else {
-            SharedString::from(format!("from current({})", self.current_branch_name))
+            SharedString::from(format!("New branch from: {}", self.current_branch_name))
         }
     }
 
     fn default_branch_label(&self) -> Option<SharedString> {
-        self.default_branch_name
+        let default_branch_name = self
+            .default_branch_name
             .as_ref()
-            .filter(|default_branch_name| *default_branch_name != &self.current_branch_name)
-            .map(|default_branch_name| {
-                SharedString::from(format!("from default({default_branch_name})"))
-            })
+            .filter(|name| *name != &self.current_branch_name)?;
+        let is_occupied = self
+            .occupied_branches
+            .as_ref()
+            .is_some_and(|occupied| occupied.contains_key(default_branch_name));
+        let prefix = if is_occupied {
+            "New branch from"
+        } else {
+            "From"
+        };
+        Some(SharedString::from(format!(
+            "{prefix}: {default_branch_name}"
+        )))
+    }
+
+    fn branch_label_prefix(&self, branch_name: &str) -> &'static str {
+        let is_occupied = self
+            .occupied_branches
+            .as_ref()
+            .is_some_and(|occupied| occupied.contains_key(branch_name));
+        if is_occupied {
+            "New branch from: "
+        } else {
+            "From: "
+        }
     }
 
     fn sync_selected_index(&mut self) {
@@ -427,7 +449,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                         .is_none_or(|default_branch_name| branch.name() != default_branch_name)
             }) {
                 matches.push(ThreadBranchEntry::ExistingBranch {
-                    disabled_reason: occupied_branches.get(branch.name()).cloned(),
+                    occupied_reason: occupied_branches.get(branch.name()).cloned(),
                     branch,
                     positions: Vec::new(),
                 });
@@ -492,11 +514,11 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                         {
                             continue;
                         }
-                        let disabled_reason = occupied_branches.get(branch.name()).cloned();
+                        let occupied_reason = occupied_branches.get(branch.name()).cloned();
                         matches.push(ThreadBranchEntry::ExistingBranch {
                             branch,
                             positions: candidate.positions.clone(),
-                            disabled_reason,
+                            occupied_reason,
                         });
                     }
 
@@ -548,11 +570,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                     cx,
                 );
             }
-            ThreadBranchEntry::ExistingBranch {
-                branch,
-                disabled_reason: None,
-                ..
-            } => {
+            ThreadBranchEntry::ExistingBranch { branch, .. } => {
                 let action = if branch.is_remote() {
                     let branch_name = branch
                         .ref_name
@@ -566,12 +584,6 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                     self.new_worktree_action(None, Some(branch.name().to_string()))
                 };
                 window.dispatch_action(Box::new(action), cx);
-            }
-            ThreadBranchEntry::ExistingBranch {
-                disabled_reason: Some(_),
-                ..
-            } => {
-                return;
             }
             ThreadBranchEntry::CreateNamed { name } => {
                 window.dispatch_action(
@@ -624,39 +636,29 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
             ThreadBranchEntry::ExistingBranch {
                 branch,
                 positions,
-                disabled_reason,
+                occupied_reason,
             } => {
-                let is_disabled = disabled_reason.is_some();
-                let icon_color = if is_disabled {
-                    Color::Disabled
-                } else {
-                    Color::Muted
-                };
-                let label_color = if is_disabled {
-                    Color::Disabled
-                } else {
-                    Color::Default
-                };
+                let prefix = self.branch_label_prefix(branch.name());
+                let branch_name = branch.name().to_string();
+                let full_label = format!("{prefix}{branch_name}");
+                let adjusted_positions: Vec<usize> =
+                    positions.iter().map(|&p| p + prefix.len()).collect();
+
                 let item = ListItem::new(SharedString::from(format!("branch-{ix}")))
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)
                     .toggle_state(selected)
-                    .disabled(is_disabled)
-                    .start_slot(Icon::new(IconName::GitBranch).color(icon_color))
-                    .child(
-                        HighlightedLabel::new(branch.name().to_string(), positions.clone())
-                            .color(label_color)
-                            .truncate(),
-                    );
+                    .start_slot(Icon::new(IconName::GitBranch).color(Color::Muted))
+                    .child(HighlightedLabel::new(full_label, adjusted_positions).truncate());
 
-                Some(if let Some(reason) = disabled_reason.clone() {
+                Some(if let Some(reason) = occupied_reason.clone() {
                     item.tooltip(Tooltip::text(reason))
                 } else if branch.is_remote() {
                     item.tooltip(Tooltip::text(
                         "Create a new local branch from this remote branch",
                     ))
                 } else {
-                    item.tooltip(Tooltip::text(branch.name().to_string()))
+                    item
                 })
             }
             ThreadBranchEntry::CreateNamed { name } => Some(

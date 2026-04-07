@@ -3376,12 +3376,13 @@ impl AgentPanel {
 
         let project = self.project.clone();
         let current_target = self.start_thread_in.clone();
+        let fs = self.fs.clone();
 
         PopoverMenu::new("thread-target-selector")
             .trigger_with_tooltip(trigger_button, {
                 move |_window, cx| {
                     Tooltip::for_action_in(
-                        "Start Thread In\u{2026}",
+                        "Start Thread In…",
                         &CycleStartThreadIn,
                         &focus_handle,
                         cx,
@@ -3389,8 +3390,9 @@ impl AgentPanel {
                 }
             })
             .menu(move |window, cx| {
+                let fs = fs.clone();
                 Some(cx.new(|cx| {
-                    ThreadWorktreePicker::new(project.clone(), &current_target, window, cx)
+                    ThreadWorktreePicker::new(project.clone(), &current_target, fs, window, cx)
                 }))
             })
             .with_handle(self.start_thread_in_menu_handle.clone())
