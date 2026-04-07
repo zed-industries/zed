@@ -6386,11 +6386,11 @@ impl MultiBufferSnapshot {
         self.buffers.get(&id).map(|state| &state.buffer_snapshot)
     }
 
-    fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<PathKey> {
-        self.path_keys_by_index.get(&anchor.path).cloned()
+    fn try_path_for_anchor(&self, anchor: ExcerptAnchor) -> Option<&PathKey> {
+        self.path_keys_by_index.get(&anchor.path)
     }
 
-    pub fn path_for_anchor(&self, anchor: ExcerptAnchor) -> PathKey {
+    pub fn path_for_anchor(&self, anchor: ExcerptAnchor) -> &PathKey {
         self.try_path_for_anchor(anchor)
             .expect("invalid anchor: path was never added to multibuffer")
     }
@@ -7432,38 +7432,36 @@ impl sum_tree::ContextLessSummary for ExcerptSummary {
     }
 }
 
-impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarget {
+impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarget<'_> {
     fn cmp(
         &self,
         cursor_location: &ExcerptSummary,
         _cx: <ExcerptSummary as sum_tree::Summary>::Context<'_>,
     ) -> cmp::Ordering {
         match self {
+            AnchorSeekTarget::Missing { path_key } => {
+                // Want to end up after any excerpts for (a different buffer at) the original path
+                match Ord::cmp(*path_key, &cursor_location.path_key) {
+                    Ordering::Less => Ordering::Less,
+                    Ordering::Equal | Ordering::Greater => Ordering::Greater,
+                }
+            }
             AnchorSeekTarget::Excerpt {
                 path_key,
                 anchor,
                 snapshot,
             } => {
-                let path_comparison = Ord::cmp(path_key, &cursor_location.path_key);
+                let path_comparison = Ord::cmp(*path_key, &cursor_location.path_key);
                 if path_comparison.is_ne() {
                     path_comparison
-                } else if let Some(snapshot) = snapshot {
-                    if anchor.text_anchor.buffer_id != snapshot.remote_id() {
-                        Ordering::Greater
-                    } else if let Some(max_anchor) = cursor_location.max_anchor {
-                        debug_assert_eq!(max_anchor.buffer_id, snapshot.remote_id());
-                        anchor.text_anchor().cmp(&max_anchor, snapshot)
-                    } else {
-                        Ordering::Greater
-                    }
+                } else if let Some(max_anchor) = cursor_location.max_anchor {
+                    debug_assert_eq!(max_anchor.buffer_id, snapshot.remote_id());
+                    anchor.cmp(&max_anchor, snapshot)
                 } else {
-                    // shouldn't happen because we expect this buffer not to have any excerpts
-                    // (otherwise snapshot would have been Some)
-                    Ordering::Equal
+                    Ordering::Greater
                 }
             }
-            // This should be dead code because Empty is only constructed for an empty snapshot
-            AnchorSeekTarget::Empty => Ordering::Equal,
+            AnchorSeekTarget::Empty => Ordering::Greater,
         }
     }
 }
