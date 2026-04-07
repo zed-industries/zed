@@ -1,7 +1,9 @@
+mod agent_setup_button;
 mod ai_setting_item;
 mod configured_api_card;
 mod thread_item;
 
+pub use agent_setup_button::*;
 pub use ai_setting_item::*;
 pub use configured_api_card::*;
 pub use thread_item::*;
