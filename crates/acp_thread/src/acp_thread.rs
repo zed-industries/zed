@@ -1388,9 +1388,14 @@ impl AcpThread {
         match update {
             acp::SessionUpdate::UserMessageChunk(acp::ContentChunk { content, .. }) => {
                 // We optimistically add the full user prompt before calling `prompt`.
-                // Some ACP servers echo user chunks back over updates, which would duplicate
-                // context chips/message text unless ignored while a turn is active.
-                if self.running_turn.is_none() {
+                // Some ACP servers echo user chunks back over updates. Skip the chunk if
+                // it's already present in the current user message to avoid duplicating content.
+                let already_in_user_message = self
+                    .entries
+                    .last()
+                    .and_then(|entry| entry.user_message())
+                    .is_some_and(|message| message.chunks.contains(&content));
+                if !already_in_user_message {
                     self.push_user_content_block(None, content, cx);
                 }
             }
