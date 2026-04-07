@@ -13,8 +13,8 @@ use settings::{Settings, SettingsStore};
 use util::rel_path::RelPath;
 
 use crate::kernels::{
-    Kernel, list_remote_kernelspecs, local_kernel_specifications, python_env_kernel_specifications,
-    wsl_kernel_specifications,
+    Kernel, PythonEnvKernelSpecification, list_remote_kernelspecs, local_kernel_specifications,
+    python_env_kernel_specifications, wsl_kernel_specifications,
 };
 use crate::{JupyterSettings, KernelSpecification, Session};
 
@@ -32,6 +32,7 @@ pub struct ReplStore {
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
     active_python_toolchain_for_worktree: HashMap<WorktreeId, SharedString>,
     remote_worktrees: HashSet<WorktreeId>,
+    fetching_python_kernelspecs: HashSet<WorktreeId>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -66,6 +67,7 @@ impl ReplStore {
             selected_kernel_for_worktree: HashMap::default(),
             active_python_toolchain_for_worktree: HashMap::default(),
             remote_worktrees: HashSet::default(),
+            fetching_python_kernelspecs: HashSet::default(),
         };
         this.on_enabled_changed(cx);
         this
@@ -134,12 +136,33 @@ impl ReplStore {
         cx.notify();
     }
 
+    pub fn mark_ipykernel_installed(
+        &mut self,
+        cx: &mut Context<Self>,
+        spec: &PythonEnvKernelSpecification,
+    ) {
+        for specs in self.kernel_specifications_for_worktree.values_mut() {
+            for kernel_spec in specs.iter_mut() {
+                if let KernelSpecification::PythonEnv(env_spec) = kernel_spec {
+                    if env_spec == spec {
+                        env_spec.has_ipykernel = true;
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
     pub fn refresh_python_kernelspecs(
         &mut self,
         worktree_id: WorktreeId,
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if !self.fetching_python_kernelspecs.insert(worktree_id) {
+            return Task::ready(Ok(()));
+        }
+
         let is_remote = project.read(cx).is_remote();
         // WSL does require access to global kernel specs, so we only exclude remote worktrees that aren't WSL.
         // TODO: a better way to handle WSL vs SSH/remote projects,
@@ -149,7 +172,7 @@ impl ReplStore {
             .map_or(false, |opts| {
                 matches!(opts, RemoteConnectionOptions::Wsl(_))
             });
-        let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
+        let kernel_specifications_task = python_env_kernel_specifications(project, worktree_id, cx);
         let active_toolchain = project.read(cx).active_toolchain(
             ProjectPath {
                 worktree_id,
@@ -160,9 +183,15 @@ impl ReplStore {
         );
 
         cx.spawn(async move |this, cx| {
-            let kernel_specifications = kernel_specifications
-                .await
-                .context("getting python kernelspecs")?;
+            let kernel_specifications_res = kernel_specifications_task.await;
+
+            this.update(cx, |this, _cx| {
+                this.fetching_python_kernelspecs.remove(&worktree_id);
+            })
+            .ok();
+
+            let kernel_specifications =
+                kernel_specifications_res.context("getting python kernelspecs")?;
 
             let active_toolchain_path = active_toolchain.await.map(|toolchain| toolchain.path);
 

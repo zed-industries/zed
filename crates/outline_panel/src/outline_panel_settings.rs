@@ -1,4 +1,4 @@
-use editor::EditorSettings;
+use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::{App, Pixels};
 use settings::RegisterSetting;
 pub use settings::{DockSide, Settings, ShowIndentGuides};
@@ -33,9 +33,13 @@ pub struct IndentGuidesSettings {
     pub show: ShowIndentGuides,
 }
 
-impl ScrollbarVisibility for OutlinePanelSettings {
+#[derive(Default)]
+pub(crate) struct OutlinePanelSettingsScrollbarProxy;
+
+impl ScrollbarVisibility for OutlinePanelSettingsScrollbarProxy {
     fn visibility(&self, cx: &App) -> ShowScrollbar {
-        self.scrollbar
+        OutlinePanelSettings::get_global(cx)
+            .scrollbar
             .show
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
@@ -65,7 +69,11 @@ impl Settings for OutlinePanelSettings {
             auto_reveal_entries: panel.auto_reveal_entries.unwrap(),
             auto_fold_dirs: panel.auto_fold_dirs.unwrap(),
             scrollbar: ScrollbarSettings {
-                show: panel.scrollbar.unwrap().show.map(Into::into),
+                show: panel
+                    .scrollbar
+                    .unwrap()
+                    .show
+                    .map(ui_scrollbar_settings_from_raw),
             },
             expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
         }

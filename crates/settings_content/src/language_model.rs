@@ -1,8 +1,8 @@
+use crate::merge_from::MergeFrom;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
-use strum::EnumString;
 
 use std::sync::Arc;
 
@@ -16,6 +16,7 @@ pub struct AllLanguageModelSettingsContent {
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
+    pub opencode: Option<OpenCodeSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
@@ -146,6 +147,24 @@ impl Default for KeepAlive {
 
 #[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct OpenCodeSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<OpenCodeAvailableModel>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct OpenCodeAvailableModel {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google".
+    pub protocol: String,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
     pub api_key: Option<String>,
@@ -218,15 +237,12 @@ pub struct OpenAiAvailableModel {
     pub capabilities: OpenAiModelCapabilities,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, EnumString, JsonSchema, MergeFrom)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-pub enum OpenAiReasoningEffort {
-    Minimal,
-    Low,
-    Medium,
-    High,
-    XHigh,
+pub use language_model_core::ReasoningEffort as OpenAiReasoningEffort;
+
+impl MergeFrom for OpenAiReasoningEffort {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
 }
 
 #[with_fallible_options]
@@ -259,6 +275,7 @@ pub struct OpenAiCompatibleAvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    pub reasoning_effort: Option<OpenAiReasoningEffort>,
     #[serde(default)]
     pub capabilities: OpenAiCompatibleModelCapabilities,
 }
@@ -459,15 +476,10 @@ pub struct LanguageModelCacheConfiguration {
     pub min_total_token: u64,
 }
 
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
-)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
-        budget_tokens: Option<u32>,
-    },
+pub use language_model_core::ModelMode;
+
+impl MergeFrom for ModelMode {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
 }

@@ -1,4 +1,6 @@
-use crate::{CycleModeSelector, ManageProfiles, ToggleProfileSelector};
+use crate::{
+    CycleModeSelector, ManageProfiles, ToggleProfileSelector, ui::documentation_aside_side,
+};
 use agent_settings::{
     AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
@@ -15,8 +17,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    DocumentationAside, DocumentationSide, HighlightedLabel, KeyBinding, LabelSize, ListItem,
-    ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
+    DocumentationAside, HighlightedLabel, KeyBinding, LabelSize, ListItem, ListItemSpacing,
+    PopoverMenuHandle, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -34,7 +36,6 @@ pub trait ProfileProvider {
 pub struct ProfileSelector {
     profiles: AvailableProfiles,
     pending_refresh: bool,
-    disabled: bool,
     fs: Arc<dyn Fs>,
     provider: Arc<dyn ProfileProvider>,
     picker: Option<Entity<Picker<ProfilePickerDelegate>>>,
@@ -58,7 +59,6 @@ impl ProfileSelector {
         Self {
             profiles: AgentProfile::available_profiles(cx),
             pending_refresh: false,
-            disabled: false,
             fs,
             provider,
             picker: None,
@@ -72,19 +72,7 @@ impl ProfileSelector {
         self.picker_handle.clone()
     }
 
-    pub fn set_disabled(&mut self, disabled: bool) {
-        self.disabled = disabled;
-    }
-
-    pub fn is_disabled(&self) -> bool {
-        self.disabled
-    }
-
     pub fn cycle_profile(&mut self, cx: &mut Context<Self>) {
-        if self.disabled {
-            return;
-        }
-
         if !self.provider.profiles_supported(cx) {
             return;
         }
@@ -104,6 +92,7 @@ impl ProfileSelector {
 
         if let Some((next_profile_id, _)) = profiles.get_index(next_index) {
             self.provider.set_profile(next_profile_id.clone(), cx);
+            cx.notify();
         }
     }
 
@@ -189,38 +178,31 @@ impl Render for ProfileSelector {
         };
 
         let trigger_button = Button::new("profile-selector", selected_profile)
-            .disabled(self.disabled)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
             .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
 
-        let disabled = self.disabled;
-
-        let tooltip: Box<dyn Fn(&mut Window, &mut App) -> AnyView> = if disabled {
-            Box::new(Tooltip::text("Disabled until generation is done"))
-        } else {
-            Box::new(Tooltip::element({
-                move |_window, cx| {
-                    let container = || h_flex().gap_1().justify_between();
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            container()
-                                .child(Label::new("Change Profile"))
-                                .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
-                        )
-                        .child(
-                            container()
-                                .pt_1()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .child(Label::new("Cycle Through Profiles"))
-                                .child(KeyBinding::for_action(&CycleModeSelector, cx)),
-                        )
-                        .into_any()
-                }
-            }))
-        };
+        let tooltip: Box<dyn Fn(&mut Window, &mut App) -> AnyView> = Box::new(Tooltip::element({
+            move |_window, cx| {
+                let container = || h_flex().gap_1().justify_between();
+                v_flex()
+                    .gap_1()
+                    .child(
+                        container()
+                            .child(Label::new("Change Profile"))
+                            .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
+                    )
+                    .child(
+                        container()
+                            .pt_1()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(Label::new("Cycle Through Profiles"))
+                            .child(KeyBinding::for_action(&CycleModeSelector, cx)),
+                    )
+                    .into_any()
+            }
+        }));
 
         PickerPopoverMenu::new(
             picker,
@@ -649,13 +631,7 @@ impl PickerDelegate for ProfilePickerDelegate {
         let candidate = self.candidates.get(entry.candidate_index)?;
         let docs_aside = Self::documentation(candidate)?.to_string();
 
-        let settings = AgentSettings::get_global(cx);
-        let side = match settings.dock {
-            settings::DockPosition::Left => DocumentationSide::Right,
-            settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                DocumentationSide::Left
-            }
-        };
+        let side = documentation_aside_side(cx);
 
         Some(DocumentationAside {
             side,

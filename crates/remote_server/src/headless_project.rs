@@ -129,7 +129,6 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 environment.clone(),
                 manifest_tree.clone(),
-                fs.clone(),
                 cx,
             )
         });
@@ -192,6 +191,7 @@ impl HeadlessProject {
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
+                git_store.clone(),
                 cx,
             );
             task_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);

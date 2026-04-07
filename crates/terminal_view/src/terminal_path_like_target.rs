@@ -554,7 +554,7 @@ mod tests {
         let fs = app_cx.update(AppState::test).fs.as_fake().clone();
 
         app_cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
 

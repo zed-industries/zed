@@ -2,9 +2,8 @@ use gh_workflow::{ctx::Context, *};
 use indoc::indoc;
 
 use crate::tasks::workflows::{
-    extension_bump::{RepositoryTarget, generate_token},
     runners,
-    steps::{self, CommonJobConditions, NamedJob, named},
+    steps::{self, CommonJobConditions, NamedJob, RepositoryTarget, generate_token, named},
     vars::{self, StepOutput},
 };
 
@@ -42,7 +41,7 @@ fn publish_job() -> NamedJob {
     named::job(
         Job::default()
             .with_repository_owner_guard()
-            .runs_on(runners::LINUX_SMALL)
+            .runs_on(runners::LINUX_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::setup_linux())
@@ -52,11 +51,8 @@ fn publish_job() -> NamedJob {
 }
 
 fn update_sha_in_zed(publish_job: &NamedJob) -> NamedJob {
-    let (generate_token, generated_token) = generate_token(
-        vars::ZED_ZIPPY_APP_ID,
-        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
-        Some(RepositoryTarget::current()),
-    );
+    let (generate_token, generated_token) =
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY).into();
 
     fn replace_sha() -> Step<Run> {
         named::bash(indoc! {r#"
@@ -92,7 +88,7 @@ fn create_pull_request_zed(generated_token: &StepOutput, short_sha: &StepOutput)
         short_sha
     );
 
-    named::uses("peter-evans", "create-pull-request", "v7").with(
+    named::uses("peter-evans", "create-pull-request", "98357b18bf14b5342f975ff684046ec3b2a07725").with(
         Input::default()
             .add("title", title.clone())
             .add(
@@ -121,11 +117,10 @@ fn create_pull_request_zed(generated_token: &StepOutput, short_sha: &StepOutput)
 
 fn update_sha_in_extensions(publish_job: &NamedJob) -> NamedJob {
     let extensions_repo = RepositoryTarget::new("zed-industries", &["extensions"]);
-    let (generate_token, generated_token) = generate_token(
-        vars::ZED_ZIPPY_APP_ID,
-        vars::ZED_ZIPPY_APP_PRIVATE_KEY,
-        Some(extensions_repo),
-    );
+    let (generate_token, generated_token) =
+        generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
+            .for_repository(extensions_repo)
+            .into();
 
     fn checkout_extensions_repo(token: &StepOutput) -> Step<Use> {
         named::uses(
@@ -165,7 +160,7 @@ fn create_pull_request_extensions(
 ) -> Step<Use> {
     let title = format!("Bump extension CLI version to `{}`", short_sha);
 
-    named::uses("peter-evans", "create-pull-request", "v7").with(
+    named::uses("peter-evans", "create-pull-request", "98357b18bf14b5342f975ff684046ec3b2a07725").with(
         Input::default()
             .add("title", title.clone())
             .add(

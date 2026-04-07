@@ -42,23 +42,22 @@ impl UserCaretPosition {
         snapshot: &MultiBufferSnapshot,
     ) -> Self {
         let selection_end = selection.head();
-        let (line, character) = if let Some((buffer_snapshot, point, _)) =
-            snapshot.point_to_buffer_point(selection_end)
-        {
-            let line_start = Point::new(point.row, 0);
+        let (line, character) =
+            if let Some((buffer_snapshot, point)) = snapshot.point_to_buffer_point(selection_end) {
+                let line_start = Point::new(point.row, 0);
 
-            let chars_to_last_position = buffer_snapshot
-                .text_summary_for_range::<text::TextSummary, _>(line_start..point)
-                .chars as u32;
-            (line_start.row, chars_to_last_position)
-        } else {
-            let line_start = Point::new(selection_end.row, 0);
+                let chars_to_last_position = buffer_snapshot
+                    .text_summary_for_range::<text::TextSummary, _>(line_start..point)
+                    .chars as u32;
+                (line_start.row, chars_to_last_position)
+            } else {
+                let line_start = Point::new(selection_end.row, 0);
 
-            let chars_to_last_position = snapshot
-                .text_summary_for_range::<MBTextSummary, _>(line_start..selection_end)
-                .chars as u32;
-            (selection_end.row, chars_to_last_position)
-        };
+                let chars_to_last_position = snapshot
+                    .text_summary_for_range::<MBTextSummary, _>(line_start..selection_end)
+                    .chars as u32;
+                (selection_end.row, chars_to_last_position)
+            };
 
         Self {
             line: NonZeroU32::new(line + 1).expect("added 1"),
@@ -232,7 +231,7 @@ impl Render for CursorPosition {
                                 if let Some(editor) = workspace
                                     .active_item(cx)
                                     .and_then(|item| item.act_as::<Editor>(cx))
-                                    && let Some((_, buffer, _)) = editor.read(cx).active_excerpt(cx)
+                                    && let Some(buffer) = editor.read(cx).active_buffer(cx)
                                 {
                                     workspace.toggle_modal(window, cx, |window, cx| {
                                         crate::GoToLine::new(editor, buffer, window, cx)

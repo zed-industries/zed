@@ -1,5 +1,5 @@
 use std::{
-    ops::ControlFlow,
+    ops::{ControlFlow, Range},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -15,7 +15,7 @@ use futures::{
 };
 use gpui::{AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    Buffer, LanguageRegistry, LocalFile,
+    Buffer, LanguageRegistry, LocalFile, OffsetUtf16,
     language_settings::{Formatter, LanguageSettings},
 };
 use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
@@ -412,7 +412,7 @@ impl PrettierStore {
             prettier_store
                 .update(cx, |prettier_store, cx| {
                     let name = if is_default {
-                        LanguageServerName("prettier (default)".to_string().into())
+                        LanguageServerName("prettier (default)".into())
                     } else {
                         let worktree_path = worktree_id
                             .and_then(|id| {
@@ -736,6 +736,7 @@ pub fn prettier_plugins_for_language(
 pub(super) async fn format_with_prettier(
     prettier_store: &WeakEntity<PrettierStore>,
     buffer: &Entity<Buffer>,
+    range_utf16: Option<Range<OffsetUtf16>>,
     cx: &mut AsyncApp,
 ) -> Option<Result<language::Diff>> {
     let prettier_instance = prettier_store
@@ -772,7 +773,14 @@ pub(super) async fn format_with_prettier(
             });
 
             let format_result = prettier
-                .format(buffer, buffer_path, ignore_dir, request_timeout, cx)
+                .format(
+                    buffer,
+                    buffer_path,
+                    ignore_dir,
+                    range_utf16,
+                    request_timeout,
+                    cx,
+                )
                 .await
                 .with_context(|| format!("{} failed to format buffer", prettier_description));
 

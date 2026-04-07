@@ -63,7 +63,7 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
         .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy().into();
 
     named::job(
         Job::default()

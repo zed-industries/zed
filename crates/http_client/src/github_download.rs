@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use async_compression::futures::bufread::GzipDecoder;
+use async_compression::futures::bufread::{BzDecoder, GzipDecoder};
 use futures::{AsyncRead, AsyncSeek, AsyncSeekExt, AsyncWrite, io::BufReader};
 use sha2::{Digest, Sha256};
 
@@ -119,7 +119,7 @@ async fn extract_to_staging(
 
 fn staging_path(parent: &Path, asset_kind: AssetKind) -> Result<PathBuf> {
     match asset_kind {
-        AssetKind::TarGz | AssetKind::Zip => {
+        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => {
             let dir = tempfile::Builder::new()
                 .prefix(".tmp-github-download-")
                 .tempdir_in(parent)
@@ -141,7 +141,7 @@ fn staging_path(parent: &Path, asset_kind: AssetKind) -> Result<PathBuf> {
 
 async fn cleanup_staging_path(staging_path: &Path, asset_kind: AssetKind) {
     match asset_kind {
-        AssetKind::TarGz | AssetKind::Zip => {
+        AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Zip => {
             if let Err(err) = async_fs::remove_dir_all(staging_path).await {
                 log::warn!("failed to remove staging directory {staging_path:?}: {err:?}");
             }
@@ -170,6 +170,7 @@ async fn stream_response_archive(
 ) -> Result<()> {
     match asset_kind {
         AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
+        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, response).await?,
         AssetKind::Gz => extract_gz(destination_path, url, response).await?,
         AssetKind::Zip => {
             util::archive::extract_zip(destination_path, response).await?;
@@ -186,6 +187,7 @@ async fn stream_file_archive(
 ) -> Result<()> {
     match asset_kind {
         AssetKind::TarGz => extract_tar_gz(destination_path, url, file_archive).await?,
+        AssetKind::TarBz2 => extract_tar_bz2(destination_path, url, file_archive).await?,
         AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
         #[cfg(not(windows))]
         AssetKind::Zip => {
@@ -205,7 +207,31 @@ async fn extract_tar_gz(
     from: impl AsyncRead + Unpin,
 ) -> Result<(), anyhow::Error> {
     let decompressed_bytes = GzipDecoder::new(BufReader::new(from));
-    let archive = async_tar::Archive::new(decompressed_bytes);
+    unpack_tar_archive(destination_path, url, decompressed_bytes).await?;
+    Ok(())
+}
+
+async fn extract_tar_bz2(
+    destination_path: &Path,
+    url: &str,
+    from: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    let decompressed_bytes = BzDecoder::new(BufReader::new(from));
+    unpack_tar_archive(destination_path, url, decompressed_bytes).await?;
+    Ok(())
+}
+
+async fn unpack_tar_archive(
+    destination_path: &Path,
+    url: &str,
+    archive_bytes: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    // We don't need to set the modified time. It's irrelevant to downloaded
+    // archive verification, and some filesystems return errors when asked to
+    // apply it after extraction.
+    let archive = async_tar::ArchiveBuilder::new(archive_bytes)
+        .set_preserve_mtime(false)
+        .build();
     archive
         .unpack(&destination_path)
         .await

@@ -2117,7 +2117,12 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         );
         let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
 
-        let buffer_ids = multi_buffer.read(cx).excerpt_buffer_ids();
+        let buffer_ids = multi_buffer
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
         // fold all but the second buffer, so that we test navigating between two
         // adjacent folded buffers, as well as folded buffers at the start and
         // end the multibuffer
@@ -2262,7 +2267,13 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
         "
     });
     cx.update_editor(|editor, _, cx| {
-        let buffer_ids = editor.buffer().read(cx).excerpt_buffer_ids();
+        let buffer_ids = editor
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>();
         editor.fold_buffer(buffer_ids[1], cx);
     });
 

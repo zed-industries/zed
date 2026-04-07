@@ -19,6 +19,7 @@ test-support = []
 anyhow.workspace = true
 gpui.workspace = true
 indoc.workspace = true
+inventory.workspace = true
 log.workspace = true
 paths.workspace = true
 release_channel.workspace = true
@@ -26,6 +27,7 @@ smol.workspace = true
 sqlez.workspace = true
 sqlez_macros.workspace = true
 util.workspace = true
+uuid.workspace = true
 zed_env_vars.workspace = true
 
 [dev-dependencies]

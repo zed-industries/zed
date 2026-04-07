@@ -304,3 +304,27 @@ pub(crate) mod m_2026_02_25 {
 
     pub(crate) use settings::migrate_builtin_agent_servers_to_registry;
 }
+
+pub(crate) mod m_2026_03_16 {
+    mod settings;
+
+    pub(crate) use settings::SETTINGS_PATTERNS;
+}
+
+pub(crate) mod m_2026_03_23 {
+    mod keymap;
+
+    pub(crate) use keymap::KEYMAP_PATTERNS;
+}
+
+pub(crate) mod m_2026_03_30 {
+    mod settings;
+
+    pub(crate) use settings::make_play_sound_when_agent_done_an_enum;
+}
+
+pub(crate) mod m_2026_04_01 {
+    mod settings;
+
+    pub(crate) use settings::restructure_profiles_with_settings_key;
+}

@@ -122,6 +122,9 @@ pub struct WorkspaceSettingsContent {
     /// What draws window decorations/titlebar, the client application (Zed) or display server
     /// Default: client
     pub window_decorations: Option<WindowDecorations>,
+    /// Whether the focused panel follows the mouse location
+    /// Default: false
+    pub focus_follows_mouse: Option<FocusFollowsMouse>,
 }
 
 #[with_fallible_options]
@@ -434,6 +437,10 @@ pub struct StatusBarSettingsContent {
     /// Default: true
     #[serde(rename = "experimental.show")]
     pub show: Option<bool>,
+    /// Whether to show the name of the active file in the status bar.
+    ///
+    /// Default: false
+    pub show_active_file: Option<bool>,
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true
@@ -741,8 +748,12 @@ pub struct ProjectPanelSettingsContent {
     pub sort_mode: Option<ProjectPanelSortMode>,
     /// Whether to show error and warning count badges next to file names in the project panel.
     ///
-    /// Default: true
+    /// Default: false
     pub diagnostic_badges: Option<bool>,
+    /// Whether to show a git status indicator next to file names in the project panel.
+    ///
+    /// Default: false
+    pub git_status_indicator: Option<bool>,
 }
 
 #[derive(
@@ -919,4 +930,11 @@ impl DocumentSymbols {
     pub fn lsp_enabled(&self) -> bool {
         self == &Self::On
     }
+}
+
+#[with_fallible_options]
+#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct FocusFollowsMouse {
+    pub enabled: Option<bool>,
+    pub debounce_ms: Option<u64>,
 }

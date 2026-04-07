@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use crate::{
     tests::{active_debug_session_panel, start_debug_session},
     *,

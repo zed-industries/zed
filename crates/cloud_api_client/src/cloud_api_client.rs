@@ -1,3 +1,4 @@
+mod llm_token;
 mod websocket;
 
 use std::sync::Arc;
@@ -17,6 +18,8 @@ use thiserror::Error;
 use yawc::WebSocket;
 
 use crate::websocket::Connection;
+
+pub use llm_token::LlmApiToken;
 
 struct Credentials {
     user_id: u32,
