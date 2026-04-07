@@ -42,6 +42,7 @@ pub(crate) enum AnchorSeekTarget<'a> {
     // we have excerpts for the buffer at the expected path key
     Excerpt {
         path_key: &'a PathKey,
+        path_key_index: PathKeyIndex,
         anchor: text::Anchor,
         snapshot: &'a BufferSnapshot,
     },
@@ -54,6 +55,7 @@ impl std::fmt::Debug for AnchorSeekTarget<'_> {
         match self {
             Self::Excerpt {
                 path_key,
+                path_key_index: _,
                 anchor,
                 snapshot: _,
             } => f
@@ -268,6 +270,7 @@ impl ExcerptAnchor {
 
         Some(AnchorSeekTarget::Excerpt {
             path_key,
+            path_key_index: self.path,
             anchor: self.text_anchor(),
             snapshot: &state.buffer_snapshot,
         })

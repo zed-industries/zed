@@ -870,6 +870,7 @@ impl ExcerptRange<text::Anchor> {
 #[derive(Clone, Debug)]
 pub struct ExcerptSummary {
     path_key: PathKey,
+    path_key_index: Option<PathKeyIndex>,
     max_anchor: Option<text::Anchor>,
     widest_line_number: u32,
     text: MBTextSummary,
@@ -880,6 +881,7 @@ impl ExcerptSummary {
     pub fn min() -> Self {
         ExcerptSummary {
             path_key: PathKey::min(),
+            path_key_index: None,
             max_anchor: None,
             widest_line_number: 0,
             text: MBTextSummary::default(),
@@ -7327,6 +7329,7 @@ impl sum_tree::Item for Excerpt {
         }
         ExcerptSummary {
             path_key: self.path_key.clone(),
+            path_key_index: Some(self.path_key_index),
             max_anchor: Some(self.range.context.end),
             widest_line_number: self.max_buffer_row,
             text: text.into(),
@@ -7425,6 +7428,7 @@ impl sum_tree::ContextLessSummary for ExcerptSummary {
         );
 
         self.path_key = summary.path_key.clone();
+        self.path_key_index = summary.path_key_index;
         self.max_anchor = summary.max_anchor;
         self.text += summary.text;
         self.widest_line_number = cmp::max(self.widest_line_number, summary.widest_line_number);
@@ -7448,12 +7452,12 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
             }
             AnchorSeekTarget::Excerpt {
                 path_key,
+                path_key_index,
                 anchor,
                 snapshot,
             } => {
-                let path_comparison = Ord::cmp(*path_key, &cursor_location.path_key);
-                if path_comparison.is_ne() {
-                    path_comparison
+                if Some(*path_key_index) != cursor_location.path_key_index {
+                    Ord::cmp(*path_key, &cursor_location.path_key)
                 } else if let Some(max_anchor) = cursor_location.max_anchor {
                     debug_assert_eq!(max_anchor.buffer_id, snapshot.remote_id());
                     anchor.cmp(&max_anchor, snapshot)
