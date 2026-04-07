@@ -276,6 +276,7 @@ pub struct MultiWorkspace {
     pending_removal_tasks: Vec<Task<()>>,
     _serialize_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    previous_focus_handle: Option<FocusHandle>,
 }
 
 impl EventEmitter<MultiWorkspaceEvent> for MultiWorkspace {}
@@ -333,6 +334,7 @@ impl MultiWorkspace {
                 quit_subscription,
                 settings_subscription,
             ],
+            previous_focus_handle: None,
         }
     }
 
@@ -387,6 +389,7 @@ impl MultiWorkspace {
         if self.sidebar_open() {
             self.close_sidebar(window, cx);
         } else {
+            self.previous_focus_handle = window.focused(cx);
             self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
                 sidebar.prepare_for_focus(window, cx);
@@ -417,14 +420,16 @@ impl MultiWorkspace {
                 .is_some_and(|s| s.focus_handle(cx).contains_focused(window, cx));
 
             if sidebar_is_focused {
-                let pane = self.workspace().read(cx).active_pane().clone();
-                let pane_focus = pane.read(cx).focus_handle(cx);
-                window.focus(&pane_focus, cx);
-            } else if let Some(sidebar) = &self.sidebar {
-                sidebar.prepare_for_focus(window, cx);
-                sidebar.focus(window, cx);
+                self.restore_previous_focus(false, window, cx);
+            } else {
+                self.previous_focus_handle = window.focused(cx);
+                if let Some(sidebar) = &self.sidebar {
+                    sidebar.prepare_for_focus(window, cx);
+                    sidebar.focus(window, cx);
+                }
             }
         } else {
+            self.previous_focus_handle = window.focused(cx);
             self.open_sidebar(cx);
             if let Some(sidebar) = &self.sidebar {
                 sidebar.prepare_for_focus(window, cx);
@@ -457,11 +462,24 @@ impl MultiWorkspace {
                 workspace.set_sidebar_focus_handle(None);
             });
         }
-        let pane = self.workspace().read(cx).active_pane().clone();
-        let pane_focus = pane.read(cx).focus_handle(cx);
-        window.focus(&pane_focus, cx);
+        self.restore_previous_focus(true, window, cx);
         self.serialize(cx);
         cx.notify();
+    }
+
+    fn restore_previous_focus(&mut self, clear: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let focus_handle = if clear {
+            self.previous_focus_handle.take()
+        } else {
+            self.previous_focus_handle.clone()
+        };
+
+        if let Some(previous_focus) = focus_handle {
+            previous_focus.focus(window, cx);
+        } else {
+            let pane = self.workspace().read(cx).active_pane().clone();
+            window.focus(&pane.read(cx).focus_handle(cx), cx);
+        }
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {

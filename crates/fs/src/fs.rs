@@ -2168,6 +2168,13 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_graph_error(&self, dot_git: &Path, error: Option<String>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.simulated_graph_error = error;
+        })
+        .unwrap();
+    }
+
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
     pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {

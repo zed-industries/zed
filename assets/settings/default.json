@@ -940,16 +940,6 @@
     // For example: typing `:wave:` gets replaced with `👋`.
     "auto_replace_emoji_shortcode": true,
   },
-  "notification_panel": {
-    // Whether to show the notification panel button in the status bar.
-    "button": true,
-    // Where to dock the notification panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the notification panel.
-    "default_width": 380,
-    // Whether to show a badge on the notification panel icon with the count of unread notifications.
-    "show_count_badge": false,
-  },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
@@ -969,6 +959,9 @@
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
+    // Maximum content width when the agent panel is wider than this value.
+    // Content will be centered within the panel.
+    "max_content_width": 850,
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.

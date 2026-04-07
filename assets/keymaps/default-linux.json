@@ -1189,6 +1189,7 @@
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"],
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
+      "ctrl-r": ["terminal::SendKeystroke", "ctrl-r"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
       "find": "buffer_search::Deploy",

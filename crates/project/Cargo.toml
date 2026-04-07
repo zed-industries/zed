@@ -52,6 +52,7 @@ fancy-regex.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
+fuzzy_nucleo.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 globset.workspace = true

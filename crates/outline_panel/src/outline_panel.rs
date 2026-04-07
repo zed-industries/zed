@@ -23,8 +23,8 @@ use gpui::{
     uniform_list,
 };
 use itertools::Itertools;
-use language::language_settings::LanguageSettings;
 use language::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
+use language::{LanguageAwareStyling, language_settings::LanguageSettings};
 
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
@@ -217,10 +217,13 @@ impl SearchState {
                     let mut offset = context_offset_range.start;
                     let mut context_text = String::new();
                     let mut highlight_ranges = Vec::new();
-                    for mut chunk in highlight_arguments
-                        .multi_buffer_snapshot
-                        .chunks(context_offset_range.start..context_offset_range.end, true)
-                    {
+                    for mut chunk in highlight_arguments.multi_buffer_snapshot.chunks(
+                        context_offset_range.start..context_offset_range.end,
+                        LanguageAwareStyling {
+                            tree_sitter: true,
+                            diagnostics: true,
+                        },
+                    ) {
                         if !non_whitespace_symbol_occurred {
                             for c in chunk.text.chars() {
                                 if c.is_whitespace() {

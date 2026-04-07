@@ -1236,6 +1236,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                     },
                     match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
                     paths: Vec::new(),
+                    active: false,
                 };
 
                 Some(

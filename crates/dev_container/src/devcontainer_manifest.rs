@@ -1229,35 +1229,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 }
             }
         }
-        if let Some(port) = &self.dev_container().app_port {
-            if let Some(network_service_name) = network_mode_service {
-                if let Some(service) = service_declarations.get_mut(network_service_name) {
-                    service.ports.push(DockerComposeServicePort {
-                        target: port.clone(),
-                        published: port.clone(),
-                        ..Default::default()
-                    });
-                } else {
-                    service_declarations.insert(
-                        network_service_name.to_string(),
-                        DockerComposeService {
-                            ports: vec![DockerComposeServicePort {
-                                target: port.clone(),
-                                published: port.clone(),
-                                ..Default::default()
-                            }],
-                            ..Default::default()
-                        },
-                    );
-                }
-            } else {
-                main_service.ports.push(DockerComposeServicePort {
-                    target: port.clone(),
-                    published: port.clone(),
-                    ..Default::default()
-                });
-            }
-        }
 
         service_declarations.insert(main_service_name.to_string(), main_service);
         let new_docker_compose_config = DockerComposeConfig {
@@ -1811,9 +1782,10 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                 }
             }
         }
-        if let Some(app_port) = &self.dev_container().app_port {
+        for app_port in &self.dev_container().app_port {
             command.arg("-p");
-            command.arg(format!("{app_port}:{app_port}"));
+            // Should just implement display for an AppPort struct which takes care of this; it might be a custom map like (literally) "8081:8080"
+            command.arg(app_port);
         }
 
         command.arg("--entrypoint");
@@ -2997,7 +2969,10 @@ mod test {
                 8082,
                 8083,
               ],
-              "appPort": "8084",
+              "appPort": [
+                8084,
+                "8085:8086",
+              ],
 
               "containerEnv": {
                 "VARIABLE_VALUE": "value",
@@ -3301,6 +3276,8 @@ chmod +x ./install.sh
                 "8083:8083".to_string(),
                 "-p".to_string(),
                 "8084:8084".to_string(),
+                "-p".to_string(),
+                "8085:8086".to_string(),
                 "--entrypoint".to_string(),
                 "/bin/sh".to_string(),
                 "sha256:610e6cfca95280188b021774f8cf69dd6f49bdb6eebc34c5ee2010f4d51cc105".to_string(),
@@ -3357,7 +3334,6 @@ chmod +x ./install.sh
                 "db:5432",
                 "db:1234",
               ],
-              "appPort": "8084",
 
               // Use 'postCreateCommand' to run commands after the container is created.
               // "postCreateCommand": "rustc --version",
@@ -3629,11 +3605,6 @@ ENV DOCKER_BUILDKIT=1
                             DockerComposeServicePort {
                                 target: "1234".to_string(),
                                 published: "1234".to_string(),
-                                ..Default::default()
-                            },
-                            DockerComposeServicePort {
-                                target: "8084".to_string(),
-                                published: "8084".to_string(),
                                 ..Default::default()
                             },
                         ],

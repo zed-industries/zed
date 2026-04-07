@@ -5,7 +5,7 @@ use super::{
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
-use language::Point;
+use language::{LanguageAwareStyling, Point};
 use multi_buffer::{MultiBufferSnapshot, RowInfo};
 use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, sync::LazyLock, time::Duration};
@@ -513,7 +513,10 @@ impl WrapSnapshot {
                 let mut remaining = None;
                 let mut chunks = new_tab_snapshot.chunks(
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
-                    false,
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
                     Highlights::default(),
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
@@ -656,7 +659,7 @@ impl WrapSnapshot {
     pub(crate) fn chunks<'a>(
         &'a self,
         rows: Range<WrapRow>,
-        language_aware: bool,
+        language_aware: LanguageAwareStyling,
         highlights: Highlights<'a>,
     ) -> WrapChunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
@@ -960,7 +963,10 @@ impl WrapSnapshot {
     pub fn text_chunks(&self, wrap_row: WrapRow) -> impl Iterator<Item = &str> {
         self.chunks(
             wrap_row..self.max_point().row() + WrapRow(1),
-            false,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
             Highlights::default(),
         )
         .map(|h| h.text)
@@ -1719,7 +1725,10 @@ mod tests {
                 let actual_text = self
                     .chunks(
                         WrapRow(start_row)..WrapRow(end_row),
-                        true,
+                        LanguageAwareStyling {
+                            tree_sitter: true,
+                            diagnostics: true,
+                        },
                         Highlights::default(),
                     )
                     .map(|c| c.text)

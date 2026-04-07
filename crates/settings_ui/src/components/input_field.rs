@@ -109,14 +109,35 @@ impl RenderOnce for SettingsInputField {
             ..Default::default()
         };
 
+        let first_render_initial_text = window.use_state(cx, |_, _| self.initial_text.clone());
+
         let editor = if let Some(id) = self.id {
             window.use_keyed_state(id, cx, {
                 let initial_text = self.initial_text.clone();
                 let placeholder = self.placeholder;
+                let mut confirm = self.confirm.clone();
+
                 move |window, cx| {
                     let mut editor = Editor::single_line(window, cx);
+                    let editor_focus_handle = editor.focus_handle(cx);
                     if let Some(text) = initial_text {
                         editor.set_text(text, window, cx);
+                    }
+
+                    if let Some(confirm) = confirm.take()
+                        && !self.display_confirm_button
+                        && !self.display_clear_button
+                        && !self.clear_on_confirm
+                    {
+                        cx.on_focus_out(
+                            &editor_focus_handle,
+                            window,
+                            move |editor, _, window, cx| {
+                                let text = Some(editor.text(cx));
+                                confirm(text, window, cx);
+                            },
+                        )
+                        .detach();
                     }
 
                     if let Some(placeholder) = placeholder {
@@ -130,10 +151,29 @@ impl RenderOnce for SettingsInputField {
             window.use_state(cx, {
                 let initial_text = self.initial_text.clone();
                 let placeholder = self.placeholder;
+                let mut confirm = self.confirm.clone();
+
                 move |window, cx| {
                     let mut editor = Editor::single_line(window, cx);
+                    let editor_focus_handle = editor.focus_handle(cx);
                     if let Some(text) = initial_text {
                         editor.set_text(text, window, cx);
+                    }
+
+                    if let Some(confirm) = confirm.take()
+                        && !self.display_confirm_button
+                        && !self.display_clear_button
+                        && !self.clear_on_confirm
+                    {
+                        cx.on_focus_out(
+                            &editor_focus_handle,
+                            window,
+                            move |editor, _, window, cx| {
+                                let text = Some(editor.text(cx));
+                                confirm(text, window, cx);
+                            },
+                        )
+                        .detach();
                     }
 
                     if let Some(placeholder) = placeholder {
@@ -149,11 +189,20 @@ impl RenderOnce for SettingsInputField {
         // re-renders but use_keyed_state returns the cached editor with stale text.
         // Reconcile with the expected initial_text when the editor is not focused,
         // so we don't clobber what the user is actively typing.
-        if let Some(initial_text) = &self.initial_text {
-            let current_text = editor.read(cx).text(cx);
-            if current_text != *initial_text && !editor.read(cx).is_focused(window) {
-                editor.update(cx, |editor, cx| {
-                    editor.set_text(initial_text.clone(), window, cx);
+        if let Some(initial_text) = &self.initial_text
+            && let Some(first_initial) = first_render_initial_text.read(cx)
+        {
+            if initial_text != first_initial && !editor.read(cx).is_focused(window) {
+                *first_render_initial_text.as_mut(cx) = self.initial_text.clone();
+                let weak_editor = editor.downgrade();
+                let initial_text = initial_text.clone();
+
+                window.defer(cx, move |window, cx| {
+                    weak_editor
+                        .update(cx, |editor, cx| {
+                            editor.set_text(initial_text, window, cx);
+                        })
+                        .ok();
                 });
             }
         }

@@ -1,6 +1,6 @@
 use crate::LanguageName;
 use collections::{HashMap, HashSet, IndexSet};
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 use lsp::LanguageServerName;
 use regex::Regex;
 use schemars::{JsonSchema, SchemaGenerator, json_schema};

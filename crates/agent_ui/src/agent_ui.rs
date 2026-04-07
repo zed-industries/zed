@@ -28,13 +28,16 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+mod thread_branch_picker;
 mod thread_history;
 mod thread_history_view;
 mod thread_import;
 pub mod thread_metadata_store;
+mod thread_worktree_picker;
 pub mod threads_archive_view;
 mod ui;
 
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -314,16 +317,42 @@ impl Agent {
     }
 }
 
+/// Describes which branch to use when creating a new git worktree.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum NewWorktreeBranchTarget {
+    /// Create a new randomly named branch from the current HEAD.
+    /// Will match worktree name if the newly created worktree was also randomly named.
+    #[default]
+    CurrentBranch,
+    /// Check out an existing branch, or create a new branch from it if it's
+    /// already occupied by another worktree.
+    ExistingBranch { name: String },
+    /// Create a new branch with an explicit name, optionally from a specific ref.
+    CreateBranch {
+        name: String,
+        #[serde(default)]
+        from_ref: Option<String>,
+    },
+}
+
 /// Sets where new threads will run.
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action,
-)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum StartThreadIn {
     #[default]
     LocalProject,
-    NewWorktree,
+    NewWorktree {
+        /// When this is None, Zed will randomly generate a worktree name
+        /// otherwise, the provided name will be used.
+        #[serde(default)]
+        worktree_name: Option<String>,
+        #[serde(default)]
+        branch_target: NewWorktreeBranchTarget,
+    },
+    /// A linked worktree that already exists on disk.
+    LinkedWorktree { path: PathBuf, display_name: String },
 }
 
 /// Content to initialize new external agent with.
@@ -495,7 +524,6 @@ pub fn init(
                     defaults.collaboration_panel.get_or_insert_default().dock =
                         Some(DockPosition::Right);
                     defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Right);
-                    defaults.notification_panel.get_or_insert_default().button = Some(false);
                 } else {
                     defaults.agent.get_or_insert_default().dock = Some(DockPosition::Right);
                     defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Left);
@@ -503,7 +531,6 @@ pub fn init(
                     defaults.collaboration_panel.get_or_insert_default().dock =
                         Some(DockPosition::Left);
                     defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Left);
-                    defaults.notification_panel.get_or_insert_default().button = Some(true);
                 }
             });
         });
@@ -713,6 +740,7 @@ mod tests {
             flexible: true,
             default_width: px(300.),
             default_height: px(600.),
+            max_content_width: px(850.),
             default_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
