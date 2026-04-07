@@ -2164,11 +2164,11 @@ mod tests {
             })
             .unwrap();
 
-        cx.dispatch_action(*multi_workspace, menu::Confirm);
+        cx.dispatch_action(*multi_workspace, menu::SecondaryConfirm);
         cx.run_until_parked();
 
-        // In multi-workspace mode, the dirty workspace is kept and a new one is
-        // opened alongside it — no save prompt needed.
+        // SecondaryConfirm opens the project in the current multi-workspace.
+        // The dirty workspace is kept alongside the new one — no save prompt needed.
         assert!(
             !cx.has_pending_prompt(),
             "Should not prompt in multi-workspace mode — dirty workspace is kept"
