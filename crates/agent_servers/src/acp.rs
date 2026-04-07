@@ -213,6 +213,56 @@ impl AgentContext {
     }
 }
 
+/// Returns true if the given environment variable key holds a path list
+/// (colon-separated on Unix, semicolon-separated on Windows) that should
+/// be concatenated rather than overwritten when merging environments.
+fn is_path_list_var(key: &str) -> bool {
+    matches!(
+        key,
+        "PATH"
+            | "LD_LIBRARY_PATH"
+            | "DYLD_LIBRARY_PATH"
+            | "DYLD_FALLBACK_LIBRARY_PATH"
+            | "LIBRARY_PATH"
+            | "PKG_CONFIG_PATH"
+            | "CPATH"
+            | "C_INCLUDE_PATH"
+            | "CPLUS_INCLUDE_PATH"
+            | "MANPATH"
+            | "INFOPATH"
+            | "XDG_DATA_DIRS"
+            | "XDG_CONFIG_DIRS"
+            | "PYTHONPATH"
+            | "NODE_PATH"
+            | "GEM_PATH"
+            | "GOPATH"
+            | "CLASSPATH"
+            | "CMAKE_PREFIX_PATH"
+    )
+}
+
+/// Merges two environments. For path-list variables (PATH, LD_LIBRARY_PATH, etc.),
+/// values are concatenated with the project environment taking precedence (prepended).
+/// For all other variables, the project environment wins over the command environment.
+fn merge_environments(
+    project_env: HashMap<String, String>,
+    command_env: HashMap<String, String>,
+) -> HashMap<String, String> {
+    let path_separator = if cfg!(windows) { ";" } else { ":" };
+
+    let mut merged = command_env;
+    for (key, project_value) in project_env {
+        if is_path_list_var(&key) {
+            if let Some(command_value) = merged.remove(&key) {
+                merged.insert(key, format!("{project_value}{path_separator}{command_value}"));
+                continue;
+            }
+        }
+        merged.insert(key, project_value);
+    }
+    merged
+}
+
 /// Resolves the project environment (e.g. from direnv), working directory,
 /// and command details for spawning an agent server subprocess.
 ///
@@ -238,8 +288,9 @@ pub async fn resolve_agent_context(
         };
         (env_task, cwd)
     });
-    let mut env = env_task.await.unwrap_or_default();
-    env.extend(command.env.into_iter().flatten());
+    let project_env = env_task.await.unwrap_or_default();
+    let command_env: HashMap<String, String> = command.env.into_iter().flatten().collect();
+    let env = merge_environments(project_env, command_env);
     AgentContext {
         path: command.path,
         args: command.args,
@@ -1119,12 +1170,13 @@ fn map_acp_error(err: acp::Error) -> anyhow::Error {
 mod tests {
     use super::*;
 
-    /// Verifies that `resolve_agent_context` incorporates the project environment
-    /// (e.g. from direnv) into the agent's environment, alongside agent-specific env.
+    /// Verifies that `resolve_agent_context` correctly merges the project environment
+    /// (e.g. from direnv) with the agent's command environment:
+    /// - Both project-only and agent-only variables are present
+    /// - PATH-like variables are concatenated (project env prepended)
+    /// - Non-path variables use the project env value when both define the same key
     #[gpui::test]
-    async fn test_resolve_agent_context_includes_project_environment(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    async fn test_resolve_agent_context_merges_environments(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -1137,7 +1189,8 @@ mod tests {
 
         let mut project_env = collections::HashMap::default();
         project_env.insert("DIRENV_VAR".to_string(), "from_direnv".to_string());
-        project_env.insert("CUSTOM_PATH".to_string(), "/direnv/bin".to_string());
+        project_env.insert("PATH".to_string(), "/direnv/bin:/usr/bin".to_string());
+        project_env.insert("SHARED_VAR".to_string(), "from_project".to_string());
 
         project.update(cx, |project, cx| {
             project.environment().update(cx, |env, _cx| {
@@ -1149,16 +1202,19 @@ mod tests {
             path: PathBuf::from("agent-binary"),
             args: vec![],
             env: Some(
-                [("AGENT_SPECIFIC".to_string(), "from_agent".to_string())]
-                    .into_iter()
-                    .collect(),
+                [
+                    ("AGENT_SPECIFIC".to_string(), "from_agent".to_string()),
+                    ("PATH".to_string(), "/agent/bin".to_string()),
+                    ("SHARED_VAR".to_string(), "from_agent".to_string()),
+                ]
+                .into_iter()
+                .collect(),
             ),
         };
 
         let context = cx
             .update(|cx| {
                 let project = project.clone();
-                let command = command.clone();
                 cx.spawn(async move |mut cx| {
                     resolve_agent_context(&project, command, &mut cx).await
                 })
@@ -1168,17 +1224,22 @@ mod tests {
         assert_eq!(
             context.env.get("DIRENV_VAR").map(|s| s.as_str()),
             Some("from_direnv"),
-            "Project environment variables (e.g. from direnv) should be included"
-        );
-        assert_eq!(
-            context.env.get("CUSTOM_PATH").map(|s| s.as_str()),
-            Some("/direnv/bin"),
-            "Project PATH-like variables should be included"
+            "Project-only variables should be present"
         );
         assert_eq!(
             context.env.get("AGENT_SPECIFIC").map(|s| s.as_str()),
             Some("from_agent"),
-            "Agent-specific environment variables should be included"
+            "Agent-only variables should be present"
+        );
+        assert_eq!(
+            context.env.get("PATH").map(|s| s.as_str()),
+            Some("/direnv/bin:/usr/bin:/agent/bin"),
+            "PATH should be concatenated with project env prepended"
+        );
+        assert_eq!(
+            context.env.get("SHARED_VAR").map(|s| s.as_str()),
+            Some("from_project"),
+            "Non-path variables should use project env value when both define the same key"
         );
     }
 
