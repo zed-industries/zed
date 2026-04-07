@@ -1363,16 +1363,10 @@ pub(crate) async fn restore_or_create_workspace(
         let mut tasks = Vec::new();
 
         for multi_workspace in multi_workspaces {
-            match restore_multiworkspace(multi_workspace, app_state.clone(), cx).await {
-                Ok(result) => {
-                    for error in result.errors {
-                        log::error!("Failed to restore workspace in group: {error:#}");
-                        results.push(Err(error));
-                    }
-                }
-                Err(e) => {
-                    results.push(Err(e));
-                }
+            if let Err(error) = restore_multiworkspace(multi_workspace, app_state.clone(), cx).await
+            {
+                log::error!("Failed to restore workspace: {error:#}");
+                results.push(Err(error));
             }
         }
 
