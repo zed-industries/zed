@@ -585,7 +585,6 @@ impl GitRepository for FakeGitRepository {
                 CreateWorktreeTarget::ExistingBranch { branch_name } => {
                     let ref_name = format!("refs/heads/{branch_name}");
                     let sha = fs.with_git_state(&dot_git_path, false, {
-                        let ref_name = ref_name.clone();
                         move |state| {
                             Ok::<_, anyhow::Error>(
                                 state

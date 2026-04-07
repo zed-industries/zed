@@ -12,7 +12,8 @@ use gpui::{
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::RepositoryId};
 use ui::{
-    HighlightedLabel, Icon, IconName, Label, LabelCommon, ListItem, ListItemSpacing, prelude::*,
+    HighlightedLabel, Icon, IconName, Label, LabelCommon, ListItem, ListItemSpacing, Tooltip,
+    prelude::*,
 };
 
 use crate::StartThreadIn;
@@ -116,7 +117,7 @@ enum ThreadWorktreeEntry {
     },
     CreateNamed {
         name: String,
-        disabled: bool,
+        disabled_reason: Option<String>,
     },
 }
 
@@ -128,6 +129,16 @@ pub(crate) struct ThreadWorktreePickerDelegate {
     preserved_branch_name: Option<String>,
     preserved_start_point: Option<String>,
     project: Entity<Project>,
+}
+
+impl ThreadWorktreePickerDelegate {
+    fn new_worktree_action(&self, worktree_name: Option<String>) -> StartThreadIn {
+        StartThreadIn::NewWorktree {
+            worktree_name,
+            branch_name: self.preserved_branch_name.clone(),
+            start_point: self.preserved_start_point.clone(),
+        }
+    }
 }
 
 impl PickerDelegate for ThreadWorktreePickerDelegate {
@@ -173,12 +184,11 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let has_multiple_repositories = self.all_worktrees.len() > 1;
-        let all_worktrees = self.all_worktrees.clone();
 
         let linked_worktrees: Vec<_> = if has_multiple_repositories {
             Vec::new()
         } else {
-            all_worktrees
+            self.all_worktrees
                 .iter()
                 .flat_map(|(_, worktrees)| worktrees.iter())
                 .filter(|worktree| {
@@ -192,11 +202,18 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         };
 
         let normalized_query = query.replace(' ', "-");
-        let has_named_worktree = all_worktrees.iter().any(|(_, worktrees)| {
+        let has_named_worktree = self.all_worktrees.iter().any(|(_, worktrees)| {
             worktrees
                 .iter()
                 .any(|worktree| worktree.display_name() == normalized_query)
         });
+        let create_named_disabled_reason = if has_multiple_repositories {
+            Some("Cannot create a named worktree in a project with multiple repositories".into())
+        } else if has_named_worktree {
+            Some("A worktree with this name already exists".into())
+        } else {
+            None
+        };
 
         let mut matches = vec![
             ThreadWorktreeEntry::CurrentWorktree,
@@ -210,6 +227,11 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                     positions: Vec::new(),
                 });
             }
+        } else if linked_worktrees.is_empty() {
+            matches.push(ThreadWorktreeEntry::CreateNamed {
+                name: normalized_query,
+                disabled_reason: create_named_disabled_reason,
+            });
         } else {
             let candidates: Vec<_> = linked_worktrees
                 .iter()
@@ -251,14 +273,14 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                             });
                         }
 
-                        let has_exact_match = fuzzy_matches.first().is_some_and(|candidate| {
-                            linked_worktrees_clone[candidate.candidate_id].display_name() == query
-                        });
+                        let has_exact_match = linked_worktrees_clone
+                            .iter()
+                            .any(|worktree| worktree.display_name() == query);
 
-                        if !query.is_empty() && !has_exact_match {
+                        if !has_exact_match {
                             new_matches.push(ThreadWorktreeEntry::CreateNamed {
                                 name: normalized_query.clone(),
-                                disabled: has_named_worktree,
+                                disabled_reason: create_named_disabled_reason.clone(),
                             });
                         }
 
@@ -294,14 +316,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                 window.dispatch_action(Box::new(StartThreadIn::LocalProject), cx);
             }
             ThreadWorktreeEntry::NewWorktree => {
-                window.dispatch_action(
-                    Box::new(StartThreadIn::NewWorktree {
-                        worktree_name: None,
-                        branch_name: self.preserved_branch_name.clone(),
-                        start_point: self.preserved_start_point.clone(),
-                    }),
-                    cx,
-                );
+                window.dispatch_action(Box::new(self.new_worktree_action(None)), cx);
             }
             ThreadWorktreeEntry::LinkedWorktree { worktree, .. } => {
                 window.dispatch_action(
@@ -314,18 +329,14 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
             }
             ThreadWorktreeEntry::CreateNamed {
                 name,
-                disabled: false,
+                disabled_reason: None,
             } => {
-                window.dispatch_action(
-                    Box::new(StartThreadIn::NewWorktree {
-                        worktree_name: Some(name.clone()),
-                        branch_name: self.preserved_branch_name.clone(),
-                        start_point: self.preserved_start_point.clone(),
-                    }),
-                    cx,
-                );
+                window.dispatch_action(Box::new(self.new_worktree_action(Some(name.clone()))), cx);
             }
-            ThreadWorktreeEntry::CreateNamed { disabled: true, .. } => {
+            ThreadWorktreeEntry::CreateNamed {
+                disabled_reason: Some(_),
+                ..
+            } => {
                 return;
             }
         }
@@ -398,25 +409,35 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                         .child(HighlightedLabel::new(first_line.to_owned(), positions).truncate()),
                 )
             }
-            ThreadWorktreeEntry::CreateNamed { name, disabled } => Some(
-                ListItem::new("create-named-worktree")
+            ThreadWorktreeEntry::CreateNamed {
+                name,
+                disabled_reason,
+            } => {
+                let is_disabled = disabled_reason.is_some();
+                let item = ListItem::new("create-named-worktree")
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)
                     .toggle_state(selected)
-                    .disabled(*disabled)
-                    .start_slot(Icon::new(IconName::Plus).color(if *disabled {
+                    .disabled(is_disabled)
+                    .start_slot(Icon::new(IconName::Plus).color(if is_disabled {
                         Color::Disabled
                     } else {
                         Color::Accent
                     }))
                     .child(Label::new(format!("Create Worktree: \"{name}\"…")).color(
-                        if *disabled {
+                        if is_disabled {
                             Color::Disabled
                         } else {
                             Color::Default
                         },
-                    )),
-            ),
+                    ));
+
+                Some(if let Some(reason) = disabled_reason.clone() {
+                    item.tooltip(Tooltip::text(reason))
+                } else {
+                    item
+                })
+            }
         }
     }
 
