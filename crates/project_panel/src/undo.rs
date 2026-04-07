@@ -258,12 +258,12 @@ impl UndoManager {
 
     pub fn undo(&mut self) -> Result<()> {
         self.tx
-            .try_send(UndoMessage::PlsUndo)
+            .try_send(UndoMessage::Undo)
             .context("Undo and redo task can not keep up")
     }
     pub fn redo(&mut self) -> Result<()> {
         self.tx
-            .try_send(UndoMessage::PlsRedo)
+            .try_send(UndoMessage::Redo)
             .context("Undo and redo task can not keep up")
     }
     pub fn record(&mut self, changes: impl IntoIterator<Item = Change>) -> Result<()> {
@@ -286,8 +286,8 @@ impl UndoManager {
 #[derive(Debug)]
 enum UndoMessage {
     Changed(Vec<Change>),
-    PlsUndo,
-    PlsRedo,
+    Undo,
+    Redo,
 }
 
 impl UndoMessage {
@@ -296,8 +296,8 @@ impl UndoMessage {
             UndoMessage::Changed(_) => {
                 "this is a bug in the manage_undo_and_redo task please report"
             }
-            UndoMessage::PlsUndo => "Undo failed",
-            UndoMessage::PlsRedo => "Redo failed",
+            UndoMessage::Undo => "Undo failed",
+            UndoMessage::Redo => "Redo failed",
         }
     }
 }
@@ -316,12 +316,12 @@ impl Inner {
                     self.record(changes);
                     Ok(())
                 }
-                UndoMessage::PlsUndo => {
+                UndoMessage::Undo => {
                     let res = self.undo(&mut cx).await;
                     let _ = self.panel.update(&mut cx, |_, cx| cx.notify());
                     res
                 }
-                UndoMessage::PlsRedo => {
+                UndoMessage::Redo => {
                     let res = self.redo(&mut cx).await;
                     let _ = self.panel.update(&mut cx, |_, cx| cx.notify());
                     res
