@@ -1145,7 +1145,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     return;
                 };
 
-                let replace_current_window = self.create_new_window != secondary;
+                let replace_current_window = self.create_new_window == secondary;
                 let candidate_workspace_id = *candidate_workspace_id;
                 let candidate_workspace_location = candidate_workspace_location.clone();
                 let candidate_workspace_paths = candidate_workspace_paths.clone();
@@ -1531,12 +1531,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                     })
                     .child(
-                        IconButton::new("open_in_window", IconName::OpenFolder)
+                        IconButton::new("open_new_window", IconName::OpenNewWindow)
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 move |_, cx| {
                                     Tooltip::for_action_in(
-                                        "Open Project in this Window",
+                                        "Open Project in New Window",
                                         &menu::SecondaryConfirm,
                                         &focus_handle,
                                         cx,
@@ -1589,7 +1589,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 })
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
-                                        "Open Project in New Window",
+                                        "Open Project in This Window",
                                         None,
                                         tooltip_path.clone(),
                                         cx,
@@ -1730,7 +1730,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         )
                     } else {
                         this.child(
-                            Button::new("open_in_window", "This Window")
+                            Button::new("open_new_window", "New Window")
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::SecondaryConfirm,
                                     &focus_handle,
@@ -1741,7 +1741,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 }),
                         )
                         .child(
-                            Button::new("open", "Open")
+                            Button::new("open_here", "Open")
                                 .key_binding(KeyBinding::for_action_in(
                                     &menu::Confirm,
                                     &focus_handle,
@@ -2164,11 +2164,11 @@ mod tests {
             })
             .unwrap();
 
-        cx.dispatch_action(*multi_workspace, menu::SecondaryConfirm);
+        cx.dispatch_action(*multi_workspace, menu::Confirm);
         cx.run_until_parked();
 
-        // SecondaryConfirm opens the project in the current multi-workspace.
-        // The dirty workspace is kept alongside the new one — no save prompt needed.
+        // In multi-workspace mode, the dirty workspace is kept and a new one is
+        // opened alongside it — no save prompt needed.
         assert!(
             !cx.has_pending_prompt(),
             "Should not prompt in multi-workspace mode — dirty workspace is kept"
