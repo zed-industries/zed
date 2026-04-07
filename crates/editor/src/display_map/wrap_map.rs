@@ -300,7 +300,12 @@ impl WrapMap {
                 && let [edit] = &**tab_edits
                 && ((edit.new.end.row().saturating_sub(edit.new.start.row()) + 1) as usize)
                     < WRAP_YIELD_ROW_INTERVAL
-                && edit.new.end.0.column.saturating_sub(edit.new.start.0.column)
+                && edit
+                    .new
+                    .end
+                    .0
+                    .column
+                    .saturating_sub(edit.new.start.0.column)
                     < MAX_SYNC_WRAP_COLUMNS
                 && let Some((tab_snapshot, tab_edits)) = pending_edits.pop_back()
             {
