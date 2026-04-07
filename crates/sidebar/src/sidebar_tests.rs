@@ -2074,6 +2074,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
                 archived: false,
             },
             &workspace_a,
+            false,
             window,
             cx,
         );
@@ -2129,6 +2130,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
                 archived: false,
             },
             &workspace_b,
+            false,
             window,
             cx,
         );

@@ -1938,7 +1938,7 @@ impl Sidebar {
                 match &thread.workspace {
                     ThreadEntryWorkspace::Open(workspace) => {
                         let workspace = workspace.clone();
-                        self.activate_thread(metadata, &workspace, window, cx);
+                        self.activate_thread(metadata, &workspace, false, window, cx);
                     }
                     ThreadEntryWorkspace::Closed(path_list) => {
                         self.open_workspace_and_activate_thread(
@@ -2039,6 +2039,7 @@ impl Sidebar {
         &mut self,
         metadata: &ThreadMetadata,
         workspace: &Entity<Workspace>,
+        retain: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2057,6 +2058,9 @@ impl Sidebar {
 
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), window, cx);
+            if retain {
+                multi_workspace.retain_active_workspace(cx);
+            }
         });
 
         Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
@@ -2108,6 +2112,7 @@ impl Sidebar {
         &mut self,
         metadata: ThreadMetadata,
         workspace: &Entity<Workspace>,
+        retain: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2115,7 +2120,7 @@ impl Sidebar {
             .find_workspace_in_current_window(cx, |candidate, _| candidate == workspace)
             .is_some()
         {
-            self.activate_thread_locally(&metadata, &workspace, window, cx);
+            self.activate_thread_locally(&metadata, &workspace, retain, window, cx);
             return;
         }
 
@@ -2146,7 +2151,7 @@ impl Sidebar {
         cx.spawn_in(window, async move |this, cx| {
             let workspace = open_task.await?;
             this.update_in(cx, |this, window, cx| {
-                this.activate_thread(metadata, &workspace, window, cx);
+                this.activate_thread(metadata, &workspace, false, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -2185,7 +2190,7 @@ impl Sidebar {
         if !metadata.folder_paths.paths().is_empty() {
             let path_list = metadata.folder_paths.clone();
             if let Some(workspace) = self.find_current_workspace_for_path_list(&path_list, cx) {
-                self.activate_thread_locally(&metadata, &workspace, window, cx);
+                self.activate_thread_locally(&metadata, &workspace, false, window, cx);
             } else if let Some((target_window, workspace)) =
                 self.find_open_workspace_for_path_list(&path_list, cx)
             {
@@ -2202,7 +2207,7 @@ impl Sidebar {
             .map(|w| w.read(cx).workspace().clone());
 
         if let Some(workspace) = active_workspace {
-            self.activate_thread_locally(&metadata, &workspace, window, cx);
+            self.activate_thread_locally(&metadata, &workspace, false, window, cx);
         }
     }
 
@@ -2669,6 +2674,7 @@ impl Sidebar {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
                         mw.update(cx, |mw, cx| {
                             mw.activate(workspace.clone(), window, cx);
+                            mw.retain_active_workspace(cx);
                         });
                     }
                     this.record_thread_access(&metadata.session_id);
@@ -2881,7 +2887,7 @@ impl Sidebar {
                     this.selection = None;
                     match &thread_workspace {
                         ThreadEntryWorkspace::Open(workspace) => {
-                            this.activate_thread(metadata.clone(), workspace, window, cx);
+                            this.activate_thread(metadata.clone(), workspace, false, window, cx);
                         }
                         ThreadEntryWorkspace::Closed(path_list) => {
                             this.open_workspace_and_activate_thread(
@@ -3116,6 +3122,7 @@ impl Sidebar {
         if let Some(workspace) = self.workspace_for_group(&path_list, cx) {
             multi_workspace.update(cx, |multi_workspace, cx| {
                 multi_workspace.activate(workspace, window, cx);
+                multi_workspace.retain_active_workspace(cx);
             });
         } else {
             self.open_workspace_for_group(&path_list, window, cx);
@@ -3183,7 +3190,7 @@ impl Sidebar {
         match &thread.workspace {
             ThreadEntryWorkspace::Open(workspace) => {
                 let workspace = workspace.clone();
-                self.activate_thread(metadata, &workspace, window, cx);
+                self.activate_thread(metadata, &workspace, true, window, cx);
             }
             ThreadEntryWorkspace::Closed(path_list) => {
                 self.open_workspace_and_activate_thread(metadata, path_list.clone(), window, cx);

@@ -862,6 +862,19 @@ impl MultiWorkspace {
         cx.notify();
     }
 
+    /// Promotes the currently active workspace to persistent if it is
+    /// transient, so it is retained across workspace switches even when
+    /// the sidebar is closed. No-op if the workspace is already persistent.
+    pub fn retain_active_workspace(&mut self, cx: &mut Context<Self>) {
+        if let ActiveWorkspace::Transient(workspace) = &self.active_workspace {
+            let workspace = workspace.clone();
+            let index = self.promote_transient(workspace, cx);
+            self.active_workspace = ActiveWorkspace::Persistent(index);
+            self.serialize(cx);
+            cx.notify();
+        }
+    }
+
     /// Promotes a former transient workspace into the persistent list.
     /// Returns the index of the newly inserted workspace.
     fn promote_transient(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
