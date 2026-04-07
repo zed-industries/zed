@@ -679,21 +679,39 @@ impl StartThreadIn {
         }
     }
 
-    fn worktree_branch_label(&self, default_branch_label: SharedString) -> Option<SharedString> {
+    fn branch_trigger_label(&self, project: &Project, cx: &App) -> Option<StartThreadInLabel> {
         match self {
-            Self::NewWorktree { branch_target, .. } => match branch_target {
-                NewWorktreeBranchTarget::CurrentBranch => Some(default_branch_label),
-                NewWorktreeBranchTarget::ExistingBranch { name } => {
-                    Some(format!("From: {name}").into())
-                }
-                NewWorktreeBranchTarget::CreateBranch { name, from_ref } => {
-                    if let Some(from_ref) = from_ref {
-                        Some(format!("From: {from_ref}").into())
-                    } else {
-                        Some(format!("From: {name}").into())
+            Self::NewWorktree { branch_target, .. } => {
+                let branch_name: SharedString = match branch_target {
+                    NewWorktreeBranchTarget::CurrentBranch => {
+                        if project.repositories(cx).len() > 1 {
+                            "current branches".into()
+                        } else {
+                            project
+                                .active_repository(cx)
+                                .and_then(|repo| {
+                                    repo.read(cx)
+                                        .branch
+                                        .as_ref()
+                                        .map(|branch| SharedString::from(branch.name().to_string()))
+                                })
+                                .unwrap_or_else(|| "HEAD".into())
+                        }
                     }
-                }
-            },
+                    NewWorktreeBranchTarget::ExistingBranch { name } => name.clone().into(),
+                    NewWorktreeBranchTarget::CreateBranch {
+                        from_ref: Some(from_ref),
+                        ..
+                    } => from_ref.clone().into(),
+                    NewWorktreeBranchTarget::CreateBranch { name, .. } => name.clone().into(),
+                };
+
+                Some(StartThreadInLabel {
+                    prefix: Some("From:".into()),
+                    label: branch_name,
+                    suffix: None,
+                })
+            }
             _ => None,
         }
     }
@@ -3408,7 +3426,6 @@ impl AgentPanel {
         };
 
         let trigger_button = ButtonLike::new("thread-target-trigger")
-            .size(ButtonSize::Default)
             .disabled(is_creating)
             .when_some(trigger_parts.prefix, |this, prefix| {
                 this.child(Label::new(prefix).color(Color::Muted))
@@ -3453,37 +3470,31 @@ impl AgentPanel {
             self.worktree_creation_status,
             Some(WorktreeCreationStatus::Creating)
         );
-        let default_branch_label = if self.project.read(cx).repositories(cx).len() > 1 {
-            SharedString::from("From: current branches")
-        } else {
-            self.project
-                .read(cx)
-                .active_repository(cx)
-                .and_then(|repo| {
-                    repo.read(cx)
-                        .branch
-                        .as_ref()
-                        .map(|branch| SharedString::from(format!("From: {}", branch.name())))
-                })
-                .unwrap_or_else(|| SharedString::from("From: HEAD"))
-        };
-        let trigger_label = self
+
+        let project_ref = self.project.read(cx);
+        let trigger_parts = self
             .start_thread_in
-            .worktree_branch_label(default_branch_label)
-            .unwrap_or_else(|| SharedString::from("From: HEAD"));
+            .branch_trigger_label(project_ref, cx)
+            .unwrap_or_else(|| StartThreadInLabel {
+                prefix: Some("From:".into()),
+                label: "HEAD".into(),
+                suffix: None,
+            });
+
         let icon = if self.thread_branch_menu_handle.is_deployed() {
             IconName::ChevronUp
         } else {
             IconName::ChevronDown
         };
-        let trigger_button = Button::new("thread-branch-trigger", trigger_label)
-            .start_icon(
-                Icon::new(IconName::GitBranch)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
-            .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
-            .disabled(is_creating);
+
+        let trigger_button = ButtonLike::new("thread-branch-trigger")
+            .disabled(is_creating)
+            .when_some(trigger_parts.prefix, |this, prefix| {
+                this.child(Label::new(prefix).color(Color::Muted))
+            })
+            .child(Label::new(trigger_parts.label))
+            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
+
         let project = self.project.clone();
         let current_target = self.start_thread_in.clone();
 
