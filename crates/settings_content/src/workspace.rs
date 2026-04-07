@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::num::NonZeroUsize;
 
 use collections::HashMap;

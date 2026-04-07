@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use collections::{HashMap, IndexMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};

@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::WindowButtonLayout;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
