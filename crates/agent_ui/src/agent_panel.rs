@@ -682,9 +682,9 @@ impl StartThreadIn {
     fn branch_trigger_label(&self, project: &Project, cx: &App) -> Option<StartThreadInLabel> {
         match self {
             Self::NewWorktree { branch_target, .. } => {
-                let branch_name: SharedString = match branch_target {
+                let (branch_name, is_occupied) = match branch_target {
                     NewWorktreeBranchTarget::CurrentBranch => {
-                        if project.repositories(cx).len() > 1 {
+                        let name: SharedString = if project.repositories(cx).len() > 1 {
                             "current branches".into()
                         } else {
                             project
@@ -696,24 +696,48 @@ impl StartThreadIn {
                                         .map(|branch| SharedString::from(branch.name().to_string()))
                                 })
                                 .unwrap_or_else(|| "HEAD".into())
-                        }
+                        };
+                        (name, false)
                     }
-                    NewWorktreeBranchTarget::ExistingBranch { name } => name.clone().into(),
+                    NewWorktreeBranchTarget::ExistingBranch { name } => {
+                        let occupied = Self::is_branch_occupied(name, project, cx);
+                        (name.clone().into(), occupied)
+                    }
                     NewWorktreeBranchTarget::CreateBranch {
                         from_ref: Some(from_ref),
                         ..
-                    } => from_ref.clone().into(),
-                    NewWorktreeBranchTarget::CreateBranch { name, .. } => name.clone().into(),
+                    } => {
+                        let occupied = Self::is_branch_occupied(from_ref, project, cx);
+                        (from_ref.clone().into(), occupied)
+                    }
+                    NewWorktreeBranchTarget::CreateBranch { name, .. } => {
+                        (name.clone().into(), false)
+                    }
+                };
+
+                let prefix = if is_occupied {
+                    Some("New From:".into())
+                } else {
+                    None
                 };
 
                 Some(StartThreadInLabel {
-                    prefix: Some("From:".into()),
+                    prefix,
                     label: branch_name,
                     suffix: None,
                 })
             }
             _ => None,
         }
+    }
+
+    fn is_branch_occupied(branch_name: &str, project: &Project, cx: &App) -> bool {
+        project.repositories(cx).values().any(|repo| {
+            repo.read(cx)
+                .linked_worktrees
+                .iter()
+                .any(|wt| wt.branch_name() == Some(branch_name))
+        })
     }
 }
 
