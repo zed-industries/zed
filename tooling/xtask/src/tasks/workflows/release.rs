@@ -169,13 +169,10 @@ pub(crate) fn add_compliance_notification_steps(
         upload_artifact(COMPLIANCE_REPORT_FILE).if_condition(Expression::new("always()"));
 
     let (success_prefix, failure_prefix) = match context {
-        ComplianceContext::Release => (
-            "\u{2705} Compliance check passed",
-            "\u{274c} Compliance check failed",
-        ),
+        ComplianceContext::Release => ("✅ Compliance check passed", "❌ Compliance check failed"),
         ComplianceContext::Scheduled { .. } => (
-            "\u{2705} Scheduled compliance check passed",
-            "\u{26a0}\u{fe0f} Scheduled compliance check failed",
+            "✅ Scheduled compliance check passed",
+            "⚠️ Scheduled compliance check failed",
         ),
     };
 
