@@ -40,10 +40,10 @@ actions!(
         CloseWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
         FocusWorkspaceSidebar,
-        /// Activates the next project workspace in the sidebar.
-        NextWorkspace,
-        /// Activates the previous project workspace in the sidebar.
-        PreviousWorkspace,
+        /// Activates the next project group in the sidebar.
+        NextProjectGroup,
+        /// Activates the previous project group in the sidebar.
+        PreviousProjectGroup,
         /// Activates the next thread in sidebar order.
         NextThread,
         /// Activates the previous thread in sidebar order.
@@ -129,23 +129,11 @@ pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     ) {
     }
 
-    /// Activates the next or previous project workspace.
-    fn cycle_workspace(
-        &mut self,
-        _forward: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-    }
+    /// Activates the next or previous project group.
+    fn cycle_project_group(&mut self, _forward: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     /// Activates the next or previous thread in sidebar order.
-    fn cycle_thread(
-        &mut self,
-        _forward: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-    }
+    fn cycle_thread(&mut self, _forward: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     /// Moves the active workspace's project group to a new window.
     fn move_workspace_to_new_window(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
@@ -175,7 +163,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
     fn toggle_thread_switcher(&self, select_last: bool, window: &mut Window, cx: &mut App);
-    fn cycle_workspace(&self, forward: bool, window: &mut Window, cx: &mut App);
+    fn cycle_project_group(&self, forward: bool, window: &mut Window, cx: &mut App);
     fn cycle_thread(&self, forward: bool, window: &mut Window, cx: &mut App);
     fn move_workspace_to_new_window(&self, window: &mut Window, cx: &mut App);
 
@@ -238,11 +226,11 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
         });
     }
 
-    fn cycle_workspace(&self, forward: bool, window: &mut Window, cx: &mut App) {
+    fn cycle_project_group(&self, forward: bool, window: &mut Window, cx: &mut App) {
         let entity = self.clone();
         window.defer(cx, move |window, cx| {
             entity.update(cx, |this, cx| {
-                this.cycle_workspace(forward, window, cx);
+                this.cycle_project_group(forward, window, cx);
             });
         });
     }
@@ -1488,34 +1476,32 @@ impl Render for MultiWorkspace {
                             }
                         },
                     ))
-                    .on_action(cx.listener(
-                        |this: &mut Self, _: &NextWorkspace, window, cx| {
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &NextProjectGroup, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
-                                sidebar.cycle_workspace(true, window, cx);
+                                sidebar.cycle_project_group(true, window, cx);
                             }
-                        },
-                    ))
-                    .on_action(cx.listener(
-                        |this: &mut Self, _: &PreviousWorkspace, window, cx| {
+                        }),
+                    )
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &PreviousProjectGroup, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
-                                sidebar.cycle_workspace(false, window, cx);
+                                sidebar.cycle_project_group(false, window, cx);
                             }
-                        },
-                    ))
-                    .on_action(cx.listener(
-                        |this: &mut Self, _: &NextThread, window, cx| {
-                            if let Some(sidebar) = &this.sidebar {
-                                sidebar.cycle_thread(true, window, cx);
-                            }
-                        },
-                    ))
-                    .on_action(cx.listener(
-                        |this: &mut Self, _: &PreviousThread, window, cx| {
+                        }),
+                    )
+                    .on_action(cx.listener(|this: &mut Self, _: &NextThread, window, cx| {
+                        if let Some(sidebar) = &this.sidebar {
+                            sidebar.cycle_thread(true, window, cx);
+                        }
+                    }))
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &PreviousThread, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
                                 sidebar.cycle_thread(false, window, cx);
                             }
-                        },
-                    ))
+                        }),
+                    )
                     .on_action(cx.listener(
                         |this: &mut Self, _: &MoveWorkspaceToNewWindow, window, cx| {
                             if let Some(sidebar) = &this.sidebar {

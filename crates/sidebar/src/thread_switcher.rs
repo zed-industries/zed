@@ -215,9 +215,11 @@ impl Render for ThreadSwitcher {
 
                 div()
                     .id(id.clone())
-                    .on_click(cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                        this.select_and_confirm(ix, cx);
-                    }))
+                    .on_click(
+                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            this.select_and_confirm(ix, cx);
+                        }),
+                    )
                     .child(
                         ThreadItem::new(id, entry.title.clone())
                             .rounded(true)

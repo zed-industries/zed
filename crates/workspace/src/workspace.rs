@@ -32,8 +32,8 @@ pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveWorkspaceToNewWindow,
-    MultiWorkspace, MultiWorkspaceEvent, NewThread, NextThread, NextWorkspace, PreviousThread,
-    PreviousWorkspace, ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent, SidebarHandle,
+    MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProjectGroup, NextThread, PreviousProjectGroup,
+    PreviousThread, ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent, SidebarHandle,
     SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
@@ -4853,7 +4853,9 @@ impl Workspace {
             .multi_workspace
             .as_ref()
             .and_then(|mw| mw.upgrade())
-            .map_or(false, |mw| mw.read(cx).sidebar_side(cx) == SidebarSide::Right);
+            .map_or(false, |mw| {
+                mw.read(cx).sidebar_side(cx) == SidebarSide::Right
+            });
 
         let away_from_sidebar = if sidebar_on_right {
             SplitDirection::Left
@@ -4945,8 +4947,7 @@ impl Workspace {
                 if let Some(last_active_pane) = get_last_active_pane() {
                     Some(Target::Pane(last_active_pane))
                 } else {
-                    try_dock(&self.bottom_dock)
-                        .or_else(|| try_dock(&self.left_dock))
+                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock))
                 }
             }
 

@@ -45,8 +45,8 @@ use util::ResultExt as _;
 use util::path_list::{PathList, SerializedPathList};
 use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MoveWorkspaceToNewWindow,
-    MultiWorkspace, MultiWorkspaceEvent, NextThread, NextWorkspace, Open, PreviousThread,
-    PreviousWorkspace, ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide,
+    MultiWorkspace, MultiWorkspaceEvent, NextProjectGroup, NextThread, Open, PreviousProjectGroup,
+    PreviousThread, ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide,
     ToggleWorkspaceSidebar, Workspace, WorkspaceId, sidebar_side_context_menu,
 };
 
@@ -1957,13 +1957,10 @@ impl Sidebar {
             } => {
                 let path_list = key.path_list().clone();
                 if *is_fully_expanded {
-                    self.expanded_groups.remove(&path_list);
+                    self.reset_thread_group_expansion(&path_list, cx);
                 } else {
-                    let current = self.expanded_groups.get(&path_list).copied().unwrap_or(0);
-                    self.expanded_groups.insert(path_list, current + 1);
+                    self.expand_thread_group(&path_list, cx);
                 }
-                self.serialize(cx);
-                self.update_entries(cx);
             }
             ListEntry::DraftThread { .. } => {
                 // Already active — nothing to do.
@@ -2995,13 +2992,10 @@ impl Sidebar {
             .on_click(cx.listener(move |this, _, _window, cx| {
                 this.selection = None;
                 if is_fully_expanded {
-                    this.expanded_groups.remove(&path_list);
+                    this.reset_thread_group_expansion(&path_list, cx);
                 } else {
-                    let current = this.expanded_groups.get(&path_list).copied().unwrap_or(0);
-                    this.expanded_groups.insert(path_list.clone(), current + 1);
+                    this.expand_thread_group(&path_list, cx);
                 }
-                this.serialize(cx);
-                this.update_entries(cx);
             }))
             .into_any_element()
     }
@@ -3067,16 +3061,12 @@ impl Sidebar {
         });
     }
 
-    /// Returns the `ProjectGroupKey` for the currently active workspace.
     fn active_project_group_key(&self, cx: &App) -> Option<ProjectGroupKey> {
         let multi_workspace = self.multi_workspace.upgrade()?;
         let mw = multi_workspace.read(cx);
         Some(mw.workspace().read(cx).project_group_key(cx))
     }
 
-    /// Returns the index into `contents.project_header_indices` for the header
-    /// whose project group key matches the active workspace. Returns `None` if
-    /// there's no match.
     fn active_project_header_position(&self, cx: &App) -> Option<usize> {
         let active_key = self.active_project_group_key(cx)?;
         self.contents
@@ -3090,12 +3080,7 @@ impl Sidebar {
             })
     }
 
-    fn cycle_workspace_impl(
-        &mut self,
-        forward: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cycle_project_group_impl(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -3119,8 +3104,7 @@ impl Sidebar {
         };
 
         let header_entry_ix = self.contents.project_header_indices[next_pos];
-        let Some(ListEntry::ProjectHeader { key, .. }) =
-            self.contents.entries.get(header_entry_ix)
+        let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(header_entry_ix)
         else {
             return;
         };
@@ -3138,31 +3122,25 @@ impl Sidebar {
         }
     }
 
-    fn on_next_workspace(
+    fn on_next_project_group(
         &mut self,
-        _: &NextWorkspace,
+        _: &NextProjectGroup,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_workspace_impl(true, window, cx);
+        self.cycle_project_group_impl(true, window, cx);
     }
 
-    fn on_previous_workspace(
+    fn on_previous_project_group(
         &mut self,
-        _: &PreviousWorkspace,
+        _: &PreviousProjectGroup,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_workspace_impl(false, window, cx);
+        self.cycle_project_group_impl(false, window, cx);
     }
 
-    fn cycle_thread_impl(
-        &mut self,
-        forward: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Collect all thread entries with their indices.
+    fn cycle_thread_impl(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let thread_indices: Vec<usize> = self
             .contents
             .entries
@@ -3178,9 +3156,10 @@ impl Sidebar {
             return;
         }
 
-        // Find which thread is currently active.
         let current_thread_pos = self.active_entry.as_ref().and_then(|active| {
-            thread_indices.iter().position(|&ix| active.matches_entry(&self.contents.entries[ix]))
+            thread_indices
+                .iter()
+                .position(|&ix| active.matches_entry(&self.contents.entries[ix]))
         });
 
         let next_pos = match current_thread_pos {
@@ -3212,12 +3191,7 @@ impl Sidebar {
         }
     }
 
-    fn on_next_thread(
-        &mut self,
-        _: &NextThread,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn on_next_thread(&mut self, _: &NextThread, window: &mut Window, cx: &mut Context<Self>) {
         self.cycle_thread_impl(true, window, cx);
     }
 
@@ -3230,6 +3204,33 @@ impl Sidebar {
         self.cycle_thread_impl(false, window, cx);
     }
 
+    fn expand_thread_group(&mut self, path_list: &PathList, cx: &mut Context<Self>) {
+        let current = self.expanded_groups.get(path_list).copied().unwrap_or(0);
+        self.expanded_groups.insert(path_list.clone(), current + 1);
+        self.serialize(cx);
+        self.update_entries(cx);
+    }
+
+    fn reset_thread_group_expansion(&mut self, path_list: &PathList, cx: &mut Context<Self>) {
+        self.expanded_groups.remove(path_list);
+        self.serialize(cx);
+        self.update_entries(cx);
+    }
+
+    fn collapse_thread_group(&mut self, path_list: &PathList, cx: &mut Context<Self>) {
+        match self.expanded_groups.get(path_list).copied() {
+            Some(batches) if batches > 1 => {
+                self.expanded_groups.insert(path_list.clone(), batches - 1);
+            }
+            Some(_) => {
+                self.expanded_groups.remove(path_list);
+            }
+            None => return,
+        }
+        self.serialize(cx);
+        self.update_entries(cx);
+    }
+
     fn on_show_more_threads(
         &mut self,
         _: &ShowMoreThreads,
@@ -3239,11 +3240,7 @@ impl Sidebar {
         let Some(active_key) = self.active_project_group_key(cx) else {
             return;
         };
-        let path_list = active_key.path_list().clone();
-        let current = self.expanded_groups.get(&path_list).copied().unwrap_or(0);
-        self.expanded_groups.insert(path_list, current + 1);
-        self.serialize(cx);
-        self.update_entries(cx);
+        self.expand_thread_group(active_key.path_list(), cx);
     }
 
     fn on_show_fewer_threads(
@@ -3255,18 +3252,7 @@ impl Sidebar {
         let Some(active_key) = self.active_project_group_key(cx) else {
             return;
         };
-        let path_list = active_key.path_list().clone();
-        match self.expanded_groups.get(&path_list).copied() {
-            Some(batches) if batches > 1 => {
-                self.expanded_groups.insert(path_list, batches - 1);
-            }
-            Some(_) => {
-                self.expanded_groups.remove(&path_list);
-            }
-            None => return,
-        }
-        self.serialize(cx);
-        self.update_entries(cx);
+        self.collapse_thread_group(active_key.path_list(), cx);
     }
 
     fn on_new_thread(
@@ -3842,21 +3828,11 @@ impl WorkspaceSidebar for Sidebar {
         self.toggle_thread_switcher_impl(select_last, window, cx);
     }
 
-    fn cycle_workspace(
-        &mut self,
-        forward: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.cycle_workspace_impl(forward, window, cx);
+    fn cycle_project_group(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_project_group_impl(forward, window, cx);
     }
 
-    fn cycle_thread(
-        &mut self,
-        forward: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cycle_thread(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.cycle_thread_impl(forward, window, cx);
     }
 
@@ -3959,8 +3935,8 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
             .on_action(cx.listener(Self::on_toggle_thread_switcher))
-            .on_action(cx.listener(Self::on_next_workspace))
-            .on_action(cx.listener(Self::on_previous_workspace))
+            .on_action(cx.listener(Self::on_next_project_group))
+            .on_action(cx.listener(Self::on_previous_project_group))
             .on_action(cx.listener(Self::on_next_thread))
             .on_action(cx.listener(Self::on_previous_thread))
             .on_action(cx.listener(Self::on_show_more_threads))
