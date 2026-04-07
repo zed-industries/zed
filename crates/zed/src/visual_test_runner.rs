@@ -3080,7 +3080,7 @@ fn run_start_thread_in_selector_visual_tests(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent_ui::{AgentPanel, StartThreadIn, WorktreeCreationStatus};
+    use agent_ui::{AgentPanel, NewWorktreeBranchTarget, StartThreadIn, WorktreeCreationStatus};
 
     // Enable feature flags so the thread target selector renders
     cx.update(|cx| {
@@ -3404,8 +3404,7 @@ edition = "2021"
             panel.set_start_thread_in_for_tests(
                 StartThreadIn::NewWorktree {
                     worktree_name: None,
-                    branch_name: None,
-                    start_point: None,
+                    branch_target: NewWorktreeBranchTarget::default(),
                 },
                 cx,
             );
@@ -3484,8 +3483,7 @@ edition = "2021"
         window.dispatch_action(
             Box::new(StartThreadIn::NewWorktree {
                 worktree_name: None,
-                branch_name: None,
-                start_point: None,
+                branch_target: NewWorktreeBranchTarget::default(),
             }),
             cx,
         );

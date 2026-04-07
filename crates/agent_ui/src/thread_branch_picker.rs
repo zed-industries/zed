@@ -18,7 +18,7 @@ use ui::{
 };
 use util::ResultExt as _;
 
-use crate::StartThreadIn;
+use crate::{NewWorktreeBranchTarget, StartThreadIn};
 
 pub(crate) struct ThreadBranchPicker {
     picker: Entity<Picker<ThreadBranchPickerDelegate>>,
@@ -64,35 +64,21 @@ impl ThreadBranchPicker {
             .map(|repo| repo.update(cx, |repo, _| repo.default_branch(false)));
         let worktrees_request = repository.map(|repo| repo.update(cx, |repo, _| repo.worktrees()));
 
-        let (selected_entry_name, prefer_create_entry, preserved_worktree_name) =
-            match current_target {
-                StartThreadIn::NewWorktree {
-                    worktree_name,
-                    branch_name,
-                    start_point,
-                } => match (branch_name, start_point) {
-                    (None, None) => (None, false, worktree_name.clone()),
-                    (None, Some(start_point)) => {
-                        (Some(start_point.clone()), false, worktree_name.clone())
-                    }
-                    (Some(branch_name), None) => {
-                        (Some(branch_name.clone()), true, worktree_name.clone())
-                    }
-                    (Some(_branch_name), Some(start_point)) => {
-                        (Some(start_point.clone()), false, worktree_name.clone())
-                    }
-                },
-                _ => (None, false, None),
-            };
+        let (worktree_name, branch_target) = match current_target {
+            StartThreadIn::NewWorktree {
+                worktree_name,
+                branch_target,
+            } => (worktree_name.clone(), branch_target.clone()),
+            _ => (None, NewWorktreeBranchTarget::default()),
+        };
 
         let delegate = ThreadBranchPickerDelegate {
             matches: vec![ThreadBranchEntry::CurrentBranch],
             all_branches: None,
             occupied_branches: None,
             selected_index: 0,
-            selected_entry_name,
-            prefer_create_entry,
-            preserved_worktree_name,
+            worktree_name,
+            branch_target,
             project_worktree_paths,
             current_branch_name,
             default_branch_name: None,
@@ -235,9 +221,8 @@ pub(crate) struct ThreadBranchPickerDelegate {
     all_branches: Option<Vec<GitBranch>>,
     occupied_branches: Option<HashMap<String, String>>,
     selected_index: usize,
-    selected_entry_name: Option<String>,
-    prefer_create_entry: bool,
-    preserved_worktree_name: Option<String>,
+    worktree_name: Option<String>,
+    branch_target: NewWorktreeBranchTarget,
     project_worktree_paths: HashSet<PathBuf>,
     current_branch_name: String,
     default_branch_name: Option<String>,
@@ -245,16 +230,30 @@ pub(crate) struct ThreadBranchPickerDelegate {
 }
 
 impl ThreadBranchPickerDelegate {
-    fn new_worktree_action(
-        &self,
-        branch_name: Option<String>,
-        start_point: Option<String>,
-    ) -> StartThreadIn {
+    fn new_worktree_action(&self, branch_target: NewWorktreeBranchTarget) -> StartThreadIn {
         StartThreadIn::NewWorktree {
-            worktree_name: self.preserved_worktree_name.clone(),
-            branch_name,
-            start_point,
+            worktree_name: self.worktree_name.clone(),
+            branch_target,
         }
+    }
+
+    fn selected_entry_name(&self) -> Option<&str> {
+        match &self.branch_target {
+            NewWorktreeBranchTarget::CurrentBranch => None,
+            NewWorktreeBranchTarget::ExistingBranch { name } => Some(name),
+            NewWorktreeBranchTarget::CreateBranch {
+                from_ref: Some(from_ref),
+                ..
+            } => Some(from_ref),
+            NewWorktreeBranchTarget::CreateBranch { name, .. } => Some(name),
+        }
+    }
+
+    fn prefer_create_entry(&self) -> bool {
+        matches!(
+            &self.branch_target,
+            NewWorktreeBranchTarget::CreateBranch { from_ref: None, .. }
+        )
     }
 
     fn fixed_matches(&self) -> Vec<ThreadBranchEntry> {
@@ -310,8 +309,11 @@ impl ThreadBranchPickerDelegate {
     }
 
     fn sync_selected_index(&mut self) {
-        if self.prefer_create_entry {
-            if let Some(selected_entry_name) = &self.selected_entry_name {
+        let selected_entry_name = self.selected_entry_name().map(ToOwned::to_owned);
+        let prefer_create = self.prefer_create_entry();
+
+        if prefer_create {
+            if let Some(ref selected_entry_name) = selected_entry_name {
                 if let Some(index) = self.matches.iter().position(|entry| {
                     matches!(
                         entry,
@@ -322,7 +324,7 @@ impl ThreadBranchPickerDelegate {
                     return;
                 }
             }
-        } else if let Some(selected_entry_name) = &self.selected_entry_name {
+        } else if let Some(ref selected_entry_name) = selected_entry_name {
             if selected_entry_name == &self.current_branch_name {
                 if let Some(index) = self
                     .matches
@@ -353,7 +355,7 @@ impl ThreadBranchPickerDelegate {
                 matches!(
                     entry,
                     ThreadBranchEntry::ExistingBranch { branch, .. }
-                        if branch.name() == selected_entry_name
+                        if branch.name() == selected_entry_name.as_str()
                 )
             }) {
                 self.selected_index = index;
@@ -414,11 +416,9 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
             let mut matches = self.fixed_matches();
 
             if query.is_empty() {
-                if self.prefer_create_entry {
-                    if let Some(selected_entry_name) = &self.selected_entry_name {
-                        matches.push(ThreadBranchEntry::CreateNamed {
-                            name: selected_entry_name.clone(),
-                        });
+                if let Some(name) = self.selected_entry_name().map(ToOwned::to_owned) {
+                    if self.prefer_create_entry() {
+                        matches.push(ThreadBranchEntry::CreateNamed { name });
                     }
                 }
             } else {
@@ -455,7 +455,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                 });
             }
 
-            if let Some(selected_entry_name) = &self.selected_entry_name {
+            if let Some(selected_entry_name) = self.selected_entry_name().map(ToOwned::to_owned) {
                 let has_existing = matches.iter().any(|entry| {
                     matches!(
                         entry,
@@ -463,9 +463,9 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                             if branch.name() == selected_entry_name
                     )
                 });
-                if self.prefer_create_entry && !has_existing {
+                if self.prefer_create_entry() && !has_existing {
                     matches.push(ThreadBranchEntry::CreateNamed {
-                        name: selected_entry_name.clone(),
+                        name: selected_entry_name,
                     });
                 }
             }
@@ -559,19 +559,26 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
 
         match entry {
             ThreadBranchEntry::CurrentBranch => {
-                window.dispatch_action(Box::new(self.new_worktree_action(None, None)), cx);
+                window.dispatch_action(
+                    Box::new(self.new_worktree_action(NewWorktreeBranchTarget::CurrentBranch)),
+                    cx,
+                );
             }
             ThreadBranchEntry::DefaultBranch => {
                 let Some(default_branch_name) = self.default_branch_name.clone() else {
                     return;
                 };
                 window.dispatch_action(
-                    Box::new(self.new_worktree_action(None, Some(default_branch_name))),
+                    Box::new(
+                        self.new_worktree_action(NewWorktreeBranchTarget::ExistingBranch {
+                            name: default_branch_name,
+                        }),
+                    ),
                     cx,
                 );
             }
             ThreadBranchEntry::ExistingBranch { branch, .. } => {
-                let action = if branch.is_remote() {
+                let branch_target = if branch.is_remote() {
                     let branch_name = branch
                         .ref_name
                         .as_ref()
@@ -579,15 +586,25 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                         .and_then(|stripped| stripped.split_once('/').map(|(_, name)| name))
                         .unwrap_or(branch.name())
                         .to_string();
-                    self.new_worktree_action(Some(branch_name), Some(branch.name().to_string()))
+                    NewWorktreeBranchTarget::CreateBranch {
+                        name: branch_name,
+                        from_ref: Some(branch.name().to_string()),
+                    }
                 } else {
-                    self.new_worktree_action(None, Some(branch.name().to_string()))
+                    NewWorktreeBranchTarget::ExistingBranch {
+                        name: branch.name().to_string(),
+                    }
                 };
-                window.dispatch_action(Box::new(action), cx);
+                window.dispatch_action(Box::new(self.new_worktree_action(branch_target)), cx);
             }
             ThreadBranchEntry::CreateNamed { name } => {
                 window.dispatch_action(
-                    Box::new(self.new_worktree_action(Some(name.clone()), None)),
+                    Box::new(
+                        self.new_worktree_action(NewWorktreeBranchTarget::CreateBranch {
+                            name: name.clone(),
+                            from_ref: None,
+                        }),
+                    ),
                     cx,
                 );
             }

@@ -28,9 +28,9 @@ use zed_actions::agent::{
 use crate::thread_metadata_store::ThreadMetadataStore;
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CycleStartThreadIn,
-    Follow, InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, StartThreadIn,
-    ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    Follow, InlineAssistant, LoadThreadFromClipboard, NewThread, NewWorktreeBranchTarget,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
+    StartThreadIn, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
     thread_branch_picker::ThreadBranchPicker,
@@ -630,20 +630,19 @@ impl StartThreadIn {
 
     fn worktree_branch_label(&self, default_branch_label: SharedString) -> Option<SharedString> {
         match self {
-            Self::NewWorktree {
-                branch_name: Some(branch_name),
-                ..
-            } => Some(format!("From: {branch_name}").into()),
-            Self::NewWorktree {
-                branch_name: None,
-                start_point: Some(start_point),
-                ..
-            } => Some(format!("From: {start_point}").into()),
-            Self::NewWorktree {
-                branch_name: None,
-                start_point: None,
-                ..
-            } => Some(default_branch_label),
+            Self::NewWorktree { branch_target, .. } => match branch_target {
+                NewWorktreeBranchTarget::CurrentBranch => Some(default_branch_label),
+                NewWorktreeBranchTarget::ExistingBranch { name } => {
+                    Some(format!("From: {name}").into())
+                }
+                NewWorktreeBranchTarget::CreateBranch { name, from_ref } => {
+                    if let Some(from_ref) = from_ref {
+                        Some(format!("From: {from_ref}").into())
+                    } else {
+                        Some(format!("From: {name}").into())
+                    }
+                }
+            },
             _ => None,
         }
     }
@@ -660,8 +659,7 @@ pub enum WorktreeCreationStatus {
 enum WorktreeCreationArgs {
     New {
         worktree_name: Option<String>,
-        branch_name: Option<String>,
-        start_point: Option<String>,
+        branch_target: NewWorktreeBranchTarget,
     },
     Linked {
         worktree_path: PathBuf,
@@ -2040,8 +2038,7 @@ impl AgentPanel {
         let next = match &self.start_thread_in {
             StartThreadIn::LocalProject => StartThreadIn::NewWorktree {
                 worktree_name: None,
-                branch_name: None,
-                start_point: None,
+                branch_target: NewWorktreeBranchTarget::default(),
             },
             StartThreadIn::NewWorktree { .. } | StartThreadIn::LinkedWorktree { .. } => {
                 StartThreadIn::LocalProject
@@ -2059,8 +2056,7 @@ impl AgentPanel {
                 if self.project_has_git_repository(cx) {
                     StartThreadIn::NewWorktree {
                         worktree_name: None,
-                        branch_name: None,
-                        start_point: None,
+                        branch_target: NewWorktreeBranchTarget::default(),
                     }
                 } else {
                     StartThreadIn::LocalProject
@@ -2292,15 +2288,13 @@ impl AgentPanel {
         match &self.start_thread_in {
             StartThreadIn::NewWorktree {
                 worktree_name,
-                branch_name,
-                start_point,
+                branch_target,
             } => {
                 self.handle_worktree_requested(
                     content,
                     WorktreeCreationArgs::New {
                         worktree_name: worktree_name.clone(),
-                        branch_name: branch_name.clone(),
-                        start_point: start_point.clone(),
+                        branch_target: branch_target.clone(),
                     },
                     window,
                     cx,
@@ -2386,8 +2380,7 @@ impl AgentPanel {
     }
 
     fn resolve_worktree_branch_target(
-        explicit_branch_name: Option<String>,
-        explicit_start_point: Option<String>,
+        branch_target: &NewWorktreeBranchTarget,
         existing_branches: &HashSet<String>,
         occupied_branches: &HashSet<String>,
     ) -> Result<(String, bool, Option<String>)> {
@@ -2398,19 +2391,19 @@ impl AgentPanel {
                 .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))
         };
 
-        if let Some(branch_name) = explicit_branch_name {
-            return Ok((branch_name, false, explicit_start_point));
-        }
-
-        if let Some(start_point) = explicit_start_point {
-            if occupied_branches.contains(&start_point) {
-                return Ok((generate_branch_name()?, false, Some(start_point)));
+        match branch_target {
+            NewWorktreeBranchTarget::CreateBranch { name, from_ref } => {
+                Ok((name.clone(), false, from_ref.clone()))
             }
-
-            return Ok((start_point, true, None));
+            NewWorktreeBranchTarget::ExistingBranch { name } => {
+                if occupied_branches.contains(name) {
+                    Ok((generate_branch_name()?, false, Some(name.clone())))
+                } else {
+                    Ok((name.clone(), true, None))
+                }
+            }
+            NewWorktreeBranchTarget::CurrentBranch => Ok((generate_branch_name()?, false, None)),
         }
-
-        Ok((generate_branch_name()?, false, None))
     }
 
     /// Kicks off an async git-worktree creation for each repository. Returns:
@@ -2636,8 +2629,7 @@ impl AgentPanel {
             let (all_paths, path_remapping, has_non_git) = match args {
                 WorktreeCreationArgs::New {
                     worktree_name,
-                    branch_name,
-                    start_point,
+                    branch_target,
                 } => {
                     let branch_receivers = branch_receivers
                         .expect("branch receivers must be prepared for new worktree creation");
@@ -2680,8 +2672,7 @@ impl AgentPanel {
 
                     let (branch_name, use_existing_branch, start_point) =
                         match Self::resolve_worktree_branch_target(
-                            branch_name,
-                            start_point,
+                            &branch_target,
                             &existing_branches,
                             &occupied_branches,
                         ) {
@@ -5445,8 +5436,7 @@ mod tests {
             panel.set_start_thread_in(
                 &StartThreadIn::NewWorktree {
                     worktree_name: None,
-                    branch_name: None,
-                    start_point: None,
+                    branch_target: NewWorktreeBranchTarget::default(),
                 },
                 window,
                 cx,
@@ -5458,8 +5448,7 @@ mod tests {
                 *panel.start_thread_in(),
                 StartThreadIn::NewWorktree {
                     worktree_name: None,
-                    branch_name: None,
-                    start_point: None,
+                    branch_target: NewWorktreeBranchTarget::default(),
                 },
                 "thread target should be NewWorktree after set_thread_target"
             );
@@ -5480,8 +5469,7 @@ mod tests {
                 *panel.start_thread_in(),
                 StartThreadIn::NewWorktree {
                     worktree_name: None,
-                    branch_name: None,
-                    start_point: None,
+                    branch_target: NewWorktreeBranchTarget::default(),
                 },
                 "thread target should survive serialization round-trip"
             );
@@ -5622,8 +5610,10 @@ mod tests {
         ]);
 
         let resolved = AgentPanel::resolve_worktree_branch_target(
-            Some("new-branch".to_string()),
-            Some("main".to_string()),
+            &NewWorktreeBranchTarget::CreateBranch {
+                name: "new-branch".to_string(),
+                from_ref: Some("main".to_string()),
+            },
             &existing_branches,
             &HashSet::from_iter(["main".to_string()]),
         )
@@ -5634,8 +5624,9 @@ mod tests {
         );
 
         let resolved = AgentPanel::resolve_worktree_branch_target(
-            None,
-            Some("feature".to_string()),
+            &NewWorktreeBranchTarget::ExistingBranch {
+                name: "feature".to_string(),
+            },
             &existing_branches,
             &HashSet::default(),
         )
@@ -5643,8 +5634,9 @@ mod tests {
         assert_eq!(resolved, ("feature".to_string(), true, None));
 
         let resolved = AgentPanel::resolve_worktree_branch_target(
-            None,
-            Some("main".to_string()),
+            &NewWorktreeBranchTarget::ExistingBranch {
+                name: "main".to_string(),
+            },
             &existing_branches,
             &HashSet::from_iter(["main".to_string()]),
         )
@@ -5752,8 +5744,7 @@ mod tests {
             panel.set_start_thread_in(
                 &StartThreadIn::NewWorktree {
                     worktree_name: None,
-                    branch_name: None,
-                    start_point: None,
+                    branch_target: NewWorktreeBranchTarget::default(),
                 },
                 window,
                 cx,
@@ -5780,8 +5771,7 @@ mod tests {
                 content,
                 WorktreeCreationArgs::New {
                     worktree_name: None,
-                    branch_name: None,
-                    start_point: None,
+                    branch_target: NewWorktreeBranchTarget::default(),
                 },
                 window,
                 cx,

@@ -18,8 +18,8 @@ use ui::{
 };
 use util::ResultExt as _;
 
-use crate::StartThreadIn;
 use crate::ui::HoldForDefault;
+use crate::{NewWorktreeBranchTarget, StartThreadIn};
 
 pub(crate) struct ThreadWorktreePicker {
     picker: Entity<Picker<ThreadWorktreePickerDelegate>>,
@@ -41,13 +41,9 @@ impl ThreadWorktreePicker {
             .map(|wt| wt.read(cx).abs_path().to_path_buf())
             .collect();
 
-        let (preserved_branch_name, preserved_start_point) = match current_target {
-            StartThreadIn::NewWorktree {
-                branch_name,
-                start_point,
-                ..
-            } => (branch_name.clone(), start_point.clone()),
-            _ => (None, None),
+        let preserved_branch_target = match current_target {
+            StartThreadIn::NewWorktree { branch_target, .. } => branch_target.clone(),
+            _ => NewWorktreeBranchTarget::default(),
         };
 
         let delegate = ThreadWorktreePickerDelegate {
@@ -68,8 +64,7 @@ impl ThreadWorktreePicker {
                 _ => 0,
             },
             project: project.clone(),
-            preserved_branch_name,
-            preserved_start_point,
+            preserved_branch_target,
             fs,
         };
 
@@ -131,8 +126,7 @@ pub(crate) struct ThreadWorktreePickerDelegate {
     all_worktrees: Vec<(RepositoryId, Arc<[GitWorktree]>)>,
     project_worktree_paths: Vec<PathBuf>,
     selected_index: usize,
-    preserved_branch_name: Option<String>,
-    preserved_start_point: Option<String>,
+    preserved_branch_target: NewWorktreeBranchTarget,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
 }
@@ -141,8 +135,7 @@ impl ThreadWorktreePickerDelegate {
     fn new_worktree_action(&self, worktree_name: Option<String>) -> StartThreadIn {
         StartThreadIn::NewWorktree {
             worktree_name,
-            branch_name: self.preserved_branch_name.clone(),
-            start_point: self.preserved_start_point.clone(),
+            branch_target: self.preserved_branch_target.clone(),
         }
     }
 
