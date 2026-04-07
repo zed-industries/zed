@@ -55,8 +55,11 @@ const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
 
 /// Trait for acquiring and refreshing LLM authentication tokens.
 pub trait CloudLlmTokenProvider: Send + Sync {
-    fn acquire_token(&self) -> BoxFuture<'_, Result<String>>;
-    fn refresh_token(&self) -> BoxFuture<'_, Result<String>>;
+    type AuthContext: Clone + Send + 'static;
+
+    fn auth_context(&self, cx: &AsyncApp) -> Self::AuthContext;
+    fn acquire_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
+    fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -79,10 +82,10 @@ impl From<ModelMode> for AnthropicModelMode {
     }
 }
 
-pub struct CloudLanguageModel {
+pub struct CloudLanguageModel<TP: CloudLlmTokenProvider> {
     pub id: LanguageModelId,
     pub model: Arc<cloud_llm_client::LanguageModel>,
-    pub token_provider: Arc<dyn CloudLlmTokenProvider>,
+    pub token_provider: Arc<TP>,
     pub http_client: Arc<HttpClientWithUrl>,
     pub app_version: Option<Version>,
     pub request_limiter: RateLimiter,
@@ -93,14 +96,15 @@ pub struct PerformLlmCompletionResponse {
     pub includes_status_messages: bool,
 }
 
-impl CloudLanguageModel {
+impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
     pub async fn perform_llm_completion(
         http_client: &HttpClientWithUrl,
-        token_provider: &dyn CloudLlmTokenProvider,
+        token_provider: &TP,
+        auth_context: TP::AuthContext,
         app_version: Option<Version>,
         body: CompletionBody,
     ) -> Result<PerformLlmCompletionResponse> {
-        let mut token = token_provider.acquire_token().await?;
+        let mut token = token_provider.acquire_token(auth_context.clone()).await?;
         let mut refreshed_token = false;
 
         loop {
@@ -131,7 +135,7 @@ impl CloudLanguageModel {
             }
 
             if !refreshed_token && needs_llm_token_refresh(&response) {
-                token = token_provider.refresh_token().await?;
+                token = token_provider.refresh_token(auth_context.clone()).await?;
                 refreshed_token = true;
                 continue;
             }
@@ -244,7 +248,7 @@ impl From<ApiError> for LanguageModelCompletionError {
     }
 }
 
-impl LanguageModel for CloudLanguageModel {
+impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<TP> {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
     }
@@ -401,8 +405,9 @@ impl LanguageModel for CloudLanguageModel {
                 let model_id = self.model.id.to_string();
                 let generate_content_request =
                     into_google(request, model_id.clone(), GoogleModelMode::Default);
+                let auth_context = token_provider.auth_context(&cx.to_async());
                 async move {
-                    let token = token_provider.acquire_token().await?;
+                    let token = token_provider.acquire_token(auth_context).await?;
 
                     let request_body = CountTokensBody {
                         provider: cloud_llm_client::LanguageModelProvider::Google,
@@ -451,7 +456,7 @@ impl LanguageModel for CloudLanguageModel {
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
-        _cx: &AsyncApp,
+        cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<
@@ -493,6 +498,7 @@ impl LanguageModel for CloudLanguageModel {
 
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
+                let auth_context = token_provider.auth_context(cx);
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -500,6 +506,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         &http_client,
                         &*token_provider,
+                        auth_context,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -549,6 +556,7 @@ impl LanguageModel for CloudLanguageModel {
                     });
                 }
 
+                let auth_context = token_provider.auth_context(cx);
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -556,6 +564,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         &http_client,
                         &*token_provider,
+                        auth_context,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -588,6 +597,7 @@ impl LanguageModel for CloudLanguageModel {
                     None,
                     None,
                 );
+                let auth_context = token_provider.auth_context(cx);
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -595,6 +605,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         &http_client,
                         &*token_provider,
+                        auth_context,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -621,6 +632,7 @@ impl LanguageModel for CloudLanguageModel {
                 let token_provider = self.token_provider.clone();
                 let request =
                     into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
+                let auth_context = token_provider.auth_context(cx);
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -628,6 +640,7 @@ impl LanguageModel for CloudLanguageModel {
                     } = Self::perform_llm_completion(
                         &http_client,
                         &*token_provider,
+                        auth_context,
                         app_version,
                         CompletionBody {
                             thread_id,
@@ -653,8 +666,8 @@ impl LanguageModel for CloudLanguageModel {
     }
 }
 
-pub struct CloudModelProvider {
-    token_provider: Arc<dyn CloudLlmTokenProvider>,
+pub struct CloudModelProvider<TP: CloudLlmTokenProvider> {
+    token_provider: Arc<TP>,
     http_client: Arc<HttpClientWithUrl>,
     app_version: Option<Version>,
     models: Vec<Arc<cloud_llm_client::LanguageModel>>,
@@ -663,9 +676,9 @@ pub struct CloudModelProvider {
     recommended_models: Vec<Arc<cloud_llm_client::LanguageModel>>,
 }
 
-impl CloudModelProvider {
+impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
     pub fn new(
-        token_provider: Arc<dyn CloudLlmTokenProvider>,
+        token_provider: Arc<TP>,
         http_client: Arc<HttpClientWithUrl>,
         app_version: Option<Version>,
     ) -> Self {
@@ -684,7 +697,9 @@ impl CloudModelProvider {
         let http_client = self.http_client.clone();
         let token_provider = self.token_provider.clone();
         cx.spawn(async move |this, cx| {
-            let response = Self::fetch_models_request(&http_client, &*token_provider).await?;
+            let auth_context = token_provider.auth_context(cx);
+            let response =
+                Self::fetch_models_request(&http_client, &*token_provider, auth_context).await?;
             this.update(cx, |this, cx| {
                 this.update_models(response);
                 cx.notify();
@@ -694,9 +709,10 @@ impl CloudModelProvider {
 
     async fn fetch_models_request(
         http_client: &HttpClientWithUrl,
-        token_provider: &dyn CloudLlmTokenProvider,
+        token_provider: &TP,
+        auth_context: TP::AuthContext,
     ) -> Result<ListModelsResponse> {
-        let token = token_provider.acquire_token().await?;
+        let token = token_provider.acquire_token(auth_context).await?;
 
         let request = http_client::Request::builder()
             .method(Method::GET)
@@ -757,7 +773,7 @@ impl CloudModelProvider {
         &self,
         model: &Arc<cloud_llm_client::LanguageModel>,
     ) -> Arc<dyn LanguageModel> {
-        Arc::new(CloudLanguageModel {
+        Arc::new(CloudLanguageModel::<TP> {
             id: LanguageModelId::from(model.id.0.to_string()),
             model: model.clone(),
             token_provider: self.token_provider.clone(),

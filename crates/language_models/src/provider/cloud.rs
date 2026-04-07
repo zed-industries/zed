@@ -2,9 +2,11 @@ use ai_onboarding::YoungAccountBanner;
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore, global_llm_token, zed_urls};
 use cloud_api_client::LlmApiToken;
+use cloud_api_types::OrganizationId;
 use cloud_api_types::Plan;
 use futures::StreamExt;
 use futures::future::BoxFuture;
+use gpui::AsyncApp;
 use gpui::{AnyElement, AnyView, App, Context, Entity, Subscription, Task};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
@@ -12,7 +14,6 @@ use language_model::{
     ZED_CLOUD_PROVIDER_NAME,
 };
 use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
-use parking_lot::Mutex;
 use release_channel::AppVersion;
 
 use settings::SettingsStore;
@@ -27,14 +28,26 @@ const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
 struct ClientTokenProvider {
     client: Arc<Client>,
     llm_api_token: LlmApiToken,
-    organization_id: Mutex<Option<cloud_api_types::OrganizationId>>,
+    user_store: Entity<UserStore>,
 }
 
 impl CloudLlmTokenProvider for ClientTokenProvider {
-    fn acquire_token(&self) -> BoxFuture<'_, Result<String>> {
+    type AuthContext = Option<OrganizationId>;
+
+    fn auth_context(&self, cx: &AsyncApp) -> Self::AuthContext {
+        self.user_store.read_with(cx, |user_store, _| {
+            user_store
+                .current_organization()
+                .map(|organization| organization.id.clone())
+        })
+    }
+
+    fn acquire_token(
+        &self,
+        organization_id: Self::AuthContext,
+    ) -> BoxFuture<'static, Result<String>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
-        let organization_id = self.organization_id.lock().clone();
         Box::pin(async move {
             client
                 .acquire_llm_token(&llm_api_token, organization_id)
@@ -42,10 +55,12 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         })
     }
 
-    fn refresh_token(&self) -> BoxFuture<'_, Result<String>> {
+    fn refresh_token(
+        &self,
+        organization_id: Self::AuthContext,
+    ) -> BoxFuture<'static, Result<String>> {
         let client = self.client.clone();
         let llm_api_token = self.llm_api_token.clone();
-        let organization_id = self.organization_id.lock().clone();
         Box::pin(async move {
             client
                 .refresh_llm_token(&llm_api_token, organization_id)
@@ -68,7 +83,7 @@ pub struct State {
     client: Arc<Client>,
     user_store: Entity<UserStore>,
     status: client::Status,
-    provider: Entity<CloudModelProvider>,
+    provider: Entity<CloudModelProvider<ClientTokenProvider>>,
     _user_store_subscription: Subscription,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
@@ -86,12 +101,7 @@ impl State {
         let token_provider = Arc::new(ClientTokenProvider {
             client: client.clone(),
             llm_api_token: global_llm_token(cx),
-            organization_id: Mutex::new(
-                user_store
-                    .read(cx)
-                    .current_organization()
-                    .map(|organization| organization.id.clone()),
-            ),
+            user_store: user_store.clone(),
         });
 
         let provider = cx.new(|cx| {
@@ -116,11 +126,6 @@ impl State {
                         if status.is_signed_out() {
                             return;
                         }
-                        *token_provider.organization_id.lock() = this
-                            .user_store
-                            .read(cx)
-                            .current_organization()
-                            .map(|organization| organization.id.clone());
 
                         this.refresh_models(cx);
                     }
