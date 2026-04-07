@@ -373,12 +373,12 @@ mod octo_client {
 
         async fn check_repo_write_permission(&self, login: &GithubLogin) -> Result<bool> {
             // TODO: octocrab fails to deserialize the permission response and
-            // does not adhere to the standars laid out at
+            // does not adhere to the scheme laid out at
             // https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2026-03-10#get-repository-permissions-for-a-user
 
             #[derive(serde::Deserialize)]
             #[serde(rename_all = "lowercase")]
-            enum RepositoryPermission {
+            enum RepoPermission {
                 Admin,
                 Write,
                 Read,
@@ -387,12 +387,12 @@ mod octo_client {
             }
 
             #[derive(serde::Deserialize)]
-            struct RepositoryPermissons {
-                permission: RepositoryPermission,
+            struct RepositoryPermissions {
+                permission: RepoPermission,
             }
 
             self.client
-                .get::<RepositoryPermissons, _, _>(
+                .get::<RepositoryPermissions, _, _>(
                     format!(
                         "/repos/{ORG}/{REPO}/collaborators/{user}/permission",
                         user = login.as_str()
@@ -403,7 +403,7 @@ mod octo_client {
                 .map(|response| {
                     matches!(
                         response.permission,
-                        RepositoryPermission::Write | RepositoryPermission::Admin
+                        RepoPermission::Write | RepoPermission::Admin
                     )
                 })
                 .map_err(Into::into)
