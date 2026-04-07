@@ -6,7 +6,7 @@ use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
+    Anchor, Editor, EditorSnapshot, FoldPlaceholder, ToOffset,
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
     scroll::Autoscroll,
 };
@@ -154,7 +154,7 @@ impl MentionSet {
             MentionUri::Selection { abs_path: None, .. } => Task::ready(Err(anyhow!(
                 "Untitled buffer selection mentions are not supported for paste"
             ))),
-            MentionUri::PastedImage
+            MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
             | MentionUri::MergeConflict { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
@@ -204,10 +204,9 @@ impl MentionSet {
         };
 
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().anchor_in_excerpt(start) else {
             return Task::ready(());
         };
-        let excerpt_id = start_anchor.excerpt_id;
         let end_anchor = snapshot.buffer_snapshot().anchor_before(
             start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1usize,
         );
@@ -234,7 +233,6 @@ impl MentionSet {
                 })
                 .shared();
             insert_crease_for_mention(
-                excerpt_id,
                 start,
                 content_len,
                 mention_uri.name().into(),
@@ -249,7 +247,6 @@ impl MentionSet {
             )
         } else {
             insert_crease_for_mention(
-                excerpt_id,
                 start,
                 content_len,
                 crease_text,
@@ -286,7 +283,7 @@ impl MentionSet {
                 include_errors,
                 include_warnings,
             } => self.confirm_mention_for_diagnostics(include_errors, include_warnings, cx),
-            MentionUri::PastedImage => {
+            MentionUri::PastedImage { .. } => {
                 debug_panic!("pasted image URI should not be included in completions");
                 Task::ready(Err(anyhow!(
                     "pasted imaged URI should not be included in completions"
@@ -468,7 +465,7 @@ impl MentionSet {
         };
 
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
+        let Some(start) = snapshot.anchor_in_excerpt(source_range.start) else {
             return;
         };
 
@@ -742,22 +739,22 @@ pub(crate) async fn insert_images_as_context(
         return;
     }
 
-    let replacement_text = MentionUri::PastedImage.as_link().to_string();
-
     for (image, name) in images {
-        let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
+        let mention_uri = MentionUri::PastedImage {
+            name: name.to_string(),
+        };
+        let replacement_text = mention_uri.as_link().to_string();
+        let Some((text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                let (excerpt_id, _, buffer_snapshot) =
-                    snapshot.buffer_snapshot().as_singleton().unwrap();
-
-                let cursor_anchor = editor.selections.newest_anchor().start.text_anchor;
-                let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
-                let multibuffer_anchor = snapshot
+                let (cursor_anchor, buffer_snapshot) = snapshot
                     .buffer_snapshot()
-                    .anchor_in_excerpt(excerpt_id, text_anchor);
+                    .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
+                    .unwrap();
+                let text_anchor = cursor_anchor.bias_left(buffer_snapshot);
+                let multibuffer_anchor = snapshot.buffer_snapshot().anchor_in_excerpt(text_anchor);
                 editor.insert(&format!("{replacement_text} "), window, cx);
-                (excerpt_id, text_anchor, multibuffer_anchor)
+                (text_anchor, multibuffer_anchor)
             })
             .ok()
         else {
@@ -775,7 +772,6 @@ pub(crate) async fn insert_images_as_context(
         let image = Arc::new(image);
         let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
             insert_crease_for_mention(
-                excerpt_id,
                 text_anchor,
                 content_len,
                 name.clone(),
@@ -810,7 +806,13 @@ pub(crate) async fn insert_images_as_context(
             .shared();
 
         mention_set.update(cx, |mention_set, _cx| {
-            mention_set.insert_mention(crease_id, MentionUri::PastedImage, task.clone())
+            mention_set.insert_mention(
+                crease_id,
+                MentionUri::PastedImage {
+                    name: name.to_string(),
+                },
+                task.clone(),
+            )
         });
 
         if task
@@ -879,7 +881,7 @@ pub(crate) fn paste_images_as_context(
 
     Some(window.spawn(cx, async move |mut cx| {
         use itertools::Itertools;
-        let default_name: SharedString = MentionUri::PastedImage.name().into();
+        let default_name: SharedString = "Image".into();
         let (mut images, paths): (Vec<(gpui::Image, SharedString)>, Vec<_>) = clipboard
             .into_entries()
             .filter_map(|entry| match entry {
@@ -909,7 +911,6 @@ pub(crate) fn paste_images_as_context(
 }
 
 pub(crate) fn insert_crease_for_mention(
-    excerpt_id: ExcerptId,
     anchor: text::Anchor,
     content_len: usize,
     crease_label: SharedString,
@@ -927,7 +928,7 @@ pub(crate) fn insert_crease_for_mention(
     let crease_id = editor.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        let start = snapshot.anchor_in_excerpt(excerpt_id, anchor)?;
+        let start = snapshot.anchor_in_excerpt(anchor)?;
 
         let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);

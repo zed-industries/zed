@@ -47,12 +47,6 @@ impl FeatureFlag for DiffReviewFeatureFlag {
     }
 }
 
-pub struct GitGraphFeatureFlag;
-
-impl FeatureFlag for GitGraphFeatureFlag {
-    const NAME: &'static str = "git-graph";
-}
-
 pub struct StreamingEditFileToolFeatureFlag;
 
 impl FeatureFlag for StreamingEditFileToolFeatureFlag {

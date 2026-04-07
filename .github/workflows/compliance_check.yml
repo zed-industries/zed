@@ -1,0 +1,55 @@
+# Generated from xtask::workflows::compliance_check
+# Rebuild with `cargo xtask workflows`.
+name: compliance_check
+env:
+  CARGO_TERM_COLOR: always
+on:
+  schedule:
+  - cron: 30 17 * * 2
+jobs:
+  scheduled_compliance_check:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        fetch-depth: 0
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - id: determine-version
+      name: compliance_check::scheduled_compliance_check
+      run: |
+        VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/zed/Cargo.toml | tr -d '[:space:]')
+        if [ -z "$VERSION" ]; then
+            echo "Could not determine version from crates/zed/Cargo.toml"
+            exit 1
+        fi
+        TAG="v${VERSION}-pre"
+        echo "Checking compliance for $TAG"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+    - id: run-compliance-check
+      name: compliance_check::scheduled_compliance_check::run_compliance_check
+      run: cargo xtask compliance "$LATEST_TAG" --branch main --report-path target/compliance-report
+      env:
+        LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
+        GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: compliance_check::scheduled_compliance_check::send_failure_slack_notification
+      if: failure()
+      run: |
+        MESSAGE="⚠️ Scheduled compliance check failed for upcoming preview release $LATEST_TAG: There are PRs with missing reviews."
+
+        curl -X POST -H 'Content-type: application/json' \
+            --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
+            "$SLACK_WEBHOOK"
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

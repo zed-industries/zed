@@ -66,6 +66,7 @@ fn migrate_thread_metadata(cx: &mut App) {
                         updated_at: entry.updated_at,
                         created_at: entry.created_at,
                         folder_paths: entry.folder_paths,
+                        main_worktree_paths: PathList::default(),
                         archived: true,
                     })
                 })
@@ -126,6 +127,7 @@ pub struct ThreadMetadata {
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
     pub folder_paths: PathList,
+    pub main_worktree_paths: PathList,
     pub archived: bool,
 }
 
@@ -149,6 +151,7 @@ pub struct ThreadMetadataStore {
     db: ThreadMetadataDb,
     threads: HashMap<acp::SessionId, ThreadMetadata>,
     threads_by_paths: HashMap<PathList, HashSet<acp::SessionId>>,
+    threads_by_main_paths: HashMap<PathList, HashSet<acp::SessionId>>,
     reload_task: Option<Shared<Task<()>>>,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
     pending_thread_ops_tx: smol::channel::Sender<DbOperation>,
@@ -238,6 +241,21 @@ impl ThreadMetadataStore {
             .filter(|s| !s.archived)
     }
 
+    /// Returns threads whose `main_worktree_paths` matches the given path list,
+    /// excluding archived threads. This finds threads that were opened in a
+    /// linked worktree but are associated with the given main worktree.
+    pub fn entries_for_main_worktree_path(
+        &self,
+        path_list: &PathList,
+    ) -> impl Iterator<Item = &ThreadMetadata> + '_ {
+        self.threads_by_main_paths
+            .get(path_list)
+            .into_iter()
+            .flatten()
+            .filter_map(|s| self.threads.get(s))
+            .filter(|s| !s.archived)
+    }
+
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
         let db = self.db.clone();
         self.reload_task.take();
@@ -254,12 +272,19 @@ impl ThreadMetadataStore {
                 this.update(cx, |this, cx| {
                     this.threads.clear();
                     this.threads_by_paths.clear();
+                    this.threads_by_main_paths.clear();
 
                     for row in rows {
                         this.threads_by_paths
                             .entry(row.folder_paths.clone())
                             .or_default()
                             .insert(row.session_id.clone());
+                        if !row.main_worktree_paths.is_empty() {
+                            this.threads_by_main_paths
+                                .entry(row.main_worktree_paths.clone())
+                                .or_default()
+                                .insert(row.session_id.clone());
+                        }
                         this.threads.insert(row.session_id.clone(), row);
                     }
 
@@ -298,12 +323,22 @@ impl ThreadMetadataStore {
     }
 
     fn save_internal(&mut self, metadata: ThreadMetadata) {
-        // If the folder paths have changed, we need to clear the old entry
-        if let Some(thread) = self.threads.get(&metadata.session_id)
-            && thread.folder_paths != metadata.folder_paths
-            && let Some(session_ids) = self.threads_by_paths.get_mut(&thread.folder_paths)
-        {
-            session_ids.remove(&metadata.session_id);
+        if let Some(thread) = self.threads.get(&metadata.session_id) {
+            if thread.folder_paths != metadata.folder_paths {
+                if let Some(session_ids) = self.threads_by_paths.get_mut(&thread.folder_paths) {
+                    session_ids.remove(&metadata.session_id);
+                }
+            }
+            if thread.main_worktree_paths != metadata.main_worktree_paths
+                && !thread.main_worktree_paths.is_empty()
+            {
+                if let Some(session_ids) = self
+                    .threads_by_main_paths
+                    .get_mut(&thread.main_worktree_paths)
+                {
+                    session_ids.remove(&metadata.session_id);
+                }
+            }
         }
 
         self.threads
@@ -313,6 +348,13 @@ impl ThreadMetadataStore {
             .entry(metadata.folder_paths.clone())
             .or_default()
             .insert(metadata.session_id.clone());
+
+        if !metadata.main_worktree_paths.is_empty() {
+            self.threads_by_main_paths
+                .entry(metadata.main_worktree_paths.clone())
+                .or_default()
+                .insert(metadata.session_id.clone());
+        }
 
         self.pending_thread_ops_tx
             .try_send(DbOperation::Upsert(metadata))
@@ -370,10 +412,18 @@ impl ThreadMetadataStore {
             return;
         }
 
-        if let Some(thread) = self.threads.get(&session_id)
-            && let Some(session_ids) = self.threads_by_paths.get_mut(&thread.folder_paths)
-        {
-            session_ids.remove(&session_id);
+        if let Some(thread) = self.threads.get(&session_id) {
+            if let Some(session_ids) = self.threads_by_paths.get_mut(&thread.folder_paths) {
+                session_ids.remove(&session_id);
+            }
+            if !thread.main_worktree_paths.is_empty() {
+                if let Some(session_ids) = self
+                    .threads_by_main_paths
+                    .get_mut(&thread.main_worktree_paths)
+                {
+                    session_ids.remove(&session_id);
+                }
+            }
         }
         self.threads.remove(&session_id);
         self.pending_thread_ops_tx
@@ -397,14 +447,9 @@ impl ThreadMetadataStore {
                 let weak_store = weak_store.clone();
                 move |thread, cx| {
                     weak_store
-                        .update(cx, |store, cx| {
+                        .update(cx, |store, _cx| {
                             let session_id = thread.session_id().clone();
                             store.session_subscriptions.remove(&session_id);
-                            if thread.entries().is_empty() {
-                                // Empty threads can be unloaded without ever being
-                                // durably persisted by the underlying agent.
-                                store.delete(session_id, cx);
-                            }
                         })
                         .ok();
                 }
@@ -449,6 +494,7 @@ impl ThreadMetadataStore {
             db,
             threads: HashMap::default(),
             threads_by_paths: HashMap::default(),
+            threads_by_main_paths: HashMap::default(),
             reload_task: None,
             session_subscriptions: HashMap::default(),
             pending_thread_ops_tx: tx,
@@ -494,6 +540,10 @@ impl ThreadMetadataStore {
             | AcpThreadEvent::Refusal
             | AcpThreadEvent::WorkingDirectoriesUpdated => {
                 let thread_ref = thread.read(cx);
+                if thread_ref.entries().is_empty() {
+                    return;
+                }
+
                 let existing_thread = self.threads.get(thread_ref.session_id());
                 let session_id = thread_ref.session_id().clone();
                 let title = thread_ref
@@ -517,6 +567,20 @@ impl ThreadMetadataStore {
                     PathList::new(&paths)
                 };
 
+                let main_worktree_paths = {
+                    let project = thread_ref.project().read(cx);
+                    let mut main_paths: Vec<Arc<Path>> = Vec::new();
+                    for repo in project.repositories(cx).values() {
+                        let snapshot = repo.read(cx).snapshot();
+                        if snapshot.is_linked_worktree() {
+                            main_paths.push(snapshot.original_repo_abs_path.clone());
+                        }
+                    }
+                    main_paths.sort();
+                    main_paths.dedup();
+                    PathList::new(&main_paths)
+                };
+
                 // Threads without a folder path (e.g. started in an empty
                 // window) are archived by default so they don't get lost,
                 // because they won't show up in the sidebar. Users can reload
@@ -532,6 +596,7 @@ impl ThreadMetadataStore {
                     created_at: Some(created_at),
                     updated_at,
                     folder_paths,
+                    main_worktree_paths,
                     archived,
                 };
 
@@ -567,6 +632,8 @@ impl Domain for ThreadMetadataDb {
             ) STRICT;
         ),
         sql!(ALTER TABLE sidebar_threads ADD COLUMN archived INTEGER DEFAULT 0),
+        sql!(ALTER TABLE sidebar_threads ADD COLUMN main_worktree_paths TEXT),
+        sql!(ALTER TABLE sidebar_threads ADD COLUMN main_worktree_paths_order TEXT),
     ];
 }
 
@@ -583,7 +650,7 @@ impl ThreadMetadataDb {
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
-            "SELECT session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived \
+            "SELECT session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order \
              FROM sidebar_threads \
              ORDER BY updated_at DESC"
         )?()
@@ -606,11 +673,18 @@ impl ThreadMetadataDb {
         } else {
             (Some(serialized.paths), Some(serialized.order))
         };
+        let main_serialized = row.main_worktree_paths.serialize();
+        let (main_worktree_paths, main_worktree_paths_order) = if row.main_worktree_paths.is_empty()
+        {
+            (None, None)
+        } else {
+            (Some(main_serialized.paths), Some(main_serialized.order))
+        };
         let archived = row.archived;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+            let sql = "INSERT INTO sidebar_threads(session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
                        ON CONFLICT(session_id) DO UPDATE SET \
                            agent_id = excluded.agent_id, \
                            title = excluded.title, \
@@ -618,7 +692,9 @@ impl ThreadMetadataDb {
                            created_at = excluded.created_at, \
                            folder_paths = excluded.folder_paths, \
                            folder_paths_order = excluded.folder_paths_order, \
-                           archived = excluded.archived";
+                           archived = excluded.archived, \
+                           main_worktree_paths = excluded.main_worktree_paths, \
+                           main_worktree_paths_order = excluded.main_worktree_paths_order";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&id, 1)?;
             i = stmt.bind(&agent_id, i)?;
@@ -627,7 +703,9 @@ impl ThreadMetadataDb {
             i = stmt.bind(&created_at, i)?;
             i = stmt.bind(&folder_paths, i)?;
             i = stmt.bind(&folder_paths_order, i)?;
-            stmt.bind(&archived, i)?;
+            i = stmt.bind(&archived, i)?;
+            i = stmt.bind(&main_worktree_paths, i)?;
+            stmt.bind(&main_worktree_paths_order, i)?;
             stmt.exec()
         })
         .await
@@ -657,6 +735,10 @@ impl Column for ThreadMetadata {
         let (folder_paths_order_str, next): (Option<String>, i32) =
             Column::column(statement, next)?;
         let (archived, next): (bool, i32) = Column::column(statement, next)?;
+        let (main_worktree_paths_str, next): (Option<String>, i32) =
+            Column::column(statement, next)?;
+        let (main_worktree_paths_order_str, next): (Option<String>, i32) =
+            Column::column(statement, next)?;
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
@@ -678,6 +760,15 @@ impl Column for ThreadMetadata {
             })
             .unwrap_or_default();
 
+        let main_worktree_paths = main_worktree_paths_str
+            .map(|paths| {
+                PathList::deserialize(&util::path_list::SerializedPathList {
+                    paths,
+                    order: main_worktree_paths_order_str.unwrap_or_default(),
+                })
+            })
+            .unwrap_or_default();
+
         Ok((
             ThreadMetadata {
                 session_id: acp::SessionId::new(id),
@@ -686,6 +777,7 @@ impl Column for ThreadMetadata {
                 updated_at,
                 created_at,
                 folder_paths,
+                main_worktree_paths,
                 archived,
             },
             next,
@@ -742,6 +834,7 @@ mod tests {
             updated_at,
             created_at: Some(updated_at),
             folder_paths,
+            main_worktree_paths: PathList::default(),
         }
     }
 
@@ -957,6 +1050,7 @@ mod tests {
             updated_at: now - chrono::Duration::seconds(10),
             created_at: Some(now - chrono::Duration::seconds(10)),
             folder_paths: project_a_paths.clone(),
+            main_worktree_paths: PathList::default(),
             archived: false,
         };
 
@@ -1066,6 +1160,7 @@ mod tests {
             updated_at: existing_updated_at,
             created_at: Some(existing_updated_at),
             folder_paths: project_paths.clone(),
+            main_worktree_paths: PathList::default(),
             archived: false,
         };
 
@@ -1197,7 +1292,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_empty_thread_metadata_deleted_when_thread_released(cx: &mut TestAppContext) {
+    async fn test_empty_thread_events_do_not_create_metadata(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1227,11 +1322,16 @@ mod tests {
                 .entry_ids()
                 .collect::<Vec<_>>()
         });
-        assert_eq!(metadata_ids, vec![session_id]);
+        assert!(
+            metadata_ids.is_empty(),
+            "expected empty draft thread title updates to be ignored"
+        );
 
-        drop(thread);
-        cx.update(|_| {});
-        cx.run_until_parked();
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "Hello".into(), cx);
+            });
+        });
         cx.run_until_parked();
 
         let metadata_ids = cx.update(|cx| {
@@ -1240,10 +1340,7 @@ mod tests {
                 .entry_ids()
                 .collect::<Vec<_>>()
         });
-        assert!(
-            metadata_ids.is_empty(),
-            "expected empty draft thread metadata to be deleted on release"
-        );
+        assert_eq!(metadata_ids, vec![session_id]);
     }
 
     #[gpui::test]
@@ -1318,6 +1415,7 @@ mod tests {
 
         cx.update(|cx| {
             thread_without_worktree.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "content".into(), cx);
                 thread.set_title("No Project Thread".into(), cx).detach();
             });
         });
@@ -1338,6 +1436,7 @@ mod tests {
 
         cx.update(|cx| {
             thread_with_worktree.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "content".into(), cx);
                 thread.set_title("Project Thread".into(), cx).detach();
             });
         });
@@ -1393,6 +1492,7 @@ mod tests {
         // Set a title on the regular thread to trigger a save via handle_thread_update.
         cx.update(|cx| {
             regular_thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "content".into(), cx);
                 thread.set_title("Regular Thread".into(), cx).detach();
             });
         });

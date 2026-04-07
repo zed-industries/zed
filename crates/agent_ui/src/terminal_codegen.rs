@@ -2,6 +2,9 @@ use crate::inline_prompt_editor::CodegenStatus;
 use futures::{SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language_model::{ConfiguredModel, LanguageModelRegistry, LanguageModelRequest};
+use language_models::provider::anthropic::telemetry::{
+    AnthropicCompletionType, AnthropicEventData, AnthropicEventReporter, AnthropicEventType,
+};
 use std::time::Instant;
 use terminal::Terminal;
 use uuid::Uuid;
@@ -40,7 +43,7 @@ impl TerminalCodegen {
             return;
         };
 
-        let anthropic_reporter = language_model::AnthropicEventReporter::new(&model, cx);
+        let anthropic_reporter = AnthropicEventReporter::new(&model, cx);
         let session_id = self.session_id;
         let model_telemetry_id = model.telemetry_id();
         let model_provider_id = model.provider_id().to_string();
@@ -94,9 +97,9 @@ impl TerminalCodegen {
                             error_message = error_message,
                         );
 
-                        anthropic_reporter.report(language_model::AnthropicEventData {
-                            completion_type: language_model::AnthropicCompletionType::Terminal,
-                            event: language_model::AnthropicEventType::Response,
+                        anthropic_reporter.report(AnthropicEventData {
+                            completion_type: AnthropicCompletionType::Terminal,
+                            event: AnthropicEventType::Response,
                             language_name: None,
                             message_id,
                         });

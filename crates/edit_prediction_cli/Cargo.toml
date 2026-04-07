@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "ep"
 path = "src/main.rs"
@@ -80,9 +83,14 @@ dynamic_prompts = []
 ignored = ["wasmtime"]
 
 [dev-dependencies]
+criterion.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
+
+[[bench]]
+name = "kept_rate"
+harness = false

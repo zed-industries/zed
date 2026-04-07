@@ -566,9 +566,7 @@ impl PickerDelegate for TasksModalDelegate {
                                         .checked_sub(1);
                                     picker.refresh(window, cx);
                                 }))
-                                .tooltip(|_, cx| {
-                                    Tooltip::simple("Delete Previously Scheduled Task", cx)
-                                }),
+                                .tooltip(|_, cx| Tooltip::simple("Delete from Recent Tasks", cx)),
                         );
                         item.end_slot_on_hover(delete_button)
                     } else {

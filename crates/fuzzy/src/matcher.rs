@@ -1,10 +1,9 @@
 use std::{
     borrow::Borrow,
-    collections::BTreeMap,
     sync::atomic::{self, AtomicBool},
 };
 
-use crate::CharBag;
+use crate::{CharBag, char_bag::simple_lowercase};
 
 const BASE_DISTANCE_PENALTY: f64 = 0.6;
 const ADDITIONAL_DISTANCE_PENALTY: f64 = 0.05;
@@ -69,7 +68,6 @@ impl<'a> Matcher<'a> {
     {
         let mut candidate_chars = Vec::new();
         let mut lowercase_candidate_chars = Vec::new();
-        let mut extra_lowercase_chars = BTreeMap::new();
 
         for candidate in candidates {
             if !candidate.borrow().has_chars(self.query_char_bag) {
@@ -82,14 +80,9 @@ impl<'a> Matcher<'a> {
 
             candidate_chars.clear();
             lowercase_candidate_chars.clear();
-            extra_lowercase_chars.clear();
-            for (i, c) in candidate.borrow().candidate_chars().enumerate() {
+            for c in candidate.borrow().candidate_chars() {
                 candidate_chars.push(c);
-                let mut char_lowercased = c.to_lowercase().collect::<Vec<_>>();
-                if char_lowercased.len() > 1 {
-                    extra_lowercase_chars.insert(i, char_lowercased.len() - 1);
-                }
-                lowercase_candidate_chars.append(&mut char_lowercased);
+                lowercase_candidate_chars.push(simple_lowercase(c));
             }
 
             if !self.find_last_positions(lowercase_prefix, &lowercase_candidate_chars) {
@@ -108,7 +101,6 @@ impl<'a> Matcher<'a> {
                 &lowercase_candidate_chars,
                 prefix,
                 lowercase_prefix,
-                &extra_lowercase_chars,
             );
 
             if score > 0.0 {
@@ -146,7 +138,6 @@ impl<'a> Matcher<'a> {
         path_lowercased: &[char],
         prefix: &[char],
         lowercase_prefix: &[char],
-        extra_lowercase_chars: &BTreeMap<usize, usize>,
     ) -> f64 {
         let score = self.recursive_score_match(
             path,
@@ -156,7 +147,6 @@ impl<'a> Matcher<'a> {
             0,
             0,
             self.query.len() as f64,
-            extra_lowercase_chars,
         ) * self.query.len() as f64;
 
         if score <= 0.0 {
@@ -201,7 +191,6 @@ impl<'a> Matcher<'a> {
         query_idx: usize,
         path_idx: usize,
         cur_score: f64,
-        extra_lowercase_chars: &BTreeMap<usize, usize>,
     ) -> f64 {
         if query_idx == self.query.len() {
             return 1.0;
@@ -228,13 +217,6 @@ impl<'a> Matcher<'a> {
         let mut last_slash = 0;
 
         for j in path_idx..=safe_limit {
-            let extra_lowercase_chars_count = extra_lowercase_chars
-                .iter()
-                .take_while(|&(&i, _)| i < j)
-                .map(|(_, increment)| increment)
-                .sum::<usize>();
-            let j_regular = j - extra_lowercase_chars_count;
-
             let path_char = if j < prefix.len() {
                 lowercase_prefix[j]
             } else {
@@ -247,20 +229,20 @@ impl<'a> Matcher<'a> {
             let is_path_sep = path_char == '/';
 
             if query_idx == 0 && is_path_sep {
-                last_slash = j_regular;
+                last_slash = j;
             }
             let need_to_score = query_char == path_char || (is_path_sep && query_char == '_');
             if need_to_score {
-                let curr = match prefix.get(j_regular) {
+                let curr = match prefix.get(j) {
                     Some(&curr) => curr,
-                    None => path[j_regular - prefix.len()],
+                    None => path[j - prefix.len()],
                 };
 
                 let mut char_score = 1.0;
                 if j > path_idx {
-                    let last = match prefix.get(j_regular - 1) {
+                    let last = match prefix.get(j - 1) {
                         Some(&last) => last,
-                        None => path[j_regular - 1 - prefix.len()],
+                        None => path[j - 1 - prefix.len()],
                     };
 
                     if last == '/' {
@@ -316,12 +298,11 @@ impl<'a> Matcher<'a> {
                     query_idx + 1,
                     j + 1,
                     next_score,
-                    extra_lowercase_chars,
                 ) * multiplier;
 
                 if new_score > score {
                     score = new_score;
-                    best_position = j_regular;
+                    best_position = j;
                     // Optimization: can't score better than 1.
                     if new_score == 1.0 {
                         break;
@@ -469,12 +450,12 @@ mod tests {
 
         assert_eq!(
             match_single_path_query("İo/oluş", false, &mixed_unicode_paths),
-            vec![("İolu/oluş", vec![0, 2, 4, 6, 8, 10, 12])]
+            vec![("İolu/oluş", vec![0, 2, 5, 6, 7, 8, 9])]
         );
 
         assert_eq!(
             match_single_path_query("İst/code", false, &mixed_unicode_paths),
-            vec![("İstanbul/code", vec![0, 2, 4, 6, 8, 10, 12, 14])]
+            vec![("İstanbul/code", vec![0, 2, 3, 9, 10, 11, 12, 13])]
         );
 
         assert_eq!(
@@ -536,12 +517,60 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_positions_are_valid_char_boundaries_with_expanding_lowercase() {
+        // İ (U+0130) lowercases to "i\u{307}" (2 chars) under full case folding.
+        // With simple case mapping (used by this matcher), İ → 'i' (1 char),
+        // so positions remain valid byte boundaries.
+        let paths = vec!["İstanbul/code.rs", "aİbİc/dİeİf.txt", "src/İmport/İndex.ts"];
+
+        for query in &["code", "İst", "dİe", "İndex", "İmport", "abcdef"] {
+            let results = match_single_path_query(query, false, &paths);
+            for (path, positions) in &results {
+                for &pos in positions {
+                    assert!(
+                        path.is_char_boundary(pos),
+                        "Position {pos} is not a valid char boundary in path {path:?} \
+                         (query: {query:?}, all positions: {positions:?})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_positions_valid_with_various_multibyte_chars() {
+        // German ß uppercases to SS but lowercases to itself — no expansion.
+        // Armenian ligatures and other characters that could expand under full
+        // case folding should still produce valid byte boundaries.
+        let paths = vec![
+            "straße/config.rs",
+            "Straße/München/file.txt",
+            "ﬁle/path.rs",     // ﬁ (U+FB01, fi ligature)
+            "ﬀoo/bar.txt",     // ﬀ (U+FB00, ff ligature)
+            "aÇbŞc/dÖeÜf.txt", // Turkish chars that don't expand
+        ];
+
+        for query in &["config", "Mün", "file", "bar", "abcdef", "straße", "ÇŞ"] {
+            let results = match_single_path_query(query, false, &paths);
+            for (path, positions) in &results {
+                for &pos in positions {
+                    assert!(
+                        path.is_char_boundary(pos),
+                        "Position {pos} is not a valid char boundary in path {path:?} \
+                         (query: {query:?}, all positions: {positions:?})"
+                    );
+                }
+            }
+        }
+    }
+
     fn match_single_path_query<'a>(
         query: &str,
         smart_case: bool,
         paths: &[&'a str],
     ) -> Vec<(&'a str, Vec<usize>)> {
-        let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+        let lowercase_query = query.chars().map(simple_lowercase).collect::<Vec<_>>();
         let query = query.chars().collect::<Vec<_>>();
         let query_chars = CharBag::from(&lowercase_query[..]);
 
@@ -551,7 +580,7 @@ mod tests {
             .collect::<Vec<_>>();
         let mut path_entries = Vec::new();
         for (i, path) in paths.iter().enumerate() {
-            let lowercase_path = path.to_lowercase().chars().collect::<Vec<_>>();
+            let lowercase_path: Vec<char> = path.chars().map(simple_lowercase).collect();
             let char_bag = CharBag::from(lowercase_path.as_slice());
             path_entries.push(PathMatchCandidate {
                 is_dir: false,

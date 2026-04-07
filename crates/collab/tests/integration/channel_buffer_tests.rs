@@ -313,7 +313,7 @@ fn assert_remote_selections(
     let snapshot = editor.snapshot(window, cx);
     let hub = editor.collaboration_hub().unwrap();
     let collaborators = hub.collaborators(cx);
-    let range = Anchor::min()..Anchor::max();
+    let range = Anchor::Min..Anchor::Max;
     let remote_selections = snapshot
         .remote_selections_in_range(&range, hub, cx)
         .map(|s| {
