@@ -361,7 +361,7 @@ mod tests {
         }
 
         async fn check_repo_write_permission(&self, _login: &GithubLogin) -> anyhow::Result<bool> {
-            Ok(true)
+            Ok(false)
         }
 
         async fn ensure_pull_request_has_label(
