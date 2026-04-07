@@ -628,22 +628,22 @@ impl StartThreadIn {
         }
     }
 
-    fn worktree_branch_label(&self) -> Option<SharedString> {
+    fn worktree_branch_label(&self, default_branch_label: SharedString) -> Option<SharedString> {
         match self {
             Self::NewWorktree {
                 branch_name: Some(branch_name),
                 ..
-            } => Some(branch_name.clone().into()),
+            } => Some(format!("From: {branch_name}").into()),
             Self::NewWorktree {
                 branch_name: None,
                 start_point: Some(start_point),
                 ..
-            } => Some(start_point.clone().into()),
+            } => Some(format!("From: {start_point}").into()),
             Self::NewWorktree {
                 branch_name: None,
                 start_point: None,
                 ..
-            } => Some("Random Branch".into()),
+            } => Some(default_branch_label),
             _ => None,
         }
     }
@@ -654,6 +654,18 @@ impl StartThreadIn {
 pub enum WorktreeCreationStatus {
     Creating,
     Error(SharedString),
+}
+
+#[derive(Clone, Debug)]
+enum WorktreeCreationArgs {
+    New {
+        worktree_name: Option<String>,
+        branch_name: Option<String>,
+        start_point: Option<String>,
+    },
+    Linked {
+        worktree_path: PathBuf,
+    },
 }
 
 impl ActiveView {
@@ -2269,28 +2281,32 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // todo! we should only send in the start thread in enum instead of the whole thing
         match &self.start_thread_in {
             StartThreadIn::NewWorktree {
                 worktree_name,
                 branch_name,
                 start_point,
             } => {
-                let worktree_name = worktree_name.clone();
-                let branch_name = branch_name.clone();
-                let start_point = start_point.clone();
-                self.handle_worktree_creation_requested(
+                self.handle_worktree_requested(
                     content,
-                    worktree_name,
-                    branch_name,
-                    start_point,
+                    WorktreeCreationArgs::New {
+                        worktree_name: worktree_name.clone(),
+                        branch_name: branch_name.clone(),
+                        start_point: start_point.clone(),
+                    },
                     window,
                     cx,
                 );
             }
             StartThreadIn::LinkedWorktree { path, .. } => {
-                let path = path.clone();
-                self.handle_linked_worktree_requested(content, path, window, cx);
+                self.handle_worktree_requested(
+                    content,
+                    WorktreeCreationArgs::Linked {
+                        worktree_path: path.clone(),
+                    },
+                    window,
+                    cx,
+                );
             }
             StartThreadIn::LocalProject => {
                 cx.defer_in(window, move |_this, window, cx| {
@@ -2359,6 +2375,43 @@ impl AgentPanel {
         }
 
         (git_repos, non_git_paths)
+    }
+
+    fn resolve_worktree_branch_target(
+        explicit_branch_name: Option<String>,
+        explicit_start_point: Option<String>,
+        existing_branches: &HashSet<String>,
+        occupied_branches: &HashSet<String>,
+    ) -> Result<(String, bool, Option<String>)> {
+        if let Some(branch_name) = explicit_branch_name {
+            return Ok((branch_name, false, explicit_start_point));
+        }
+
+        if let Some(start_point) = explicit_start_point {
+            if occupied_branches.contains(&start_point) {
+                let existing_branch_refs: Vec<&str> = existing_branches
+                    .iter()
+                    .map(|branch_name| branch_name.as_str())
+                    .collect();
+                let mut rng = rand::rng();
+                let branch_name =
+                    crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng)
+                        .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))?;
+                return Ok((branch_name, false, Some(start_point)));
+            }
+
+            return Ok((start_point, true, None));
+        }
+
+        let existing_branch_refs: Vec<&str> = existing_branches
+            .iter()
+            .map(|branch_name| branch_name.as_str())
+            .collect();
+        let mut rng = rand::rng();
+        let branch_name =
+            crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng)
+                .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))?;
+        Ok((branch_name, false, None))
     }
 
     /// Kicks off an async git-worktree creation for each repository. Returns:
@@ -2505,85 +2558,10 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn handle_linked_worktree_requested(
+    fn handle_worktree_requested(
         &mut self,
         content: Vec<acp::ContentBlock>,
-        worktree_path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if matches!(
-            self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
-        ) {
-            debug_panic!(
-                "We should never call this function with worktree creation status as Creating"
-            );
-            return;
-        }
-
-        self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
-        cx.notify();
-
-        let workspace = self.workspace.clone();
-        let window_handle = window
-            .window_handle()
-            .downcast::<workspace::MultiWorkspace>();
-        let selected_agent = self.selected_agent();
-
-        let task = cx.spawn_in(window, async move |this, cx| {
-            let app_state = match workspace.upgrade() {
-                Some(workspace) => cx.update(|_, cx| workspace.read(cx).app_state().clone())?,
-                None => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_worktree_creation_error(
-                            "Workspace no longer available".into(),
-                            window,
-                            cx,
-                        );
-                    })?;
-                    return anyhow::Ok(());
-                }
-            };
-
-            if let Err(err) = Self::open_worktree_workspace_and_start_thread(
-                this.clone(),
-                vec![worktree_path],
-                app_state,
-                window_handle,
-                None,
-                Vec::new(),
-                Vec::new(),
-                false,
-                content,
-                selected_agent,
-                cx,
-            )
-            .await
-            {
-                this.update_in(cx, |this, window, cx| {
-                    this.set_worktree_creation_error(
-                        format!("Failed to set up workspace: {err}").into(),
-                        window,
-                        cx,
-                    );
-                })?;
-            }
-
-            anyhow::Ok(())
-        });
-
-        self._worktree_creation_task = Some(cx.foreground_executor().spawn(async move {
-            task.await.log_err();
-        }));
-    }
-
-    fn handle_worktree_creation_requested(
-        &mut self,
-        content: Vec<acp::ContentBlock>,
-        explicit_worktree_name: Option<String>,
-        explicit_branch_name: Option<String>,
-        explicit_start_point: Option<String>,
+        args: WorktreeCreationArgs,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2599,7 +2577,7 @@ impl AgentPanel {
 
         let (git_repos, non_git_paths) = self.classify_worktrees(cx);
 
-        if git_repos.is_empty() {
+        if matches!(args, WorktreeCreationArgs::New { .. }) && git_repos.is_empty() {
             self.set_worktree_creation_error(
                 "No git repositories found in the project".into(),
                 window,
@@ -2608,17 +2586,36 @@ impl AgentPanel {
             return;
         }
 
-        // Kick off branch listing as early as possible so it can run
-        // concurrently with the remaining synchronous setup work.
-        let branch_receivers: Vec<_> = git_repos
-            .iter()
-            .map(|repo| repo.update(cx, |repo, _cx| repo.branches()))
-            .collect();
-
-        let worktree_directory_setting = ProjectSettings::get_global(cx)
-            .git
-            .worktree_directory
-            .clone();
+        let branch_receivers = if matches!(args, WorktreeCreationArgs::New { .. }) {
+            Some(
+                git_repos
+                    .iter()
+                    .map(|repo| repo.update(cx, |repo, _cx| repo.branches()))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+        let worktree_receivers = if matches!(args, WorktreeCreationArgs::New { .. }) {
+            Some(
+                git_repos
+                    .iter()
+                    .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+        let worktree_directory_setting = if matches!(args, WorktreeCreationArgs::New { .. }) {
+            Some(
+                ProjectSettings::get_global(cx)
+                    .git
+                    .worktree_directory
+                    .clone(),
+            )
+        } else {
+            None
+        };
 
         let active_file_path = self.workspace.upgrade().and_then(|workspace| {
             let workspace = workspace.read(cx);
@@ -2638,84 +2635,125 @@ impl AgentPanel {
         let selected_agent = self.selected_agent();
 
         let task = cx.spawn_in(window, async move |this, cx| {
-            // Await the branch listings we kicked off earlier.
-            let mut existing_branches = Vec::new();
-            for result in futures::future::join_all(branch_receivers).await {
-                match result {
-                    Ok(Ok(branches)) => {
-                        for branch in branches {
-                            existing_branches.push(branch.name().to_string());
+            let (all_paths, path_remapping, has_non_git) = match args {
+                WorktreeCreationArgs::New {
+                    worktree_name,
+                    branch_name,
+                    start_point,
+                } => {
+                    let branch_receivers = branch_receivers
+                        .expect("branch receivers must be prepared for new worktree creation");
+                    let worktree_receivers = worktree_receivers
+                        .expect("worktree receivers must be prepared for new worktree creation");
+                    let worktree_directory_setting = worktree_directory_setting
+                        .expect("worktree directory must be prepared for new worktree creation");
+
+                    let mut existing_branches = HashSet::default();
+                    for result in futures::future::join_all(branch_receivers).await {
+                        match result {
+                            Ok(Ok(branches)) => {
+                                for branch in branches {
+                                    existing_branches.insert(branch.name().to_string());
+                                }
+                            }
+                            Ok(Err(err)) => {
+                                Err::<(), _>(err).log_err();
+                            }
+                            Err(_) => {}
                         }
                     }
-                    Ok(Err(err)) => {
-                        Err::<(), _>(err).log_err();
-                    }
-                    Err(_) => {}
-                }
-            }
 
-            let branch_name = if let Some(name) = explicit_branch_name.clone() {
-                name
-            } else if let Some(start_point) = explicit_start_point.clone() {
-                start_point
-            } else {
-                let existing_branch_refs: Vec<&str> =
-                    existing_branches.iter().map(|s| s.as_str()).collect();
-                let mut rng = rand::rng();
-                match crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng) {
-                    Some(name) => name,
-                    None => {
-                        this.update_in(cx, |this, window, cx| {
-                            this.set_worktree_creation_error(
-                                "Failed to generate a unique branch name".into(),
-                                window,
+                    let mut occupied_branches = HashSet::default();
+                    for result in futures::future::join_all(worktree_receivers).await {
+                        match result {
+                            Ok(Ok(worktrees)) => {
+                                for worktree in worktrees {
+                                    if let Some(branch_name) = worktree.branch_name() {
+                                        occupied_branches.insert(branch_name.to_string());
+                                    }
+                                }
+                            }
+                            Ok(Err(err)) => {
+                                Err::<(), _>(err).log_err();
+                            }
+                            Err(_) => {}
+                        }
+                    }
+
+                    let (branch_name, use_existing_branch, start_point) =
+                        match Self::resolve_worktree_branch_target(
+                            branch_name,
+                            start_point,
+                            &existing_branches,
+                            &occupied_branches,
+                        ) {
+                            Ok(target) => target,
+                            Err(err) => {
+                                this.update_in(cx, |this, window, cx| {
+                                    this.set_worktree_creation_error(
+                                        err.to_string().into(),
+                                        window,
+                                        cx,
+                                    );
+                                })?;
+                                return anyhow::Ok(());
+                            }
+                        };
+
+                    let (creation_infos, path_remapping) =
+                        match this.update_in(cx, |_this, _window, cx| {
+                            Self::start_worktree_creations(
+                                &git_repos,
+                                worktree_name,
+                                &branch_name,
+                                use_existing_branch,
+                                start_point,
+                                &worktree_directory_setting,
                                 cx,
-                            );
-                        })?;
-                        return anyhow::Ok(());
-                    }
+                            )
+                        }) {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(err)) | Err(err) => {
+                                this.update_in(cx, |this, window, cx| {
+                                    this.set_worktree_creation_error(
+                                        format!("Failed to validate worktree directory: {err}")
+                                            .into(),
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                                return anyhow::Ok(());
+                            }
+                        };
+
+                    let created_paths =
+                        match Self::await_and_rollback_on_failure(creation_infos, cx).await {
+                            Ok(paths) => paths,
+                            Err(err) => {
+                                this.update_in(cx, |this, window, cx| {
+                                    this.set_worktree_creation_error(
+                                        format!("{err}").into(),
+                                        window,
+                                        cx,
+                                    );
+                                })?;
+                                return anyhow::Ok(());
+                            }
+                        };
+
+                    let mut all_paths = created_paths;
+                    let has_non_git = !non_git_paths.is_empty();
+                    all_paths.extend(non_git_paths.iter().cloned());
+                    (all_paths, path_remapping, has_non_git)
+                }
+                WorktreeCreationArgs::Linked { worktree_path } => {
+                    let mut all_paths = vec![worktree_path];
+                    let has_non_git = !non_git_paths.is_empty();
+                    all_paths.extend(non_git_paths.iter().cloned());
+                    (all_paths, Vec::new(), has_non_git)
                 }
             };
-
-            let (creation_infos, path_remapping) = match this.update_in(cx, |_this, _window, cx| {
-                Self::start_worktree_creations(
-                    &git_repos,
-                    explicit_worktree_name.clone(),
-                    &branch_name,
-                    explicit_branch_name.is_none() && explicit_start_point.is_some(),
-                    explicit_start_point.clone(),
-                    &worktree_directory_setting,
-                    cx,
-                )
-            }) {
-                Ok(Ok(result)) => result,
-                Ok(Err(err)) | Err(err) => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_worktree_creation_error(
-                            format!("Failed to validate worktree directory: {err}").into(),
-                            window,
-                            cx,
-                        );
-                    })
-                    .log_err();
-                    return anyhow::Ok(());
-                }
-            };
-
-            let created_paths = match Self::await_and_rollback_on_failure(creation_infos, cx).await
-            {
-                Ok(paths) => paths,
-                Err(err) => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_worktree_creation_error(format!("{err}").into(), window, cx);
-                    })?;
-                    return anyhow::Ok(());
-                }
-            };
-
-            let mut all_paths = created_paths;
-            let has_non_git = !non_git_paths.is_empty();
-            all_paths.extend(non_git_paths.iter().cloned());
 
             let app_state = match workspace.upgrade() {
                 Some(workspace) => cx.update(|_, cx| workspace.read(cx).app_state().clone())?,
@@ -3370,10 +3408,24 @@ impl AgentPanel {
             self.worktree_creation_status,
             Some(WorktreeCreationStatus::Creating)
         );
+        let default_branch_label = if self.project.read(_cx).repositories(_cx).len() > 1 {
+            SharedString::from("From: current branches")
+        } else {
+            self.project
+                .read(_cx)
+                .active_repository(_cx)
+                .and_then(|repo| {
+                    repo.read(_cx)
+                        .branch
+                        .as_ref()
+                        .map(|branch| SharedString::from(format!("From: {}", branch.name())))
+                })
+                .unwrap_or_else(|| SharedString::from("From: HEAD"))
+        };
         let trigger_label = self
             .start_thread_in
-            .worktree_branch_label()
-            .unwrap_or_else(|| SharedString::from("Random Branch"));
+            .worktree_branch_label(default_branch_label)
+            .unwrap_or_else(|| SharedString::from("From: HEAD"));
         let icon = if self.thread_branch_menu_handle.is_deployed() {
             IconName::ChevronUp
         } else {
@@ -5561,6 +5613,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_resolve_worktree_branch_target() {
+        let existing_branches = HashSet::from_iter([
+            "main".to_string(),
+            "feature".to_string(),
+            "origin/main".to_string(),
+        ]);
+
+        let resolved = AgentPanel::resolve_worktree_branch_target(
+            Some("new-branch".to_string()),
+            Some("main".to_string()),
+            &existing_branches,
+            &HashSet::from_iter(["main".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(
+            resolved,
+            ("new-branch".to_string(), false, Some("main".to_string()))
+        );
+
+        let resolved = AgentPanel::resolve_worktree_branch_target(
+            None,
+            Some("feature".to_string()),
+            &existing_branches,
+            &HashSet::default(),
+        )
+        .unwrap();
+        assert_eq!(resolved, ("feature".to_string(), true, None));
+
+        let resolved = AgentPanel::resolve_worktree_branch_target(
+            None,
+            Some("main".to_string()),
+            &existing_branches,
+            &HashSet::from_iter(["main".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(resolved.1, false);
+        assert_eq!(resolved.2, Some("main".to_string()));
+        assert_ne!(resolved.0, "main");
+        assert!(existing_branches.contains("main"));
+        assert!(!existing_branches.contains(&resolved.0));
+    }
+
     #[gpui::test]
     async fn test_worktree_creation_preserves_selected_agent(cx: &mut TestAppContext) {
         init_test(cx);
@@ -5681,7 +5776,16 @@ mod tests {
             "Hello from test",
         ))];
         panel.update_in(cx, |panel, window, cx| {
-            panel.handle_worktree_creation_requested(content, None, None, None, window, cx);
+            panel.handle_worktree_requested(
+                content,
+                WorktreeCreationArgs::New {
+                    worktree_name: None,
+                    branch_name: None,
+                    start_point: None,
+                },
+                window,
+                cx,
+            );
         });
 
         // Let the async worktree creation + workspace setup complete.
