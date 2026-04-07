@@ -28,13 +28,17 @@ fn path(path: impl AsRef<str>) -> String {
     let path = path.as_ref();
     #[cfg(target_os = "windows")]
     {
-        path = path.replace("/", "\\");
+        let mut path = path.replace("/", "\\");
         if path.starts_with("\\") {
-            path = format!("C:{}", path);
+            path = format!("C:{}", &path);
         }
         path
     }
-    path.to_string()
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
 }
 
 impl TestContext {

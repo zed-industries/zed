@@ -873,7 +873,7 @@ impl Worktree {
         if is_local {
             LocalWorktree::restore_entry(trash_entry, worktree, cx).await
         } else {
-            // TODO!(dino): Add support for restoring entries in remote worktrees.
+            // TODO(dino): Add support for restoring entries in remote worktrees.
             Err(anyhow!("Unsupported"))
         }
     }
@@ -2161,7 +2161,7 @@ impl RemoteWorktree {
                 snapshot.delete_entry(entry_id);
                 this.snapshot = snapshot.clone();
 
-                // TODO!: How can we actually track the deleted entry when
+                // TODO: How can we actually track the deleted entry when
                 // working in remote? We likely only need to keep this
                 // information on the remote side in order to support restoring
                 // the trashed file.
