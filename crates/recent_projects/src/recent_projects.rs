@@ -1589,7 +1589,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     }
                                     highlighted.render(window, cx)
                                 })
-                                .tooltip(Tooltip::text(tooltip_path)),
+                                .tooltip(move |_, cx| {
+                                    Tooltip::with_meta(
+                                        "Open Project in New Window",
+                                        None,
+                                        tooltip_path.clone(),
+                                        cx,
+                                    )
+                                }),
                         )
                         .end_slot(secondary_actions)
                         .show_end_slot_on_hover()
