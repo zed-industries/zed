@@ -2446,6 +2446,10 @@ impl AgentPanel {
                 let new_path =
                     repo.path_for_new_linked_worktree(&worktree_name, worktree_directory_setting)?;
                 let target = if use_existing_branch {
+                    debug_assert!(
+                        git_repos.len() == 1,
+                        "use_existing_branch should only be true for a single repo"
+                    );
                     git::repository::CreateWorktreeTarget::ExistingBranch {
                         branch_name: branch_name.to_string(),
                     }
