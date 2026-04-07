@@ -101,7 +101,7 @@ impl ThreadWorktreePicker {
             all_worktrees,
             project_worktree_paths,
             selected_index,
-            project: project.clone(),
+            project,
             preserved_branch_target,
             fs,
         };
