@@ -16,7 +16,7 @@ use smol::io::AsyncReadExt;
 use ui::{AnnouncementToast, ListBulletItem, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{
-    Workspace,
+    ToggleWorkspaceSidebar, Workspace,
     notifications::{
         ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, show_app_notification,
         simple_message_notification::MessageNotification,
@@ -174,7 +174,7 @@ struct AnnouncementContent {
     bullet_items: Vec<SharedString>,
     primary_action_label: SharedString,
     primary_action_url: Option<SharedString>,
-    primary_action_callback: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
+    primary_action_callback: Option<Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>>,
     secondary_action_url: Option<SharedString>,
     on_dismiss: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
 }
@@ -206,17 +206,17 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                     ],
                     primary_action_label: "Try Now".into(),
                     primary_action_url: None,
-                    primary_action_callback: if already_agent_layout {
-                        None
-                    } else {
-                        Some(Arc::new(move |cx| {
+                    primary_action_callback: Some(Arc::new(move |window, cx| {
+                        if !already_agent_layout {
                             AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
-                        }))
-                    },
+                        }
+                        window.dispatch_action(Box::new(ToggleWorkspaceSidebar), cx);
+                        window.dispatch_action(Box::new(zed_actions::assistant::ToggleFocus), cx);
+                    })),
                     on_dismiss: Some(Arc::new(|cx| {
                         ParallelAgentAnnouncement::set_dismissed(true, cx)
                     })),
-                    secondary_action_url: Some("https://zed.dev/blog/parallel-agents".into()),
+                    secondary_action_url: Some("https://zed.dev/blog/".into()),
                 })
             }
         }
@@ -270,10 +270,10 @@ impl Render for AnnouncementToastNotification {
             .primary_on_click(cx.listener({
                 let url = self.content.primary_action_url.clone();
                 let callback = self.content.primary_action_callback.clone();
-                telemetry::event!("Parallel Agent Announcement Main Click");
-                move |this, _, _window, cx| {
+                move |this, _, window, cx| {
+                    telemetry::event!("Parallel Agent Announcement Main Click");
                     if let Some(callback) = &callback {
-                        callback(cx);
+                        callback(window, cx);
                     }
                     if let Some(url) = &url {
                         cx.open_url(url);
@@ -283,8 +283,8 @@ impl Render for AnnouncementToastNotification {
             }))
             .secondary_on_click(cx.listener({
                 let url = self.content.secondary_action_url.clone();
-                telemetry::event!("Parallel Agent Announcement Secondary Click");
                 move |this, _, _window, cx| {
+                    telemetry::event!("Parallel Agent Announcement Secondary Click");
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }
