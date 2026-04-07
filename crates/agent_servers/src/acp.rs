@@ -197,13 +197,11 @@ impl AcpConnection {
         default_config_options: HashMap<String, String>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
-        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
-        let mut child =
-            builder.build_std_command(Some(command.path.display().to_string()), &command.args);
-        child.envs(command.env.iter().flatten());
-        if let Some(cwd) = project.update(cx, |project, cx| {
-            if project.is_local() {
+        let (env_task, cwd) = project.update(cx, |project, cx| {
+            let env_task = project
+                .environment()
+                .update(cx, |env, cx| env.default_environment(cx));
+            let cwd = if project.is_local() {
                 project
                     .default_path_list(cx)
                     .ordered_paths()
@@ -211,8 +209,18 @@ impl AcpConnection {
                     .cloned()
             } else {
                 None
-            }
-        }) {
+            };
+            (env_task, cwd)
+        });
+        let project_env = env_task.await.unwrap_or_default();
+
+        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
+        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
+        let mut child =
+            builder.build_std_command(Some(command.path.display().to_string()), &command.args);
+        child.envs(project_env.iter());
+        child.envs(command.env.iter().flatten());
+        if let Some(cwd) = cwd {
             child.current_dir(cwd);
         }
         let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;

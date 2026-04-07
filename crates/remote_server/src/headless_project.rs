@@ -236,7 +236,6 @@ impl HeadlessProject {
             let mut agent_server_store = AgentServerStore::local(
                 node_runtime.clone(),
                 fs.clone(),
-                environment.clone(),
                 http_client.clone(),
                 cx,
             );

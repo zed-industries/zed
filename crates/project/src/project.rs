@@ -1286,7 +1286,6 @@ impl Project {
                 AgentServerStore::local(
                     node.clone(),
                     fs.clone(),
-                    environment.clone(),
                     client.http_client(),
                     cx,
                 )
