@@ -6711,19 +6711,11 @@ pub(crate) mod tests {
         conversation_view.read_with(cx, |conversation_view, cx| {
             let state = conversation_view.active_thread().unwrap();
             let error = &state.read(cx).thread_error;
-            match error {
-                Some(ThreadError::Other { message, .. }) => {
-                    assert!(
-                        message.contains("Maximum tokens reached"),
-                        "Expected 'Maximum tokens reached' error, got: {}",
-                        message
-                    );
-                }
-                other => panic!(
-                    "Expected ThreadError::Other with 'Maximum tokens reached', got: {:?}",
-                    other.is_some()
-                ),
-            }
+            assert!(
+                matches!(error, Some(ThreadError::MaxOutputTokens)),
+                "Expected ThreadError::MaxOutputTokens, got: {:?}",
+                error.is_some()
+            );
         });
     }
 
