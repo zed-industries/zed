@@ -2399,7 +2399,7 @@ impl AgentPanel {
                 } else {
                     git::repository::CreateWorktreeTarget::NewBranch {
                         branch_name: branch_name.to_string(),
-                        start_point: start_point.clone(),
+                        base_sha: start_point.clone(),
                     }
                 };
                 let receiver = repo.create_worktree(target, new_path.clone());
@@ -3320,8 +3320,6 @@ impl AgentPanel {
 
     fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
-        let has_git_repo = self.project_has_git_repository(cx);
-        let is_via_collab = self.project.read(cx).is_via_collab();
 
         let is_creating = matches!(
             self.worktree_creation_status,
@@ -3356,14 +3354,7 @@ impl AgentPanel {
             })
             .menu(move |window, cx| {
                 Some(cx.new(|cx| {
-                    ThreadWorktreePicker::new(
-                        project.clone(),
-                        &current_target,
-                        has_git_repo,
-                        is_via_collab,
-                        window,
-                        cx,
-                    )
+                    ThreadWorktreePicker::new(project.clone(), &current_target, window, cx)
                 }))
             })
             .with_handle(self.start_thread_in_menu_handle.clone())

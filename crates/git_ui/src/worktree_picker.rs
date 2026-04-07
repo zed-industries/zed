@@ -321,7 +321,7 @@ impl WorktreeListDelegate {
                 let receiver = repo.create_worktree(
                     git::repository::CreateWorktreeTarget::NewBranch {
                         branch_name: branch.clone(),
-                        start_point: commit,
+                        base_sha: commit,
                     },
                     new_worktree_path.clone(),
                 );

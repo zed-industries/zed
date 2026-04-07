@@ -241,6 +241,7 @@ pub struct Worktree {
     pub is_main: bool,
 }
 
+// todo! comment these
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum CreateWorktreeTarget {
     ExistingBranch {
@@ -248,10 +249,10 @@ pub enum CreateWorktreeTarget {
     },
     NewBranch {
         branch_name: String,
-        start_point: Option<String>,
+        base_sha: Option<String>,
     },
     Detached {
-        start_point: Option<String>,
+        base_sha: Option<String>,
     },
 }
 
@@ -1709,7 +1710,7 @@ impl GitRepository for RealGitRepository {
             }
             CreateWorktreeTarget::NewBranch {
                 branch_name,
-                start_point,
+                base_sha: start_point,
             } => {
                 args.push(OsString::from("-b"));
                 args.push(OsString::from(branch_name));
@@ -1717,7 +1718,9 @@ impl GitRepository for RealGitRepository {
                 args.push(OsString::from(path.as_os_str()));
                 args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
             }
-            CreateWorktreeTarget::Detached { start_point } => {
+            CreateWorktreeTarget::Detached {
+                base_sha: start_point,
+            } => {
                 args.push(OsString::from("--detach"));
                 args.push(OsString::from("--"));
                 args.push(OsString::from(path.as_os_str()));
@@ -4094,7 +4097,7 @@ mod tests {
         repo.create_worktree(
             CreateWorktreeTarget::NewBranch {
                 branch_name: "test-branch".to_string(),
-                start_point: Some("HEAD".to_string()),
+                base_sha: Some("HEAD".to_string()),
             },
             worktree_path.clone(),
         )
@@ -4155,7 +4158,7 @@ mod tests {
         repo.create_worktree(
             CreateWorktreeTarget::NewBranch {
                 branch_name: "to-remove".to_string(),
-                start_point: Some("HEAD".to_string()),
+                base_sha: Some("HEAD".to_string()),
             },
             worktree_path.clone(),
         )
@@ -4181,7 +4184,7 @@ mod tests {
         repo.create_worktree(
             CreateWorktreeTarget::NewBranch {
                 branch_name: "dirty-wt".to_string(),
-                start_point: Some("HEAD".to_string()),
+                base_sha: Some("HEAD".to_string()),
             },
             worktree_path.clone(),
         )
@@ -4253,7 +4256,7 @@ mod tests {
         repo.create_worktree(
             CreateWorktreeTarget::NewBranch {
                 branch_name: "old-name".to_string(),
-                start_point: Some("HEAD".to_string()),
+                base_sha: Some("HEAD".to_string()),
             },
             old_path.clone(),
         )

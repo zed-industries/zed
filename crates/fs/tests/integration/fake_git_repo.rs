@@ -26,7 +26,7 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
     repo.create_worktree(
         git::repository::CreateWorktreeTarget::NewBranch {
             branch_name: "feature-branch".to_string(),
-            start_point: Some("abc123".to_string()),
+            base_sha: Some("abc123".to_string()),
         },
         worktree_1_dir.clone(),
     )
@@ -52,7 +52,7 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
     repo.create_worktree(
         git::repository::CreateWorktreeTarget::NewBranch {
             branch_name: "bugfix-branch".to_string(),
-            start_point: None,
+            base_sha: None,
         },
         worktree_2_dir.clone(),
     )

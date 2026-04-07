@@ -600,13 +600,15 @@ impl GitRepository for FakeGitRepository {
                 }
                 CreateWorktreeTarget::NewBranch {
                     branch_name,
-                    start_point,
+                    base_sha: start_point,
                 } => (
                     Some(branch_name),
                     start_point.unwrap_or_else(|| "fake-sha".to_string()),
                     true,
                 ),
-                CreateWorktreeTarget::Detached { start_point } => (
+                CreateWorktreeTarget::Detached {
+                    base_sha: start_point,
+                } => (
                     None,
                     start_point.unwrap_or_else(|| "fake-sha".to_string()),
                     false,

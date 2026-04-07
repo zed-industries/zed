@@ -475,7 +475,7 @@ async fn test_ssh_collaboration_git_worktrees(
             repo.create_worktree(
                 git::repository::CreateWorktreeTarget::NewBranch {
                     branch_name: "feature-branch".to_string(),
-                    start_point: Some("abc123".to_string()),
+                    base_sha: Some("abc123".to_string()),
                 },
                 worktree_directory.join("feature-branch"),
             )

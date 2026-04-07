@@ -271,7 +271,7 @@ async fn test_remote_git_worktrees(
             repository.create_worktree(
                 git::repository::CreateWorktreeTarget::NewBranch {
                     branch_name: "feature-branch".to_string(),
-                    start_point: Some("abc123".to_string()),
+                    base_sha: Some("abc123".to_string()),
                 },
                 worktree_directory.join("feature-branch"),
             )
@@ -327,7 +327,7 @@ async fn test_remote_git_worktrees(
             repository.create_worktree(
                 git::repository::CreateWorktreeTarget::NewBranch {
                     branch_name: "bugfix-branch".to_string(),
-                    start_point: None,
+                    base_sha: None,
                 },
                 worktree_directory.join("bugfix-branch"),
             )

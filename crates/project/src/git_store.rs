@@ -2412,15 +2412,13 @@ impl GitStore {
         let commit = envelope.payload.commit;
         let use_existing_branch = envelope.payload.use_existing_branch;
         let target = if name.is_empty() {
-            CreateWorktreeTarget::Detached {
-                start_point: commit,
-            }
+            CreateWorktreeTarget::Detached { base_sha: commit }
         } else if use_existing_branch {
             CreateWorktreeTarget::ExistingBranch { branch_name: name }
         } else {
             CreateWorktreeTarget::NewBranch {
                 branch_name: name,
-                start_point: commit,
+                base_sha: commit,
             }
         };
 
@@ -6027,11 +6025,11 @@ impl Repository {
                         }
                         CreateWorktreeTarget::NewBranch {
                             branch_name,
-                            start_point,
+                            base_sha: start_point,
                         } => (branch_name, start_point, false),
-                        CreateWorktreeTarget::Detached { start_point } => {
-                            (String::new(), start_point, false)
-                        }
+                        CreateWorktreeTarget::Detached {
+                            base_sha: start_point,
+                        } => (String::new(), start_point, false),
                     };
 
                     client
@@ -6058,7 +6056,7 @@ impl Repository {
     ) -> oneshot::Receiver<Result<()>> {
         self.create_worktree(
             CreateWorktreeTarget::Detached {
-                start_point: Some(commit),
+                base_sha: Some(commit),
             },
             path,
         )
