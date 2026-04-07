@@ -241,17 +241,24 @@ pub struct Worktree {
     pub is_main: bool,
 }
 
-// todo! comment these
+/// Describes how a new worktree should choose or create its checked-out HEAD.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum CreateWorktreeTarget {
+    /// Check out an existing local branch in the new worktree.
     ExistingBranch {
+        /// The existing local branch to check out.
         branch_name: String,
     },
+    /// Create a new local branch for the new worktree.
     NewBranch {
+        /// The new local branch to create and check out.
         branch_name: String,
+        /// The commit or ref to create the branch from. Uses `HEAD` when `None`.
         base_sha: Option<String>,
     },
+    /// Check out a commit or ref in detached HEAD state.
     Detached {
+        /// The commit or ref to check out. Uses `HEAD` when `None`.
         base_sha: Option<String>,
     },
 }
