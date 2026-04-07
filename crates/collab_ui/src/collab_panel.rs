@@ -2846,11 +2846,11 @@ impl CollabPanel {
                         }
                     };
 
-                    Some(channel.name.as_ref())
+                    Some(channel.name.clone())
                 });
 
                 if let Some(name) = channel_name {
-                    SharedString::from(name.to_string())
+                    name
                 } else {
                     SharedString::from("Current Call")
                 }

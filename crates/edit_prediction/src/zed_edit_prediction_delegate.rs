@@ -177,7 +177,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 BufferEditPrediction::Local { prediction } => prediction,
                 BufferEditPrediction::Jump { prediction } => {
                     return Some(edit_prediction_types::EditPrediction::Jump {
-                        id: Some(prediction.id.to_string().into()),
+                        id: Some(prediction.id.0.clone()),
                         snapshot: prediction.snapshot.clone(),
                         target: prediction.edits.first().unwrap().0.start,
                     });
@@ -228,7 +228,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             }
 
             Some(edit_prediction_types::EditPrediction::Local {
-                id: Some(prediction.id.to_string().into()),
+                id: Some(prediction.id.0.clone()),
                 edits: edits[edit_start_ix..edit_end_ix].to_vec(),
                 cursor_position: prediction.cursor_position,
                 edit_preview: Some(prediction.edit_preview.clone()),
