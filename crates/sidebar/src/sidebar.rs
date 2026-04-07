@@ -14,7 +14,6 @@ use agent_ui::{
 };
 use chrono::{DateTime, Utc};
 use editor::Editor;
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagViewExt as _};
 use gpui::{
     Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyContext, ListState,
     Pixels, Render, SharedString, WeakEntity, Window, WindowHandle, linear_color_stop,
@@ -430,11 +429,6 @@ impl Sidebar {
         .detach();
 
         cx.observe(&ThreadMetadataStore::global(cx), |this, _store, cx| {
-            this.update_entries(cx);
-        })
-        .detach();
-
-        cx.observe_flag::<AgentV2FeatureFlag, _>(window, |_is_enabled, this, _window, cx| {
             this.update_entries(cx);
         })
         .detach();

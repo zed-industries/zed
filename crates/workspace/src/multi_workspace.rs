@@ -1,5 +1,4 @@
 use anyhow::Result;
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use gpui::PathPromptOptions;
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
@@ -438,7 +437,7 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
-        cx.has_flag::<AgentV2FeatureFlag>() && !DisableAiSettings::get_global(cx).disable_ai
+        !DisableAiSettings::get_global(cx).disable_ai
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {

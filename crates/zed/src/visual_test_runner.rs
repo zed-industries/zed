@@ -2527,11 +2527,6 @@ fn run_multi_workspace_sidebar_visual_tests(
     std::fs::create_dir_all(&workspace1_dir)?;
     std::fs::create_dir_all(&workspace2_dir)?;
 
-    // Enable the agent-v2 feature flag so multi-workspace is active
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-v2".to_string()]);
-    });
-
     // Create both projects upfront so we can build both workspaces during
     // window creation, before the MultiWorkspace entity exists.
     // This avoids a re-entrant read panic that occurs when Workspace::new
@@ -3081,11 +3076,6 @@ fn run_start_thread_in_selector_visual_tests(
     update_baseline: bool,
 ) -> Result<TestResult> {
     use agent_ui::{AgentPanel, NewWorktreeBranchTarget, StartThreadIn, WorktreeCreationStatus};
-
-    // Enable feature flags so the thread target selector renders
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-v2".to_string()]);
-    });
 
     // Create a temp directory with a real git repo so "New Worktree" is enabled
     let temp_dir = tempfile::tempdir()?;

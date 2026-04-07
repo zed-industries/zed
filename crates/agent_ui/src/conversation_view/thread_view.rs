@@ -3101,7 +3101,7 @@ impl ThreadView {
         let editor_bg_color = cx.theme().colors().editor_background;
         let editor_expanded = self.editor_expanded;
         let has_messages = self.list_state.item_count() > 0;
-        let v2_empty_state = cx.has_flag::<AgentV2FeatureFlag>() && !has_messages;
+        let v2_empty_state = !has_messages;
         let (expand_icon, expand_tooltip) = if editor_expanded {
             (IconName::Minimize, "Minimize Message Editor")
         } else {
@@ -5118,7 +5118,7 @@ impl ThreadView {
 
     pub(crate) fn sync_editor_mode_for_empty_state(&mut self, cx: &mut Context<Self>) {
         let has_messages = self.list_state.item_count() > 0;
-        let v2_empty_state = cx.has_flag::<AgentV2FeatureFlag>() && !has_messages;
+        let v2_empty_state = !has_messages;
 
         let mode = if v2_empty_state {
             EditorMode::Full {
@@ -6347,7 +6347,6 @@ impl ThreadView {
                                     .when(is_collapsible || failed_or_canceled, |this| {
                                         let diff_for_discard = if has_revealed_diff
                                             && is_cancelled_edit
-                                            && cx.has_flag::<AgentV2FeatureFlag>()
                                         {
                                             tool_call.diffs().next().cloned()
                                         } else {
@@ -8575,7 +8574,7 @@ impl ThreadView {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
-        let v2_empty_state = cx.has_flag::<AgentV2FeatureFlag>() && !has_messages;
+        let v2_empty_state = !has_messages;
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 

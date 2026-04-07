@@ -13,7 +13,6 @@ use db::{
     },
     sqlez_macros::sql,
 };
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
@@ -25,16 +24,7 @@ use crate::DEFAULT_THREAD_TITLE;
 
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
-
-    if cx.has_flag::<AgentV2FeatureFlag>() {
-        migrate_thread_metadata(cx);
-    }
-    cx.observe_flag::<AgentV2FeatureFlag, _>(|has_flag, cx| {
-        if has_flag {
-            migrate_thread_metadata(cx);
-        }
-    })
-    .detach();
+    migrate_thread_metadata(cx);
 }
 
 /// Migrate existing thread metadata from native agent thread store to the new metadata storage.
@@ -298,10 +288,6 @@ impl ThreadMetadataStore {
     }
 
     pub fn save_all(&mut self, metadata: Vec<ThreadMetadata>, cx: &mut Context<Self>) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         for metadata in metadata {
             self.save_internal(metadata);
         }
@@ -314,10 +300,6 @@ impl ThreadMetadataStore {
     }
 
     fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         self.save_internal(metadata);
         cx.notify();
     }
@@ -367,10 +349,6 @@ impl ThreadMetadataStore {
         work_dirs: PathList,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         if let Some(thread) = self.threads.get(session_id) {
             self.save_internal(ThreadMetadata {
                 folder_paths: work_dirs,
@@ -394,10 +372,6 @@ impl ThreadMetadataStore {
         archived: bool,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         if let Some(thread) = self.threads.get(session_id) {
             self.save_internal(ThreadMetadata {
                 archived,
@@ -408,10 +382,6 @@ impl ThreadMetadataStore {
     }
 
     pub fn delete(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         if let Some(thread) = self.threads.get(&session_id) {
             if let Some(session_ids) = self.threads_by_paths.get_mut(&thread.folder_paths) {
                 session_ids.remove(&session_id);
@@ -785,7 +755,7 @@ mod tests {
     use action_log::ActionLog;
     use agent::DbThread;
     use agent_client_protocol as acp;
-    use feature_flags::FeatureFlagAppExt;
+
     use gpui::TestAppContext;
     use project::FakeFs;
     use project::Project;
@@ -835,7 +805,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
             ThreadMetadataStore::init_global(cx);
             ThreadStore::init_global(cx);
         });
@@ -876,7 +845,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
             ThreadMetadataStore::init_global(cx);
         });
 

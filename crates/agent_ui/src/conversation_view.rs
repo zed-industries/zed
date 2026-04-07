@@ -22,7 +22,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -2645,7 +2645,6 @@ impl ConversationView {
 impl Render for ConversationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
-        let v2_flag = cx.has_flag::<AgentV2FeatureFlag>();
 
         v_flex()
             .track_focus(&self.focus_handle)
@@ -2654,17 +2653,18 @@ impl Render for ConversationView {
             .child(match &self.server_state {
                 ServerState::Loading { .. } => v_flex()
                     .flex_1()
-                    .when(v2_flag, |this| {
-                        this.size_full().items_center().justify_center().child(
-                            Label::new("Loading…").color(Color::Muted).with_animation(
-                                "loading-agent-label",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.3, 0.7)),
-                                |label, delta| label.alpha(delta),
-                            ),
-                        )
-                    })
+                    .size_full()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Label::new("Loading…").color(Color::Muted).with_animation(
+                            "loading-agent-label",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.3, 0.7)),
+                            |label, delta| label.alpha(delta),
+                        ),
+                    )
                     .into_any(),
                 ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()
@@ -3437,7 +3437,6 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
 
         cx.update(|cx| {
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
             <dyn Fs>::set_global(fs.clone(), cx);
