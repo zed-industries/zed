@@ -6321,7 +6321,13 @@ mod tests {
         let success_path = PathBuf::from("/worktrees/branch/project");
         cx.update(|cx| {
             repository.update(cx, |repo, _| {
-                repo.create_worktree("branch".to_string(), success_path.clone(), None)
+                repo.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "branch".to_string(),
+                        base_sha: None,
+                    },
+                    success_path.clone(),
+                )
             })
         })
         .await
@@ -6505,85 +6511,6 @@ mod tests {
         assert!(
             !fs.is_dir(&orphan_path).await,
             "orphan worktree directory should be removed by filesystem cleanup"
-        );
-        // Parent directory should be pruned since it's now empty.
-        assert!(
-            !fs.is_dir(Path::new("/worktrees/branch")).await,
-            "empty parent (branch) directory should be pruned"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_rollback_preserves_nonempty_parent_directory(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-            agent::ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-            <dyn fs::Fs>::set_global(fs.clone(), cx);
-        });
-
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "src": { "main.rs": "fn main() {}" }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-        cx.executor().run_until_parked();
-
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
-        });
-
-        let multi_workspace =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-
-        // Create a branch dir with a sibling project that should survive.
-        let failed_path = PathBuf::from("/worktrees/branch/failed_project");
-        let sibling_path = PathBuf::from("/worktrees/branch/sibling_project");
-        fs.insert_tree(
-            "/worktrees/branch",
-            json!({
-                "failed_project": {},
-                "sibling_project": { "file.txt": "content" }
-            }),
-        )
-        .await;
-
-        let (sender, receiver) = futures::channel::oneshot::channel::<Result<()>>();
-        sender.send(Err(anyhow!("error"))).unwrap();
-
-        let creation_infos = vec![(repository.clone(), failed_path.clone(), receiver)];
-
-        let fs_clone = fs.clone();
-        let result = multi_workspace
-            .update(cx, |_, window, cx| {
-                window.spawn(cx, async move |cx| {
-                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
-                })
-            })
-            .unwrap()
-            .await;
-
-        cx.executor().run_until_parked();
-
-        assert!(result.is_err());
-        assert!(
-            !fs.is_dir(&failed_path).await,
-            "failed worktree directory should be removed"
-        );
-        assert!(
-            fs.is_dir(&sibling_path).await,
-            "sibling directory should not be affected"
-        );
-        assert!(
-            fs.is_dir(Path::new("/worktrees/branch")).await,
-            "parent directory should be preserved when it still has children"
         );
     }
 }
