@@ -403,7 +403,7 @@ impl Inner {
         //  1 +++cursor+++
 
         // We always want to move the cursor back regardless of whether undoing
-        // suceeds or fails, otherwise the cursor could end up pointing to a
+        // succeeds or fails, otherwise the cursor could end up pointing to a
         // position outside of the history, as we remove the change before the
         // cursor, in case undo fails.
         let before_cursor = self.cursor - 1; // see docs above
