@@ -4398,11 +4398,14 @@ impl Render for Pane {
             ))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
-                    let active_item = pane.active_item();
+                    let Some(active_item) = pane.active_item() else {
+                        return;
+                    };
+
                     let entry_id = action
                         .entry_id
                         .map(ProjectEntryId::from_proto)
-                        .or_else(|| active_item.as_ref()?.project_entry_ids(cx).first().copied());
+                        .or_else(|| active_item.project_entry_ids(cx).first().copied());
 
                     let show_reveal_error_toast = |display_name: &str, cx: &mut App| {
                         let notification_id = NotificationId::unique::<RevealInProjectPanel>();
@@ -4422,12 +4425,8 @@ impl Render for Pane {
                         // any of the open projects and stop execution, as we
                         // don't want to open the project panel.
                         let display_name = active_item
-                            .as_ref()
-                            .map(|item| {
-                                item.tab_tooltip_text(cx)
-                                    .unwrap_or_else(|| item.tab_content_text(0, cx))
-                            })
-                            .unwrap_or_else(|| "Unsaved buffer".into());
+                            .tab_tooltip_text(cx)
+                            .unwrap_or_else(|| active_item.tab_content_text(0, cx));
 
                         return show_reveal_error_toast(&display_name, cx);
                     };
