@@ -6,6 +6,7 @@ env:
 on:
   schedule:
   - cron: 30 17 * * 2
+  workflow_dispatch: {}
 jobs:
   scheduled_compliance_check:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -34,22 +35,44 @@ jobs:
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
     - id: run-compliance-check
       name: compliance_check::scheduled_compliance_check::run_compliance_check
-      run: cargo xtask compliance "$LATEST_TAG" --branch main --report-path target/compliance-report
+      run: |
+        echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+        cargo xtask compliance "$LATEST_TAG" --branch main --report-path compliance-report
       env:
         LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: compliance_check::scheduled_compliance_check::send_failure_slack_notification
-      if: failure()
+    - name: '@actions/upload-artifact compliance-report.md'
+      if: always()
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: compliance-report.md
+        path: target/compliance-report.md
+        if-no-files-found: error
+    - name: send_compliance_slack_notification
+      if: always()
       run: |
-        MESSAGE="⚠️ Scheduled compliance check failed for upcoming preview release $LATEST_TAG: There are PRs with missing reviews."
+        REPORT_CONTENT=""
+        if [ -f "target/compliance-report.md" ]; then
+            REPORT_CONTENT=$(cat "target/compliance-report.md")
+        fi
+
+        if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+            STATUS="✅ Scheduled compliance check passed for $COMPLIANCE_TAG"
+        else
+            STATUS="⚠️ Scheduled compliance check failed for $COMPLIANCE_TAG"
+        fi
+
+        MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s\n\n%s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22" "$REPORT_CONTENT")
 
         curl -X POST -H 'Content-type: application/json' \
             --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
             "$SLACK_WEBHOOK"
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
-        LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
+        COMPLIANCE_TAG: ${{ steps.determine-version.outputs.tag }}
+        ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
 defaults:
   run:
     shell: bash -euxo pipefail {0}

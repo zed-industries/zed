@@ -207,11 +207,7 @@ async fn extract_tar_gz(
     from: impl AsyncRead + Unpin,
 ) -> Result<(), anyhow::Error> {
     let decompressed_bytes = GzipDecoder::new(BufReader::new(from));
-    let archive = async_tar::Archive::new(decompressed_bytes);
-    archive
-        .unpack(&destination_path)
-        .await
-        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
+    unpack_tar_archive(destination_path, url, decompressed_bytes).await?;
     Ok(())
 }
 
@@ -221,7 +217,21 @@ async fn extract_tar_bz2(
     from: impl AsyncRead + Unpin,
 ) -> Result<(), anyhow::Error> {
     let decompressed_bytes = BzDecoder::new(BufReader::new(from));
-    let archive = async_tar::Archive::new(decompressed_bytes);
+    unpack_tar_archive(destination_path, url, decompressed_bytes).await?;
+    Ok(())
+}
+
+async fn unpack_tar_archive(
+    destination_path: &Path,
+    url: &str,
+    archive_bytes: impl AsyncRead + Unpin,
+) -> Result<(), anyhow::Error> {
+    // We don't need to set the modified time. It's irrelevant to downloaded
+    // archive verification, and some filesystems return errors when asked to
+    // apply it after extraction.
+    let archive = async_tar::ArchiveBuilder::new(archive_bytes)
+        .set_preserve_mtime(false)
+        .build();
     archive
         .unpack(&destination_path)
         .await

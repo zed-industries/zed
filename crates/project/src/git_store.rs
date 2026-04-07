@@ -32,10 +32,10 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
-        UpstreamTrackingStatus, Worktree as GitWorktree,
+        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, CreateWorktreeTarget,
+        DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint, GraphCommitData,
+        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
+        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -327,12 +327,6 @@ pub struct GraphDataResponse<'a> {
     pub commits: &'a [Arc<InitialGraphCommitData>],
     pub is_loading: bool,
     pub error: Option<SharedString>,
-}
-
-#[derive(Clone, Debug)]
-enum CreateWorktreeStartPoint {
-    Detached,
-    Branched { name: String },
 }
 
 pub struct Repository {
@@ -2414,18 +2408,23 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let directory = PathBuf::from(envelope.payload.directory);
-        let start_point = if envelope.payload.name.is_empty() {
-            CreateWorktreeStartPoint::Detached
+        let name = envelope.payload.name;
+        let commit = envelope.payload.commit;
+        let use_existing_branch = envelope.payload.use_existing_branch;
+        let target = if name.is_empty() {
+            CreateWorktreeTarget::Detached { base_sha: commit }
+        } else if use_existing_branch {
+            CreateWorktreeTarget::ExistingBranch { branch_name: name }
         } else {
-            CreateWorktreeStartPoint::Branched {
-                name: envelope.payload.name,
+            CreateWorktreeTarget::NewBranch {
+                branch_name: name,
+                base_sha: commit,
             }
         };
-        let commit = envelope.payload.commit;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.create_worktree_with_start_point(start_point, directory, commit)
+                repository_handle.create_worktree(target, directory)
             })
             .await??;
 
@@ -6004,50 +6003,43 @@ impl Repository {
         })
     }
 
-    fn create_worktree_with_start_point(
+    pub fn create_worktree(
         &mut self,
-        start_point: CreateWorktreeStartPoint,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        commit: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
-        if matches!(
-            &start_point,
-            CreateWorktreeStartPoint::Branched { name } if name.is_empty()
-        ) {
-            let (sender, receiver) = oneshot::channel();
-            sender
-                .send(Err(anyhow!("branch name cannot be empty")))
-                .ok();
-            return receiver;
-        }
-
         let id = self.id;
-        let message = match &start_point {
-            CreateWorktreeStartPoint::Detached => "git worktree add (detached)".into(),
-            CreateWorktreeStartPoint::Branched { name } => {
-                format!("git worktree add: {name}").into()
-            }
+        let job_description = match target.branch_name() {
+            Some(branch_name) => format!("git worktree add: {branch_name}"),
+            None => "git worktree add (detached)".to_string(),
         };
-
-        self.send_job(Some(message), move |repo, _cx| async move {
-            let branch_name = match start_point {
-                CreateWorktreeStartPoint::Detached => None,
-                CreateWorktreeStartPoint::Branched { name } => Some(name),
-            };
-            let remote_name = branch_name.clone().unwrap_or_default();
-
+        self.send_job(Some(job_description.into()), move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.create_worktree(branch_name, path, commit).await
+                    backend.create_worktree(target, path).await
                 }
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let (name, commit, use_existing_branch) = match target {
+                        CreateWorktreeTarget::ExistingBranch { branch_name } => {
+                            (branch_name, None, true)
+                        }
+                        CreateWorktreeTarget::NewBranch {
+                            branch_name,
+                            base_sha: start_point,
+                        } => (branch_name, start_point, false),
+                        CreateWorktreeTarget::Detached {
+                            base_sha: start_point,
+                        } => (String::new(), start_point, false),
+                    };
+
                     client
                         .request(proto::GitCreateWorktree {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
-                            name: remote_name,
+                            name,
                             directory: path.to_string_lossy().to_string(),
                             commit,
+                            use_existing_branch,
                         })
                         .await?;
 
@@ -6057,28 +6049,16 @@ impl Repository {
         })
     }
 
-    pub fn create_worktree(
-        &mut self,
-        branch_name: String,
-        path: PathBuf,
-        commit: Option<String>,
-    ) -> oneshot::Receiver<Result<()>> {
-        self.create_worktree_with_start_point(
-            CreateWorktreeStartPoint::Branched { name: branch_name },
-            path,
-            commit,
-        )
-    }
-
     pub fn create_worktree_detached(
         &mut self,
         path: PathBuf,
         commit: String,
     ) -> oneshot::Receiver<Result<()>> {
-        self.create_worktree_with_start_point(
-            CreateWorktreeStartPoint::Detached,
+        self.create_worktree(
+            CreateWorktreeTarget::Detached {
+                base_sha: Some(commit),
+            },
             path,
-            Some(commit),
         )
     }
 

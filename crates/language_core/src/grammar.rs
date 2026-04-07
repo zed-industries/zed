@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 use lsp::LanguageServerName;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};

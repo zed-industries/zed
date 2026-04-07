@@ -78,6 +78,7 @@ members = [
     "crates/fs",
     "crates/fs_benchmarks",
     "crates/fuzzy",
+    "crates/fuzzy_nucleo",
     "crates/git",
     "crates/git_graph",
     "crates/git_hosting_providers",
@@ -86,6 +87,7 @@ members = [
     "crates/google_ai",
     "crates/grammars",
     "crates/gpui",
+    "crates/gpui_shared_string",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
@@ -109,7 +111,9 @@ members = [
     "crates/language_core",
     "crates/language_extension",
     "crates/language_model",
+    "crates/language_model_core",
     "crates/language_models",
+    "crates/language_models_cloud",
     "crates/language_onboarding",
     "crates/language_selector",
     "crates/language_tools",
@@ -325,6 +329,7 @@ file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fuzzy = { path = "crates/fuzzy" }
+fuzzy_nucleo = { path = "crates/fuzzy_nucleo" }
 git = { path = "crates/git" }
 git_graph = { path = "crates/git_graph" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
@@ -333,6 +338,7 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 grammars = { path = "crates/grammars" }
 gpui = { path = "crates/gpui", default-features = false }
+gpui_shared_string = { path = "crates/gpui_shared_string" }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
@@ -359,7 +365,9 @@ language = { path = "crates/language" }
 language_core = { path = "crates/language_core" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
+language_model_core = { path = "crates/language_model_core" }
 language_models = { path = "crates/language_models" }
+language_models_cloud = { path = "crates/language_models_cloud" }
 language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
@@ -609,6 +617,7 @@ naga = { version = "29.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
+nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
 objc2-app-kit = { version = "0.3", default-features = false, features = [ "NSGraphics" ] }

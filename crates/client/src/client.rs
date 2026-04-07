@@ -14,6 +14,7 @@ use async_tungstenite::tungstenite::{
     http::{HeaderValue, Request, StatusCode},
 };
 use clock::SystemClock;
+use cloud_api_client::LlmApiToken;
 use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{ClientApiError, CloudApiClient};
 use cloud_api_types::OrganizationId;
@@ -26,7 +27,6 @@ use futures::{
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
-use language_model::LlmApiToken;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;

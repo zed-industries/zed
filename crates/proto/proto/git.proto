@@ -594,6 +594,7 @@ message GitCreateWorktree {
   string name = 3;
   string directory = 4;
   optional string commit = 5;
+  bool use_existing_branch = 6;
 }
 
 message GitCreateCheckpoint {

@@ -126,6 +126,10 @@ impl ThreadSwitcher {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut gpui::Window, cx: &mut Context<Self>) {
+        self.confirm_selected(cx);
+    }
+
+    fn confirm_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(entry) = self.entries.get(self.selected_index) {
             cx.emit(ThreadSwitcherEvent::Confirmed {
                 metadata: entry.metadata.clone(),
@@ -133,6 +137,13 @@ impl ThreadSwitcher {
             });
         }
         cx.emit(DismissEvent);
+    }
+
+    fn select_and_confirm(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.entries.len() {
+            self.selected_index = index;
+            self.confirm_selected(cx);
+        }
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _window: &mut gpui::Window, cx: &mut Context<Self>) {
@@ -202,28 +213,37 @@ impl Render for ThreadSwitcher {
             .children(self.entries.iter().enumerate().map(|(ix, entry)| {
                 let id = SharedString::from(format!("thread-switcher-{}", entry.session_id));
 
-                ThreadItem::new(id, entry.title.clone())
-                    .rounded(true)
-                    .icon(entry.icon)
-                    .status(entry.status)
-                    .when_some(entry.icon_from_external_svg.clone(), |this, svg| {
-                        this.custom_icon_from_external_svg(svg)
-                    })
-                    .when_some(entry.project_name.clone(), |this, name| {
-                        this.project_name(name)
-                    })
-                    .worktrees(entry.worktrees.clone())
-                    .timestamp(entry.timestamp.clone())
-                    .title_generating(entry.is_title_generating)
-                    .notified(entry.notified)
-                    .when(entry.diff_stats.lines_added > 0, |this| {
-                        this.added(entry.diff_stats.lines_added as usize)
-                    })
-                    .when(entry.diff_stats.lines_removed > 0, |this| {
-                        this.removed(entry.diff_stats.lines_removed as usize)
-                    })
-                    .selected(ix == selected_index)
-                    .base_bg(cx.theme().colors().surface_background)
+                div()
+                    .id(id.clone())
+                    .on_click(
+                        cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            this.select_and_confirm(ix, cx);
+                        }),
+                    )
+                    .child(
+                        ThreadItem::new(id, entry.title.clone())
+                            .rounded(true)
+                            .icon(entry.icon)
+                            .status(entry.status)
+                            .when_some(entry.icon_from_external_svg.clone(), |this, svg| {
+                                this.custom_icon_from_external_svg(svg)
+                            })
+                            .when_some(entry.project_name.clone(), |this, name| {
+                                this.project_name(name)
+                            })
+                            .worktrees(entry.worktrees.clone())
+                            .timestamp(entry.timestamp.clone())
+                            .title_generating(entry.is_title_generating)
+                            .notified(entry.notified)
+                            .when(entry.diff_stats.lines_added > 0, |this| {
+                                this.added(entry.diff_stats.lines_added as usize)
+                            })
+                            .when(entry.diff_stats.lines_removed > 0, |this| {
+                                this.removed(entry.diff_stats.lines_removed as usize)
+                            })
+                            .selected(ix == selected_index)
+                            .base_bg(cx.theme().colors().elevated_surface_background),
+                    )
                     .into_any_element()
             }))
     }

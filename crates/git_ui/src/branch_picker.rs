@@ -1906,7 +1906,7 @@ mod tests {
         assert_eq!(
             remotes,
             vec![Remote {
-                name: SharedString::from("my_new_remote".to_string())
+                name: SharedString::from("my_new_remote")
             }]
         );
     }

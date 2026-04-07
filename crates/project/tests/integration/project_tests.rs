@@ -41,9 +41,10 @@ use gpui::{
 use itertools::Itertools;
 use language::{
     Buffer, BufferEvent, Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet,
-    DiagnosticSourceKind, DiskState, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
-    LanguageName, LineEnding, ManifestName, ManifestProvider, ManifestQuery, OffsetRangeExt, Point,
-    ToPoint, Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata,
+    DiagnosticSourceKind, DiskState, FakeLspAdapter, Language, LanguageAwareStyling,
+    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
+    ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
+    ToolchainMetadata,
     language_settings::{LanguageSettings, LanguageSettingsContent},
     markdown_lang, rust_lang, tree_sitter_typescript,
 };
@@ -4382,7 +4383,13 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
     range: Range<T>,
 ) -> Vec<(String, Option<DiagnosticSeverity>)> {
     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
-    for chunk in buffer.snapshot().chunks(range, true) {
+    for chunk in buffer.snapshot().chunks(
+        range,
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: true,
+        },
+    ) {
         if chunks
             .last()
             .is_some_and(|prev_chunk| prev_chunk.1 == chunk.diagnostic_severity)

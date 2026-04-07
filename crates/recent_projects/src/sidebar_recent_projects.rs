@@ -374,6 +374,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             prefix,
             match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
             paths: Vec::new(),
+            active: false,
         };
 
         let icon = icon_for_remote_connection(match location {
@@ -395,7 +396,14 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         })
                         .child(highlighted_match.render(window, cx)),
                 )
-                .tooltip(Tooltip::text(tooltip_path))
+                .tooltip(move |_, cx| {
+                    Tooltip::with_meta(
+                        "Open Project in This Window",
+                        None,
+                        tooltip_path.clone(),
+                        cx,
+                    )
+                })
                 .into_any_element(),
         )
     }

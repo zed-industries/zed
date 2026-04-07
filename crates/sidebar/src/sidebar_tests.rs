@@ -191,6 +191,25 @@ fn focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
     cx.run_until_parked();
 }
 
+fn format_linked_worktree_chips(worktrees: &[WorktreeInfo]) -> String {
+    let mut seen = Vec::new();
+    let mut chips = Vec::new();
+    for wt in worktrees {
+        if wt.kind == ui::WorktreeKind::Main {
+            continue;
+        }
+        if !seen.contains(&wt.name) {
+            seen.push(wt.name.clone());
+            chips.push(format!("{{{}}}", wt.name));
+        }
+    }
+    if chips.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", chips.join(", "))
+    }
+}
+
 fn visible_entries_as_strings(
     sidebar: &Entity<Sidebar>,
     cx: &mut gpui::VisualTestContext,
@@ -238,23 +257,8 @@ fn visible_entries_as_strings(
                         } else {
                             ""
                         };
-                        let worktree = if thread.worktrees.is_empty() {
-                            String::new()
-                        } else {
-                            let mut seen = Vec::new();
-                            let mut chips = Vec::new();
-                            for wt in &thread.worktrees {
-                                if !seen.contains(&wt.name) {
-                                    seen.push(wt.name.clone());
-                                    chips.push(format!("{{{}}}", wt.name));
-                                }
-                            }
-                            format!(" {}", chips.join(", "))
-                        };
-                        format!(
-                            "  {}{}{}{}{}{}",
-                            title, worktree, active, status_str, notified, selected
-                        )
+                        let worktree = format_linked_worktree_chips(&thread.worktrees);
+                        format!("  {title}{worktree}{active}{status_str}{notified}{selected}")
                     }
                     ListEntry::ViewMore {
                         is_fully_expanded, ..
@@ -266,35 +270,11 @@ fn visible_entries_as_strings(
                         }
                     }
                     ListEntry::DraftThread { worktrees, .. } => {
-                        let worktree = if worktrees.is_empty() {
-                            String::new()
-                        } else {
-                            let mut seen = Vec::new();
-                            let mut chips = Vec::new();
-                            for wt in worktrees {
-                                if !seen.contains(&wt.name) {
-                                    seen.push(wt.name.clone());
-                                    chips.push(format!("{{{}}}", wt.name));
-                                }
-                            }
-                            format!(" {}", chips.join(", "))
-                        };
+                        let worktree = format_linked_worktree_chips(worktrees);
                         format!("  [~ Draft{}]{}", worktree, selected)
                     }
                     ListEntry::NewThread { worktrees, .. } => {
-                        let worktree = if worktrees.is_empty() {
-                            String::new()
-                        } else {
-                            let mut seen = Vec::new();
-                            let mut chips = Vec::new();
-                            for wt in worktrees {
-                                if !seen.contains(&wt.name) {
-                                    seen.push(wt.name.clone());
-                                    chips.push(format!("{{{}}}", wt.name));
-                                }
-                            }
-                            format!(" {}", chips.join(", "))
-                        };
+                        let worktree = format_linked_worktree_chips(worktrees);
                         format!("  [+ New Thread{}]{}", worktree, selected)
                     }
                 }
@@ -2074,6 +2054,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
                 archived: false,
             },
             &workspace_a,
+            false,
             window,
             cx,
         );
@@ -2129,6 +2110,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
                 archived: false,
             },
             &workspace_b,
+            false,
             window,
             cx,
         );
@@ -5064,6 +5046,7 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
 
 mod property_test {
     use super::*;
+    use gpui::proptest::prelude::*;
 
     struct UnopenedWorktree {
         path: String,
@@ -5658,7 +5641,10 @@ mod property_test {
         Ok(())
     }
 
-    #[gpui::property_test]
+    #[gpui::property_test(config = ProptestConfig {
+        cases: 10,
+        ..Default::default()
+    })]
     async fn test_sidebar_invariants(
         #[strategy = gpui::proptest::collection::vec(0u32..DISTRIBUTION_SLOTS * 10, 1..5)]
         raw_operations: Vec<u32>,

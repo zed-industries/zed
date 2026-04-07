@@ -567,19 +567,12 @@ impl ThreadMetadataStore {
                     PathList::new(&paths)
                 };
 
-                let main_worktree_paths = {
-                    let project = thread_ref.project().read(cx);
-                    let mut main_paths: Vec<Arc<Path>> = Vec::new();
-                    for repo in project.repositories(cx).values() {
-                        let snapshot = repo.read(cx).snapshot();
-                        if snapshot.is_linked_worktree() {
-                            main_paths.push(snapshot.original_repo_abs_path.clone());
-                        }
-                    }
-                    main_paths.sort();
-                    main_paths.dedup();
-                    PathList::new(&main_paths)
-                };
+                let main_worktree_paths = thread_ref
+                    .project()
+                    .read(cx)
+                    .project_group_key(cx)
+                    .path_list()
+                    .clone();
 
                 // Threads without a folder path (e.g. started in an empty
                 // window) are archived by default so they don't get lost,
