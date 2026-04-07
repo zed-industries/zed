@@ -3086,7 +3086,12 @@ impl Sidebar {
             })
     }
 
-    fn cycle_project_group_impl(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn cycle_project_group_impl(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
