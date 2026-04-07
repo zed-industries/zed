@@ -627,7 +627,7 @@ impl StartThreadIn {
             Self::LocalProject => {
                 let suffix = project.active_repository(cx).and_then(|repo| {
                     let repo = repo.read(cx);
-                    let work_dir = &repo.work_directory_abs_path;
+                    let work_dir = &repo.original_repo_abs_path;
                     let visible_paths: Vec<_> = project
                         .visible_worktrees(cx)
                         .map(|wt| wt.read(cx).abs_path().to_path_buf())
