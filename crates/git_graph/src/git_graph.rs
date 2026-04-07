@@ -25,7 +25,7 @@ use project::git_store::{
 };
 use search::{
     SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive,
+    ToggleCaseSensitive, buffer_search,
 };
 use settings::Settings;
 use smallvec::{SmallVec, smallvec};
@@ -275,6 +275,8 @@ actions!(
     [
         /// Opens the commit view for the selected commit.
         OpenCommitView,
+        /// Focuses the search field.
+        FocusSearch,
     ]
 );
 
@@ -833,8 +835,8 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn lane_center_x(bounds: Bounds<Pixels>, lane: f32, horizontal_scroll_offset: Pixels) -> Pixels {
-    bounds.origin.x + LEFT_PADDING + lane * LANE_WIDTH + LANE_WIDTH / 2.0 - horizontal_scroll_offset
+fn lane_center_x(bounds: Bounds<Pixels>, lane: f32) -> Pixels {
+    bounds.origin.x + LEFT_PADDING + lane * LANE_WIDTH + LANE_WIDTH / 2.0
 }
 
 fn to_row_center(
@@ -902,7 +904,6 @@ pub struct GitGraph {
     row_height: Pixels,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
-    horizontal_scroll_offset: Pixels,
     selected_entry_idx: Option<usize>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -978,14 +979,6 @@ impl GitGraph {
             .read(cx)
             .preview_column_width(0, window)
             .unwrap_or_else(|| self.graph_canvas_content_width())
-    }
-
-    fn clamp_horizontal_scroll_offset(&mut self, graph_viewport_width: Pixels) {
-        let max_horizontal_scroll =
-            (self.graph_canvas_content_width() - graph_viewport_width).max(px(0.));
-        self.horizontal_scroll_offset = self
-            .horizontal_scroll_offset
-            .clamp(px(0.), max_horizontal_scroll);
     }
 
     pub fn new(
@@ -1074,7 +1067,6 @@ impl GitGraph {
             row_height,
             table_interaction_state,
             column_widths,
-            horizontal_scroll_offset: px(0.),
             selected_entry_idx: None,
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
@@ -1156,11 +1148,17 @@ impl GitGraph {
                     }
                 }
             }
-            RepositoryEvent::BranchChanged => {
+            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
                 self.pending_select_sha = None;
                 // Only invalidate if we scanned atleast once,
                 // meaning we are not inside the initial repo loading state
                 // NOTE: this fixes an loading performance regression
+                if repository.read(cx).scan_id > 1 {
+                    self.invalidate_state(cx);
+                }
+            }
+            RepositoryEvent::StashEntriesChanged if self.log_source == LogSource::All => {
+                self.pending_select_sha = None;
                 if repository.read(cx).scan_id > 1 {
                     self.invalidate_state(cx);
                 }
@@ -2139,7 +2137,6 @@ impl GitGraph {
 
         let first_visible_row = (scroll_offset_y / row_height).floor() as usize;
         let vertical_scroll_offset = scroll_offset_y - (first_visible_row as f32 * row_height);
-        let horizontal_scroll_offset = self.horizontal_scroll_offset;
 
         let graph_viewport_width = self.graph_viewport_width(window, cx);
         let graph_width = if self.graph_canvas_content_width() > graph_viewport_width {
@@ -2214,8 +2211,7 @@ impl GitGraph {
                             bounds.origin.y + row_idx as f32 * row_height + row_height / 2.0
                                 - vertical_scroll_offset;
 
-                        let commit_x =
-                            lane_center_x(bounds, row.lane as f32, horizontal_scroll_offset);
+                        let commit_x = lane_center_x(bounds, row.lane as f32);
 
                         draw_commit_circle(commit_x, row_y_center, row_color, window);
                     }
@@ -2227,8 +2223,7 @@ impl GitGraph {
                             continue;
                         };
 
-                        let line_x =
-                            lane_center_x(bounds, start_column as f32, horizontal_scroll_offset);
+                        let line_x = lane_center_x(bounds, start_column as f32);
 
                         let start_row = line.full_interval.start as i32 - first_visible_row as i32;
 
@@ -2273,11 +2268,7 @@ impl GitGraph {
                                     on_row,
                                     curve_kind,
                                 } => {
-                                    let mut to_column = lane_center_x(
-                                        bounds,
-                                        *to_column as f32,
-                                        horizontal_scroll_offset,
-                                    );
+                                    let mut to_column = lane_center_x(bounds, *to_column as f32);
 
                                     let mut to_row = to_row_center(
                                         *on_row - first_visible_row,
@@ -2403,9 +2394,8 @@ impl GitGraph {
         let local_y = position_y - canvas_bounds.origin.y;
 
         if local_y >= px(0.) && local_y < canvas_bounds.size.height {
-            let row_in_viewport = (local_y / self.row_height).floor() as usize;
-            let scroll_rows = (scroll_offset_y / self.row_height).floor() as usize;
-            let absolute_row = scroll_rows + row_in_viewport;
+            let absolute_y = local_y + scroll_offset_y;
+            let absolute_row = (absolute_y / self.row_height).floor() as usize;
 
             if absolute_row < self.graph_data.commits.len() {
                 return Some(absolute_row);
@@ -2470,25 +2460,8 @@ impl GitGraph {
         let new_y = (current_offset.y + delta.y).clamp(max_vertical_scroll, px(0.));
         let new_offset = Point::new(current_offset.x, new_y);
 
-        let graph_viewport_width = self.graph_viewport_width(window, cx);
-        let max_horizontal_scroll =
-            (self.graph_canvas_content_width() - graph_viewport_width).max(px(0.));
-
-        let new_horizontal_offset =
-            (self.horizontal_scroll_offset - delta.x).clamp(px(0.), max_horizontal_scroll);
-
-        let vertical_changed = new_offset != current_offset;
-        let horizontal_changed = new_horizontal_offset != self.horizontal_scroll_offset;
-
-        if vertical_changed {
+        if new_offset != current_offset {
             table_state.set_scroll_offset(new_offset);
-        }
-
-        if horizontal_changed {
-            self.horizontal_scroll_offset = new_horizontal_offset;
-        }
-
-        if vertical_changed || horizontal_changed {
             cx.notify();
         }
     }
@@ -2553,8 +2526,6 @@ impl Render for GitGraph {
                             cx,
                         );
                         self.graph_data.add_commits(&commits);
-                        let graph_viewport_width = self.graph_viewport_width(window, cx);
-                        self.clamp_horizontal_scroll_offset(graph_viewport_width);
                         (commits.len(), is_loading)
                     })
                 } else {
@@ -2600,8 +2571,6 @@ impl Render for GitGraph {
             let table_fraction =
                 description_fraction + date_fraction + author_fraction + commit_fraction;
             let table_width_config = self.table_column_width_config(window, cx);
-            let graph_viewport_width = self.graph_viewport_width(window, cx);
-            self.clamp_horizontal_scroll_offset(graph_viewport_width);
 
             h_flex()
                 .size_full()
@@ -2806,6 +2775,11 @@ impl Render for GitGraph {
                 this.open_selected_commit_view(window, cx);
             }))
             .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(|this, _: &FocusSearch, window, cx| {
+                this.search_state
+                    .editor
+                    .update(cx, |editor, cx| editor.focus_handle(cx).focus(window, cx));
+            }))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_next))
@@ -2836,6 +2810,10 @@ impl Render for GitGraph {
                         .child(menu.clone()),
                 )
                 .with_priority(1)
+            }))
+            .on_action(cx.listener(|_, _: &buffer_search::Deploy, window, cx| {
+                window.dispatch_action(Box::new(FocusSearch), cx);
+                cx.stop_propagation();
             }))
     }
 }
@@ -3764,8 +3742,8 @@ mod tests {
         assert!(
             observed_repository_events
                 .iter()
-                .any(|event| matches!(event, RepositoryEvent::BranchChanged)),
-            "initial repository scan should emit BranchChanged"
+                .any(|event| matches!(event, RepositoryEvent::HeadChanged)),
+            "initial repository scan should emit HeadChanged"
         );
         let commit_count_after = repository.read_with(cx, |repo, _| {
             repo.get_graph_data(crate::LogSource::default(), crate::LogOrder::default())
@@ -3883,11 +3861,220 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let commit_count_after_switch_back =
+        // Verify graph data is reloaded from repository cache on switch back
+        let reloaded_commit_count =
             git_graph.read_with(&*cx, |graph, _| graph.graph_data.commits.len());
         assert_eq!(
-            initial_commit_count, commit_count_after_switch_back,
-            "graph_data should be repopulated from cache after switching back to the same repo"
+            reloaded_commit_count,
+            commits.len(),
+            "graph data should be reloaded after switching back"
         );
+    }
+
+    #[gpui::test]
+    async fn test_graph_data_reloaded_after_stash_change(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let initial_head = Oid::from_bytes(&[1; 20]).unwrap();
+        let initial_stash = Oid::from_bytes(&[2; 20]).unwrap();
+        let updated_head = Oid::from_bytes(&[3; 20]).unwrap();
+        let updated_stash = Oid::from_bytes(&[4; 20]).unwrap();
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: initial_head,
+                    parents: smallvec![initial_stash],
+                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: initial_stash,
+                    parents: smallvec![],
+                    ref_names: vec!["refs/stash".into()],
+                }),
+            ],
+        );
+        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+            state.stash_entries = git::stash::GitStash {
+                entries: vec![git::stash::StashEntry {
+                    index: 0,
+                    oid: initial_stash,
+                    message: "initial stash".to_string(),
+                    branch: Some("main".to_string()),
+                    timestamp: 1,
+                }]
+                .into(),
+            };
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let initial_shas = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .graph_data
+                .commits
+                .iter()
+                .map(|commit| commit.data.sha)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(initial_shas, vec![initial_head, initial_stash]);
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: updated_head,
+                    parents: smallvec![updated_stash],
+                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: updated_stash,
+                    parents: smallvec![],
+                    ref_names: vec!["refs/stash".into()],
+                }),
+            ],
+        );
+        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+            state.stash_entries = git::stash::GitStash {
+                entries: vec![git::stash::StashEntry {
+                    index: 0,
+                    oid: updated_stash,
+                    message: "updated stash".to_string(),
+                    branch: Some("main".to_string()),
+                    timestamp: 1,
+                }]
+                .into(),
+            };
+        })
+        .unwrap();
+
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let reloaded_shas = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .graph_data
+                .commits
+                .iter()
+                .map(|commit| commit.data.sha)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(reloaded_shas, vec![updated_head, updated_stash]);
+    }
+
+    #[gpui::test]
+    async fn test_git_graph_row_at_position_rounding(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            assert!(
+                graph.graph_data.commits.len() >= 10,
+                "graph should load dummy commits"
+            );
+
+            graph.row_height = px(20.0);
+            let origin_y = px(100.0);
+            graph.graph_canvas_bounds.set(Some(Bounds {
+                origin: point(px(0.0), origin_y),
+                size: gpui::size(px(100.0), px(1000.0)),
+            }));
+
+            graph.table_interaction_state.update(cx, |state, _| {
+                state.set_scroll_offset(point(px(0.0), px(-15.0)))
+            });
+            let pos_y = origin_y + px(10.0);
+            let absolute_calc_row = graph.row_at_position(pos_y, cx);
+
+            assert_eq!(
+                absolute_calc_row,
+                Some(1),
+                "Row calculation should yield absolute row exactly"
+            );
+        });
     }
 }

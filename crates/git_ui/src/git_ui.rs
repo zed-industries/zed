@@ -47,6 +47,8 @@ pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_picker;
 
+pub use conflict_view::MergeConflictIndicator;
+
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
@@ -62,7 +64,6 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
-        conflict_view::register_conflict_notification(workspace, cx);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {

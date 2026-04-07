@@ -3903,6 +3903,117 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
     });
 }
 
+#[gpui::test]
+async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingJsonErrorContextTool);
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Use the streaming_json_error_context tool"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: StreamingJsonErrorContextTool::NAME.into(),
+        raw_input: r#"{"text": "partial"#.into(),
+        input: json!({"text": "partial"}),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use));
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(
+        LanguageModelCompletionEvent::ToolUseJsonParseError {
+            id: "tool_1".into(),
+            tool_name: StreamingJsonErrorContextTool::NAME.into(),
+            raw_input: r#"{"text": "partial"#.into(),
+            json_parse_error: "EOF while parsing a string at line 1 column 17".into(),
+        },
+    );
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("No running turn");
+
+    let tool_results: Vec<_> = completion
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|content| match content {
+            MessageContent::ToolResult(result)
+                if result.tool_use_id == language_model::LanguageModelToolUseId::from("tool_1") =>
+            {
+                Some(result)
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        tool_results.len(),
+        1,
+        "Expected exactly 1 tool result for tool_1, got {}: {:#?}",
+        tool_results.len(),
+        tool_results
+    );
+
+    let result = tool_results[0];
+    assert!(result.is_error);
+    let content_text = match &result.content {
+        language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
+        other => panic!("Expected text content, got {:?}", other),
+    };
+    assert!(
+        content_text.contains("Saw partial text 'partial' before invalid JSON"),
+        "Expected tool-enriched partial context, got: {content_text}"
+    );
+    assert!(
+        content_text
+            .contains("Error parsing input JSON: EOF while parsing a string at line 1 column 17"),
+        "Expected forwarded JSON parse error, got: {content_text}"
+    );
+    assert!(
+        !content_text.contains("tool input was not fully received"),
+        "Should not contain orphaned sender error, got: {content_text}"
+    );
+
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should not be stuck; the turn should have completed",
+        );
+    });
+}
+
 /// Filters out the stop events for asserting against in tests
 fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> {
     result_events
@@ -3959,6 +4070,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
                             StreamingEchoTool::NAME: true,
+                            StreamingJsonErrorContextTool::NAME: true,
                             StreamingFailingEchoTool::NAME: true,
                             TerminalTool::NAME: true,
                             UpdatePlanTool::NAME: true,
@@ -6208,9 +6320,9 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     cx.run_until_parked();
 
-    let event = rx.try_next();
+    let event = rx.try_recv();
     assert!(
-        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
         "expected no authorization request for allowed .md file"
     );
 }
@@ -6352,9 +6464,9 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     cx.run_until_parked();
 
-    let event = rx.try_next();
+    let event = rx.try_recv();
     assert!(
-        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
         "expected no authorization request for allowed docs.rs URL"
     );
 }

@@ -4159,7 +4159,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn layout_section() -> [SettingsPageItem; 4] {
+    fn layout_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Layout"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4222,6 +4222,52 @@ fn window_and_layout_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Focus Follows Mouse",
+                description: "Whether to change focus to a pane when the mouse hovers over it.",
+                field: Box::new(SettingField {
+                    json_path: Some("focus_follows_mouse.enabled"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .focus_follows_mouse
+                            .as_ref()
+                            .and_then(|s| s.enabled.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .workspace
+                            .focus_follows_mouse
+                            .get_or_insert_default()
+                            .enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Focus Follows Mouse Debounce ms",
+                description: "Amount of time to wait before changing focus.",
+                field: Box::new(SettingField {
+                    json_path: Some("focus_follows_mouse.debounce_ms"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .focus_follows_mouse
+                            .as_ref()
+                            .and_then(|s| s.debounce_ms.as_ref())
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .workspace
+                            .focus_follows_mouse
+                            .get_or_insert_default()
+                            .debounce_ms = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }
@@ -4387,7 +4433,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 24] {
+    fn project_panel_section() -> [SettingsPageItem; 28] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4868,31 +4914,25 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Hidden Files",
-                description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
-                field: Box::new(
-                    SettingField {
-                        json_path: Some("worktree.hidden_files"),
-                        pick: |settings_content| {
-                            settings_content.project.worktree.hidden_files.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.project.worktree.hidden_files = value;
-                        },
-                    }
-                    .unimplemented(),
-                ),
+                title: "Sort Mode",
+                description: "Sort order for entries in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.sort_mode"),
+                    pick: |settings_content| {
+                        settings_content.project_panel.as_ref()?.sort_mode.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .sort_mode = value;
+                    },
+                }),
                 metadata: None,
                 files: USER,
             }),
-        ]
-    }
-
-    fn auto_open_files_section() -> [SettingsPageItem; 5] {
-        [
-            SettingsPageItem::SectionHeader("Auto Open Files"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "On Create",
+                title: "Auto Open Files On Create",
                 description: "Whether to automatically open newly created files in the editor.",
                 field: Box::new(SettingField {
                     json_path: Some("project_panel.auto_open.on_create"),
@@ -4918,7 +4958,7 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "On Paste",
+                title: "Auto Open Files On Paste",
                 description: "Whether to automatically open files after pasting or duplicating them.",
                 field: Box::new(SettingField {
                     json_path: Some("project_panel.auto_open.on_paste"),
@@ -4944,7 +4984,7 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "On Drop",
+                title: "Auto Open Files On Drop",
                 description: "Whether to automatically open files dropped from external sources.",
                 field: Box::new(SettingField {
                     json_path: Some("project_panel.auto_open.on_drop"),
@@ -4970,20 +5010,20 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Sort Mode",
-                description: "Sort order for entries in the project panel.",
-                field: Box::new(SettingField {
-                    pick: |settings_content| {
-                        settings_content.project_panel.as_ref()?.sort_mode.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project_panel
-                            .get_or_insert_default()
-                            .sort_mode = value;
-                    },
-                    json_path: Some("project_panel.sort_mode"),
-                }),
+                title: "Hidden Files",
+                description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("worktree.hidden_files"),
+                        pick: |settings_content| {
+                            settings_content.project.worktree.hidden_files.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project.worktree.hidden_files = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
                 metadata: None,
                 files: USER,
             }),
@@ -5761,7 +5801,6 @@ fn panels_page() -> SettingsPage {
         title: "Panels",
         items: concat_sections![
             project_panel_section(),
-            auto_open_files_section(),
             terminal_panel_section(),
             outline_panel_section(),
             git_panel_section(),
@@ -7465,6 +7504,24 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .show_turn_stats = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Merge Conflict Indicator",
+                description: "Whether to show the merge conflict indicator in the status bar that offers to resolve conflicts using the agent.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.show_merge_conflict_indicator"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.show_merge_conflict_indicator.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .show_merge_conflict_indicator = value;
                     },
                 }),
                 metadata: None,

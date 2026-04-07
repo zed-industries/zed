@@ -140,11 +140,20 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     );
 
                     editor.update(cx, |editor, cx| {
+                        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
+                            return;
+                        };
+                        let text_anchor = buffer_snapshot.anchor_before(position);
+                        let Some(anchor) = multibuffer_snapshot.anchor_in_buffer(text_anchor)
+                        else {
+                            return;
+                        };
                         editor.change_selections(
                             SelectionEffects::scroll(Autoscroll::center()),
                             window,
                             cx,
-                            |s| s.select_ranges([position..position]),
+                            |s| s.select_ranges([anchor..anchor]),
                         );
                     });
                 })?;

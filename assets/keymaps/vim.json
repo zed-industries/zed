@@ -1096,6 +1096,7 @@
       "ctrl-e": "markdown::ScrollDown",
       "g g": "markdown::ScrollToTop",
       "shift-g": "markdown::ScrollToBottom",
+      "/": "buffer_search::Deploy",
     },
   },
   {

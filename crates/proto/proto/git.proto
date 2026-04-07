@@ -403,6 +403,7 @@ message Commit {
   message CommitOptions {
     bool amend = 1;
     bool signoff = 2;
+    bool allow_empty = 3;
   }
 }
 
@@ -565,6 +566,15 @@ message GetBlobContentResponse {
 message GitGetWorktrees {
   uint64 project_id = 1;
   uint64 repository_id = 2;
+}
+
+message GitGetHeadSha {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitGetHeadShaResponse {
+  optional string sha = 1;
 }
 
 message GitWorktreesResponse {

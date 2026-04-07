@@ -60,7 +60,8 @@ pub(crate) enum ShutdownAction {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MountDefinition {
-    pub(crate) source: String,
+    #[serde(default)]
+    pub(crate) source: Option<String>,
     pub(crate) target: String,
     #[serde(rename = "type")]
     pub(crate) mount_type: Option<String>,
@@ -68,19 +69,23 @@ pub(crate) struct MountDefinition {
 
 impl Display for MountDefinition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "type={},source={},target={},consistency=cached",
-            self.mount_type.clone().unwrap_or_else(|| {
-                if self.source.starts_with('/') {
-                    "bind".to_string()
-                } else {
-                    "volume".to_string()
+        let mount_type = self.mount_type.clone().unwrap_or_else(|| {
+            if let Some(source) = &self.source {
+                if source.starts_with('/')
+                    || source.starts_with("\\\\")
+                    || source.get(1..3) == Some(":\\")
+                    || source.get(1..3) == Some(":/")
+                {
+                    return "bind".to_string();
                 }
-            }),
-            self.source,
-            self.target
-        )
+            }
+            "volume".to_string()
+        });
+        write!(f, "type={}", mount_type)?;
+        if let Some(source) = &self.source {
+            write!(f, ",source={}", source)?;
+        }
+        write!(f, ",target={},consistency=cached", self.target)
     }
 }
 
@@ -252,13 +257,6 @@ impl DevContainer {
             return DevContainerBuildType::Dockerfile;
         }
         return DevContainerBuildType::None;
-    }
-
-    pub(crate) fn has_features(&self) -> bool {
-        self.features
-            .as_ref()
-            .map(|features| !features.is_empty())
-            .unwrap_or(false)
     }
 }
 
@@ -450,8 +448,6 @@ where
                 }
             }
 
-            let source = source
-                .ok_or_else(|| D::Error::custom(format!("mount string missing 'source': {}", s)))?;
             let target = target
                 .ok_or_else(|| D::Error::custom(format!("mount string missing 'target': {}", s)))?;
 
@@ -505,9 +501,6 @@ where
                     }
                 }
 
-                let source = source.ok_or_else(|| {
-                    D::Error::custom(format!("mount string missing 'source': {}", s))
-                })?;
                 let target = target.ok_or_else(|| {
                     D::Error::custom(format!("mount string missing 'target': {}", s))
                 })?;
@@ -876,7 +869,7 @@ mod test {
                 ])),
                 container_user: Some("myUser".to_string()),
                 mounts: Some(vec![MountDefinition {
-                    source: "/localfolder/app".to_string(),
+                    source: Some("/localfolder/app".to_string()),
                     target: "/workspaces/app".to_string(),
                     mount_type: Some("volume".to_string()),
                 }]),
@@ -885,7 +878,7 @@ mod test {
                 override_command: Some(true),
                 workspace_folder: Some("/workspaces".to_string()),
                 workspace_mount: Some(MountDefinition {
-                    source: "/app".to_string(),
+                    source: Some("/app".to_string()),
                     target: "/workspaces/app".to_string(),
                     mount_type: Some("bind".to_string())
                 }),
@@ -1319,12 +1312,12 @@ mod test {
                 container_user: Some("myUser".to_string()),
                 mounts: Some(vec![
                     MountDefinition {
-                        source: "/localfolder/app".to_string(),
+                        source: Some("/localfolder/app".to_string()),
                         target: "/workspaces/app".to_string(),
                         mount_type: Some("volume".to_string()),
                     },
                     MountDefinition {
-                        source: "dev-containers-cli-bashhistory".to_string(),
+                        source: Some("dev-containers-cli-bashhistory".to_string()),
                         target: "/home/node/commandhistory".to_string(),
                         mount_type: None,
                     }
@@ -1334,7 +1327,7 @@ mod test {
                 override_command: Some(true),
                 workspace_folder: Some("/workspaces".to_string()),
                 workspace_mount: Some(MountDefinition {
-                    source: "/folder".to_string(),
+                    source: Some("/folder".to_string()),
                     target: "/workspace".to_string(),
                     mount_type: Some("bind".to_string())
                 }),
@@ -1354,5 +1347,66 @@ mod test {
         );
 
         assert_eq!(devcontainer.build_type(), DevContainerBuildType::Dockerfile);
+    }
+
+    #[test]
+    fn mount_definition_should_use_bind_type_for_unix_absolute_paths() {
+        let mount = MountDefinition {
+            source: Some("/home/user/project".to_string()),
+            target: "/workspaces/project".to_string(),
+            mount_type: None,
+        };
+
+        let rendered = mount.to_string();
+
+        assert!(
+            rendered.starts_with("type=bind,"),
+            "Expected mount type 'bind' for Unix absolute path, but got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn mount_definition_should_use_bind_type_for_windows_unc_paths() {
+        let mount = MountDefinition {
+            source: Some("\\\\server\\share\\project".to_string()),
+            target: "/workspaces/project".to_string(),
+            mount_type: None,
+        };
+
+        let rendered = mount.to_string();
+
+        assert!(
+            rendered.starts_with("type=bind,"),
+            "Expected mount type 'bind' for Windows UNC path, but got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn mount_definition_should_use_bind_type_for_windows_absolute_paths() {
+        let mount = MountDefinition {
+            source: Some("C:\\Users\\mrg\\cli".to_string()),
+            target: "/workspaces/cli".to_string(),
+            mount_type: None,
+        };
+
+        let rendered = mount.to_string();
+
+        assert!(
+            rendered.starts_with("type=bind,"),
+            "Expected mount type 'bind' for Windows absolute path, but got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn mount_definition_should_omit_source_when_none() {
+        let mount = MountDefinition {
+            source: None,
+            target: "/tmp".to_string(),
+            mount_type: Some("tmpfs".to_string()),
+        };
+
+        let rendered = mount.to_string();
+
+        assert_eq!(rendered, "type=tmpfs,target=/tmp,consistency=cached");
     }
 }

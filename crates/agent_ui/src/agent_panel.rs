@@ -2126,6 +2126,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(store) = ThreadMetadataStore::try_global(cx) {
+            store.update(cx, |store, cx| store.unarchive(&session_id, cx));
+        }
+
         if let Some(conversation_view) = self.background_threads.remove(&session_id) {
             self.set_active_view(
                 ActiveView::AgentThread { conversation_view },
@@ -5305,7 +5309,7 @@ mod tests {
         multi_workspace
             .read_with(cx, |multi_workspace, _cx| {
                 assert_eq!(
-                    multi_workspace.workspaces().len(),
+                    multi_workspace.workspaces().count(),
                     1,
                     "LocalProject should not create a new workspace"
                 );
@@ -5597,6 +5601,11 @@ mod tests {
 
         let multi_workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
 
         let workspace = multi_workspace
             .read_with(cx, |multi_workspace, _cx| {
@@ -5692,15 +5701,14 @@ mod tests {
             .read_with(cx, |multi_workspace, cx| {
                 // There should be more than one workspace now (the original + the new worktree).
                 assert!(
-                    multi_workspace.workspaces().len() > 1,
+                    multi_workspace.workspaces().count() > 1,
                     "expected a new workspace to have been created, found {}",
-                    multi_workspace.workspaces().len(),
+                    multi_workspace.workspaces().count(),
                 );
 
                 // Check the newest workspace's panel for the correct agent.
                 let new_workspace = multi_workspace
                     .workspaces()
-                    .iter()
                     .find(|ws| ws.entity_id() != workspace.entity_id())
                     .expect("should find the new workspace");
                 let new_panel = new_workspace

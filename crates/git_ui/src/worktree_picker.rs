@@ -369,7 +369,7 @@ impl WorktreeListDelegate {
                 workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.open_workspace_for_paths(
-                            OpenMode::Replace,
+                            OpenMode::Activate,
                             vec![new_worktree_path],
                             window,
                             cx,
@@ -423,7 +423,7 @@ impl WorktreeListDelegate {
             return;
         };
         let open_mode = if replace_current_window {
-            OpenMode::Replace
+            OpenMode::Activate
         } else {
             OpenMode::NewWindow
         };

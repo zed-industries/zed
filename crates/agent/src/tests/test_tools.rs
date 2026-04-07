@@ -56,13 +56,12 @@ impl AgentTool for StreamingEchoTool {
 
     fn run(
         self: Arc<Self>,
-        mut input: ToolInput<Self::Input>,
+        input: ToolInput<Self::Input>,
         _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String, String>> {
         let wait_until_complete_rx = self.wait_until_complete_rx.lock().unwrap().take();
         cx.spawn(async move |_cx| {
-            while input.recv_partial().await.is_some() {}
             let input = input
                 .recv()
                 .await
@@ -71,6 +70,68 @@ impl AgentTool for StreamingEchoTool {
                 rx.await.ok();
             }
             Ok(input.text)
+        })
+    }
+}
+
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct StreamingJsonErrorContextToolInput {
+    /// The text to echo.
+    pub text: String,
+}
+
+pub struct StreamingJsonErrorContextTool;
+
+impl AgentTool for StreamingJsonErrorContextTool {
+    type Input = StreamingJsonErrorContextToolInput;
+    type Output = String;
+
+    const NAME: &'static str = "streaming_json_error_context";
+
+    fn supports_input_streaming() -> bool {
+        true
+    }
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Streaming JSON Error Context".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        mut input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String, String>> {
+        cx.spawn(async move |_cx| {
+            let mut last_partial_text = None;
+
+            loop {
+                match input.next().await {
+                    Ok(ToolInputPayload::Partial(partial)) => {
+                        if let Some(text) = partial.get("text").and_then(|value| value.as_str()) {
+                            last_partial_text = Some(text.to_string());
+                        }
+                    }
+                    Ok(ToolInputPayload::Full(input)) => return Ok(input.text),
+                    Ok(ToolInputPayload::InvalidJson { error_message }) => {
+                        let partial_text = last_partial_text.unwrap_or_default();
+                        return Err(format!(
+                            "Saw partial text '{partial_text}' before invalid JSON: {error_message}"
+                        ));
+                    }
+                    Err(error) => {
+                        return Err(format!("Failed to receive tool input: {error}"));
+                    }
+                }
+            }
         })
     }
 }
@@ -119,7 +180,7 @@ impl AgentTool for StreamingFailingEchoTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |_cx| {
             for _ in 0..self.receive_chunks_until_failure {
-                let _ = input.recv_partial().await;
+                let _ = input.next().await;
             }
             Err("failed".into())
         })

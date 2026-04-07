@@ -250,14 +250,18 @@ pub enum CreateWorktreeTarget {
         branch_name: String,
         start_point: Option<String>,
     },
+    Detached {
+        start_point: Option<String>,
+    },
 }
 
 impl CreateWorktreeTarget {
-    pub fn branch_name(&self) -> &str {
+    pub fn branch_name(&self) -> Option<&str> {
         match self {
             Self::ExistingBranch { branch_name } | Self::NewBranch { branch_name, .. } => {
-                branch_name
+                Some(branch_name)
             }
+            Self::Detached { .. } => None,
         }
     }
 }
@@ -354,6 +358,7 @@ impl Upstream {
 pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
+    pub allow_empty: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -939,6 +944,12 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<()>>;
 
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
+
+    fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>>;
+
+    fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>>;
+
+    fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>>;
 
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
@@ -1706,6 +1717,12 @@ impl GitRepository for RealGitRepository {
                 args.push(OsString::from(path.as_os_str()));
                 args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
             }
+            CreateWorktreeTarget::Detached { start_point } => {
+                args.push(OsString::from("--detach"));
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
+            }
         }
 
         self.executor
@@ -2194,6 +2211,10 @@ impl GitRepository for RealGitRepository {
                 cmd.arg("--signoff");
             }
 
+            if options.allow_empty {
+                cmd.arg("--allow-empty");
+            }
+
             if let Some((name, email)) = name_and_email {
                 cmd.arg("--author").arg(&format!("{name} <{email}>"));
             }
@@ -2203,6 +2224,39 @@ impl GitRepository for RealGitRepository {
             Ok(())
         }
         .boxed()
+    }
+
+    fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["update-ref".into(), ref_name.into(), commit.into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["update-ref".into(), "-d".into(), ref_name.into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["worktree".into(), "repair".into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
     }
 
     fn push(

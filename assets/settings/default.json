@@ -225,6 +225,11 @@
   // 3. Hide on both typing and cursor movement:
   //    "on_typing_and_movement"
   "hide_mouse": "on_typing_and_movement",
+  // Determines whether the focused panel follows the mouse location.
+  "focus_follows_mouse": {
+    "enabled": false,
+    "debounce_ms": 250,
+  },
   // Determines how snippets are sorted relative to other completion items.
   //
   // 1. Place snippets at the top of the completion list:
@@ -1139,6 +1144,11 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // Whether to show the merge conflict indicator in the status bar
+    // that offers to resolve conflicts using the agent.
+    //
+    // Default: true
+    "show_merge_conflict_indicator": true,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
