@@ -10,7 +10,10 @@ use crate::{
         TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
-    notifications::NotifyResultExt,
+    notifications::{
+        NotificationId, NotifyResultExt, show_app_notification,
+        simple_message_notification::MessageNotification,
+    },
     toolbar::Toolbar,
     workspace_settings::{AutosaveSetting, FocusFollowsMouse, TabBarSettings, WorkspaceSettings},
 };
@@ -4400,17 +4403,64 @@ impl Render for Pane {
             ))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
+                    let Some(active_item) = pane.active_item() else {
+                        return;
+                    };
+
                     let entry_id = action
                         .entry_id
                         .map(ProjectEntryId::from_proto)
-                        .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
-                    if let Some(entry_id) = entry_id {
-                        pane.project
-                            .update(cx, |_, cx| {
-                                cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                            })
-                            .ok();
+                        .or_else(|| active_item.project_entry_ids(cx).first().copied());
+
+                    let show_reveal_error_toast = |display_name: &str, cx: &mut App| {
+                        let notification_id = NotificationId::unique::<RevealInProjectPanel>();
+                        let message = SharedString::from(format!(
+                            "\"{display_name}\" is not part of any open projects."
+                        ));
+
+                        show_app_notification(notification_id, cx, move |cx| {
+                            let message = message.clone();
+                            cx.new(|cx| MessageNotification::new(message, cx))
+                        });
+                    };
+
+                    let Some(entry_id) = entry_id else {
+                        // When working with an unsaved buffer, display a toast
+                        // informing the user that the buffer is not present in
+                        // any of the open projects and stop execution, as we
+                        // don't want to open the project panel.
+                        let display_name = active_item
+                            .tab_tooltip_text(cx)
+                            .unwrap_or_else(|| active_item.tab_content_text(0, cx));
+
+                        return show_reveal_error_toast(&display_name, cx);
+                    };
+
+                    // We'll now check whether the entry belongs to a visible
+                    // worktree and, if that's not the case, it means the user
+                    // is interacting with a file that does not belong to any of
+                    // the open projects, so we'll show a toast informing them
+                    // of this and stop execution.
+                    let display_name = pane
+                        .project
+                        .read_with(cx, |project, cx| {
+                            project
+                                .worktree_for_entry(entry_id, cx)
+                                .filter(|worktree| !worktree.read(cx).is_visible())
+                                .map(|worktree| worktree.read(cx).root_name_str().to_string())
+                        })
+                        .ok()
+                        .flatten();
+
+                    if let Some(display_name) = display_name {
+                        return show_reveal_error_toast(&display_name, cx);
                     }
+
+                    pane.project
+                        .update(cx, |_, cx| {
+                            cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                        })
+                        .log_err();
                 }),
             )
             .on_action(cx.listener(|_, _: &menu::Cancel, window, cx| {
