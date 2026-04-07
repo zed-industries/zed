@@ -1265,6 +1265,7 @@ pub struct Editor {
     >,
     use_autoclose: bool,
     use_auto_surround: bool,
+    use_selection_highlight: bool,
     auto_replace_emoji_shortcode: bool,
     jsx_tag_auto_close_enabled_in_any_buffer: bool,
     show_git_blame_gutter: bool,
@@ -2468,6 +2469,7 @@ impl Editor {
             read_only: is_minimap,
             use_autoclose: true,
             use_auto_surround: true,
+            use_selection_highlight: true,
             auto_replace_emoji_shortcode: false,
             jsx_tag_auto_close_enabled_in_any_buffer: false,
             leader_id: None,
@@ -3545,6 +3547,10 @@ impl Editor {
 
     pub fn set_use_autoclose(&mut self, autoclose: bool) {
         self.use_autoclose = autoclose;
+    }
+
+    pub fn set_use_selection_highlight(&mut self, highlight: bool) {
+        self.use_selection_highlight = highlight;
     }
 
     pub fn set_use_auto_surround(&mut self, auto_surround: bool) {
@@ -7699,7 +7705,7 @@ impl Editor {
         if matches!(self.mode, EditorMode::SingleLine) {
             return None;
         }
-        if !EditorSettings::get_global(cx).selection_highlight {
+        if !self.use_selection_highlight || !EditorSettings::get_global(cx).selection_highlight {
             return None;
         }
         if self.selections.count() != 1 || self.selections.line_mode() {
