@@ -3,13 +3,13 @@ use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
 use language::language_settings::{LanguageSettings, PrettierSettings};
-use language::{Buffer, Diff, Language};
+use language::{Buffer, Diff, Language, OffsetUtf16};
 use lsp::{LanguageServer, LanguageServerId};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use serde::{Deserialize, Serialize};
 use std::{
-    ops::ControlFlow,
+    ops::{ControlFlow, Range},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -48,6 +48,8 @@ const TAILWIND_PRETTIER_PLUGIN_PACKAGE_NAME: &str = "prettier-plugin-tailwindcss
 
 #[cfg(any(test, feature = "test-support"))]
 pub const FORMAT_SUFFIX: &str = "\nformatted by test prettier";
+#[cfg(any(test, feature = "test-support"))]
+pub const RANGE_FORMAT_SUFFIX: &str = "\nrange formatted by test prettier";
 
 impl Prettier {
     pub const CONFIG_FILE_NAMES: &'static [&'static str] = &[
@@ -348,6 +350,7 @@ impl Prettier {
         buffer: &Entity<Buffer>,
         buffer_path: Option<PathBuf>,
         ignore_dir: Option<PathBuf>,
+        range_utf16: Option<Range<OffsetUtf16>>,
         request_timeout: Duration,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Diff> {
@@ -478,6 +481,8 @@ impl Prettier {
                                 plugins,
                                 prettier_options,
                                 ignore_path,
+                                range_start: range_utf16.as_ref().map(|r| r.start.0),
+                                range_end: range_utf16.as_ref().map(|r| r.end.0),
                             },
                         })
                 })
@@ -501,8 +506,6 @@ impl Prettier {
                     {
                         Some("rust") => anyhow::bail!("prettier does not support Rust"),
                         Some(_other) => {
-                            let mut formatted_text = buffer.text() + FORMAT_SUFFIX;
-
                             let buffer_language =
                                 buffer.language().map(|language| language.as_ref());
                             let language_settings = LanguageSettings::for_buffer(buffer, cx);
@@ -513,9 +516,29 @@ impl Prettier {
                                 prettier_settings,
                             )?;
 
-                            if let Some(parser) = parser {
-                                formatted_text = format!("{formatted_text}\n{parser}");
-                            }
+                            let formatted_text = if let Some(range) = &range_utf16 {
+                                let text = buffer.text();
+                                let start_byte = buffer.offset_utf16_to_offset(range.start);
+                                let insert_at = text[start_byte..]
+                                    .find('\n')
+                                    .map(|pos| start_byte + pos)
+                                    .unwrap_or(text.len());
+                                let mut suffix = RANGE_FORMAT_SUFFIX.to_string();
+                                if let Some(parser) = &parser {
+                                    suffix = format!("{suffix}\n{parser}");
+                                }
+                                let mut result = String::new();
+                                result.push_str(&text[..insert_at]);
+                                result.push_str(&suffix);
+                                result.push_str(&text[insert_at..]);
+                                result
+                            } else {
+                                let mut text = buffer.text() + FORMAT_SUFFIX;
+                                if let Some(parser) = &parser {
+                                    text = format!("{text}\n{parser}");
+                                }
+                                text
+                            };
 
                             Ok(buffer.diff(formatted_text, cx))
                         }
@@ -651,6 +674,10 @@ struct FormatOptions {
     path: Option<PathBuf>,
     prettier_options: Option<HashMap<String, serde_json::Value>>,
     ignore_path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range_start: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    range_end: Option<usize>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -1,5 +1,6 @@
 pub mod excerpt_ranges;
 pub mod multi_region;
+pub mod udiff;
 
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -105,10 +106,19 @@ impl std::fmt::Display for ZetaFormat {
 
 impl ZetaFormat {
     pub fn parse(format_name: &str) -> Result<Self> {
+        let lower = format_name.to_lowercase();
+
+        // Exact case-insensitive match takes priority, bypassing ambiguity checks.
+        for variant in ZetaFormat::iter() {
+            if <&'static str>::from(&variant).to_lowercase() == lower {
+                return Ok(variant);
+            }
+        }
+
         let mut results = ZetaFormat::iter().filter(|version| {
             <&'static str>::from(version)
                 .to_lowercase()
-                .contains(&format_name.to_lowercase())
+                .contains(&lower)
         });
         let Some(result) = results.next() else {
             anyhow::bail!(
@@ -211,9 +221,13 @@ pub struct RelatedExcerpt {
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
-    special_tokens_for_format(format)
-        .iter()
-        .any(|token| input.cursor_excerpt.contains(token))
+    special_tokens_for_format(format).iter().any(|token| {
+        if let Some(line_token) = token.strip_suffix('\n') {
+            input.cursor_excerpt.lines().any(|line| line == line_token)
+        } else {
+            input.cursor_excerpt.contains(token)
+        }
+    })
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option<String> {
@@ -815,11 +829,146 @@ pub fn encode_patch_as_output_for_format(
     }
 }
 
+/// Given a `ZetaPromptInput`, a format, and a patch (with cursor already
+/// extracted), produce the expected model output string for training.
+pub fn format_expected_output(
+    input: &ZetaPromptInput,
+    format: ZetaFormat,
+    patch: &str,
+    cursor_offset: Option<usize>,
+) -> Result<String> {
+    let (context, editable_range, _, _) = resolve_cursor_region(input, format);
+    let mut old_editable = context[editable_range].to_string();
+    if !old_editable.is_empty() && !old_editable.ends_with('\n') {
+        old_editable.push('\n');
+    }
+
+    // Formats with their own output encoding (hashline, variable-edit,
+    // multi-region empty patches) are handled here.
+    if let Some(output) =
+        encode_patch_as_output_for_format(format, &old_editable, patch, cursor_offset)?
+    {
+        return Ok(output);
+    }
+
+    let empty_patch = patch.lines().count() <= 3;
+
+    match format {
+        // Multi-region formats: non-empty patches need diff application
+        // then marker-span encoding.
+        ZetaFormat::V0316SeedMultiRegions => {
+            let (new_editable, first_hunk_offset) =
+                udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable)?;
+            let cursor_in_new = cursor_in_new_text(cursor_offset, first_hunk_offset, &new_editable);
+            multi_region::encode_from_old_and_new_v0316(
+                &old_editable,
+                &new_editable,
+                cursor_in_new,
+                CURSOR_MARKER,
+                multi_region::V0316_END_MARKER,
+            )
+        }
+        ZetaFormat::V0318SeedMultiRegions => {
+            let (new_editable, first_hunk_offset) =
+                udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable)?;
+            let cursor_in_new = cursor_in_new_text(cursor_offset, first_hunk_offset, &new_editable);
+            multi_region::encode_from_old_and_new_v0318(
+                &old_editable,
+                &new_editable,
+                cursor_in_new,
+                CURSOR_MARKER,
+                multi_region::V0318_END_MARKER,
+            )
+        }
+        ZetaFormat::V0317SeedMultiRegions => {
+            let (new_editable, first_hunk_offset) =
+                udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable)?;
+            let cursor_in_new = cursor_in_new_text(cursor_offset, first_hunk_offset, &new_editable);
+            multi_region::encode_from_old_and_new_v0317(
+                &old_editable,
+                &new_editable,
+                cursor_in_new,
+                CURSOR_MARKER,
+                multi_region::V0317_END_MARKER,
+            )
+        }
+        // V0131-style formats and fallback: produce new editable text with
+        // cursor marker inserted, followed by the end marker.
+        _ => {
+            let (mut result, first_hunk_offset) = if empty_patch {
+                (old_editable.clone(), None)
+            } else {
+                udiff::apply_diff_to_string_with_hunk_offset(patch, &old_editable)?
+            };
+
+            if let Some(cursor) = cursor_offset {
+                let hunk_start = if !empty_patch {
+                    first_hunk_offset.unwrap_or(0)
+                } else {
+                    0
+                };
+                let offset = (hunk_start + cursor).min(result.len());
+                result.insert_str(offset, CURSOR_MARKER);
+            }
+
+            if !result.is_empty() && !result.ends_with('\n') {
+                result.push('\n');
+            }
+
+            if let Some(end_marker) = output_end_marker_for_format(format) {
+                result.push_str(end_marker);
+            }
+
+            Ok(result)
+        }
+    }
+}
+
+/// Compute the cursor position within the new text after diff application.
+fn cursor_in_new_text(
+    cursor_offset: Option<usize>,
+    first_hunk_offset: Option<usize>,
+    new_text: &str,
+) -> Option<usize> {
+    cursor_offset.map(|cursor| {
+        let hunk_start = first_hunk_offset.unwrap_or(0);
+        (hunk_start + cursor).min(new_text.len())
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ParsedOutput {
     /// Text that should replace the editable region
     pub new_editable_region: String,
     /// The byte range within `cursor_excerpt` that this replacement applies to
     pub range_in_excerpt: Range<usize>,
+    /// Byte offset of the cursor marker within `new_editable_region`, if present
+    pub cursor_offset_in_new_editable_region: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CursorPosition {
+    pub path: String,
+    pub row: usize,
+    pub column: usize,
+    pub offset: usize,
+    pub editable_region_offset: usize,
+}
+
+pub fn parsed_output_from_editable_region(
+    range_in_excerpt: Range<usize>,
+    mut new_editable_region: String,
+) -> ParsedOutput {
+    let cursor_offset_in_new_editable_region = new_editable_region.find(CURSOR_MARKER);
+    if let Some(offset) = cursor_offset_in_new_editable_region {
+        new_editable_region.replace_range(offset..offset + CURSOR_MARKER.len(), "");
+    }
+
+    ParsedOutput {
+        new_editable_region,
+        range_in_excerpt,
+        cursor_offset_in_new_editable_region,
+    }
 }
 
 /// Parse model output for the given zeta format
@@ -887,10 +1036,95 @@ pub fn parse_zeta2_model_output(
     let range_in_excerpt =
         range_in_context.start + context_start..range_in_context.end + context_start;
 
-    Ok(ParsedOutput {
-        new_editable_region: output,
-        range_in_excerpt,
+    Ok(parsed_output_from_editable_region(range_in_excerpt, output))
+}
+
+pub fn parse_zeta2_model_output_as_patch(
+    output: &str,
+    format: ZetaFormat,
+    prompt_inputs: &ZetaPromptInput,
+) -> Result<String> {
+    let parsed = parse_zeta2_model_output(output, format, prompt_inputs)?;
+    parsed_output_to_patch(prompt_inputs, parsed)
+}
+
+pub fn cursor_position_from_parsed_output(
+    prompt_inputs: &ZetaPromptInput,
+    parsed: &ParsedOutput,
+) -> Option<CursorPosition> {
+    let cursor_offset = parsed.cursor_offset_in_new_editable_region?;
+    let editable_region_offset = parsed.range_in_excerpt.start;
+    let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+
+    let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
+
+    let new_editable_region = &parsed.new_editable_region;
+    let prefix_end = cursor_offset.min(new_editable_region.len());
+    let new_region_prefix = &new_editable_region[..prefix_end];
+
+    let row = editable_region_start_line + new_region_prefix.matches('\n').count();
+
+    let column = match new_region_prefix.rfind('\n') {
+        Some(last_newline) => cursor_offset - last_newline - 1,
+        None => {
+            let content_prefix = &excerpt[..editable_region_offset];
+            let content_column = match content_prefix.rfind('\n') {
+                Some(last_newline) => editable_region_offset - last_newline - 1,
+                None => editable_region_offset,
+            };
+            content_column + cursor_offset
+        }
+    };
+
+    Some(CursorPosition {
+        path: prompt_inputs.cursor_path.to_string_lossy().into_owned(),
+        row,
+        column,
+        offset: editable_region_offset + cursor_offset,
+        editable_region_offset: cursor_offset,
     })
+}
+
+pub fn parsed_output_to_patch(
+    prompt_inputs: &ZetaPromptInput,
+    parsed: ParsedOutput,
+) -> Result<String> {
+    let range_in_excerpt = parsed.range_in_excerpt;
+    let excerpt = prompt_inputs.cursor_excerpt.as_ref();
+    let old_text = excerpt[range_in_excerpt.clone()].to_string();
+    let mut new_text = parsed.new_editable_region;
+
+    let mut old_text_normalized = old_text;
+    if !new_text.is_empty() && !new_text.ends_with('\n') {
+        new_text.push('\n');
+    }
+    if !old_text_normalized.is_empty() && !old_text_normalized.ends_with('\n') {
+        old_text_normalized.push('\n');
+    }
+
+    let editable_region_offset = range_in_excerpt.start;
+    let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count() as u32;
+    let editable_region_lines = old_text_normalized.lines().count() as u32;
+
+    let diff = udiff::unified_diff_with_context(
+        &old_text_normalized,
+        &new_text,
+        editable_region_start_line,
+        editable_region_start_line,
+        editable_region_lines,
+    );
+
+    let path = prompt_inputs
+        .cursor_path
+        .to_string_lossy()
+        .trim_start_matches('/')
+        .to_string();
+    let formatted_diff = format!("--- a/{path}\n+++ b/{path}\n{diff}");
+
+    Ok(udiff::encode_cursor_in_patch(
+        &formatted_diff,
+        parsed.cursor_offset_in_new_editable_region,
+    ))
 }
 
 pub fn excerpt_range_for_format(
@@ -5286,5 +5520,43 @@ mod tests {
 
         assert_eq!(apply_edit(excerpt, &output1), apply_edit(excerpt, &output2));
         assert_eq!(apply_edit(excerpt, &output1), "new content\n");
+    }
+
+    #[test]
+    fn test_parsed_output_to_patch_round_trips_through_udiff_application() {
+        let excerpt = "before ctx\nctx start\neditable old\nctx end\nafter ctx\n";
+        let context_start = excerpt.find("ctx start").unwrap();
+        let context_end = excerpt.find("after ctx").unwrap();
+        let editable_start = excerpt.find("editable old").unwrap();
+        let editable_end = editable_start + "editable old\n".len();
+        let input = make_input_with_context_range(
+            excerpt,
+            editable_start..editable_end,
+            context_start..context_end,
+            editable_start,
+        );
+
+        let parsed = parse_zeta2_model_output(
+            "editable new\n>>>>>>> UPDATED\n",
+            ZetaFormat::V0131GitMergeMarkersPrefix,
+            &input,
+        )
+        .unwrap();
+        let expected = apply_edit(excerpt, &parsed);
+        let patch = parsed_output_to_patch(&input, parsed).unwrap();
+        let patched = udiff::apply_diff_to_string(&patch, excerpt).unwrap();
+
+        assert_eq!(patched, expected);
+    }
+
+    #[test]
+    fn test_special_tokens_not_triggered_by_comment_separator() {
+        // Regression test for https://github.com/zed-industries/zed/issues/52489
+        let excerpt = "fn main() {\n    // =======\n    println!(\"hello\");\n}\n";
+        let input = make_input(excerpt, 0..excerpt.len(), 0, vec![], vec![]);
+        assert!(
+            !prompt_input_contains_special_tokens(&input, ZetaFormat::V0131GitMergeMarkersPrefix),
+            "comment containing ======= should not trigger special token detection"
+        );
     }
 }

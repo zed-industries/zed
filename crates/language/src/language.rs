@@ -1023,9 +1023,7 @@ impl Language {
                 BufferChunks::new(text, range, Some((captures, highlight_maps)), false, None)
             {
                 let end_offset = offset + chunk.text.len();
-                if let Some(highlight_id) = chunk.syntax_highlight_id
-                    && !highlight_id.is_default()
-                {
+                if let Some(highlight_id) = chunk.syntax_highlight_id {
                     result.push((offset..end_offset, highlight_id));
                 }
                 offset = end_offset;
@@ -1077,11 +1075,11 @@ impl Language {
 
 #[inline]
 pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> HighlightMap {
-    HighlightMap::from_ids(capture_names.iter().map(|capture_name| {
-        theme
-            .highlight_id(capture_name)
-            .map_or(HighlightId::default(), HighlightId)
-    }))
+    HighlightMap::from_ids(
+        capture_names
+            .iter()
+            .map(|capture_name| theme.highlight_id(capture_name).map(HighlightId::new)),
+    )
 }
 
 impl LanguageScope {
@@ -1645,9 +1643,18 @@ mod tests {
         ];
 
         let map = build_highlight_map(capture_names, &theme);
-        assert_eq!(theme.get_capture_name(map.get(0)), Some("function"));
-        assert_eq!(theme.get_capture_name(map.get(1)), Some("function.async"));
-        assert_eq!(theme.get_capture_name(map.get(2)), Some("variable.builtin"));
+        assert_eq!(
+            theme.get_capture_name(map.get(0).unwrap()),
+            Some("function")
+        );
+        assert_eq!(
+            theme.get_capture_name(map.get(1).unwrap()),
+            Some("function.async")
+        );
+        assert_eq!(
+            theme.get_capture_name(map.get(2).unwrap()),
+            Some("variable.builtin")
+        );
     }
 
     #[gpui::test(iterations = 10)]

@@ -3274,6 +3274,10 @@ impl Buffer {
     pub fn preserve_preview(&self) -> bool {
         !self.has_edits_since(&self.preview_version)
     }
+
+    pub fn set_group_interval(&mut self, group_interval: Duration) {
+        self.text.set_group_interval(group_interval);
+    }
 }
 
 #[doc(hidden)]
@@ -3287,10 +3291,6 @@ impl Buffer {
     ) {
         let edits = self.edits_for_marked_text(marked_string);
         self.edit(edits, autoindent_mode, cx);
-    }
-
-    pub fn set_group_interval(&mut self, group_interval: Duration) {
-        self.text.set_group_interval(group_interval);
     }
 
     pub fn randomly_edit<T>(&mut self, rng: &mut T, old_range_count: usize, cx: &mut Context<Self>)
@@ -5549,11 +5549,11 @@ impl<'a> BufferChunks<'a> {
                     && range.start >= capture.node.start_byte()
                 {
                     let next_capture_end = capture.node.end_byte();
-                    if range.start < next_capture_end {
-                        highlights.stack.push((
-                            next_capture_end,
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index),
-                        ));
+                    if range.start < next_capture_end
+                        && let Some(capture_id) =
+                            highlights.highlight_maps[capture.grammar_index].get(capture.index)
+                    {
+                        highlights.stack.push((next_capture_end, capture_id));
                     }
                     highlights.next_capture.take();
                 }
@@ -5688,9 +5688,11 @@ impl<'a> Iterator for BufferChunks<'a> {
                 } else {
                     let highlight_id =
                         highlights.highlight_maps[capture.grammar_index].get(capture.index);
-                    highlights
-                        .stack
-                        .push((capture.node.end_byte(), highlight_id));
+                    if let Some(highlight_id) = highlight_id {
+                        highlights
+                            .stack
+                            .push((capture.node.end_byte(), highlight_id));
+                    }
                     highlights.next_capture = highlights.captures.next();
                 }
             }
