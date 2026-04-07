@@ -151,7 +151,7 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
     .add_with(("environment", "production"))
 }
 
-pub(crate) const COMPLIANCE_REPORT_PATH: &str = "target/compliance-report";
+pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report";
 const COMPLIANCE_REPORT_FILE: &str = "target/compliance-report.md";
 const NEEDS_REVIEW_PULLS_URL: &str = "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22";
 

@@ -311,8 +311,7 @@ jobs:
     - id: run-compliance-check
       name: release::compliance_check::run_compliance_check
       run: |
-        echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path target/compliance-report
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -345,7 +344,7 @@ jobs:
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
         COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
-        COMPLIANCE_TAG: ${{ steps.run-compliance-check.outputs.tag }}
+        COMPLIANCE_TAG: ${{ github.ref_name }}
         ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
     timeout-minutes: 60
   bundle_linux_aarch64:
@@ -682,8 +681,7 @@ jobs:
     - id: run-post-upload-compliance-check
       name: release::validate_release_assets::run_post_upload_compliance_check
       run: |
-        echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path target/compliance-report
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -716,7 +714,7 @@ jobs:
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
         COMPLIANCE_OUTCOME: ${{ steps.run-post-upload-compliance-check.outcome }}
-        COMPLIANCE_TAG: ${{ steps.run-post-upload-compliance-check.outputs.tag }}
+        COMPLIANCE_TAG: ${{ github.ref_name }}
         ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
   auto_release_preview:
     needs:
