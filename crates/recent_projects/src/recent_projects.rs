@@ -940,7 +940,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, _, _))| self.is_sibling_workspace(*id, cx))
+            .filter(|(_, (id, _, _, _))| self.sibling_workspace_ids.contains(id))
             .map(|(id, (_, _, paths, _))| {
                 let combined_string = paths
                     .ordered_paths()
@@ -1029,7 +1029,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
             if is_empty_query {
                 for (id, (workspace_id, _, _, _)) in self.workspaces.iter().enumerate() {
-                    if self.is_sibling_workspace(*workspace_id, cx) {
+                    if self.sibling_workspace_ids.contains(workspace_id) {
                         entries.push(ProjectPickerEntry::OpenProject(StringMatch {
                             candidate_id: id,
                             score: 0.0,
@@ -1106,6 +1106,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                     return;
                 };
                 let workspace_id = *workspace_id;
+
+                if self.is_current_workspace(workspace_id, cx) {
+                    cx.emit(DismissEvent);
+                    return;
+                }
 
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
