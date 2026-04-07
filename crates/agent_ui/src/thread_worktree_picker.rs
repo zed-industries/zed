@@ -198,7 +198,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let has_multiple_repositories = self.all_worktrees.len() > 1;
@@ -274,7 +274,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
             });
 
             let linked_worktrees_clone = linked_worktrees;
-            return cx.spawn_in(_window, async move |picker, cx| {
+            return cx.spawn_in(window, async move |picker, cx| {
                 let fuzzy_matches = task.await;
 
                 picker

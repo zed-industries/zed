@@ -476,7 +476,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
         });
 
         let all_branches_clone = all_branches;
-        return cx.spawn_in(window, async move |picker, cx| {
+        cx.spawn_in(window, async move |picker, cx| {
             let fuzzy_matches = task.await;
 
             picker
@@ -527,7 +527,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                     cx.notify();
                 })
                 .log_err();
-        });
+        })
     }
 
     fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -587,8 +587,9 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
     fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
     fn separators_after_indices(&self) -> Vec<usize> {
-        if self.matches.len() > 1 {
-            vec![0]
+        let fixed_count = self.fixed_matches().len();
+        if self.matches.len() > fixed_count {
+            vec![fixed_count - 1]
         } else {
             Vec::new()
         }

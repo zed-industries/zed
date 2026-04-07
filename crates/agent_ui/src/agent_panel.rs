@@ -1989,13 +1989,12 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         let new_target = match action {
             StartThreadIn::LocalProject => StartThreadIn::LocalProject,
             StartThreadIn::NewWorktree { .. } => {
+                if !cx.has_flag::<AgentV2FeatureFlag>() {
+                    return;
+                }
                 if !self.project_has_git_repository(cx) {
                     log::error!(
                         "set_start_thread_in: cannot use worktree mode without a git repository"
@@ -2011,9 +2010,18 @@ impl AgentPanel {
                 action.clone()
             }
             StartThreadIn::LinkedWorktree { .. } => {
+                if !cx.has_flag::<AgentV2FeatureFlag>() {
+                    return;
+                }
                 if !self.project_has_git_repository(cx) {
                     log::error!(
                         "set_start_thread_in: cannot use LinkedWorktree without a git repository"
+                    );
+                    return;
+                }
+                if self.project.read(cx).is_via_collab() {
+                    log::error!(
+                        "set_start_thread_in: cannot use LinkedWorktree in a collab project"
                     );
                     return;
                 }
@@ -2383,35 +2391,26 @@ impl AgentPanel {
         existing_branches: &HashSet<String>,
         occupied_branches: &HashSet<String>,
     ) -> Result<(String, bool, Option<String>)> {
+        let generate_branch_name = || -> Result<String> {
+            let refs: Vec<&str> = existing_branches.iter().map(|s| s.as_str()).collect();
+            let mut rng = rand::rng();
+            crate::branch_names::generate_branch_name(&refs, &mut rng)
+                .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))
+        };
+
         if let Some(branch_name) = explicit_branch_name {
             return Ok((branch_name, false, explicit_start_point));
         }
 
         if let Some(start_point) = explicit_start_point {
             if occupied_branches.contains(&start_point) {
-                let existing_branch_refs: Vec<&str> = existing_branches
-                    .iter()
-                    .map(|branch_name| branch_name.as_str())
-                    .collect();
-                let mut rng = rand::rng();
-                let branch_name =
-                    crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng)
-                        .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))?;
-                return Ok((branch_name, false, Some(start_point)));
+                return Ok((generate_branch_name()?, false, Some(start_point)));
             }
 
             return Ok((start_point, true, None));
         }
 
-        let existing_branch_refs: Vec<&str> = existing_branches
-            .iter()
-            .map(|branch_name| branch_name.as_str())
-            .collect();
-        let mut rng = rand::rng();
-        let branch_name =
-            crate::branch_names::generate_branch_name(&existing_branch_refs, &mut rng)
-                .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))?;
-        Ok((branch_name, false, None))
+        Ok((generate_branch_name()?, false, None))
     }
 
     /// Kicks off an async git-worktree creation for each repository. Returns:
@@ -2590,36 +2589,31 @@ impl AgentPanel {
             return;
         }
 
-        let branch_receivers = if matches!(args, WorktreeCreationArgs::New { .. }) {
-            Some(
-                git_repos
-                    .iter()
-                    .map(|repo| repo.update(cx, |repo, _cx| repo.branches()))
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        };
-        let worktree_receivers = if matches!(args, WorktreeCreationArgs::New { .. }) {
-            Some(
-                git_repos
-                    .iter()
-                    .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        };
-        let worktree_directory_setting = if matches!(args, WorktreeCreationArgs::New { .. }) {
-            Some(
-                ProjectSettings::get_global(cx)
-                    .git
-                    .worktree_directory
-                    .clone(),
-            )
-        } else {
-            None
-        };
+        let (branch_receivers, worktree_receivers, worktree_directory_setting) =
+            if matches!(args, WorktreeCreationArgs::New { .. }) {
+                (
+                    Some(
+                        git_repos
+                            .iter()
+                            .map(|repo| repo.update(cx, |repo, _cx| repo.branches()))
+                            .collect::<Vec<_>>(),
+                    ),
+                    Some(
+                        git_repos
+                            .iter()
+                            .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
+                            .collect::<Vec<_>>(),
+                    ),
+                    Some(
+                        ProjectSettings::get_global(cx)
+                            .git
+                            .worktree_directory
+                            .clone(),
+                    ),
+                )
+            } else {
+                (None, None, None)
+            };
 
         let active_file_path = self.workspace.upgrade().and_then(|workspace| {
             let workspace = workspace.read(cx);
@@ -3407,19 +3401,19 @@ impl AgentPanel {
             })
     }
 
-    fn render_new_worktree_branch_selector(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_new_worktree_branch_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_creating = matches!(
             self.worktree_creation_status,
             Some(WorktreeCreationStatus::Creating)
         );
-        let default_branch_label = if self.project.read(_cx).repositories(_cx).len() > 1 {
+        let default_branch_label = if self.project.read(cx).repositories(cx).len() > 1 {
             SharedString::from("From: current branches")
         } else {
             self.project
-                .read(_cx)
-                .active_repository(_cx)
+                .read(cx)
+                .active_repository(cx)
                 .and_then(|repo| {
-                    repo.read(_cx)
+                    repo.read(cx)
                         .branch
                         .as_ref()
                         .map(|branch| SharedString::from(format!("From: {}", branch.name())))
