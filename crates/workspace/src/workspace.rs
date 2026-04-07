@@ -3744,8 +3744,7 @@ impl Workspace {
                     worktree_id: path.worktree_id,
                     path: &path.path,
                 };
-                if WorktreeSettings::get(Some(settings_location), cx)
-                    .is_path_read_only(&path.path)
+                if WorktreeSettings::get(Some(settings_location), cx).is_path_read_only(&path.path)
                 {
                     return None;
                 }
@@ -14864,10 +14863,7 @@ mod tests {
         workspace.update_in(cx, |_workspace, _window, cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store
-                    .set_user_settings(
-                        r#"{"read_only_files": ["**/.venv/**"]}"#,
-                        cx,
-                    )
+                    .set_user_settings(r#"{"read_only_files": ["**/.venv/**"]}"#, cx)
                     .ok();
             });
         });
