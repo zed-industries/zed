@@ -45,7 +45,7 @@ use util::ResultExt as _;
 use util::path_list::{PathList, SerializedPathList};
 use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MoveWorkspaceToNewWindow,
-    MultiWorkspace, MultiWorkspaceEvent, NextProjectGroup, NextThread, Open, PreviousProjectGroup,
+    MultiWorkspace, MultiWorkspaceEvent, NextProject, NextThread, Open, PreviousProject,
     PreviousThread, ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide,
     ToggleWorkspaceSidebar, Workspace, WorkspaceId, sidebar_side_context_menu,
 };
@@ -3084,53 +3084,37 @@ impl Sidebar {
         Some(mw.workspace().read(cx).project_group_key(cx))
     }
 
-    fn active_project_header_position(&self, cx: &App) -> Option<usize> {
-        let active_key = self.active_project_group_key(cx)?;
-        self.contents
-            .project_header_indices
-            .iter()
-            .position(|&entry_ix| {
-                matches!(
-                    &self.contents.entries[entry_ix],
-                    ListEntry::ProjectHeader { key, .. } if *key == active_key
-                )
-            })
-    }
-
-    fn cycle_project_group_impl(
-        &mut self,
-        forward: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn cycle_project_impl(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
 
-        let header_count = self.contents.project_header_indices.len();
-        if header_count == 0 {
+        let keys: Vec<ProjectGroupKey> = multi_workspace
+            .read(cx)
+            .project_group_keys()
+            .cloned()
+            .collect();
+        if keys.is_empty() {
             return;
         }
 
-        let current_pos = self.active_project_header_position(cx);
+        let active_key = self.active_project_group_key(cx);
+        let current_pos = active_key
+            .as_ref()
+            .and_then(|active| keys.iter().position(|k| k == active));
 
         let next_pos = match current_pos {
             Some(pos) => {
                 if forward {
-                    (pos + 1) % header_count
+                    (pos + 1) % keys.len()
                 } else {
-                    (pos + header_count - 1) % header_count
+                    (pos + keys.len() - 1) % keys.len()
                 }
             }
             None => 0,
         };
 
-        let header_entry_ix = self.contents.project_header_indices[next_pos];
-        let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(header_entry_ix)
-        else {
-            return;
-        };
-        let path_list = key.path_list().clone();
+        let path_list = keys[next_pos].path_list().clone();
 
         // Uncollapse the target group so that threads become visible.
         self.collapsed_groups.remove(&path_list);
@@ -3145,22 +3129,17 @@ impl Sidebar {
         }
     }
 
-    fn on_next_project_group(
-        &mut self,
-        _: &NextProjectGroup,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.cycle_project_group_impl(true, window, cx);
+    fn on_next_project(&mut self, _: &NextProject, window: &mut Window, cx: &mut Context<Self>) {
+        self.cycle_project_impl(true, window, cx);
     }
 
-    fn on_previous_project_group(
+    fn on_previous_project(
         &mut self,
-        _: &PreviousProjectGroup,
+        _: &PreviousProject,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_project_group_impl(false, window, cx);
+        self.cycle_project_impl(false, window, cx);
     }
 
     fn cycle_thread_impl(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -3844,27 +3823,6 @@ impl WorkspaceSidebar for Sidebar {
         cx.notify();
     }
 
-    fn toggle_thread_switcher(
-        &mut self,
-        select_last: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.toggle_thread_switcher_impl(select_last, window, cx);
-    }
-
-    fn cycle_project_group(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.cycle_project_group_impl(forward, window, cx);
-    }
-
-    fn cycle_thread(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.cycle_thread_impl(forward, window, cx);
-    }
-
-    fn move_workspace_to_new_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.on_move_workspace_to_new_window(&MoveWorkspaceToNewWindow, window, cx);
-    }
-
     fn serialized_state(&self, _cx: &App) -> Option<String> {
         let serialized = SerializedSidebar {
             width: Some(f32::from(self.width)),
@@ -3960,8 +3918,8 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
             .on_action(cx.listener(Self::on_toggle_thread_switcher))
-            .on_action(cx.listener(Self::on_next_project_group))
-            .on_action(cx.listener(Self::on_previous_project_group))
+            .on_action(cx.listener(Self::on_next_project))
+            .on_action(cx.listener(Self::on_previous_project))
             .on_action(cx.listener(Self::on_next_thread))
             .on_action(cx.listener(Self::on_previous_thread))
             .on_action(cx.listener(Self::on_show_more_threads))
