@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use agent_settings::{AgentSettings, WindowLayout};
 use auto_update::{AutoUpdater, release_notes_url};
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
+use fs::Fs;
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window, actions, prelude::*,
 };
@@ -172,6 +174,7 @@ struct AnnouncementContent {
     bullet_items: Vec<SharedString>,
     primary_action_label: SharedString,
     primary_action_url: Option<SharedString>,
+    primary_action_callback: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
     on_dismiss: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
 }
 
@@ -187,6 +190,10 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
             if ParallelAgentAnnouncement::dismissed(cx) {
                 None
             } else {
+                let fs = <dyn Fs>::global(cx);
+                let already_agent_layout =
+                    matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
+
                 Some(AnnouncementContent {
                     heading: "What's new in Zed 0.232".into(),
                     description: "This release includes some exciting improvements.".into(),
@@ -195,8 +202,19 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                         "New agentic features".into(),
                         "Better agent capabilities".into(),
                     ],
-                    primary_action_label: "Learn More".into(),
+                    primary_action_label: if already_agent_layout {
+                        "Learn More".into()
+                    } else {
+                        "Try It Now".into()
+                    },
                     primary_action_url: Some("https://zed.dev/".into()),
+                    primary_action_callback: if already_agent_layout {
+                        None
+                    } else {
+                        Some(Arc::new(move |cx| {
+                            AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
+                        }))
+                    },
                     on_dismiss: Some(Arc::new(|cx| {
                         ParallelAgentAnnouncement::set_dismissed(true, cx)
                     })),
@@ -252,8 +270,12 @@ impl Render for AnnouncementToastNotification {
             .primary_action_label(self.content.primary_action_label.clone())
             .primary_on_click(cx.listener({
                 let url = self.content.primary_action_url.clone();
+                let callback = self.content.primary_action_callback.clone();
                 telemetry::event!("Parallel Agent Announcement Main Click");
                 move |this, _, _window, cx| {
+                    if let Some(callback) = &callback {
+                        callback(cx);
+                    }
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }

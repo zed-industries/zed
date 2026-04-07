@@ -446,12 +446,50 @@ impl Component for ZedAiOnboarding {
 #[derive(RegisterComponent)]
 pub struct AgentLayoutOnboarding {
     pub use_agent_layout: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub revert_to_editor_layout: Arc<dyn Fn(&mut Window, &mut App)>,
     pub dismissed: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub is_agent_layout: bool,
 }
 
 impl Render for AgentLayoutOnboarding {
     fn render(&mut self, _window: &mut ui::Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let description = "Introducing a threads sidebar, positioned in the far left of your workspace, that allows you to manage agents across many projects. Your agent thread lives right to the side of it, and all other panels move to the right.";
+
+        let dismiss_button = Button::new("old_default", "Maybe Later")
+            .label_size(LabelSize::Small)
+            .on_click({
+                let dismiss = self.dismissed.clone();
+                telemetry::event!("Agentic Layout Onboarding Dismissed");
+                move |_, window, cx| dismiss(window, cx)
+            });
+
+        let primary_button = if self.is_agent_layout {
+            Button::new("revert", "Revert to Editor Layout")
+                .label_size(LabelSize::Small)
+                .style(ButtonStyle::Outlined)
+                .on_click({
+                    let revert = self.revert_to_editor_layout.clone();
+                    let dismiss = self.dismissed.clone();
+                    telemetry::event!("Revert To Editor Layout");
+                    move |_, window, cx| {
+                        revert(window, cx);
+                        dismiss(window, cx);
+                    }
+                })
+        } else {
+            Button::new("start", "Use New Layout")
+                .label_size(LabelSize::Small)
+                .style(ButtonStyle::Outlined)
+                .on_click({
+                    let use_layout = self.use_agent_layout.clone();
+                    let dismiss = self.dismissed.clone();
+                    telemetry::event!("Use New Agentic Layout");
+                    move |_, window, cx| {
+                        use_layout(window, cx);
+                        dismiss(window, cx);
+                    }
+                })
+        };
 
         let content = v_flex()
             .min_w_0()
@@ -472,36 +510,15 @@ impl Render for AgentLayoutOnboarding {
                         "Combine multiple projects in one window",
                     )),
             )
-            .child({
+            .child(
                 h_flex()
                     .w_full()
                     .gap_1()
                     .flex_wrap()
                     .justify_end()
-                    .child(
-                        Button::new("old_default", "Maybe Later")
-                            .label_size(LabelSize::Small)
-                            .on_click({
-                                let dismiss = self.dismissed.clone();
-                                telemetry::event!("Agentic Layout Onboarding Dismissed");
-                                move |_, window, cx| dismiss(window, cx)
-                            }),
-                    )
-                    .child(
-                        Button::new("start", "Use New Layout")
-                            .label_size(LabelSize::Small)
-                            .style(ButtonStyle::Outlined)
-                            .on_click({
-                                let use_layout = self.use_agent_layout.clone();
-                                let dismiss = self.dismissed.clone();
-                                telemetry::event!("Use New Agentic Layout");
-                                move |_, window, cx| {
-                                    use_layout(window, cx);
-                                    dismiss(window, cx);
-                                }
-                            }),
-                    )
-            });
+                    .child(dismiss_button)
+                    .child(primary_button),
+            );
 
         AgentPanelOnboardingCard::new().child(content)
     }
@@ -519,7 +536,9 @@ impl Component for AgentLayoutOnboarding {
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let onboarding = cx.new(|_cx| AgentLayoutOnboarding {
             use_agent_layout: Arc::new(|_, _| {}),
+            revert_to_editor_layout: Arc::new(|_, _| {}),
             dismissed: Arc::new(|_, _| {}),
+            is_agent_layout: false,
         });
 
         Some(

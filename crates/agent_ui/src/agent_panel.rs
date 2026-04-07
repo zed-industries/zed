@@ -923,12 +923,28 @@ impl AgentPanel {
         });
 
         let weak_panel = cx.entity().downgrade();
+
+        let layout = AgentSettings::get_layout(cx);
+        let is_agent_layout = matches!(layout, WindowLayout::Agent(_));
+
         let agent_layout_onboarding = cx.new(|_cx| ai_onboarding::AgentLayoutOnboarding {
             use_agent_layout: Arc::new({
                 let fs = fs.clone();
                 let weak_panel = weak_panel.clone();
                 move |_window, cx| {
                     AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
+                    weak_panel
+                        .update(cx, |panel, cx| {
+                            panel.dismiss_agent_layout_onboarding(cx);
+                        })
+                        .ok();
+                }
+            }),
+            revert_to_editor_layout: Arc::new({
+                let fs = fs.clone();
+                let weak_panel = weak_panel.clone();
+                move |_window, cx| {
+                    AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
                     weak_panel
                         .update(cx, |panel, cx| {
                             panel.dismiss_agent_layout_onboarding(cx);
@@ -943,6 +959,7 @@ impl AgentPanel {
                     })
                     .ok();
             }),
+            is_agent_layout,
         });
 
         // Subscribe to extension events to sync agent servers when extensions change
@@ -1019,6 +1036,7 @@ impl AgentPanel {
             _worktree_creation_task: None,
             show_trust_workspace_message: false,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
+            // new_user_onboarding_upsell_dismissed: AtomicBool::new(true), // todo: Clean up hardcoded testing bool
             agent_layout_onboarding_dismissed: AtomicBool::new(AgentLayoutOnboarding::dismissed(
                 cx,
             )),

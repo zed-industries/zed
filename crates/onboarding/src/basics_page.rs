@@ -652,7 +652,7 @@ fn render_registry_agent_button(
 
 fn render_zed_agent_button(cx: &mut App) -> impl IntoElement {
     let client = Client::global(cx);
-    let status = client.status().borrow().clone();
+    let status = *client.status().borrow();
     let sign_in_state = if status.is_signed_out()
         || matches!(
             status,
