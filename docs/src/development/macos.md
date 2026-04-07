@@ -30,6 +30,12 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
   sudo xcodebuild -license accept
   ```
 
+- Ensure Metal Toolchain is available:
+
+  ```sh
+  xcodebuild -downloadComponent MetalToolchain
+  ```
+
 - Install `cmake` (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/))
 
   ```sh
