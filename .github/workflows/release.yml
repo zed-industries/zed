@@ -293,6 +293,51 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 60
+  compliance_check:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      COMPLIANCE_FILE_PATH: compliance.md
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        fetch-depth: 0
+        ref: ${{ github.ref }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - id: run-compliance-check
+      name: release::compliance_check::run_compliance_check
+      run: cargo xtask compliance "$GITHUB_REF_NAME" --report-path "$COMPLIANCE_FILE_OUTPUT"
+      env:
+        GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: release::compliance_check::send_compliance_slack_notification
+      if: always()
+      run: |
+        if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+            STATUS="✅ Compliance check passed for $GITHUB_REF_NAME"
+        else
+            STATUS="❌ Compliance check failed for $GITHUB_REF_NAME"
+        fi
+
+        REPORT_CONTENT=""
+        if [ -f "$COMPLIANCE_FILE_OUTPUT" ]; then
+            REPORT_CONTENT=$(cat "$REPORT_FILE")
+        fi
+
+        MESSAGE=$(printf "%s\n\n%s" "$STATUS" "$REPORT_CONTENT")
+
+        curl -X POST -H 'Content-type: application/json' \
+            --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
+            "$SLACK_WEBHOOK"
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
   bundle_linux_aarch64:
     needs:
     - run_tests_linux
@@ -613,6 +658,45 @@ jobs:
         echo "All expected assets are present in the release."
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        fetch-depth: 0
+        ref: ${{ github.ref }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - id: run-post-upload-compliance-check
+      name: release::validate_release_assets::run_post_upload_compliance_check
+      run: cargo xtask compliance "$GITHUB_REF_NAME" --report-path target/compliance-report
+      env:
+        GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: release::validate_release_assets::send_post_upload_compliance_notification
+      if: always()
+      run: |
+        if [ -z "$COMPLIANCE_OUTCOME" ] || [ "$COMPLIANCE_OUTCOME" == "skipped" ]; then
+            echo "Compliance check was skipped, not sending notification"
+            exit 0
+        fi
+
+        TAG="$GITHUB_REF_NAME"
+
+        if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+            MESSAGE="✅ Post-upload compliance re-check passed for $TAG"
+        else
+            MESSAGE="❌ Post-upload compliance re-check failed for $TAG"
+        fi
+
+        curl -X POST -H 'Content-type: application/json' \
+            --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
+            "$SLACK_WEBHOOK"
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-post-upload-compliance-check.outcome }}
   auto_release_preview:
     needs:
     - validate_release_assets
