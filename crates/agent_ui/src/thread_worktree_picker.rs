@@ -139,6 +139,24 @@ impl ThreadWorktreePickerDelegate {
             start_point: self.preserved_start_point.clone(),
         }
     }
+
+    fn sync_selected_index(&mut self) {
+        if let Some(index) = self
+            .matches
+            .iter()
+            .position(|entry| matches!(entry, ThreadWorktreeEntry::LinkedWorktree { .. }))
+        {
+            self.selected_index = index;
+        } else if let Some(index) = self
+            .matches
+            .iter()
+            .position(|entry| matches!(entry, ThreadWorktreeEntry::CreateNamed { .. }))
+        {
+            self.selected_index = index;
+        } else {
+            self.selected_index = 0;
+        }
+    }
 }
 
 impl PickerDelegate for ThreadWorktreePickerDelegate {
@@ -285,12 +303,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                         }
 
                         picker.delegate.matches = new_matches;
-
-                        if picker.delegate.matches.len() > 2 {
-                            picker.delegate.selected_index = 2;
-                        } else {
-                            picker.delegate.selected_index = 0;
-                        }
+                        picker.delegate.sync_selected_index();
 
                         cx.notify();
                     })
@@ -299,9 +312,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         }
 
         self.matches = matches;
-        if self.selected_index >= self.matches.len() {
-            self.selected_index = 0;
-        }
+        self.sync_selected_index();
 
         Task::ready(())
     }
