@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::{num::NonZeroU32, path::Path};
 
 use collections::{HashMap, HashSet};

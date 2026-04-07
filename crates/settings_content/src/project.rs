@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

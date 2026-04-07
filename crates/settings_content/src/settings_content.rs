@@ -1,3 +1,8 @@
+#![warn(missing_docs)]
+//! Settings content types for Zed's JSON settings files.
+//!
+//! This crate defines the structures that represent all user-configurable settings in Zed.
+
 mod agent;
 mod editor;
 mod extension;
