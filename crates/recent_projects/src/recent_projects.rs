@@ -1508,9 +1508,16 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .gap_px()
                     .when(is_local, |this| {
                         this.child(
-                            IconButton::new("add_to_workspace", IconName::FolderPlus)
+                            IconButton::new("add_to_workspace", IconName::FolderOpenAdd)
                                 .icon_size(IconSize::Small)
-                                .tooltip(Tooltip::text("Add Project to this Workspace"))
+                                .tooltip(move |_, cx| {
+                                    Tooltip::with_meta(
+                                        "Add Project to this Workspace",
+                                        None,
+                                        "As a multi-root folder project",
+                                        cx,
+                                    )
+                                })
                                 .on_click({
                                     let paths_to_add = paths_to_add.clone();
                                     cx.listener(move |picker, _event, window, cx| {
@@ -1779,7 +1786,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         menu.context(focus_handle)
                                             .when(show_add_to_workspace, |menu| {
                                                 menu.action(
-                                                    "Add to Workspace",
+                                                    "Add to this Workspace",
                                                     AddToWorkspace.boxed_clone(),
                                                 )
                                                 .separator()
