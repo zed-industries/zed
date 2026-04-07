@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::role::Role;
 use crate::{LanguageModelToolUse, LanguageModelToolUseId, SharedString};
 
-/// Dimensions of a `LanguageModelImage`, without depending on GPUI geometry types.
+/// Dimensions of a `LanguageModelImage`
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ImageSize {
     pub width: i32,
