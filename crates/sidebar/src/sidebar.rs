@@ -3090,12 +3090,16 @@ impl Sidebar {
             })
     }
 
-    fn cycle_workspace(
+    fn cycle_workspace_impl(
         &mut self,
         forward: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
         let header_count = self.contents.project_header_indices.len();
         if header_count == 0 {
             return;
@@ -3126,23 +3130,9 @@ impl Sidebar {
         self.collapsed_groups.remove(&path_list);
 
         if let Some(workspace) = self.workspace_for_group(&path_list, cx) {
-            // Find the first thread under this header to activate.
-            let thread_to_activate = self
-                .contents
-                .entries
-                .iter()
-                .skip(header_entry_ix + 1)
-                .take_while(|e| !matches!(e, ListEntry::ProjectHeader { .. }))
-                .find_map(|e| match e {
-                    ListEntry::Thread(thread) => Some(thread.metadata.clone()),
-                    _ => None,
-                });
-
-            if let Some(metadata) = thread_to_activate {
-                self.activate_thread(metadata, &workspace, window, cx);
-            } else {
-                self.create_new_thread(&workspace, window, cx);
-            }
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace.activate(workspace, window, cx);
+            });
         } else {
             self.open_workspace_for_group(&path_list, window, cx);
         }
@@ -3154,7 +3144,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_workspace(true, window, cx);
+        self.cycle_workspace_impl(true, window, cx);
     }
 
     fn on_previous_workspace(
@@ -3163,10 +3153,10 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_workspace(false, window, cx);
+        self.cycle_workspace_impl(false, window, cx);
     }
 
-    fn cycle_thread(
+    fn cycle_thread_impl(
         &mut self,
         forward: bool,
         window: &mut Window,
@@ -3228,7 +3218,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_thread(true, window, cx);
+        self.cycle_thread_impl(true, window, cx);
     }
 
     fn on_previous_thread(
@@ -3237,7 +3227,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.cycle_thread(false, window, cx);
+        self.cycle_thread_impl(false, window, cx);
     }
 
     fn on_show_more_threads(
@@ -3850,6 +3840,28 @@ impl WorkspaceSidebar for Sidebar {
         cx: &mut Context<Self>,
     ) {
         self.toggle_thread_switcher_impl(select_last, window, cx);
+    }
+
+    fn cycle_workspace(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_workspace_impl(forward, window, cx);
+    }
+
+    fn cycle_thread(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_thread_impl(forward, window, cx);
+    }
+
+    fn move_workspace_to_new_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.on_move_workspace_to_new_window(&MoveWorkspaceToNewWindow, window, cx);
     }
 
     fn serialized_state(&self, _cx: &App) -> Option<String> {
