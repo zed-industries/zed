@@ -1619,6 +1619,15 @@ fn open_existing_thread_sync(
             log::info!("📋 [THREAD_SERVICE] Registered thread: {} (strong reference)", acp_thread_id);
         }
 
+        // CRITICAL: Subscribe to thread events so streaming responses sync to Helix.
+        // This mirrors create_new_thread_sync (line ~1218). Without this call,
+        // after a Zed restart the thread loads successfully but its NewEntry /
+        // EntryUpdated / Stopped events have no listener, so message_added is
+        // never emitted and the interaction stays stuck in "waiting" forever.
+        cx.update(|cx| {
+            ensure_thread_subscription(&thread_entity, &acp_thread_id, cx);
+        });
+
         // Send agent_ready event to Helix (signals that agent is ready to receive prompts)
         // (THREAD_LOAD_IN_PROGRESS is cleared by the ClearLoadingGuard drop guard)
         let agent_name_for_ready = request_clone.agent_name.clone().unwrap_or_else(|| "zed-agent".to_string());
