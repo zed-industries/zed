@@ -561,7 +561,11 @@ impl ThreadsArchiveView {
                                 settings::SidebarSide::Left => "left",
                                 settings::SidebarSide::Right => "right",
                             };
-                            telemetry::event!("Archived Thread Opened", side = side);
+                            telemetry::event!(
+                                "Archived Thread Opened",
+                                agent = thread.agent_id.as_ref(),
+                                side = side
+                            );
                             this.unarchive_thread(thread.clone(), window, cx);
                         })
                     })
