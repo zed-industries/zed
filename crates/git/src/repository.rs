@@ -241,20 +241,57 @@ pub struct Worktree {
     pub is_main: bool,
 }
 
+/// Describes how a new worktree should choose or create its checked-out HEAD.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum CreateWorktreeTarget {
+    /// Check out an existing local branch in the new worktree.
+    ExistingBranch {
+        /// The existing local branch to check out.
+        branch_name: String,
+    },
+    /// Create a new local branch for the new worktree.
+    NewBranch {
+        /// The new local branch to create and check out.
+        branch_name: String,
+        /// The commit or ref to create the branch from. Uses `HEAD` when `None`.
+        base_sha: Option<String>,
+    },
+    /// Check out a commit or ref in detached HEAD state.
+    Detached {
+        /// The commit or ref to check out. Uses `HEAD` when `None`.
+        base_sha: Option<String>,
+    },
+}
+
+impl CreateWorktreeTarget {
+    pub fn branch_name(&self) -> Option<&str> {
+        match self {
+            Self::ExistingBranch { branch_name } | Self::NewBranch { branch_name, .. } => {
+                Some(branch_name)
+            }
+            Self::Detached { .. } => None,
+        }
+    }
+}
+
 impl Worktree {
+    /// Returns the branch name if the worktree is attached to a branch.
+    pub fn branch_name(&self) -> Option<&str> {
+        self.ref_name.as_ref().map(|ref_name| {
+            ref_name
+                .strip_prefix("refs/heads/")
+                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
+                .unwrap_or(ref_name)
+        })
+    }
+
     /// Returns a display name for the worktree, suitable for use in the UI.
     ///
     /// If the worktree is attached to a branch, returns the branch name.
     /// Otherwise, returns the short SHA of the worktree's HEAD commit.
     pub fn display_name(&self) -> &str {
-        match self.ref_name {
-            Some(ref ref_name) => ref_name
-                .strip_prefix("refs/heads/")
-                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
-                .unwrap_or(ref_name),
-            // Detached HEAD — show the short SHA as a fallback.
-            None => &self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)],
-        }
+        self.branch_name()
+            .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
 }
 
@@ -716,9 +753,8 @@ pub trait GitRepository: Send + Sync {
 
     fn create_worktree(
         &self,
-        branch_name: Option<String>,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>>;
 
     fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>>;
@@ -1667,24 +1703,36 @@ impl GitRepository for RealGitRepository {
 
     fn create_worktree(
         &self,
-        branch_name: Option<String>,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
         let mut args = vec![OsString::from("worktree"), OsString::from("add")];
-        if let Some(branch_name) = &branch_name {
-            args.push(OsString::from("-b"));
-            args.push(OsString::from(branch_name.as_str()));
-        } else {
-            args.push(OsString::from("--detach"));
-        }
-        args.push(OsString::from("--"));
-        args.push(OsString::from(path.as_os_str()));
-        if let Some(from_commit) = from_commit {
-            args.push(OsString::from(from_commit));
-        } else {
-            args.push(OsString::from("HEAD"));
+
+        match &target {
+            CreateWorktreeTarget::ExistingBranch { branch_name } => {
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(branch_name));
+            }
+            CreateWorktreeTarget::NewBranch {
+                branch_name,
+                base_sha: start_point,
+            } => {
+                args.push(OsString::from("-b"));
+                args.push(OsString::from(branch_name));
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
+            }
+            CreateWorktreeTarget::Detached {
+                base_sha: start_point,
+            } => {
+                args.push(OsString::from("--detach"));
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
+            }
         }
 
         self.executor
@@ -4054,9 +4102,11 @@ mod tests {
 
         // Create a new worktree
         repo.create_worktree(
-            Some("test-branch".to_string()),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "test-branch".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -4113,9 +4163,11 @@ mod tests {
         // Create a worktree
         let worktree_path = worktrees_dir.join("worktree-to-remove");
         repo.create_worktree(
-            Some("to-remove".to_string()),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "to-remove".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -4137,9 +4189,11 @@ mod tests {
         // Create a worktree
         let worktree_path = worktrees_dir.join("dirty-wt");
         repo.create_worktree(
-            Some("dirty-wt".to_string()),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "dirty-wt".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -4207,9 +4261,11 @@ mod tests {
         // Create a worktree
         let old_path = worktrees_dir.join("old-worktree-name");
         repo.create_worktree(
-            Some("old-name".to_string()),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "old-name".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             old_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();

@@ -318,8 +318,13 @@ impl WorktreeListDelegate {
                     .clone();
                 let new_worktree_path =
                     repo.path_for_new_linked_worktree(&branch, &worktree_directory_setting)?;
-                let receiver =
-                    repo.create_worktree(branch.clone(), new_worktree_path.clone(), commit);
+                let receiver = repo.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: branch.clone(),
+                        base_sha: commit,
+                    },
+                    new_worktree_path.clone(),
+                );
                 anyhow::Ok((receiver, new_worktree_path))
             })?;
             receiver.await??;

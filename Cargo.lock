@@ -6183,6 +6183,7 @@ dependencies = [
  "file_icons",
  "futures 0.3.32",
  "fuzzy",
+ "fuzzy_nucleo",
  "gpui",
  "menu",
  "open_path_prompt",
@@ -6738,6 +6739,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
 dependencies = [
  "thread_local",
+]
+
+[[package]]
+name = "fuzzy_nucleo"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "nucleo",
+ "util",
 ]
 
 [[package]]
@@ -11064,6 +11074,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "nucleo"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5262af4c94921c2646c5ac6ff7900c2af9cbb08dc26a797e18130a7019c039d4"
+dependencies = [
+ "nucleo-matcher",
+ "parking_lot",
+ "rayon",
+]
+
+[[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "num"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -13203,6 +13234,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "fuzzy",
+ "fuzzy_nucleo",
  "git",
  "git2",
  "git_hosting_providers",

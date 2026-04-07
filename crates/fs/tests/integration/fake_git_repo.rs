@@ -24,9 +24,11 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
     // Create a worktree
     let worktree_1_dir = worktrees_dir.join("feature-branch");
     repo.create_worktree(
-        Some("feature-branch".to_string()),
+        git::repository::CreateWorktreeTarget::NewBranch {
+            branch_name: "feature-branch".to_string(),
+            base_sha: Some("abc123".to_string()),
+        },
         worktree_1_dir.clone(),
-        Some("abc123".to_string()),
     )
     .await
     .unwrap();
@@ -48,9 +50,11 @@ async fn test_fake_worktree_lifecycle(cx: &mut TestAppContext) {
     // Create a second worktree (without explicit commit)
     let worktree_2_dir = worktrees_dir.join("bugfix-branch");
     repo.create_worktree(
-        Some("bugfix-branch".to_string()),
+        git::repository::CreateWorktreeTarget::NewBranch {
+            branch_name: "bugfix-branch".to_string(),
+            base_sha: None,
+        },
         worktree_2_dir.clone(),
-        None,
     )
     .await
     .unwrap();

@@ -869,7 +869,10 @@ impl ThreadView {
                 .upgrade()
                 .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
                 .is_some_and(|panel| {
-                    panel.read(cx).start_thread_in() == &StartThreadIn::NewWorktree
+                    !matches!(
+                        panel.read(cx).start_thread_in(),
+                        StartThreadIn::LocalProject
+                    )
                 });
 
         if intercept_first_send {
@@ -7390,9 +7393,8 @@ impl ThreadView {
             .gap_2()
             .map(|this| {
                 if card_layout {
-                    this.when(context_ix > 0, |this| {
-                        this.pt_2()
-                            .border_t_1()
+                    this.p_2().when(context_ix > 0, |this| {
+                        this.border_t_1()
                             .border_color(self.tool_card_border_color(cx))
                     })
                 } else {

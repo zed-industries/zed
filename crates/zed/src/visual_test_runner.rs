@@ -3080,7 +3080,7 @@ fn run_start_thread_in_selector_visual_tests(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent_ui::{AgentPanel, StartThreadIn, WorktreeCreationStatus};
+    use agent_ui::{AgentPanel, NewWorktreeBranchTarget, StartThreadIn, WorktreeCreationStatus};
 
     // Enable feature flags so the thread target selector renders
     cx.update(|cx| {
@@ -3401,7 +3401,13 @@ edition = "2021"
 
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         panel.update(cx, |panel, cx| {
-            panel.set_start_thread_in_for_tests(StartThreadIn::NewWorktree, cx);
+            panel.set_start_thread_in_for_tests(
+                StartThreadIn::NewWorktree {
+                    worktree_name: None,
+                    branch_target: NewWorktreeBranchTarget::default(),
+                },
+                cx,
+            );
         });
     })?;
     cx.run_until_parked();
@@ -3474,7 +3480,13 @@ edition = "2021"
     cx.run_until_parked();
 
     cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.dispatch_action(Box::new(StartThreadIn::NewWorktree), cx);
+        window.dispatch_action(
+            Box::new(StartThreadIn::NewWorktree {
+                worktree_name: None,
+                branch_target: NewWorktreeBranchTarget::default(),
+            }),
+            cx,
+        );
     })?;
     cx.run_until_parked();
 
