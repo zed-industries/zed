@@ -16,7 +16,7 @@ use std::sync::Arc;
 use ui::prelude::*;
 use util::ResultExt;
 use util::path_list::PathList;
-use zed_actions::agents_sidebar::{MoveWorkspaceToNewWindow, ToggleThreadSwitcher};
+use zed_actions::agents_sidebar::ToggleThreadSwitcher;
 
 use agent_settings::AgentSettings;
 use settings::SidebarDockPosition;
@@ -40,7 +40,22 @@ actions!(
         CloseWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
         FocusWorkspaceSidebar,
-        //TODO: Restore next/previous workspace
+        /// Activates the next project workspace in the sidebar.
+        NextWorkspace,
+        /// Activates the previous project workspace in the sidebar.
+        PreviousWorkspace,
+        /// Activates the next thread in sidebar order.
+        NextThread,
+        /// Activates the previous thread in sidebar order.
+        PreviousThread,
+        /// Expands the thread list for the current project to show more threads.
+        ShowMoreThreads,
+        /// Collapses the thread list for the current project to show fewer threads.
+        ShowFewerThreads,
+        /// Creates a new thread in the current workspace.
+        NewThread,
+        /// Moves the current workspace's project group to a new window.
+        MoveWorkspaceToNewWindow,
     ]
 );
 

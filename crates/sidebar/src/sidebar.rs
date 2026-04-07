@@ -44,9 +44,10 @@ use ui::{
 use util::ResultExt as _;
 use util::path_list::{PathList, SerializedPathList};
 use workspace::{
-    AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
-    Open, Sidebar as WorkspaceSidebar, SidebarSide, ToggleWorkspaceSidebar, Workspace, WorkspaceId,
-    sidebar_side_context_menu,
+    AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MoveWorkspaceToNewWindow,
+    MultiWorkspace, MultiWorkspaceEvent, NextThread, NextWorkspace, Open, PreviousThread,
+    PreviousWorkspace, ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide,
+    ToggleWorkspaceSidebar, Workspace, WorkspaceId, sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -1602,9 +1603,7 @@ impl Sidebar {
                         let multi_workspace = multi_workspace.clone();
                         menu.entry(
                             "Move to New Window",
-                            Some(Box::new(
-                                zed_actions::agents_sidebar::MoveWorkspaceToNewWindow,
-                            )),
+                            Some(Box::new(MoveWorkspaceToNewWindow)),
                             move |window, cx| {
                                 multi_workspace
                                     .update(cx, |multi_workspace, cx| {
@@ -3068,6 +3067,254 @@ impl Sidebar {
         });
     }
 
+    /// Returns the `ProjectGroupKey` for the currently active workspace.
+    fn active_project_group_key(&self, cx: &App) -> Option<ProjectGroupKey> {
+        let multi_workspace = self.multi_workspace.upgrade()?;
+        let mw = multi_workspace.read(cx);
+        Some(mw.workspace().read(cx).project_group_key(cx))
+    }
+
+    /// Returns the index into `contents.project_header_indices` for the header
+    /// whose project group key matches the active workspace. Returns `None` if
+    /// there's no match.
+    fn active_project_header_position(&self, cx: &App) -> Option<usize> {
+        let active_key = self.active_project_group_key(cx)?;
+        self.contents
+            .project_header_indices
+            .iter()
+            .position(|&entry_ix| {
+                matches!(
+                    &self.contents.entries[entry_ix],
+                    ListEntry::ProjectHeader { key, .. } if *key == active_key
+                )
+            })
+    }
+
+    fn cycle_workspace(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let header_count = self.contents.project_header_indices.len();
+        if header_count == 0 {
+            return;
+        }
+
+        let current_pos = self.active_project_header_position(cx);
+
+        let next_pos = match current_pos {
+            Some(pos) => {
+                if forward {
+                    (pos + 1) % header_count
+                } else {
+                    (pos + header_count - 1) % header_count
+                }
+            }
+            None => 0,
+        };
+
+        let header_entry_ix = self.contents.project_header_indices[next_pos];
+        let Some(ListEntry::ProjectHeader { key, .. }) =
+            self.contents.entries.get(header_entry_ix)
+        else {
+            return;
+        };
+        let path_list = key.path_list().clone();
+
+        // Uncollapse the target group so that threads become visible.
+        self.collapsed_groups.remove(&path_list);
+
+        if let Some(workspace) = self.workspace_for_group(&path_list, cx) {
+            // Find the first thread under this header to activate.
+            let thread_to_activate = self
+                .contents
+                .entries
+                .iter()
+                .skip(header_entry_ix + 1)
+                .take_while(|e| !matches!(e, ListEntry::ProjectHeader { .. }))
+                .find_map(|e| match e {
+                    ListEntry::Thread(thread) => Some(thread.metadata.clone()),
+                    _ => None,
+                });
+
+            if let Some(metadata) = thread_to_activate {
+                self.activate_thread(metadata, &workspace, window, cx);
+            } else {
+                self.create_new_thread(&workspace, window, cx);
+            }
+        } else {
+            self.open_workspace_for_group(&path_list, window, cx);
+        }
+    }
+
+    fn on_next_workspace(
+        &mut self,
+        _: &NextWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_workspace(true, window, cx);
+    }
+
+    fn on_previous_workspace(
+        &mut self,
+        _: &PreviousWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_workspace(false, window, cx);
+    }
+
+    fn cycle_thread(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Collect all thread entries with their indices.
+        let thread_indices: Vec<usize> = self
+            .contents
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(ix, entry)| match entry {
+                ListEntry::Thread(_) => Some(ix),
+                _ => None,
+            })
+            .collect();
+
+        if thread_indices.is_empty() {
+            return;
+        }
+
+        // Find which thread is currently active.
+        let current_thread_pos = self.active_entry.as_ref().and_then(|active| {
+            thread_indices.iter().position(|&ix| active.matches_entry(&self.contents.entries[ix]))
+        });
+
+        let next_pos = match current_thread_pos {
+            Some(pos) => {
+                let count = thread_indices.len();
+                if forward {
+                    (pos + 1) % count
+                } else {
+                    (pos + count - 1) % count
+                }
+            }
+            None => 0,
+        };
+
+        let entry_ix = thread_indices[next_pos];
+        let ListEntry::Thread(thread) = &self.contents.entries[entry_ix] else {
+            return;
+        };
+
+        let metadata = thread.metadata.clone();
+        match &thread.workspace {
+            ThreadEntryWorkspace::Open(workspace) => {
+                let workspace = workspace.clone();
+                self.activate_thread(metadata, &workspace, window, cx);
+            }
+            ThreadEntryWorkspace::Closed(path_list) => {
+                self.open_workspace_and_activate_thread(metadata, path_list.clone(), window, cx);
+            }
+        }
+    }
+
+    fn on_next_thread(
+        &mut self,
+        _: &NextThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_thread(true, window, cx);
+    }
+
+    fn on_previous_thread(
+        &mut self,
+        _: &PreviousThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cycle_thread(false, window, cx);
+    }
+
+    fn on_show_more_threads(
+        &mut self,
+        _: &ShowMoreThreads,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_key) = self.active_project_group_key(cx) else {
+            return;
+        };
+        let path_list = active_key.path_list().clone();
+        let current = self.expanded_groups.get(&path_list).copied().unwrap_or(0);
+        self.expanded_groups.insert(path_list, current + 1);
+        self.serialize(cx);
+        self.update_entries(cx);
+    }
+
+    fn on_show_fewer_threads(
+        &mut self,
+        _: &ShowFewerThreads,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_key) = self.active_project_group_key(cx) else {
+            return;
+        };
+        let path_list = active_key.path_list().clone();
+        match self.expanded_groups.get(&path_list).copied() {
+            Some(batches) if batches > 1 => {
+                self.expanded_groups.insert(path_list, batches - 1);
+            }
+            Some(_) => {
+                self.expanded_groups.remove(&path_list);
+            }
+            None => return,
+        }
+        self.serialize(cx);
+        self.update_entries(cx);
+    }
+
+    fn on_new_thread(
+        &mut self,
+        _: &workspace::NewThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.active_workspace(cx) else {
+            return;
+        };
+        self.create_new_thread(&workspace, window, cx);
+    }
+
+    fn on_move_workspace_to_new_window(
+        &mut self,
+        _: &MoveWorkspaceToNewWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        let group_count = multi_workspace.read(cx).project_group_keys().count();
+        if group_count <= 1 {
+            return;
+        }
+
+        let Some(active_key) = self.active_project_group_key(cx) else {
+            return;
+        };
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.move_project_group_to_new_window(&active_key, window, cx);
+        });
+    }
+
     fn render_draft_thread(
         &self,
         ix: usize,
@@ -3700,6 +3947,14 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
             .on_action(cx.listener(Self::on_toggle_thread_switcher))
+            .on_action(cx.listener(Self::on_next_workspace))
+            .on_action(cx.listener(Self::on_previous_workspace))
+            .on_action(cx.listener(Self::on_next_thread))
+            .on_action(cx.listener(Self::on_previous_thread))
+            .on_action(cx.listener(Self::on_show_more_threads))
+            .on_action(cx.listener(Self::on_show_fewer_threads))
+            .on_action(cx.listener(Self::on_new_thread))
+            .on_action(cx.listener(Self::on_move_workspace_to_new_window))
             .on_action(cx.listener(|this, _: &OpenRecent, window, cx| {
                 this.recent_projects_popover_handle.toggle(window, cx);
             }))
