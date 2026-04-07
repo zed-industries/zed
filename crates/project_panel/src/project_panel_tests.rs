@@ -6032,13 +6032,19 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let entry = worktree.update(cx, |worktree, _| worktree.root_entry().unwrap().id);
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            let worktree_id = worktree.read(cx).id();
+            let path = rel_path("").into();
+            let project_path = ProjectPath { worktree_id, path };
 
-    panel.update(cx, |panel, cx| {
-        panel.project.update(cx, |_, cx| {
-            cx.emit(project::Event::RevealInProjectPanel(entry))
+            workspace.open_path(project_path, None, true, window, cx)
         })
-    });
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    cx.dispatch_action(workspace::RevealInProjectPanel::default());
     cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
@@ -6053,7 +6059,7 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             notifications.len(),
             1,
-            "A simple notification should be shown when trying to reveal an invisible worktree entry"
+            "A notification should be shown when trying to reveal an invisible worktree entry"
         );
 
         workspace.dismiss_notification(&notifications[0], cx);
