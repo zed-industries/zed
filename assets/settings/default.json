@@ -1165,6 +1165,11 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // Whether to show the merge conflict indicator in the status bar
+    // that offers to resolve conflicts using the agent.
+    //
+    // Default: true
+    "show_merge_conflict_indicator": true,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -2433,6 +2438,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "use_regex_search": true,
     "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},

@@ -462,6 +462,13 @@ impl ListState {
 
         let current_offset = self.logical_scroll_top();
         let state = &mut *self.0.borrow_mut();
+
+        if distance < px(0.) {
+            if let FollowState::Tail { is_following } = &mut state.follow_state {
+                *is_following = false;
+            }
+        }
+
         let mut cursor = state.items.cursor::<ListItemSummary>(());
         cursor.seek(&Count(current_offset.item_ix), Bias::Right);
 
@@ -534,6 +541,12 @@ impl ListState {
         if scroll_top.item_ix >= item_count {
             scroll_top.item_ix = item_count;
             scroll_top.offset_in_item = px(0.);
+        }
+
+        if scroll_top.item_ix < item_count {
+            if let FollowState::Tail { is_following } = &mut state.follow_state {
+                *is_following = false;
+            }
         }
 
         state.logical_scroll_top = Some(scroll_top);

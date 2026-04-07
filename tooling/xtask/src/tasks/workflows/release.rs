@@ -1,11 +1,13 @@
-use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow, ctx::Context};
+use gh_workflow::{Event, Expression, Job, Push, Run, Step, Use, Workflow, ctx::Context};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
     run_bundling::{bundle_linux, bundle_mac, bundle_windows},
     run_tests,
     runners::{self, Arch, Platform},
-    steps::{self, FluentBuilder, NamedJob, dependant_job, named, release_job},
+    steps::{
+        self, CommonJobConditions, FluentBuilder, NamedJob, dependant_job, named, release_job,
+    },
     vars::{self, StepOutput, assets},
 };
 
@@ -22,6 +24,7 @@ pub(crate) fn release() -> Workflow {
     let check_scripts = run_tests::check_scripts();
 
     let create_draft_release = create_draft_release();
+    let compliance = compliance_check();
 
     let bundle = ReleaseBundleJobs {
         linux_aarch64: bundle_linux(
@@ -92,6 +95,7 @@ pub(crate) fn release() -> Workflow {
         .add_job(windows_clippy.name, windows_clippy.job)
         .add_job(check_scripts.name, check_scripts.job)
         .add_job(create_draft_release.name, create_draft_release.job)
+        .add_job(compliance.name, compliance.job)
         .map(|mut workflow| {
             for job in bundle.into_jobs() {
                 workflow = workflow.add_job(job.name, job.job);
@@ -149,6 +153,59 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
     .add_with(("environment", "production"))
 }
 
+fn compliance_check() -> NamedJob {
+    fn run_compliance_check() -> Step<Run> {
+        named::bash(
+            r#"cargo xtask compliance "$GITHUB_REF_NAME" --report-path "$COMPLIANCE_FILE_OUTPUT""#,
+        )
+        .id("run-compliance-check")
+        .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
+        .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    }
+
+    fn send_compliance_slack_notification() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+                STATUS="✅ Compliance check passed for $GITHUB_REF_NAME"
+            else
+                STATUS="❌ Compliance check failed for $GITHUB_REF_NAME"
+            fi
+
+            REPORT_CONTENT=""
+            if [ -f "$COMPLIANCE_FILE_OUTPUT" ]; then
+                REPORT_CONTENT=$(cat "$REPORT_FILE")
+            fi
+
+            MESSAGE=$(printf "%s\n\n%s" "$STATUS" "$REPORT_CONTENT")
+
+            curl -X POST -H 'Content-type: application/json' \
+                --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
+                "$SLACK_WEBHOOK"
+        "#})
+        .if_condition(Expression::new("always()"))
+        .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
+        .add_env((
+            "COMPLIANCE_OUTCOME",
+            "${{ steps.run-compliance-check.outcome }}",
+        ))
+    }
+
+    named::job(
+        Job::default()
+            .add_env(("COMPLIANCE_FILE_PATH", "compliance.md"))
+            .with_repository_owner_guard()
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_step(
+                steps::checkout_repo()
+                    .with_full_history()
+                    .with_ref(Context::github().ref_()),
+            )
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(run_compliance_check())
+            .add_step(send_compliance_slack_notification()),
+    )
+}
+
 fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
     let expected_assets: Vec<String> = assets::all().iter().map(|a| format!("\"{a}\"")).collect();
     let expected_assets_json = format!("[{}]", expected_assets.join(", "));
@@ -171,10 +228,54 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
         "#,
     };
 
+    fn run_post_upload_compliance_check() -> Step<Run> {
+        named::bash(
+            r#"cargo xtask compliance "$GITHUB_REF_NAME" --report-path target/compliance-report"#,
+        )
+        .id("run-post-upload-compliance-check")
+        .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
+        .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    }
+
+    fn send_post_upload_compliance_notification() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            if [ -z "$COMPLIANCE_OUTCOME" ] || [ "$COMPLIANCE_OUTCOME" == "skipped" ]; then
+                echo "Compliance check was skipped, not sending notification"
+                exit 0
+            fi
+
+            TAG="$GITHUB_REF_NAME"
+
+            if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+                MESSAGE="✅ Post-upload compliance re-check passed for $TAG"
+            else
+                MESSAGE="❌ Post-upload compliance re-check failed for $TAG"
+            fi
+
+            curl -X POST -H 'Content-type: application/json' \
+                --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
+                "$SLACK_WEBHOOK"
+        "#})
+        .if_condition(Expression::new("always()"))
+        .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
+        .add_env((
+            "COMPLIANCE_OUTCOME",
+            "${{ steps.run-post-upload-compliance-check.outcome }}",
+        ))
+    }
+
     named::job(
-        dependant_job(deps).runs_on(runners::LINUX_SMALL).add_step(
-            named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)),
-        ),
+        dependant_job(deps)
+            .runs_on(runners::LINUX_SMALL)
+            .add_step(named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)))
+            .add_step(
+                steps::checkout_repo()
+                    .with_full_history()
+                    .with_ref(Context::github().ref_()),
+            )
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(run_post_upload_compliance_check())
+            .add_step(send_post_upload_compliance_notification()),
     )
 }
 
@@ -255,7 +356,7 @@ fn create_draft_release() -> NamedJob {
             .add_step(
                 steps::checkout_repo()
                     .with_custom_fetch_depth(25)
-                    .with_ref("${{ github.ref }}"),
+                    .with_ref(Context::github().ref_()),
             )
             .add_step(steps::script("script/determine-release-channel"))
             .add_step(steps::script("mkdir -p target/"))

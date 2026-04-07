@@ -7,7 +7,7 @@ use editor::{
     },
 };
 use gpui::{Action, Context, Window, actions, px};
-use language::{CharKind, Point, Selection, SelectionGoal};
+use language::{CharKind, Point, Selection, SelectionGoal, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -2451,6 +2451,10 @@ fn find_matching_bracket_text_based(
         .take_while(|(_, char_offset)| *char_offset < line_range.end)
         .find_map(|(ch, char_offset)| get_bracket_pair(ch).map(|info| (info, char_offset)));
 
+    if bracket_info.is_none() {
+        return find_matching_c_preprocessor_directive(map, line_range);
+    }
+
     let (open, close, is_opening) = bracket_info?.0;
     let bracket_offset = bracket_info?.1;
 
@@ -2480,6 +2484,122 @@ fn find_matching_bracket_text_based(
     }
 
     None
+}
+
+fn find_matching_c_preprocessor_directive(
+    map: &DisplaySnapshot,
+    line_range: Range<MultiBufferOffset>,
+) -> Option<MultiBufferOffset> {
+    let line_start = map
+        .buffer_chars_at(line_range.start)
+        .skip_while(|(c, _)| *c == ' ' || *c == '\t')
+        .map(|(c, _)| c)
+        .take(6)
+        .collect::<String>();
+
+    if line_start.starts_with("#if")
+        || line_start.starts_with("#else")
+        || line_start.starts_with("#elif")
+    {
+        let mut depth = 0i32;
+        for (ch, char_offset) in map.buffer_chars_at(line_range.end) {
+            if ch != '\n' {
+                continue;
+            }
+            let mut line_offset = char_offset + '\n'.len_utf8();
+
+            // Skip leading whitespace
+            map.buffer_chars_at(line_offset)
+                .take_while(|(c, _)| *c == ' ' || *c == '\t')
+                .for_each(|(_, _)| line_offset += 1);
+
+            // Check what directive starts the next line
+            let next_line_start = map
+                .buffer_chars_at(line_offset)
+                .map(|(c, _)| c)
+                .take(6)
+                .collect::<String>();
+
+            if next_line_start.starts_with("#if") {
+                depth += 1;
+            } else if next_line_start.starts_with("#endif") {
+                if depth > 0 {
+                    depth -= 1;
+                } else {
+                    return Some(line_offset);
+                }
+            } else if next_line_start.starts_with("#else") || next_line_start.starts_with("#elif") {
+                if depth == 0 {
+                    return Some(line_offset);
+                }
+            }
+        }
+    } else if line_start.starts_with("#endif") {
+        let mut depth = 0i32;
+        for (ch, char_offset) in
+            map.reverse_buffer_chars_at(line_range.start.saturating_sub_usize(1))
+        {
+            let mut line_offset = if char_offset == MultiBufferOffset(0) {
+                MultiBufferOffset(0)
+            } else if ch != '\n' {
+                continue;
+            } else {
+                char_offset + '\n'.len_utf8()
+            };
+
+            // Skip leading whitespace
+            map.buffer_chars_at(line_offset)
+                .take_while(|(c, _)| *c == ' ' || *c == '\t')
+                .for_each(|(_, _)| line_offset += 1);
+
+            // Check what directive starts this line
+            let line_start = map
+                .buffer_chars_at(line_offset)
+                .skip_while(|(c, _)| *c == ' ' || *c == '\t')
+                .map(|(c, _)| c)
+                .take(6)
+                .collect::<String>();
+
+            if line_start.starts_with("\n\n") {
+                // empty line
+                continue;
+            } else if line_start.starts_with("#endif") {
+                depth += 1;
+            } else if line_start.starts_with("#if") {
+                if depth > 0 {
+                    depth -= 1;
+                } else {
+                    return Some(line_offset);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn comment_delimiter_pair(
+    map: &DisplaySnapshot,
+    offset: MultiBufferOffset,
+) -> Option<(Range<MultiBufferOffset>, Range<MultiBufferOffset>)> {
+    let snapshot = map.buffer_snapshot();
+    snapshot
+        .text_object_ranges(offset..offset, TreeSitterOptions::default())
+        .find_map(|(range, obj)| {
+            if !matches!(obj, TextObject::InsideComment | TextObject::AroundComment)
+                || !range.contains(&offset)
+            {
+                return None;
+            }
+
+            let mut chars = snapshot.chars_at(range.start);
+            if (Some('/'), Some('*')) != (chars.next(), chars.next()) {
+                return None;
+            }
+
+            let open_range = range.start..range.start + 2usize;
+            let close_range = range.end - 2..range.end;
+            Some((open_range, close_range))
+        })
 }
 
 fn matching(
@@ -2607,6 +2727,32 @@ fn matching(
             }
 
             continue;
+        }
+
+        if let Some((open_range, close_range)) = comment_delimiter_pair(map, offset) {
+            if open_range.contains(&offset) {
+                return close_range.start.to_display_point(map);
+            }
+
+            if close_range.contains(&offset) {
+                return open_range.start.to_display_point(map);
+            }
+
+            let open_candidate = (open_range.start >= offset
+                && line_range.contains(&open_range.start))
+            .then_some((open_range.start.saturating_sub(offset), close_range.start));
+
+            let close_candidate = (close_range.start >= offset
+                && line_range.contains(&close_range.start))
+            .then_some((close_range.start.saturating_sub(offset), open_range.start));
+
+            if let Some((_, destination)) = [open_candidate, close_candidate]
+                .into_iter()
+                .flatten()
+                .min_by_key(|(distance, _)| *distance)
+            {
+                return destination.to_display_point(map);
+            }
         }
 
         closest_pair_destination
@@ -3495,6 +3641,119 @@ mod test {
             }"},
             Mode::Normal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_matching_comments(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {r"ˇ/*
+          this is a comment
+        */"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"/*
+          this is a comment
+        ˇ*/"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"ˇ/*
+          this is a comment
+        */"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"/*
+          this is a comment
+        ˇ*/"});
+
+        cx.set_shared_state("ˇ// comment").await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq("ˇ// comment");
+    }
+
+    #[gpui::test]
+    async fn test_matching_preprocessor_directives(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {r"#ˇif
+
+            #else
+
+            #endif
+            "})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"#if
+
+          ˇ#else
+
+          #endif
+          "});
+
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"#if
+
+          #else
+
+          ˇ#endif
+          "});
+
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"ˇ#if
+
+          #else
+
+          #endif
+          "});
+
+        cx.set_shared_state(indoc! {r"
+            #ˇif
+              #if
+
+              #else
+
+              #endif
+
+            #else
+            #endif
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            #if
+              #if
+
+              #else
+
+              #endif
+
+            ˇ#else
+            #endif
+            "});
+
+        cx.simulate_shared_keystrokes("% %").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            ˇ#if
+              #if
+
+              #else
+
+              #endif
+
+            #else
+            #endif
+            "});
+        cx.simulate_shared_keystrokes("j % % %").await;
+        cx.shared_state().await.assert_eq(indoc! {r"
+            #if
+              ˇ#if
+
+              #else
+
+              #endif
+
+            #else
+            #endif
+            "});
     }
 
     #[gpui::test]

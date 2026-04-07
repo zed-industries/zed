@@ -2447,7 +2447,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn vim_settings_section() -> [SettingsPageItem; 12] {
+    fn vim_settings_section() -> [SettingsPageItem; 13] {
         [
             SettingsPageItem::SectionHeader("Vim"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2551,6 +2551,24 @@ fn editor_page() -> SettingsPage {
                             .vim
                             .get_or_insert_default()
                             .highlight_on_yank_duration = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Regex Search",
+                description: "Use regex search by default in Vim search.",
+                field: Box::new(SettingField {
+                    json_path: Some("vim.use_regex_search"),
+                    pick: |settings_content| {
+                        settings_content.vim.as_ref()?.use_regex_search.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .use_regex_search = value;
                     },
                 }),
                 metadata: None,
@@ -4433,7 +4451,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 24] {
+    fn project_panel_section() -> [SettingsPageItem; 28] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4914,31 +4932,25 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Hidden Files",
-                description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
-                field: Box::new(
-                    SettingField {
-                        json_path: Some("worktree.hidden_files"),
-                        pick: |settings_content| {
-                            settings_content.project.worktree.hidden_files.as_ref()
-                        },
-                        write: |settings_content, value| {
-                            settings_content.project.worktree.hidden_files = value;
-                        },
-                    }
-                    .unimplemented(),
-                ),
+                title: "Sort Mode",
+                description: "Sort order for entries in the project panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("project_panel.sort_mode"),
+                    pick: |settings_content| {
+                        settings_content.project_panel.as_ref()?.sort_mode.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .sort_mode = value;
+                    },
+                }),
                 metadata: None,
                 files: USER,
             }),
-        ]
-    }
-
-    fn auto_open_files_section() -> [SettingsPageItem; 5] {
-        [
-            SettingsPageItem::SectionHeader("Auto Open Files"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "On Create",
+                title: "Auto Open Files On Create",
                 description: "Whether to automatically open newly created files in the editor.",
                 field: Box::new(SettingField {
                     json_path: Some("project_panel.auto_open.on_create"),
@@ -4964,7 +4976,7 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "On Paste",
+                title: "Auto Open Files On Paste",
                 description: "Whether to automatically open files after pasting or duplicating them.",
                 field: Box::new(SettingField {
                     json_path: Some("project_panel.auto_open.on_paste"),
@@ -4990,7 +5002,7 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "On Drop",
+                title: "Auto Open Files On Drop",
                 description: "Whether to automatically open files dropped from external sources.",
                 field: Box::new(SettingField {
                     json_path: Some("project_panel.auto_open.on_drop"),
@@ -5016,20 +5028,20 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Sort Mode",
-                description: "Sort order for entries in the project panel.",
-                field: Box::new(SettingField {
-                    pick: |settings_content| {
-                        settings_content.project_panel.as_ref()?.sort_mode.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project_panel
-                            .get_or_insert_default()
-                            .sort_mode = value;
-                    },
-                    json_path: Some("project_panel.sort_mode"),
-                }),
+                title: "Hidden Files",
+                description: "Globs to match files that will be considered \"hidden\" and can be hidden from the project panel.",
+                field: Box::new(
+                    SettingField {
+                        json_path: Some("worktree.hidden_files"),
+                        pick: |settings_content| {
+                            settings_content.project.worktree.hidden_files.as_ref()
+                        },
+                        write: |settings_content, value| {
+                            settings_content.project.worktree.hidden_files = value;
+                        },
+                    }
+                    .unimplemented(),
+                ),
                 metadata: None,
                 files: USER,
             }),
@@ -5927,7 +5939,6 @@ fn panels_page() -> SettingsPage {
         title: "Panels",
         items: concat_sections![
             project_panel_section(),
-            auto_open_files_section(),
             terminal_panel_section(),
             outline_panel_section(),
             call_hierarchy_panel_section(),
@@ -7632,6 +7643,24 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .show_turn_stats = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Merge Conflict Indicator",
+                description: "Whether to show the merge conflict indicator in the status bar that offers to resolve conflicts using the agent.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.show_merge_conflict_indicator"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.show_merge_conflict_indicator.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .show_merge_conflict_indicator = value;
                     },
                 }),
                 metadata: None,

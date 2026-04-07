@@ -5,8 +5,7 @@ use crate::{
     repair,
 };
 use anyhow::{Context as _, Result};
-use edit_prediction::example_spec::encode_cursor_in_patch;
-use zeta_prompt::{CURSOR_MARKER, ZetaFormat, parse_zeta2_model_output};
+use zeta_prompt::{ZetaFormat, parse_zeta2_model_output, parsed_output_to_patch};
 
 pub fn run_parse_output(example: &mut Example) -> Result<()> {
     example
@@ -65,46 +64,18 @@ fn parse_zeta2_output(
         .context("prompt_inputs required")?;
 
     let parsed = parse_zeta2_model_output(actual_output, format, prompt_inputs)?;
-    let range_in_excerpt = parsed.range_in_excerpt;
-
+    let range_in_excerpt = parsed.range_in_excerpt.clone();
     let excerpt = prompt_inputs.cursor_excerpt.as_ref();
-    let old_text = excerpt[range_in_excerpt.clone()].to_string();
-    let mut new_text = parsed.new_editable_region;
+    let editable_region_offset = range_in_excerpt.start;
+    let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
 
-    let cursor_offset = if let Some(offset) = new_text.find(CURSOR_MARKER) {
-        new_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
-        Some(offset)
-    } else {
-        None
-    };
-
-    // Normalize trailing newlines for diff generation
-    let mut old_text_normalized = old_text;
+    let mut new_text = parsed.new_editable_region.clone();
     if !new_text.is_empty() && !new_text.ends_with('\n') {
         new_text.push('\n');
     }
-    if !old_text_normalized.is_empty() && !old_text_normalized.ends_with('\n') {
-        old_text_normalized.push('\n');
-    }
 
-    let editable_region_offset = range_in_excerpt.start;
-    let editable_region_start_line = excerpt[..editable_region_offset].matches('\n').count();
-    let editable_region_lines = old_text_normalized.lines().count() as u32;
-
-    let diff = language::unified_diff_with_context(
-        &old_text_normalized,
-        &new_text,
-        editable_region_start_line as u32,
-        editable_region_start_line as u32,
-        editable_region_lines,
-    );
-
-    let formatted_diff = format!(
-        "--- a/{path}\n+++ b/{path}\n{diff}",
-        path = example.spec.cursor_path.to_string_lossy(),
-    );
-
-    let formatted_diff = encode_cursor_in_patch(&formatted_diff, cursor_offset);
+    let cursor_offset = parsed.cursor_offset_in_new_editable_region;
+    let formatted_diff = parsed_output_to_patch(prompt_inputs, parsed)?;
 
     let actual_cursor = cursor_offset.map(|editable_region_cursor_offset| {
         ActualCursor::from_editable_region(

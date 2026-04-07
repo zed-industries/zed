@@ -24,8 +24,9 @@ use zeta_prompt::{ParsedOutput, ZetaPromptInput};
 
 use std::{env, ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    CURSOR_MARKER, ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
-    prompt_input_contains_special_tokens, stop_tokens_for_format,
+    ZetaFormat, format_zeta_prompt, get_prefill, parse_zeta2_model_output,
+    parsed_output_from_editable_region, prompt_input_contains_special_tokens,
+    stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
 
@@ -181,6 +182,7 @@ pub fn request_prediction_with_zeta(
                             let parsed_output = output_text.map(|text| ParsedOutput {
                                 new_editable_region: text,
                                 range_in_excerpt: editable_range_in_excerpt,
+                                cursor_offset_in_new_editable_region: None,
                             });
 
                             (request_id, parsed_output, None, None)
@@ -283,10 +285,10 @@ pub fn request_prediction_with_zeta(
                     let request_id = EditPredictionId(response.request_id.into());
                     let output_text = Some(response.output).filter(|s| !s.is_empty());
                     let model_version = response.model_version;
-                    let parsed_output = ParsedOutput {
-                        new_editable_region: output_text.unwrap_or_default(),
-                        range_in_excerpt: response.editable_range,
-                    };
+                    let parsed_output = parsed_output_from_editable_region(
+                        response.editable_range,
+                        output_text.unwrap_or_default(),
+                    );
 
                     Some((request_id, Some(parsed_output), model_version, usage))
                 })
@@ -299,6 +301,7 @@ pub fn request_prediction_with_zeta(
             let Some(ParsedOutput {
                 new_editable_region: mut output_text,
                 range_in_excerpt: editable_range_in_excerpt,
+                cursor_offset_in_new_editable_region: cursor_offset_in_output,
             }) = output
             else {
                 return Ok((Some((request_id, None)), None));
@@ -311,13 +314,6 @@ pub fn request_prediction_with_zeta(
             let mut old_text = snapshot
                 .text_for_range(editable_range_in_buffer.clone())
                 .collect::<String>();
-
-            // Client-side cursor marker processing (applies to both raw and v3 responses)
-            let cursor_offset_in_output = output_text.find(CURSOR_MARKER);
-            if let Some(offset) = cursor_offset_in_output {
-                log::trace!("Stripping out {CURSOR_MARKER} from response at offset {offset}");
-                output_text.replace_range(offset..offset + CURSOR_MARKER.len(), "");
-            }
 
             if let Some(debug_tx) = &debug_tx {
                 debug_tx
