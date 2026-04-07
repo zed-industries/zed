@@ -111,7 +111,7 @@ zed_actions.workspace = true
 image.workspace = true
 reqwest_client = { workspace = true, optional = true }
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 image = { workspace = true, features = ["avif-native"] }
 
 [dev-dependencies]

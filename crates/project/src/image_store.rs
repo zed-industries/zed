@@ -932,7 +932,7 @@ mod tests {
         assert_eq!(image.format(), gpui::ImageFormat::Avif);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     #[test]
     fn test_compute_metadata_from_bytes_supports_avif() {
         let metadata = ImageItem::compute_metadata_from_bytes(&encode_test_avif())
