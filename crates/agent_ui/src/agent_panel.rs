@@ -72,7 +72,7 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, PopoverMenu,
+    Button, ButtonLike, Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, PopoverMenu,
     PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
@@ -615,16 +615,67 @@ enum WhichFontSize {
     None,
 }
 
+struct StartThreadInLabel {
+    prefix: Option<SharedString>,
+    label: SharedString,
+    suffix: Option<SharedString>,
+}
+
 impl StartThreadIn {
-    fn label(&self) -> SharedString {
+    fn trigger_label(&self, project: &Project, cx: &App) -> StartThreadInLabel {
         match self {
-            Self::LocalProject => "Current Worktree".into(),
+            Self::LocalProject => {
+                let suffix = project.active_repository(cx).and_then(|repo| {
+                    let repo = repo.read(cx);
+                    let work_dir = &repo.work_directory_abs_path;
+                    let visible_paths: Vec<_> = project
+                        .visible_worktrees(cx)
+                        .map(|wt| wt.read(cx).abs_path().to_path_buf())
+                        .collect();
+
+                    for linked in repo.linked_worktrees() {
+                        if visible_paths.iter().any(|p| *p == linked.path) {
+                            return Some(SharedString::from(format!(
+                                "({})",
+                                linked.display_name()
+                            )));
+                        }
+                    }
+
+                    if visible_paths
+                        .iter()
+                        .any(|p| p.as_path() == work_dir.as_ref())
+                    {
+                        return Some("(main)".into());
+                    }
+
+                    None
+                });
+
+                StartThreadInLabel {
+                    prefix: None,
+                    label: "Current Worktree".into(),
+                    suffix,
+                }
+            }
             Self::NewWorktree {
                 worktree_name: Some(worktree_name),
                 ..
-            } => format!("New: {worktree_name}").into(),
-            Self::NewWorktree { .. } => "New Git Worktree".into(),
-            Self::LinkedWorktree { display_name, .. } => format!("From: {}", &display_name).into(),
+            } => StartThreadInLabel {
+                prefix: Some("New:".into()),
+                label: worktree_name.clone().into(),
+                suffix: None,
+            },
+            Self::NewWorktree { .. } => StartThreadInLabel {
+                prefix: None,
+                label: "New Git Worktree".into(),
+                suffix: None,
+            },
+            Self::LinkedWorktree { display_name, .. } => StartThreadInLabel {
+                prefix: Some("From:".into()),
+                label: display_name.clone().into(),
+                suffix: None,
+            },
         }
     }
 
@@ -3346,7 +3397,9 @@ impl AgentPanel {
             Some(WorktreeCreationStatus::Creating)
         );
 
-        let trigger_label = self.start_thread_in.label();
+        let trigger_parts = self
+            .start_thread_in
+            .trigger_label(self.project.read(cx), cx);
 
         let icon = if self.start_thread_in_menu_handle.is_deployed() {
             IconName::ChevronUp
@@ -3354,9 +3407,17 @@ impl AgentPanel {
             IconName::ChevronDown
         };
 
-        let trigger_button = Button::new("thread-target-trigger", trigger_label)
-            .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
-            .disabled(is_creating);
+        let trigger_button = ButtonLike::new("thread-target-trigger")
+            .size(ButtonSize::Default)
+            .disabled(is_creating)
+            .when_some(trigger_parts.prefix, |this, prefix| {
+                this.child(Label::new(prefix).color(Color::Muted))
+            })
+            .child(Label::new(trigger_parts.label))
+            .when_some(trigger_parts.suffix, |this, suffix| {
+                this.child(Label::new(suffix).color(Color::Muted))
+            })
+            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
 
         let project = self.project.clone();
         let current_target = self.start_thread_in.clone();
