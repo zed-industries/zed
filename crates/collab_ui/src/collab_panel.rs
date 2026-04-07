@@ -1181,7 +1181,6 @@ impl CollabPanel {
         .into();
 
         ListItem::new(project_id as usize)
-            .height(px(24.))
             .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.workspace
@@ -1222,7 +1221,6 @@ impl CollabPanel {
         let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
         ListItem::new(("screen", id))
-            .height(px(24.))
             .toggle_state(is_selected)
             .start_slot(
                 h_flex()
@@ -1269,7 +1267,6 @@ impl CollabPanel {
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
 
         ListItem::new("channel-notes")
-            .height(px(24.))
             .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_channel_notes(channel_id, window, cx);
@@ -3210,12 +3207,9 @@ impl CollabPanel {
             (IconName::Star, Color::Default, "Add to Favorites")
         };
 
-        let height = px(24.);
-
         h_flex()
             .id(ix)
             .group("")
-            .h(height)
             .w_full()
             .overflow_hidden()
             .when(!channel.is_root_channel(), |el| {
@@ -3245,7 +3239,6 @@ impl CollabPanel {
             )
             .child(
                 ListItem::new(ix)
-                    .height(height)
                     // Add one level of depth for the disclosure arrow.
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
