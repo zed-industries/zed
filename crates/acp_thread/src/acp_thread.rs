@@ -3452,11 +3452,7 @@ mod tests {
         let connection = Rc::new(FakeAgentConnection::new().on_user_message(
             |request, thread, mut cx| {
                 async move {
-                    let prompt = request
-                        .prompt
-                        .first()
-                        .cloned()
-                        .unwrap_or_else(|| "".into());
+                    let prompt = request.prompt.first().cloned().unwrap_or_else(|| "".into());
 
                     thread.update(&mut cx, |thread, cx| {
                         thread
