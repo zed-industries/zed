@@ -2513,7 +2513,6 @@ impl AgentPanel {
                 rollback_receivers.push((rollback_path.clone(), receiver));
             }
         }
-
         let mut rollback_failures: Vec<String> = Vec::new();
         for (path, receiver) in rollback_receivers {
             match receiver.await {
