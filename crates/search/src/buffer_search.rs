@@ -745,6 +745,10 @@ impl BufferSearchBar {
         self.query_editor_focused
     }
 
+    pub fn has_focused_editor(&self) -> bool {
+        self.query_editor_focused || self.replacement_editor_focused
+    }
+
     pub fn register(registrar: &mut impl SearchActionsRegistrar) {
         registrar.register_handler(ForDeployed(|this, _: &FocusSearch, window, cx| {
             this.query_editor.focus_handle(cx).focus(window, cx);
