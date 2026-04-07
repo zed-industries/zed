@@ -141,9 +141,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
                 ))
             }
         }
-        EditPredictionProvider::Sweep => Some(EditPredictionProviderConfig::Zed(
-            EditPredictionModel::Sweep,
-        )),
+
         EditPredictionProvider::Mercury => Some(EditPredictionProviderConfig::Zed(
             EditPredictionModel::Mercury,
         )),
@@ -183,7 +181,6 @@ impl EditPredictionProviderConfig {
             EditPredictionProviderConfig::Zed(model) => match model {
                 EditPredictionModel::Zeta => "Zeta",
                 EditPredictionModel::Fim { .. } => "FIM",
-                EditPredictionModel::Sweep => "Sweep",
                 EditPredictionModel::Mercury => "Mercury",
             },
         }
@@ -316,7 +313,12 @@ mod tests {
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
             client::init(&app_state.client, cx);
-            language_model::init(app_state.client.clone(), cx);
+            language_model::init(cx);
+            client::RefreshLlmTokenListener::register(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                cx,
+            );
             editor::init(cx);
             app_state
         });

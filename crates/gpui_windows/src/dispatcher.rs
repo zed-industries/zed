@@ -24,7 +24,7 @@ use windows::{
 use crate::{HWND, SafeHwnd, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
 use gpui::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant,
-    THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, TimerResolutionGuard,
+    TaskTiming, ThreadTaskTimings, TimerResolutionGuard,
 };
 
 pub(crate) struct WindowsDispatcher {
@@ -58,10 +58,6 @@ impl WindowsDispatcher {
             let mut task_wrapper = Some(runnable);
             WorkItemHandler::new(move |_| {
                 let runnable = task_wrapper.take().unwrap();
-                // Check if the executor that spawned this task was closed
-                if runnable.metadata().is_closed() {
-                    return Ok(());
-                }
                 Self::execute_runnable(runnable);
                 Ok(())
             })
@@ -75,10 +71,6 @@ impl WindowsDispatcher {
             let mut task_wrapper = Some(runnable);
             TimerElapsedHandler::new(move |_| {
                 let runnable = task_wrapper.take().unwrap();
-                // Check if the executor that spawned this task was closed
-                if runnable.metadata().is_closed() {
-                    return Ok(());
-                }
                 Self::execute_runnable(runnable);
                 Ok(())
             })
@@ -114,25 +106,7 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn get_current_thread_timings(&self) -> gpui::ThreadTaskTimings {
-        THREAD_TIMINGS.with(|timings| {
-            let timings = timings.lock();
-            let thread_name = timings.thread_name.clone();
-            let total_pushed = timings.total_pushed;
-            let timings = &timings.timings;
-
-            let mut vec = Vec::with_capacity(timings.len());
-
-            let (s1, s2) = timings.as_slices();
-            vec.extend_from_slice(s1);
-            vec.extend_from_slice(s2);
-
-            gpui::ThreadTaskTimings {
-                thread_name,
-                thread_id: std::thread::current().id(),
-                timings: vec,
-                total_pushed,
-            }
-        })
+        gpui::profiler::get_current_thread_task_timings()
     }
 
     fn is_main_thread(&self) -> bool {

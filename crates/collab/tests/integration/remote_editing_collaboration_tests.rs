@@ -14,7 +14,7 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{Formatter, FormatterList, language_settings},
+    language_settings::{Formatter, FormatterList, LanguageSettings},
     rust_lang, tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;
@@ -91,6 +91,7 @@ async fn test_sharing_an_ssh_remote_project(
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    languages.add(rust_lang());
     let _headless_project = server_cx.new(|cx| {
         HeadlessProject::new(
             HeadlessAppState {
@@ -121,6 +122,7 @@ async fn test_sharing_an_ssh_remote_project(
 
     // User B joins the project.
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    project_b.update(cx_b, |project, _| project.languages().add(rust_lang()));
     let worktree_b = project_b
         .update(cx_b, |project, cx| project.worktree_for_id(worktree_id, cx))
         .unwrap();
@@ -173,9 +175,8 @@ async fn test_sharing_an_ssh_remote_project(
     executor.run_until_parked();
 
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            LanguageSettings::for_buffer(buffer_b.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -468,12 +469,12 @@ async fn test_ssh_collaboration_git_worktrees(
         .unwrap();
     assert_eq!(worktrees.len(), 1);
 
-    let worktree_directory = PathBuf::from("/project");
+    let worktree_directory = PathBuf::from("/worktrees");
     cx_b.update(|cx| {
         repo_b.update(cx, |repo, _| {
             repo.create_worktree(
                 "feature-branch".to_string(),
-                worktree_directory.clone(),
+                worktree_directory.join("feature-branch"),
                 Some("abc123".to_string()),
             )
         })
@@ -491,7 +492,10 @@ async fn test_ssh_collaboration_git_worktrees(
         .unwrap();
     assert_eq!(worktrees.len(), 2);
     assert_eq!(worktrees[1].path, worktree_directory.join("feature-branch"));
-    assert_eq!(worktrees[1].ref_name.as_ref(), "refs/heads/feature-branch");
+    assert_eq!(
+        worktrees[1].ref_name,
+        Some("refs/heads/feature-branch".into())
+    );
     assert_eq!(worktrees[1].sha.as_ref(), "abc123");
 
     let server_worktrees = {
@@ -517,6 +521,122 @@ async fn test_ssh_collaboration_git_worktrees(
     assert_eq!(
         server_worktrees[1].path,
         worktree_directory.join("feature-branch")
+    );
+
+    // Host (client A) renames the worktree via SSH
+    let repo_a = cx_a.update(|cx| {
+        project_a
+            .read(cx)
+            .repositories(cx)
+            .values()
+            .next()
+            .unwrap()
+            .clone()
+    });
+    cx_a.update(|cx| {
+        repo_a.update(cx, |repository, _| {
+            repository.rename_worktree(
+                PathBuf::from("/worktrees/feature-branch"),
+                PathBuf::from("/worktrees/renamed-branch"),
+            )
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let host_worktrees = cx_a
+        .update(|cx| repo_a.update(cx, |repository, _| repository.worktrees()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        host_worktrees.len(),
+        2,
+        "Host should still have 2 worktrees after rename"
+    );
+    assert_eq!(
+        host_worktrees[1].path,
+        PathBuf::from("/worktrees/renamed-branch")
+    );
+
+    let server_worktrees = {
+        let server_repo = server_cx.update(|cx| {
+            headless_project.update(cx, |headless_project, cx| {
+                headless_project
+                    .git_store
+                    .read(cx)
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .clone()
+            })
+        });
+        server_cx
+            .update(|cx| server_repo.update(cx, |repo, _| repo.worktrees()))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(
+        server_worktrees.len(),
+        2,
+        "Server should still have 2 worktrees after rename"
+    );
+    assert_eq!(
+        server_worktrees[1].path,
+        PathBuf::from("/worktrees/renamed-branch")
+    );
+
+    // Host (client A) removes the renamed worktree via SSH
+    cx_a.update(|cx| {
+        repo_a.update(cx, |repository, _| {
+            repository.remove_worktree(PathBuf::from("/worktrees/renamed-branch"), false)
+        })
+    })
+    .await
+    .unwrap()
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let host_worktrees = cx_a
+        .update(|cx| repo_a.update(cx, |repository, _| repository.worktrees()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        host_worktrees.len(),
+        1,
+        "Host should only have the main worktree after removal"
+    );
+
+    let server_worktrees = {
+        let server_repo = server_cx.update(|cx| {
+            headless_project.update(cx, |headless_project, cx| {
+                headless_project
+                    .git_store
+                    .read(cx)
+                    .repositories()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .clone()
+            })
+        });
+        server_cx
+            .update(|cx| server_repo.update(cx, |repo, _| repo.worktrees()))
+            .await
+            .unwrap()
+            .unwrap()
+    };
+    assert_eq!(
+        server_worktrees.len(),
+        1,
+        "Server should only have the main worktree after removal"
     );
 }
 
@@ -1165,9 +1285,8 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     let fake_language_server = fake_language_servers.next();
 
     cx_a.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
             ["...".to_string()],
             "remote .zed/settings.json must not sync before trust approval"
         )
@@ -1194,9 +1313,8 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
     cx_a.run_until_parked();
 
     cx_a.read(|cx| {
-        let file = buffer_before_approval.read(cx).file();
         assert_eq!(
-            language_settings(Some("Rust".into()), file, cx).language_servers,
+            LanguageSettings::for_buffer(buffer_before_approval.read(cx), cx).language_servers,
             ["override-rust-analyzer".to_string()],
             "remote .zed/settings.json should sync after trust approval"
         )

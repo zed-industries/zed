@@ -1,10 +1,11 @@
 use crate::handle_open_request;
 use crate::restore_or_create_workspace;
+use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::Editor;
 use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -28,7 +29,7 @@ use util::ResultExt;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
-use workspace::{AppState, MultiWorkspace, OpenOptions, SerializedWorkspaceLocation};
+use workspace::{AppState, MultiWorkspace, OpenOptions, OpenResult, SerializedWorkspaceLocation};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -36,6 +37,7 @@ pub struct OpenRequest {
     pub open_paths: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
     pub diff_all: bool,
+    pub dev_container: bool,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
@@ -48,7 +50,7 @@ pub enum OpenRequestKind {
         extension_id: String,
     },
     AgentPanel {
-        initial_prompt: Option<String>,
+        external_source_prompt: Option<ExternalSourcePrompt>,
     },
     SharedAgentThread {
         session_id: String,
@@ -77,6 +79,7 @@ impl OpenRequest {
 
         this.diff_paths = request.diff_paths;
         this.diff_all = request.diff_all;
+        this.dev_container = request.dev_container;
         if let Some(wsl) = request.wsl {
             let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
                 if user.is_empty() {
@@ -110,8 +113,6 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
-                this.parse_agent_url(agent_path)
             } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
                 if uuid::Uuid::parse_str(session_id_str).is_ok() {
                     this.kind = Some(OpenRequestKind::SharedAgentThread {
@@ -120,6 +121,8 @@ impl OpenRequest {
                 } else {
                     log::error!("Invalid session ID in URL: {}", session_id_str);
                 }
+            } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
+                this.parse_agent_url(agent_path)
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -164,13 +167,14 @@ impl OpenRequest {
 
     fn parse_agent_url(&mut self, agent_path: &str) {
         // Format: "" or "?prompt=<text>"
-        let initial_prompt = agent_path.strip_prefix('?').and_then(|query| {
+        let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(key, value)| (key == "prompt").then_some(value))
-                .filter(|s| !s.is_empty())
-                .map(|s| s.into_owned())
+                .and_then(|prompt| ExternalSourcePrompt::new(prompt.as_ref()))
         });
-        self.kind = Some(OpenRequestKind::AgentPanel { initial_prompt });
+        self.kind = Some(OpenRequestKind::AgentPanel {
+            external_source_prompt,
+        });
     }
 
     fn parse_git_clone_url(&mut self, clone_path: &str) -> Result<()> {
@@ -254,6 +258,7 @@ pub struct RawOpenRequest {
     pub urls: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
     pub diff_all: bool,
+    pub dev_container: bool,
     pub wsl: Option<String>,
 }
 
@@ -343,7 +348,11 @@ pub async fn open_paths_with_positions(
         .map(|path_with_position| path_with_position.path.clone())
         .collect::<Vec<_>>();
 
-    let (multi_workspace, mut items) = cx
+    let OpenResult {
+        window: multi_workspace,
+        opened_items: mut items,
+        ..
+    } = cx
         .update(|cx| workspace::open_paths(&paths, app_state, open_options, cx))
         .await?;
 
@@ -407,6 +416,7 @@ pub async fn handle_cli_connection(
                 reuse,
                 env,
                 user_data_dir: _,
+                dev_container,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -415,6 +425,7 @@ pub async fn handle_cli_connection(
                                 urls,
                                 diff_paths,
                                 diff_all,
+                                dev_container,
                                 wsl,
                             },
                             cx,
@@ -444,6 +455,7 @@ pub async fn handle_cli_connection(
                     reuse,
                     &responses,
                     wait,
+                    dev_container,
                     app_state.clone(),
                     env,
                     cx,
@@ -465,6 +477,7 @@ async fn open_workspaces(
     reuse: bool,
     responses: &IpcSender<CliResponse>,
     wait: bool,
+    dev_container: bool,
     app_state: Arc<AppState>,
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncApp,
@@ -485,7 +498,8 @@ async fn open_workspaces(
 
     if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
-        if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        if matches!(kvp.read_kvp(FIRST_OPEN), Ok(None)) {
             cx.update(|cx| show_onboarding_view(app_state, cx).detach());
         }
         // If not the first launch, show an empty window with empty editor
@@ -522,9 +536,10 @@ async fn open_workspaces(
         };
         let open_options = workspace::OpenOptions {
             open_new_workspace,
-            replace_window,
+            requesting_window: replace_window,
             wait,
             env: env.clone(),
+            open_in_dev_container: dev_container,
             ..Default::default()
         };
 
@@ -770,6 +785,137 @@ mod tests {
             })
         );
         assert_eq!(request.open_paths, vec!["/"]);
+    }
+
+    #[gpui::test]
+    fn test_parse_agent_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://agent".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            }) => {
+                assert_eq!(external_source_prompt, None);
+            }
+            _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    fn agent_url_with_prompt(prompt: &str) -> String {
+        let mut serializer = url::form_urlencoded::Serializer::new("zed://agent?".to_string());
+        serializer.append_pair("prompt", prompt);
+        serializer.finish()
+    }
+
+    #[gpui::test]
+    fn test_parse_agent_url_with_prompt(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        let prompt = "Write me a script\nThanks";
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![agent_url_with_prompt(prompt)],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            }) => {
+                assert_eq!(
+                    external_source_prompt
+                        .as_ref()
+                        .map(ExternalSourcePrompt::as_str),
+                    Some("Write me a script\nThanks")
+                );
+            }
+            _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_agent_url_with_empty_prompt(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![agent_url_with_prompt("")],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            }) => {
+                assert_eq!(external_source_prompt, None);
+            }
+            _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_shared_agent_thread_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        let session_id = "123e4567-e89b-12d3-a456-426614174000";
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec![format!("zed://agent/shared/{session_id}")],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::SharedAgentThread {
+                session_id: parsed_session_id,
+            }) => {
+                assert_eq!(parsed_session_id, session_id);
+            }
+            _ => panic!("Expected SharedAgentThread kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_shared_agent_thread_url_with_invalid_uuid(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://agent/shared/not-a-uuid".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert!(request.kind.is_none());
     }
 
     #[gpui::test]
@@ -1154,7 +1300,7 @@ mod tests {
                         vec![],
                         false,
                         workspace::OpenOptions {
-                            replace_window: Some(window_to_replace),
+                            requesting_window: Some(window_to_replace),
                             ..Default::default()
                         },
                         &response_tx,
@@ -1404,6 +1550,125 @@ mod tests {
             .update(cx, |workspace, _, cx| {
                 let items = workspace.workspace().read(cx).items(cx).collect::<Vec<_>>();
                 assert_eq!(items.len(), 1, "Other window should still have 1 item");
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_dev_container_flag_opens_modal(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| recent_projects::init(cx));
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    ".devcontainer": {
+                        "devcontainer.json": "{}"
+                    },
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+
+        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
+        let errored = cx
+            .spawn({
+                let app_state = app_state.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        vec![path!("/project").to_owned()],
+                        vec![],
+                        false,
+                        workspace::OpenOptions {
+                            open_in_dev_container: true,
+                            ..Default::default()
+                        },
+                        &response_tx,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        assert!(!errored);
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let flag = multi_workspace.workspace().read(cx).open_in_dev_container();
+                assert!(
+                    !flag,
+                    "open_in_dev_container flag should be consumed by suggest_on_worktree_updated"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_dev_container_flag_cleared_without_config(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| recent_projects::init(cx));
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+
+        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
+        let errored = cx
+            .spawn({
+                let app_state = app_state.clone();
+                |mut cx| async move {
+                    open_local_workspace(
+                        vec![path!("/project").to_owned()],
+                        vec![],
+                        false,
+                        workspace::OpenOptions {
+                            open_in_dev_container: true,
+                            ..Default::default()
+                        },
+                        &response_tx,
+                        &app_state,
+                        &mut cx,
+                    )
+                    .await
+                }
+            })
+            .await;
+
+        assert!(!errored);
+
+        // Let any pending worktree scan events and updates settle.
+        cx.run_until_parked();
+
+        // With no .devcontainer config, the flag should be cleared once the
+        // worktree scan completes, rather than persisting on the workspace.
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let flag = multi_workspace
+                    .workspace()
+                    .read(cx)
+                    .open_in_dev_container();
+                assert!(
+                    !flag,
+                    "open_in_dev_container flag should be cleared when no devcontainer config exists"
+                );
             })
             .unwrap();
     }

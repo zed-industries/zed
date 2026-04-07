@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "0.227.0"
+version = "0.232.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -13,11 +13,12 @@ workspace = true
 
 [features]
 tracy = ["ztracing/tracy"]
+# LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
+track-project-leak = ["gpui/leak-detection"]
 test-support = [
     "gpui/test-support",
     "gpui_platform/screen-capture",
     "dep:image",
-    "dep:semver",
     "workspace/test-support",
     "project/test-support",
     "editor/test-support",
@@ -32,7 +33,6 @@ visual-tests = [
     "gpui_platform/screen-capture",
     "gpui_platform/test-support",
     "dep:image",
-    "dep:semver",
     "dep:tempfile",
     "dep:action_log",
     "dep:agent_servers",
@@ -50,7 +50,6 @@ visual-tests = [
     "language_model/test-support",
     "fs/test-support",
     "recent_projects/test-support",
-    "sidebar/test-support",
     "title_bar/test-support",
 ]
 
@@ -69,14 +68,13 @@ activity_indicator.workspace = true
 agent.workspace = true
 agent-client-protocol.workspace = true
 agent_settings.workspace = true
-agent_ui.workspace = true
+agent_ui = { workspace = true, features = ["audio"] }
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 auto_update_ui.workspace = true
-bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
 chrono.workspace = true
@@ -122,7 +120,7 @@ system_specs.workspace = true
 gpui.workspace = true
 gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
 image = { workspace = true, optional = true }
-semver = { workspace = true, optional = true }
+semver.workspace = true
 tempfile = { workspace = true, optional = true }
 clock = { workspace = true, optional = true }
 acp_thread.workspace = true
@@ -199,6 +197,7 @@ telemetry.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 theme_extension.workspace = true
 theme_selector.workspace = true
 time.workspace = true
@@ -247,7 +246,6 @@ pkg-config = "0.3.22"
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
-dap = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
@@ -257,8 +255,6 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
-tree-sitter-md.workspace = true
-tree-sitter-rust.workspace = true
 title_bar = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 image.workspace = true

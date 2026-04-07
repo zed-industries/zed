@@ -370,7 +370,7 @@ pub struct ItemSummary {
 impl Default for ItemSummary {
     fn default() -> Self {
         Self {
-            range: Anchor::min()..Anchor::min(),
+            range: Anchor::Min..Anchor::Min,
         }
     }
 }

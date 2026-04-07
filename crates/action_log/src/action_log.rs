@@ -209,7 +209,7 @@ impl ActionLog {
         cx: &mut Context<Self>,
     ) {
         match event {
-            BufferEvent::Edited => {
+            BufferEvent::Edited { .. } => {
                 let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
                     return;
                 };
@@ -738,6 +738,7 @@ impl ActionLog {
                 let task = if let Some(existing_file_content) = existing_file_content {
                     // Capture the agent's content before restoring existing file content
                     let agent_content = buffer.read(cx).text();
+                    let buffer_id = buffer.read(cx).remote_id();
 
                     buffer.update(cx, |buffer, cx| {
                         buffer.start_transaction();
@@ -750,7 +751,10 @@ impl ActionLog {
 
                     undo_info = Some(PerBufferUndo {
                         buffer: buffer.downgrade(),
-                        edits_to_restore: vec![(Anchor::MIN..Anchor::MAX, agent_content)],
+                        edits_to_restore: vec![(
+                            Anchor::min_for_buffer(buffer_id)..Anchor::max_for_buffer(buffer_id),
+                            agent_content,
+                        )],
                         status: UndoBufferStatus::Created {
                             had_existing_content: true,
                         },
@@ -990,8 +994,8 @@ impl ActionLog {
                 let mut valid_edits = Vec::new();
 
                 for (anchor_range, text_to_restore) in per_buffer_undo.edits_to_restore {
-                    if anchor_range.start.buffer_id == Some(buffer.remote_id())
-                        && anchor_range.end.buffer_id == Some(buffer.remote_id())
+                    if anchor_range.start.buffer_id == buffer.remote_id()
+                        && anchor_range.end.buffer_id == buffer.remote_id()
                     {
                         valid_edits.push((anchor_range, text_to_restore));
                     }
@@ -1028,6 +1032,11 @@ impl ActionLog {
             .collect()
     }
 
+    /// Returns the total number of lines added and removed across all unreviewed buffers.
+    pub fn diff_stats(&self, cx: &App) -> DiffStats {
+        DiffStats::all_files(&self.changed_buffers(cx), cx)
+    }
+
     /// Iterate over buffers changed since last read or edited by the model
     pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
         self.tracked_buffers
@@ -1041,6 +1050,46 @@ impl ActionLog {
                         .is_some_and(|file| !file.disk_state().is_deleted())
             })
             .map(|(buffer, _)| buffer)
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+pub struct DiffStats {
+    pub lines_added: u32,
+    pub lines_removed: u32,
+}
+
+impl DiffStats {
+    pub fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
+        let mut stats = DiffStats::default();
+        let diff_snapshot = diff.snapshot(cx);
+        let buffer_snapshot = buffer.snapshot();
+        let base_text = diff_snapshot.base_text();
+
+        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
+            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
+            stats.lines_added += added_rows;
+
+            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
+            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
+            let removed_rows = base_end.saturating_sub(base_start);
+            stats.lines_removed += removed_rows;
+        }
+
+        stats
+    }
+
+    pub fn all_files(
+        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        cx: &App,
+    ) -> Self {
+        let mut total = DiffStats::default();
+        for (buffer, diff) in changed_buffers {
+            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+            total.lines_added += stats.lines_added;
+            total.lines_removed += stats.lines_removed;
+        }
+        total
     }
 }
 

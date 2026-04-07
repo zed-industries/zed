@@ -1,6 +1,7 @@
 use crate::{
-    NewFile, Open, PathList, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace, WorkspaceId,
+    NewFile, Open, OpenMode, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceId,
     item::{Item, ItemEvent},
+    persistence::WorkspaceDb,
 };
 use chrono::{DateTime, Utc};
 use git::Clone as GitClone;
@@ -10,8 +11,10 @@ use gpui::{
     ParentElement, Render, Styled, Task, Window, actions,
 };
 use menu::{SelectNext, SelectPrevious};
+use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use util::ResultExt;
 use zed_actions::{Extensions, OpenOnboarding, OpenSettings, agent, command_palette};
@@ -121,21 +124,43 @@ impl RenderOnce for SectionButton {
     }
 }
 
+enum SectionVisibility {
+    Always,
+    Conditional(fn(&App) -> bool),
+}
+
+impl SectionVisibility {
+    fn is_visible(&self, cx: &App) -> bool {
+        match self {
+            SectionVisibility::Always => true,
+            SectionVisibility::Conditional(f) => f(cx),
+        }
+    }
+}
+
 struct SectionEntry {
     icon: IconName,
     title: &'static str,
     action: &'static dyn Action,
+    visibility_guard: SectionVisibility,
 }
 
 impl SectionEntry {
-    fn render(&self, button_index: usize, focus: &FocusHandle, _cx: &App) -> impl IntoElement {
-        SectionButton::new(
-            self.title,
-            self.icon,
-            self.action,
-            button_index,
-            focus.clone(),
-        )
+    fn render(
+        &self,
+        button_index: usize,
+        focus: &FocusHandle,
+        cx: &App,
+    ) -> Option<impl IntoElement> {
+        self.visibility_guard.is_visible(cx).then(|| {
+            SectionButton::new(
+                self.title,
+                self.icon,
+                self.action,
+                button_index,
+                focus.clone(),
+            )
+        })
     }
 }
 
@@ -147,21 +172,25 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Plus,
                 title: "New File",
                 action: &NewFile,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::FolderOpen,
                 title: "Open Project",
-                action: &Open,
+                action: &Open::DEFAULT,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::CloudDownload,
                 title: "Clone Repository",
                 action: &GitClone,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::ListCollapse,
                 title: "Open Command Palette",
                 action: &command_palette::Toggle,
+                visibility_guard: SectionVisibility::Always,
             },
         ],
     },
@@ -172,11 +201,15 @@ const CONTENT: (Section<4>, Section<3>) = (
                 icon: IconName::Settings,
                 title: "Open Settings",
                 action: &OpenSettings,
+                visibility_guard: SectionVisibility::Always,
             },
             SectionEntry {
                 icon: IconName::ZedAssistant,
                 title: "View AI Settings",
                 action: &agent::OpenSettings,
+                visibility_guard: SectionVisibility::Conditional(|cx| {
+                    !DisableAiSettings::get_global(cx).disable_ai
+                }),
             },
             SectionEntry {
                 icon: IconName::Blocks,
@@ -185,6 +218,7 @@ const CONTENT: (Section<4>, Section<3>) = (
                     category_filter: None,
                     id: None,
                 },
+                visibility_guard: SectionVisibility::Always,
             },
         ],
     },
@@ -204,7 +238,7 @@ impl<const COLS: usize> Section<COLS> {
                 self.entries
                     .iter()
                     .enumerate()
-                    .map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
+                    .filter_map(|(index, entry)| entry.render(index_offset + index, focus, cx)),
             )
     }
 }
@@ -238,9 +272,10 @@ impl WelcomePage {
             let fs = workspace
                 .upgrade()
                 .map(|ws| ws.read(cx).app_state().fs.clone());
+            let db = WorkspaceDb::global(cx);
             cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
                 let Some(fs) = fs else { return };
-                let workspaces = WORKSPACE_DB
+                let workspaces = db
                     .recent_workspaces_on_disk(fs.as_ref())
                     .await
                     .log_err()
@@ -291,7 +326,7 @@ impl WelcomePage {
                     self.workspace
                         .update(cx, |workspace, cx| {
                             workspace
-                                .open_workspace_for_paths(true, paths, window, cx)
+                                .open_workspace_for_paths(OpenMode::Activate, paths, window, cx)
                                 .detach_and_log_err(cx);
                         })
                         .log_err();
@@ -485,7 +520,7 @@ impl crate::SerializableItem for WelcomePage {
             alive_items,
             workspace_id,
             "welcome_pages",
-            &persistence::WELCOME_PAGES,
+            &persistence::WelcomePagesDb::global(cx),
             cx,
         )
     }
@@ -498,7 +533,7 @@ impl crate::SerializableItem for WelcomePage {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<gpui::Result<Entity<Self>>> {
-        if persistence::WELCOME_PAGES
+        if persistence::WelcomePagesDb::global(cx)
             .get_welcome_page(item_id, workspace_id)
             .ok()
             .is_some_and(|is_open| is_open)
@@ -520,11 +555,10 @@ impl crate::SerializableItem for WelcomePage {
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
-        Some(cx.background_spawn(async move {
-            persistence::WELCOME_PAGES
-                .save_welcome_page(item_id, workspace_id, true)
-                .await
-        }))
+        let db = persistence::WelcomePagesDb::global(cx);
+        Some(cx.background_spawn(
+            async move { db.save_welcome_page(item_id, workspace_id, true).await },
+        ))
     }
 
     fn should_serialize(&self, event: &Self::Event) -> bool {
@@ -558,7 +592,7 @@ mod persistence {
         )]);
     }
 
-    db::static_connection!(WELCOME_PAGES, WelcomePagesDb, [WorkspaceDb]);
+    db::static_connection!(WelcomePagesDb, [WorkspaceDb]);
 
     impl WelcomePagesDb {
         query! {

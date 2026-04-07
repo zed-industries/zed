@@ -1,6 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod llm_token;
 mod proxy;
 pub mod telemetry;
 pub mod user;
@@ -13,8 +14,9 @@ use async_tungstenite::tungstenite::{
     http::{HeaderValue, Request, StatusCode},
 };
 use clock::SystemClock;
-use cloud_api_client::CloudApiClient;
 use cloud_api_client::websocket_protocol::MessageToClient;
+use cloud_api_client::{ClientApiError, CloudApiClient};
+use cloud_api_types::OrganizationId;
 use credentials_provider::CredentialsProvider;
 use feature_flags::FeatureFlagAppExt as _;
 use futures::{
@@ -24,6 +26,7 @@ use futures::{
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
+use language_model::LlmApiToken;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -51,6 +54,7 @@ use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
 
+pub use llm_token::*;
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
@@ -339,7 +343,7 @@ pub struct ClientCredentialsProvider {
 impl ClientCredentialsProvider {
     pub fn new(cx: &App) -> Self {
         Self {
-            provider: <dyn CredentialsProvider>::global(cx),
+            provider: zed_credentials_provider::global(cx),
         }
     }
 
@@ -566,6 +570,10 @@ impl Client {
 
     pub fn http_client(&self) -> Arc<HttpClientWithUrl> {
         self.http.clone()
+    }
+
+    pub fn credentials_provider(&self) -> Arc<dyn CredentialsProvider> {
+        self.credentials_provider.provider.clone()
     }
 
     pub fn cloud_client(&self) -> Arc<CloudApiClient> {
@@ -1388,7 +1396,11 @@ impl Client {
                     // Start an HTTP server to receive the redirect from Zed's sign-in page.
                     let server = tiny_http::Server::http("127.0.0.1:0")
                         .map_err(|e| anyhow!(e).context("failed to bind callback port"))?;
-                    let port = server.server_addr().port();
+                    let port = server
+                        .server_addr()
+                        .to_ip()
+                        .context("server not bound to a TCP address")?
+                        .port();
 
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
@@ -1507,6 +1519,66 @@ impl Client {
             user_id: response.user_id,
             access_token: response.access_token,
         })
+    }
+
+    pub async fn acquire_llm_token(
+        &self,
+        llm_token: &LlmApiToken,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
+        let system_id = self.telemetry().system_id().map(|x| x.to_string());
+        let cloud_client = self.cloud_client();
+        match llm_token
+            .acquire(&cloud_client, system_id, organization_id)
+            .await
+        {
+            Ok(token) => Ok(token),
+            Err(ClientApiError::Unauthorized) => {
+                self.request_sign_out();
+                Err(ClientApiError::Unauthorized).context("Failed to create LLM token")
+            }
+            Err(err) => Err(anyhow::Error::from(err)),
+        }
+    }
+
+    pub async fn refresh_llm_token(
+        &self,
+        llm_token: &LlmApiToken,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
+        let system_id = self.telemetry().system_id().map(|x| x.to_string());
+        let cloud_client = self.cloud_client();
+        match llm_token
+            .refresh(&cloud_client, system_id, organization_id)
+            .await
+        {
+            Ok(token) => Ok(token),
+            Err(ClientApiError::Unauthorized) => {
+                self.request_sign_out();
+                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
+            }
+            Err(err) => return Err(anyhow::Error::from(err)),
+        }
+    }
+
+    pub async fn clear_and_refresh_llm_token(
+        &self,
+        llm_token: &LlmApiToken,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String> {
+        let system_id = self.telemetry().system_id().map(|x| x.to_string());
+        let cloud_client = self.cloud_client();
+        match llm_token
+            .clear_and_refresh(&cloud_client, system_id, organization_id)
+            .await
+        {
+            Ok(token) => Ok(token),
+            Err(ClientApiError::Unauthorized) => {
+                self.request_sign_out();
+                return Err(ClientApiError::Unauthorized).context("Failed to create LLM token");
+            }
+            Err(err) => return Err(anyhow::Error::from(err)),
+        }
     }
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {
@@ -2137,11 +2209,13 @@ mod tests {
             project_id: 1,
             committer_name: None,
             committer_email: None,
+            features: Vec::new(),
         });
         server.send(proto::JoinProject {
             project_id: 2,
             committer_name: None,
             committer_email: None,
+            features: Vec::new(),
         });
         done_rx1.recv().await.unwrap();
         done_rx2.recv().await.unwrap();

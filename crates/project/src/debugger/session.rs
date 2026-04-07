@@ -2187,21 +2187,27 @@ impl Session {
             self.capabilities.supports_restart_request.unwrap_or(false) && !self.is_terminated();
 
         self.restart_task = Some(cx.spawn(async move |this, cx| {
-            let _ = this.update(cx, |session, cx| {
+            this.update(cx, |session, cx| {
                 if supports_dap_restart {
-                    session
-                        .request(
-                            RestartCommand {
-                                raw: args.unwrap_or(Value::Null),
-                            },
-                            Self::fallback_to_manual_restart,
-                            cx,
-                        )
-                        .detach();
+                    session.request(
+                        RestartCommand {
+                            raw: args.unwrap_or(Value::Null),
+                        },
+                        Self::fallback_to_manual_restart,
+                        cx,
+                    )
                 } else {
                     cx.emit(SessionStateEvent::Restart);
+                    Task::ready(None)
                 }
-            });
+            })
+            .unwrap_or_else(|_| Task::ready(None))
+            .await;
+
+            this.update(cx, |session, _cx| {
+                session.restart_task = None;
+            })
+            .ok();
         }));
     }
 
@@ -2645,9 +2651,39 @@ impl Session {
         self.fetch(
             command,
             move |this, variables, cx| {
-                let Some(variables) = variables.log_err() else {
+                let Some(mut variables) = variables.log_err() else {
                     return;
                 };
+
+                if this.adapter.0.as_ref() == "Debugpy" {
+                    for variable in variables.iter_mut() {
+                        if variable.type_ == Some("str".into()) {
+                            // reverse Python repr() escaping
+                            let mut unescaped = String::with_capacity(variable.value.len());
+                            let mut chars = variable.value.chars();
+                            while let Some(c) = chars.next() {
+                                if c != '\\' {
+                                    unescaped.push(c);
+                                } else {
+                                    match chars.next() {
+                                        Some('\\') => unescaped.push('\\'),
+                                        Some('n') => unescaped.push('\n'),
+                                        Some('t') => unescaped.push('\t'),
+                                        Some('r') => unescaped.push('\r'),
+                                        Some('\'') => unescaped.push('\''),
+                                        Some('"') => unescaped.push('"'),
+                                        Some(c) => {
+                                            unescaped.push('\\');
+                                            unescaped.push(c);
+                                        }
+                                        None => {}
+                                    }
+                                }
+                            }
+                            variable.value = unescaped;
+                        }
+                    }
+                }
 
                 this.active_snapshot
                     .variables

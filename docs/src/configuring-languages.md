@@ -165,8 +165,6 @@ Not all languages in Zed support toolchain discovery and selection, but for thos
 
 ### Configuring Language Servers
 
-> **Changed in Preview (v0.225).** See [release notes](/releases#0.225).
-
 When configuring language servers in your `settings.json`, autocomplete suggestions include all available LSP adapters recognized by Zed, not only those currently active for loaded languages. This helps you discover and configure language servers before opening files that use them.
 
 Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json`:
@@ -352,6 +350,18 @@ To run linter fixes automatically on save:
   }
 }
 ```
+
+### Formatting Selections
+
+Zed supports formatting only the selected text via `editor: format selections` ({#kb editor::FormatSelections}). How
+this works depends on the configured formatter:
+
+- **Language server**: Sends an LSP range formatting request for each selection. This provides the most precise
+  selection-only formatting.
+- **Prettier**: Uses Prettier's built-in range formatting to format the encompassing range of all selections. Any
+  resulting edits that fall outside the selected ranges are discarded, so only the selected code is modified.
+- **External commands**: External command formatters do not support range formatting and are skipped when formatting
+  selections.
 
 ### Integrating Formatting and Linting
 

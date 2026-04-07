@@ -1,6 +1,6 @@
 mod create_file_parser;
 mod edit_parser;
-#[cfg(test)]
+#[cfg(all(test, feature = "unit-eval"))]
 mod evals;
 pub mod reindent;
 pub mod streaming_fuzzy_matcher;
@@ -8,7 +8,6 @@ pub mod streaming_fuzzy_matcher;
 use crate::{Template, Templates};
 use action_log::ActionLog;
 use anyhow::Result;
-use cloud_llm_client::CompletionIntent;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
 pub use edit_parser::EditFormat;
 use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
@@ -21,8 +20,8 @@ use futures::{
 use gpui::{AppContext, AsyncApp, Entity, Task};
 use language::{Anchor, Buffer, BufferSnapshot, LineIndent, Point, TextBufferSnapshot};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolChoice, MessageContent, Role,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolChoice, MessageContent, Role,
 };
 use project::{AgentLocation, Project};
 use reindent::{IndentDelta, Reindenter};
@@ -375,13 +374,13 @@ impl EditAgent {
                         buffer.edit(edits.iter().cloned(), None, cx);
                         let max_edit_end = buffer
                             .summaries_for_anchors::<Point, _>(
-                                edits.iter().map(|(range, _)| &range.end),
+                                edits.iter().map(|(range, _)| range.end),
                             )
                             .max()
                             .unwrap();
                         let min_edit_start = buffer
                             .summaries_for_anchors::<Point, _>(
-                                edits.iter().map(|(range, _)| &range.start),
+                                edits.iter().map(|(range, _)| range.start),
                             )
                             .min()
                             .unwrap();
@@ -1520,7 +1519,7 @@ mod tests {
         stream: &mut UnboundedReceiver<EditAgentOutputEvent>,
     ) -> Vec<EditAgentOutputEvent> {
         let mut events = Vec::new();
-        while let Ok(Some(event)) = stream.try_next() {
+        while let Ok(event) = stream.try_recv() {
             events.push(event);
         }
         events

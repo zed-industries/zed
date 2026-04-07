@@ -7,12 +7,14 @@ fn main() {
         // Add rpaths for libraries that webrtc-sys dlopens at runtime.
         // This is mostly required for hosts with non-standard SO installation
         // locations such as NixOS.
-        let dlopened_libs = ["libva", "libva-drm"];
+        let dlopened_libs = ["libva", "libva-drm", "egl"];
 
         let mut rpath_dirs = std::collections::BTreeSet::new();
         for lib in &dlopened_libs {
             if let Some(libdir) = pkg_config::get_variable(lib, "libdir").ok() {
                 rpath_dirs.insert(libdir);
+            } else {
+                eprintln!("zed build.rs: {lib} not found in pkg-config's path");
             }
         }
 
@@ -43,12 +45,28 @@ fn main() {
         "cargo:rustc-env=TARGET={}",
         std::env::var("TARGET").unwrap()
     );
-    if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output()
-        && output.status.success()
-    {
-        let git_sha = String::from_utf8_lossy(&output.stdout);
-        let git_sha = git_sha.trim();
 
+    let git_sha = match std::env::var("ZED_COMMIT_SHA").ok() {
+        Some(git_sha) => {
+            // In deterministic build environments such as Nix, we inject the commit sha into the build script.
+            Some(git_sha)
+        }
+        None => {
+            if let Some(output) = Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .ok()
+                && output.status.success()
+            {
+                let git_sha = String::from_utf8_lossy(&output.stdout);
+                Some(git_sha.trim().to_string())
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some(git_sha) = git_sha {
         println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
 
         if let Some(build_identifier) = option_env!("GITHUB_RUN_NUMBER") {
@@ -64,10 +82,8 @@ fn main() {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        #[cfg(target_env = "msvc")]
-        {
+    if cfg!(windows) {
+        if cfg!(target_env = "msvc") {
             // todo(windows): This is to avoid stack overflow. Remove it when solved.
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
@@ -84,7 +100,7 @@ fn main() {
             let conpty_dll_target = target_dir.join("conpty.dll");
             let open_console_target = target_dir.join("OpenConsole.exe");
 
-            let conpty_url = "https://github.com/microsoft/terminal/releases/download/v1.23.13503.0/Microsoft.Windows.Console.ConPTY.1.23.251216003.nupkg";
+            let conpty_url = "https://github.com/microsoft/terminal/releases/download/v1.24.10621.0/Microsoft.Windows.Console.ConPTY.1.24.260303001.nupkg";
             let nupkg_path = out_dir.join("conpty.nupkg.zip");
             let extract_dir = out_dir.join("conpty");
 
@@ -199,21 +215,24 @@ fn main() {
         println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
         println!("cargo:rerun-if-changed={}", icon.display());
 
-        let mut res = winresource::WindowsResource::new();
+        #[cfg(windows)]
+        {
+            let mut res = winresource::WindowsResource::new();
 
-        // Depending on the security applied to the computer, winresource might fail
-        // fetching the RC path. Therefore, we add a way to explicitly specify the
-        // toolkit path, allowing winresource to use a valid RC path.
-        if let Some(explicit_rc_toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH").ok() {
-            res.set_toolkit_path(explicit_rc_toolkit_path.as_str());
-        }
-        res.set_icon(icon.to_str().unwrap());
-        res.set("FileDescription", "Zed");
-        res.set("ProductName", "Zed");
+            // Depending on the security applied to the computer, winresource might fail
+            // fetching the RC path. Therefore, we add a way to explicitly specify the
+            // toolkit path, allowing winresource to use a valid RC path.
+            if let Some(explicit_rc_toolkit_path) = std::env::var("ZED_RC_TOOLKIT_PATH").ok() {
+                res.set_toolkit_path(explicit_rc_toolkit_path.as_str());
+            }
+            res.set_icon(icon.to_str().unwrap());
+            res.set("FileDescription", "Zed");
+            res.set("ProductName", "Zed");
 
-        if let Err(e) = res.compile() {
-            eprintln!("{}", e);
-            std::process::exit(1);
+            if let Err(e) = res.compile() {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
         }
     }
 }

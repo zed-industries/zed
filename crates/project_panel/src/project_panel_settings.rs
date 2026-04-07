@@ -1,4 +1,4 @@
-use editor::EditorSettings;
+use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,7 @@ pub struct ProjectPanelSettings {
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
     pub diagnostic_badges: bool,
+    pub git_status_indicator: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -49,6 +50,11 @@ pub struct ScrollbarSettings {
     ///
     /// Default: inherits editor scrollbar settings
     pub show: Option<ShowScrollbar>,
+    /// Whether to allow horizontal scrolling in the project panel.
+    /// When false, the view is locked to the leftmost position and long file names are clipped.
+    ///
+    /// Default: true
+    pub horizontal_scroll: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -75,9 +81,13 @@ impl AutoOpenSettings {
     }
 }
 
-impl ScrollbarVisibility for ProjectPanelSettings {
+#[derive(Default)]
+pub(crate) struct ProjectPanelScrollbarProxy;
+
+impl ScrollbarVisibility for ProjectPanelScrollbarProxy {
     fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
-        self.scrollbar
+        ProjectPanelSettings::get_global(cx)
+            .scrollbar
             .show
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
@@ -111,8 +121,12 @@ impl Settings for ProjectPanelSettings {
             auto_fold_dirs: project_panel.auto_fold_dirs.unwrap(),
             bold_folder_labels: project_panel.bold_folder_labels.unwrap(),
             starts_open: project_panel.starts_open.unwrap(),
-            scrollbar: ScrollbarSettings {
-                show: project_panel.scrollbar.unwrap().show.map(Into::into),
+            scrollbar: {
+                let scrollbar = project_panel.scrollbar.unwrap();
+                ScrollbarSettings {
+                    show: scrollbar.show.map(ui_scrollbar_settings_from_raw),
+                    horizontal_scroll: scrollbar.horizontal_scroll.unwrap(),
+                }
             },
             show_diagnostics: project_panel.show_diagnostics.unwrap(),
             hide_root: project_panel.hide_root.unwrap(),
@@ -128,6 +142,7 @@ impl Settings for ProjectPanelSettings {
             },
             sort_mode: project_panel.sort_mode.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
+            git_status_indicator: project_panel.git_status_indicator.unwrap(),
         }
     }
 }

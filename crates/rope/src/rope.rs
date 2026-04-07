@@ -4,7 +4,7 @@ mod point;
 mod point_utf16;
 mod unclipped;
 
-use arrayvec::ArrayVec;
+use heapless::Vec as ArrayVec;
 use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use std::{
     cmp, fmt, io, mem,
@@ -184,7 +184,7 @@ impl Rope {
             return self.push_large(text);
         }
         // 16 is enough as otherwise we will hit the branch above
-        let mut new_chunks = ArrayVec::<_, NUM_CHUNKS>::new();
+        let mut new_chunks = ArrayVec::<_, NUM_CHUNKS, u8>::new();
 
         while !text.is_empty() {
             let mut split_ix = cmp::min(chunk::MAX_BASE, text.len());
@@ -192,7 +192,7 @@ impl Rope {
                 split_ix -= 1;
             }
             let (chunk, remainder) = text.split_at(split_ix);
-            new_chunks.push(chunk);
+            new_chunks.push(chunk).unwrap();
             text = remainder;
         }
         self.chunks
@@ -693,18 +693,31 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn seek_forward(&mut self, end_offset: usize) {
-        debug_assert!(end_offset >= self.offset);
+        assert!(
+            end_offset >= self.offset,
+            "cannot seek backward from {} to {}",
+            self.offset,
+            end_offset
+        );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
+        );
 
         self.chunks.seek_forward(&end_offset, Bias::Right);
         self.offset = end_offset;
     }
 
     pub fn slice(&mut self, end_offset: usize) -> Rope {
-        debug_assert!(
+        assert!(
             end_offset >= self.offset,
-            "cannot slice backwards from {} to {}",
+            "cannot slice backward from {} to {}",
             self.offset,
             end_offset
+        );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
         );
 
         let mut slice = Rope::new();
@@ -730,7 +743,16 @@ impl<'a> Cursor<'a> {
     }
 
     pub fn summary<D: TextDimension>(&mut self, end_offset: usize) -> D {
-        debug_assert!(end_offset >= self.offset);
+        assert!(
+            end_offset >= self.offset,
+            "cannot summarize backward from {} to {}",
+            self.offset,
+            end_offset
+        );
+        assert!(
+            end_offset <= self.rope.len(),
+            "cannot summarize past end of rope"
+        );
 
         let mut summary = D::zero(());
         if let Some(start_chunk) = self.chunks.item() {

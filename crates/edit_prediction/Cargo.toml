@@ -17,8 +17,7 @@ cli-support = []
 [dependencies]
 ai_onboarding.workspace = true
 anyhow.workspace = true
-arrayvec.workspace = true
-brotli.workspace = true
+heapless.workspace = true
 buffer_diff.workspace = true
 client.workspace = true
 clock.workspace = true
@@ -27,6 +26,7 @@ cloud_llm_client.workspace = true
 collections.workspace = true
 copilot.workspace = true
 copilot_ui.workspace = true
+credentials_provider.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
@@ -66,6 +66,7 @@ uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
+zed_credentials_provider.workspace = true
 zeta_prompt.workspace = true
 zstd.workspace = true
 
@@ -82,5 +83,5 @@ parking_lot.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
-tree-sitter-rust.workspace = true
+
 zlog.workspace = true
