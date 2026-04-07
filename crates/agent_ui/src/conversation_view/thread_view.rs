@@ -172,6 +172,30 @@ impl Render for GeneratingSpinner {
     }
 }
 
+#[derive(IntoElement)]
+struct GeneratingSpinnerElement {
+    variant: SpinnerVariant,
+}
+
+impl GeneratingSpinnerElement {
+    fn new(variant: SpinnerVariant) -> Self {
+        Self { variant }
+    }
+}
+
+impl RenderOnce for GeneratingSpinnerElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let id = match self.variant {
+            SpinnerVariant::Dots => "generating-spinner-view",
+            SpinnerVariant::Sand => "confirmation-spinner-view",
+            _ => "spinner-view",
+        };
+        window.with_id(id, |window| {
+            window.use_state(cx, |_, _| GeneratingSpinner::new(self.variant))
+        })
+    }
+}
+
 pub enum AcpThreadViewEvent {
     FirstSendRequested { content: Vec<acp::ContentBlock> },
 }
@@ -3780,12 +3804,7 @@ impl ThreadView {
 }
 
 impl ThreadView {
-    fn render_entries(
-        &mut self,
-        generating_spinner: Entity<GeneratingSpinner>,
-        confirmation_spinner: Entity<GeneratingSpinner>,
-        cx: &mut Context<Self>,
-    ) -> List {
+    fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
@@ -3793,15 +3812,7 @@ impl ThreadView {
                 let Some(entry) = entries.get(index) else {
                     return Empty.into_any();
                 };
-                this.render_entry(
-                    index,
-                    entries.len(),
-                    entry,
-                    &generating_spinner,
-                    &confirmation_spinner,
-                    window,
-                    cx,
-                )
+                this.render_entry(index, entries.len(), entry, window, cx)
             }),
         )
         .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
@@ -3813,8 +3824,6 @@ impl ThreadView {
         entry_ix: usize,
         total_entries: usize,
         entry: &AgentThreadEntry,
-        generating_spinner: &Entity<GeneratingSpinner>,
-        confirmation_spinner: &Entity<GeneratingSpinner>,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -4085,8 +4094,6 @@ impl ThreadView {
                     tool_call,
                     &self.focus_handle(cx),
                     false,
-                    generating_spinner,
-                    confirmation_spinner,
                     window,
                     cx,
                 )
@@ -4174,19 +4181,9 @@ impl ThreadView {
                 .child(primary)
                 .map(|this| {
                     if needs_confirmation {
-                        this.child(self.render_generating(
-                            true,
-                            generating_spinner,
-                            confirmation_spinner,
-                            cx,
-                        ))
+                        this.child(self.render_generating(true, cx))
                     } else {
-                        this.child(self.render_thread_controls(
-                            &thread,
-                            generating_spinner,
-                            confirmation_spinner,
-                            cx,
-                        ))
+                        this.child(self.render_thread_controls(&thread, cx))
                     }
                 })
                 .when_some(comments_editor, |this, editor| {
@@ -4267,15 +4264,11 @@ impl ThreadView {
     fn render_thread_controls(
         &self,
         thread: &Entity<AcpThread>,
-        generating_spinner: &Entity<GeneratingSpinner>,
-        confirmation_spinner: &Entity<GeneratingSpinner>,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
         if is_generating {
-            return self
-                .render_generating(false, generating_spinner, confirmation_spinner, cx)
-                .into_any_element();
+            return self.render_generating(false, cx).into_any_element();
         }
 
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
@@ -4559,13 +4552,7 @@ impl ThreadView {
         })
     }
 
-    fn render_generating(
-        &self,
-        confirmation: bool,
-        generating_spinner: &Entity<GeneratingSpinner>,
-        confirmation_spinner: &Entity<GeneratingSpinner>,
-        cx: &App,
-    ) -> impl IntoElement {
+    fn render_generating(&self, confirmation: bool, cx: &App) -> impl IntoElement {
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let elapsed_label = show_stats
             .then(|| {
@@ -4607,7 +4594,7 @@ impl ThreadView {
                         h_flex()
                             .w_2()
                             .justify_center()
-                            .child(confirmation_spinner.clone()),
+                            .child(GeneratingSpinnerElement::new(SpinnerVariant::Sand)),
                     )
                     .child(
                         div().min_w(rems(8.)).child(
@@ -4623,7 +4610,7 @@ impl ThreadView {
                         h_flex()
                             .w_2()
                             .justify_center()
-                            .child(generating_spinner.clone()),
+                            .child(GeneratingSpinnerElement::new(SpinnerVariant::Dots)),
                     )
                 }
             })
@@ -5338,8 +5325,6 @@ impl ThreadView {
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
         is_subagent: bool,
-        generating_spinner: &Entity<GeneratingSpinner>,
-        confirmation_spinner: &Entity<GeneratingSpinner>,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -5357,8 +5342,6 @@ impl ThreadView {
                             .as_ref()
                             .map(|i| i.session_id.clone()),
                         focus_handle,
-                        generating_spinner,
-                        confirmation_spinner,
                         window,
                         cx,
                     ),
@@ -6696,8 +6679,6 @@ impl ThreadView {
         tool_call: &ToolCall,
         subagent_session_id: Option<acp::SessionId>,
         focus_handle: &FocusHandle,
-        generating_spinner: &Entity<GeneratingSpinner>,
-        confirmation_spinner: &Entity<GeneratingSpinner>,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -6714,8 +6695,6 @@ impl ThreadView {
             subagent_thread_view,
             tool_call,
             focus_handle,
-            generating_spinner,
-            confirmation_spinner,
             window,
             cx,
         );
@@ -6730,8 +6709,6 @@ impl ThreadView {
         thread_view: Option<&Entity<ThreadView>>,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        generating_spinner: &Entity<GeneratingSpinner>,
-        confirmation_spinner: &Entity<GeneratingSpinner>,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -7020,8 +6997,6 @@ impl ThreadView {
                                 tool_call,
                                 focus_handle,
                                 true,
-                                generating_spinner,
-                                confirmation_spinner,
                                 window,
                                 cx,
                             ))
@@ -7035,8 +7010,6 @@ impl ThreadView {
                             thread_view,
                             is_running,
                             tool_call,
-                            generating_spinner,
-                            confirmation_spinner,
                             window,
                             cx,
                         ))
@@ -7060,8 +7033,6 @@ impl ThreadView {
         thread_view: &Entity<ThreadView>,
         is_running: bool,
         tool_call: &ToolCall,
-        generating_spinner: &Entity<GeneratingSpinner>,
-        confirmation_spinner: &Entity<GeneratingSpinner>,
         window: &Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -7123,15 +7094,7 @@ impl ThreadView {
             .enumerate()
             .map(|(i, entry)| {
                 let actual_ix = start_ix + i;
-                subagent_view.render_entry(
-                    actual_ix,
-                    total_entries,
-                    entry,
-                    generating_spinner,
-                    confirmation_spinner,
-                    window,
-                    cx,
-                )
+                subagent_view.render_entry(actual_ix, total_entries, entry, window, cx)
             })
             .collect();
 
@@ -7871,17 +7834,7 @@ impl Render for ThreadView {
                 });
                 if has_messages {
                     let list_state = self.list_state.clone();
-                    let generating_spinner =
-                        window.with_id("thread-view-generating-spinner", |window| {
-                            window
-                                .use_state(cx, |_, _| GeneratingSpinner::new(SpinnerVariant::Dots))
-                        });
-                    let confirmation_spinner =
-                        window.with_id("thread-view-confirmation-spinner", |window| {
-                            window
-                                .use_state(cx, |_, _| GeneratingSpinner::new(SpinnerVariant::Sand))
-                        });
-                    this.child(self.render_entries(generating_spinner, confirmation_spinner, cx))
+                    this.child(self.render_entries(cx))
                         .vertical_scrollbar_for(&list_state, window, cx)
                         .into_any()
                 } else if v2_empty_state {
