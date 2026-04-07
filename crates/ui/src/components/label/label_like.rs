@@ -1,11 +1,9 @@
 use crate::prelude::*;
-use gpui::{FontWeight, StyleRefinement, UnderlineStyle};
-use settings::Settings;
+use gpui::{FontWeight, Rems, StyleRefinement, UnderlineStyle};
 use smallvec::SmallVec;
-use theme::ThemeSettings;
 
 /// Sets the size of a label
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum LabelSize {
     /// The default size of a label.
     #[default]
@@ -16,6 +14,8 @@ pub enum LabelSize {
     Small,
     /// The extra small size of a label.
     XSmall,
+    /// An arbitrary custom size specified in rems.
+    Custom(Rems),
 }
 
 /// Sets the line height of a label
@@ -189,7 +189,7 @@ impl LabelCommon for LabelLike {
     }
 
     fn buffer_font(mut self, cx: &App) -> Self {
-        let font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+        let font = theme::theme_settings(cx).buffer_font(cx).clone();
         self.weight = Some(font.weight);
         self.base = self.base.font(font);
         self
@@ -198,7 +198,7 @@ impl LabelCommon for LabelLike {
     fn inline_code(mut self, cx: &App) -> Self {
         self.base = self
             .base
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .font(theme::theme_settings(cx).buffer_font(cx).clone())
             .bg(cx.theme().colors().element_background)
             .rounded_sm()
             .px_0p5();
@@ -225,6 +225,7 @@ impl RenderOnce for LabelLike {
                 LabelSize::Default => this.text_ui(cx),
                 LabelSize::Small => this.text_ui_sm(cx),
                 LabelSize::XSmall => this.text_ui_xs(cx),
+                LabelSize::Custom(size) => this.text_size(size),
             })
             .when(self.line_height_style == LineHeightStyle::UiLabel, |this| {
                 this.line_height(relative(1.))
@@ -255,7 +256,7 @@ impl RenderOnce for LabelLike {
             .text_color(color)
             .font_weight(
                 self.weight
-                    .unwrap_or(ThemeSettings::get_global(cx).ui_font.weight),
+                    .unwrap_or(theme::theme_settings(cx).ui_font(cx).weight),
             )
             .children(self.children)
     }

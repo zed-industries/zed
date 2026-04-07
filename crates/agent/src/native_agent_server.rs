@@ -1,4 +1,4 @@
-use std::{any::Any, path::Path, rc::Rc, sync::Arc};
+use std::{any::Any, rc::Rc, sync::Arc};
 
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
@@ -6,7 +6,8 @@ use agent_settings::AgentSettings;
 use anyhow::Result;
 use collections::HashSet;
 use fs::Fs;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, Entity, Task};
+use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 
@@ -25,8 +26,8 @@ impl NativeAgentServer {
 }
 
 impl AgentServer for NativeAgentServer {
-    fn name(&self) -> SharedString {
-        "Zed Agent".into()
+    fn agent_id(&self) -> AgentId {
+        crate::ZED_AGENT_ID.clone()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -35,20 +36,11 @@ impl AgentServer for NativeAgentServer {
 
     fn connect(
         &self,
-        _root_dir: Option<&Path>,
-        delegate: AgentServerDelegate,
+        _delegate: AgentServerDelegate,
+        _project: Entity<Project>,
         cx: &mut App,
-    ) -> Task<
-        Result<(
-            Rc<dyn acp_thread::AgentConnection>,
-            Option<task::SpawnInTerminal>,
-        )>,
-    > {
-        log::debug!(
-            "NativeAgentServer::connect called for path: {:?}",
-            _root_dir
-        );
-        let project = delegate.project().clone();
+    ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+        log::debug!("NativeAgentServer::connect");
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         let prompt_store = PromptStore::global(cx);
@@ -58,18 +50,14 @@ impl AgentServer for NativeAgentServer {
             let prompt_store = prompt_store.await?;
 
             log::debug!("Creating native agent entity");
-            let agent =
-                NativeAgent::new(project, thread_store, templates, Some(prompt_store), fs, cx)
-                    .await?;
+            let agent = cx
+                .update(|cx| NativeAgent::new(thread_store, templates, Some(prompt_store), fs, cx));
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
             log::debug!("NativeAgentServer connection established successfully");
 
-            Ok((
-                Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>,
-                None,
-            ))
+            Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })
     }
 

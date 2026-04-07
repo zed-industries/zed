@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use crate::tests::{init_test, init_test_workspace, start_debug_session};
 use dap::requests::{StackTrace, Threads};
 use debugger_tools::LogStore;

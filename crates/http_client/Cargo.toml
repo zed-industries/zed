@@ -19,8 +19,6 @@ doctest = true
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true
-async-fs.workspace = true
-async-tar.workspace = true
 bytes.workspace = true
 derive_more.workspace = true
 futures.workspace = true
@@ -31,7 +29,11 @@ parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
+url.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+util.workspace = true
+async-fs.workspace = true
+async-tar.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-url.workspace = true
-util.workspace = true

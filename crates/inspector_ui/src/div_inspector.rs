@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MinimapVisibility,
-    MultiBuffer,
+    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, MinimapVisibility, MultiBuffer,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -641,7 +640,6 @@ struct RustStyleCompletionProvider {
 impl CompletionProvider for RustStyleCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         position: Anchor,
         _: editor::CompletionContext,

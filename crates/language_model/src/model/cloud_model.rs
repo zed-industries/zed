@@ -1,12 +1,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
-use client::Client;
 use cloud_api_client::ClientApiError;
-use cloud_api_types::websocket_protocol::MessageToClient;
-use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME};
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _};
+use cloud_api_client::CloudApiClient;
+use cloud_api_types::OrganizationId;
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
@@ -26,92 +23,65 @@ impl fmt::Display for PaymentRequiredError {
 pub struct LlmApiToken(Arc<RwLock<Option<String>>>);
 
 impl LlmApiToken {
-    pub async fn acquire(&self, client: &Arc<Client>) -> Result<String> {
+    pub async fn acquire(
+        &self,
+        client: &CloudApiClient,
+        system_id: Option<String>,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String, ClientApiError> {
         let lock = self.0.upgradable_read().await;
         if let Some(token) = lock.as_ref() {
             Ok(token.to_string())
         } else {
-            Self::fetch(RwLockUpgradableReadGuard::upgrade(lock).await, client).await
+            Self::fetch(
+                RwLockUpgradableReadGuard::upgrade(lock).await,
+                client,
+                system_id,
+                organization_id,
+            )
+            .await
         }
     }
 
-    pub async fn refresh(&self, client: &Arc<Client>) -> Result<String> {
-        Self::fetch(self.0.write().await, client).await
+    pub async fn refresh(
+        &self,
+        client: &CloudApiClient,
+        system_id: Option<String>,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String, ClientApiError> {
+        Self::fetch(self.0.write().await, client, system_id, organization_id).await
+    }
+
+    /// Clears the existing token before attempting to fetch a new one.
+    ///
+    /// Used when switching organizations so that a failed refresh doesn't
+    /// leave a token for the wrong organization.
+    pub async fn clear_and_refresh(
+        &self,
+        client: &CloudApiClient,
+        system_id: Option<String>,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String, ClientApiError> {
+        let mut lock = self.0.write().await;
+        *lock = None;
+        Self::fetch(lock, client, system_id, organization_id).await
     }
 
     async fn fetch(
         mut lock: RwLockWriteGuard<'_, Option<String>>,
-        client: &Arc<Client>,
-    ) -> Result<String> {
-        let system_id = client
-            .telemetry()
-            .system_id()
-            .map(|system_id| system_id.to_string());
-
-        let result = client.cloud_client().create_llm_token(system_id).await;
+        client: &CloudApiClient,
+        system_id: Option<String>,
+        organization_id: Option<OrganizationId>,
+    ) -> Result<String, ClientApiError> {
+        let result = client.create_llm_token(system_id, organization_id).await;
         match result {
             Ok(response) => {
                 *lock = Some(response.token.0.clone());
                 Ok(response.token.0)
             }
-            Err(err) => match err {
-                ClientApiError::Unauthorized => {
-                    client.request_sign_out();
-                    Err(err).context("Failed to create LLM token")
-                }
-                ClientApiError::Other(err) => Err(err),
-            },
-        }
-    }
-}
-
-pub trait NeedsLlmTokenRefresh {
-    /// Returns whether the LLM token needs to be refreshed.
-    fn needs_llm_token_refresh(&self) -> bool;
-}
-
-impl NeedsLlmTokenRefresh for http_client::Response<http_client::AsyncBody> {
-    fn needs_llm_token_refresh(&self) -> bool {
-        self.headers().get(EXPIRED_LLM_TOKEN_HEADER_NAME).is_some()
-            || self.headers().get(OUTDATED_LLM_TOKEN_HEADER_NAME).is_some()
-    }
-}
-
-struct GlobalRefreshLlmTokenListener(Entity<RefreshLlmTokenListener>);
-
-impl Global for GlobalRefreshLlmTokenListener {}
-
-pub struct RefreshLlmTokenEvent;
-
-pub struct RefreshLlmTokenListener;
-
-impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
-
-impl RefreshLlmTokenListener {
-    pub fn register(client: Arc<Client>, cx: &mut App) {
-        let listener = cx.new(|cx| RefreshLlmTokenListener::new(client, cx));
-        cx.set_global(GlobalRefreshLlmTokenListener(listener));
-    }
-
-    pub fn global(cx: &App) -> Entity<Self> {
-        GlobalRefreshLlmTokenListener::global(cx).0.clone()
-    }
-
-    fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
-        client.add_message_to_client_handler({
-            let this = cx.entity();
-            move |message, cx| {
-                Self::handle_refresh_llm_token(this.clone(), message, cx);
-            }
-        });
-
-        Self
-    }
-
-    fn handle_refresh_llm_token(this: Entity<Self>, message: &MessageToClient, cx: &mut App) {
-        match message {
-            MessageToClient::UserUpdated => {
-                this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent));
+            Err(err) => {
+                *lock = None;
+                Err(err)
             }
         }
     }

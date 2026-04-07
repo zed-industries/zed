@@ -38,6 +38,7 @@ pub struct ChannelStore {
     channel_invitations: Vec<Arc<Channel>>,
     channel_participants: HashMap<ChannelId, Vec<Arc<User>>>,
     channel_states: HashMap<ChannelId, ChannelState>,
+    favorite_channel_ids: Vec<ChannelId>,
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
     opened_buffers: HashMap<ChannelId, OpenEntityHandle<ChannelBuffer>>,
@@ -156,6 +157,36 @@ impl ChannelStore {
         cx.global::<GlobalChannelStore>().0.clone()
     }
 
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalChannelStore>().map(|g| g.0.clone())
+    }
+
+    pub fn favorite_channel_ids(&self) -> &[ChannelId] {
+        &self.favorite_channel_ids
+    }
+
+    pub fn is_channel_favorited(&self, channel_id: ChannelId) -> bool {
+        self.favorite_channel_ids.contains(&channel_id)
+    }
+
+    pub fn toggle_favorite_channel(&mut self, channel_id: ChannelId, cx: &mut Context<Self>) {
+        if let Some(ix) = self
+            .favorite_channel_ids
+            .iter()
+            .position(|id| *id == channel_id)
+        {
+            self.favorite_channel_ids.remove(ix);
+        } else {
+            self.favorite_channel_ids.push(channel_id);
+        }
+        cx.notify();
+    }
+
+    pub fn set_favorite_channel_ids(&mut self, ids: Vec<ChannelId>, cx: &mut Context<Self>) {
+        self.favorite_channel_ids = ids;
+        cx.notify();
+    }
+
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let rpc_subscriptions = [
             client.add_message_handler(cx.weak_entity(), Self::handle_update_channels),
@@ -213,6 +244,7 @@ impl ChannelStore {
                 .log_err();
             }),
             channel_states: Default::default(),
+            favorite_channel_ids: Vec::default(),
             did_subscribe: false,
             channels_loaded: watch::channel_with(false),
         }
@@ -855,12 +887,18 @@ impl ChannelStore {
             if let OpenEntityHandle::Open(buffer) = buffer
                 && let Some(buffer) = buffer.upgrade()
             {
-                let channel_buffer = buffer.read(cx);
-                let buffer = channel_buffer.buffer().read(cx);
-                buffer_versions.push(proto::ChannelBufferVersion {
-                    channel_id: channel_buffer.channel_id.0,
-                    epoch: channel_buffer.epoch(),
-                    version: language::proto::serialize_version(&buffer.version()),
+                buffer.update(cx, |channel_buffer, cx| {
+                    // Block on_buffer_update from sending UpdateChannelBuffer messages
+                    // until the rejoin completes. This prevents a race condition where
+                    // edits made during the rejoin async gap could inflate the server
+                    // version, causing offline edits to be filtered out by serialize_ops.
+                    channel_buffer.set_rejoining(true);
+                    let inner_buffer = channel_buffer.buffer().read(cx);
+                    buffer_versions.push(proto::ChannelBufferVersion {
+                        channel_id: channel_buffer.channel_id.0,
+                        epoch: channel_buffer.epoch(),
+                        version: language::proto::serialize_version(&inner_buffer.version()),
+                    });
                 });
             }
         }
@@ -874,7 +912,26 @@ impl ChannelStore {
         });
 
         cx.spawn(async move |this, cx| {
-            let mut response = response.await?;
+            let response = match response.await {
+                Ok(response) => response,
+                Err(err) => {
+                    // Clear rejoining flag on all buffers since the rejoin failed
+                    this.update(cx, |this, cx| {
+                        for buffer in this.opened_buffers.values() {
+                            if let OpenEntityHandle::Open(buffer) = buffer {
+                                if let Some(buffer) = buffer.upgrade() {
+                                    buffer.update(cx, |channel_buffer, _| {
+                                        channel_buffer.set_rejoining(false);
+                                    });
+                                }
+                            }
+                        }
+                    })
+                    .ok();
+                    return Err(err);
+                }
+            };
+            let mut response = response;
 
             this.update(cx, |this, cx| {
                 this.opened_buffers.retain(|_, buffer| match buffer {
@@ -948,6 +1005,22 @@ impl ChannelStore {
     fn handle_disconnect(&mut self, wait_for_reconnect: bool, cx: &mut Context<Self>) {
         cx.notify();
         self.did_subscribe = false;
+
+        // If we're waiting for reconnect, set rejoining=true on all buffers immediately.
+        // This prevents operations from being sent during the reconnection window,
+        // before handle_connect has a chance to run and capture the version.
+        if wait_for_reconnect {
+            for buffer in self.opened_buffers.values() {
+                if let OpenEntityHandle::Open(buffer) = buffer {
+                    if let Some(buffer) = buffer.upgrade() {
+                        buffer.update(cx, |channel_buffer, _| {
+                            channel_buffer.set_rejoining(true);
+                        });
+                    }
+                }
+            }
+        }
+
         self.disconnect_channel_buffers_task.get_or_insert_with(|| {
             cx.spawn(async move |this, cx| {
                 if wait_for_reconnect {
@@ -1021,6 +1094,8 @@ impl ChannelStore {
                 self.channel_index.delete_channels(&delete_channels);
                 self.channel_participants
                     .retain(|channel_id, _| !delete_channels.contains(channel_id));
+                self.favorite_channel_ids
+                    .retain(|channel_id| !delete_channels.contains(channel_id));
 
                 for channel_id in &delete_channels {
                     let channel_id = *channel_id;

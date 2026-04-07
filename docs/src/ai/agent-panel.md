@@ -34,7 +34,7 @@ The sections below cover what you can do from here.
 
 By default, the Agent Panel uses Zed's first-party agent.
 
-To choose another agent, go to the plus button in the top-right of the Agent Panel and pick either one of the [external agents](./external-agents.md) installed out of the box or a new [Text Thread](./text-threads.md).
+To choose another agent, go to the plus button in the top-right of the Agent Panel and pick one of the [external agents](./external-agents.md) installed out of the box.
 
 ### Editing Messages {#editing-messages}
 
@@ -67,7 +67,9 @@ Right-click on any agent response in the thread view to access a context menu wi
 
 ### Navigating the Thread {#navigating-the-thread}
 
-In long conversations, use the scroll arrow buttons at the bottom of the panel to jump to your most recent prompt or to the very beginning of the thread.
+In long conversations, use the scroll arrow buttons at the bottom of the panel to jump to your most recent prompt or to the very beginning of the thread. You can also scroll the thread using arrow keys, Page Up/Down, Home/End, and Shift+Page Up/Down to jump between messages, when the thread pane is focused.
+
+When focus is in the message editor, you can also use {#kb agent::ScrollOutputPageUp}, {#kb agent::ScrollOutputPageDown}, {#kb agent::ScrollOutputToTop}, {#kb agent::ScrollOutputToBottom}, {#kb agent::ScrollOutputLineUp}, and {#kb agent::ScrollOutputLineDown} to navigate the thread, or {#kb agent::ScrollOutputToPreviousMessage} and {#kb agent::ScrollOutputToNextMessage} to jump between your prompts.
 
 ### Navigating History {#navigating-history}
 
@@ -114,14 +116,20 @@ The agent can search your codebase to find relevant context, but providing it ex
 Add context by typing `@` in the message editor.
 You can mention files, directories, symbols, previous threads, rules files, and diagnostics.
 
-Copying images and pasting them in the panel's message editor is also supported.
-
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
 
 ### Selection as Context
 
 Additionally, you can also select text in a buffer or terminal and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `+` menu in the message editor.
+
+### Images as Context
+
+It's also possible to attach images in your prompt for providers that support vision models.
+OpenAI GPT-4o and later, Anthropic Claude 3 and later, Google Gemini 1.5 and 2.0, and Bedrock vision models (Claude 3+, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision, Mistral Pixtral) all support image inputs.
+
+To add an image, you can either search in your project's directory by @-mentioning it, or drag it from your file system directly into the agent panel message editor.
+Copying an image and pasting it is also supported.
 
 ## Token Usage {#token-usage}
 
@@ -168,7 +176,7 @@ You can explore the exact tools enabled in each profile by clicking on the profi
 
 Alternatively, you can also use either the command palette, by running {#action agent::ManageProfiles}, or the keybinding directly, {#kb agent::ManageProfiles}, to have access to the profile management modal.
 
-Use {#kb agent::CycleModeSelector} to switch between profiles without opening the modal.
+Use {#kb agent::CycleModeSelector} to cycle through available profiles without opening the modal.
 
 #### Custom Profiles {#custom-profiles}
 
@@ -215,15 +223,6 @@ All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 
 Similarly to the built-in tools, some models may not support all tools included in a given MCP Server.
 Zed's UI will inform you about this via a warning icon that appears close to the model selector.
-
-## Text Threads {#text-threads}
-
-["Text Threads"](./text-threads.md) present your conversation with the LLM in a different format—as raw text.
-With text threads, you have full control over the conversation data.
-You can remove and edit responses from the LLM, swap roles, and include more context earlier in the conversation.
-
-Text threads are Zed's original assistant panel format, preserved for users who want direct control over conversation data.
-Autonomous code editing (where the agent writes to files) is only available in the default thread format, not text threads.
 
 ## Errors and Debugging {#errors-and-debugging}
 

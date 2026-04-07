@@ -9,8 +9,8 @@ use itertools::Itertools;
 use language::CodeLabel;
 use language::{Buffer, LanguageName, LanguageRegistry};
 use lsp::CompletionItemTag;
-use markdown::{Markdown, MarkdownElement};
-use multi_buffer::{Anchor, ExcerptId};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
+use multi_buffer::Anchor;
 use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
@@ -287,13 +287,8 @@ impl Drop for CompletionsMenu {
     }
 }
 
+#[derive(Default)]
 struct CompletionMenuScrollBarSetting;
-
-impl ui::scrollbars::GlobalSetting for CompletionMenuScrollBarSetting {
-    fn get_value(_cx: &App) -> &Self {
-        &Self
-    }
-}
 
 impl ui::scrollbars::ScrollbarVisibility for CompletionMenuScrollBarSetting {
     fn visibility(&self, cx: &App) -> ui::scrollbars::ShowScrollbar {
@@ -362,7 +357,8 @@ impl CompletionsMenu {
         id: CompletionId,
         sort_completions: bool,
         choices: &Vec<String>,
-        selection: Range<Anchor>,
+        initial_position: Anchor,
+        selection: Range<text::Anchor>,
         buffer: Entity<Buffer>,
         scroll_handle: Option<UniformListScrollHandle>,
         snippet_sort_order: SnippetSortOrder,
@@ -370,7 +366,7 @@ impl CompletionsMenu {
         let completions = choices
             .iter()
             .map(|choice| Completion {
-                replace_range: selection.start.text_anchor..selection.end.text_anchor,
+                replace_range: selection.clone(),
                 new_text: choice.to_string(),
                 label: CodeLabel::plain(choice.to_string(), None),
                 match_start: None,
@@ -405,7 +401,7 @@ impl CompletionsMenu {
             id,
             source: CompletionsMenuSource::SnippetChoices,
             sort_completions,
-            initial_position: selection.start,
+            initial_position,
             initial_query: None,
             is_incomplete: false,
             buffer,
@@ -1123,8 +1119,7 @@ impl CompletionsMenu {
         div().child(
             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                    copy_button: false,
-                    copy_button_on_hover: false,
+                    copy_button_visibility: CopyButtonVisibility::Hidden,
                     border: false,
                 })
                 .on_url_click(open_markdown_url),
@@ -1386,7 +1381,6 @@ impl CompletionsMenu {
 
 #[derive(Clone)]
 pub struct AvailableCodeAction {
-    pub excerpt_id: ExcerptId,
     pub action: CodeAction,
     pub provider: Rc<dyn CodeActionProvider>,
 }
@@ -1439,7 +1433,6 @@ impl CodeActionContents {
             })
             .chain(self.actions.iter().flat_map(|actions| {
                 actions.iter().map(|available| CodeActionsItem::CodeAction {
-                    excerpt_id: available.excerpt_id,
                     action: available.action.clone(),
                     provider: available.provider.clone(),
                 })
@@ -1463,7 +1456,6 @@ impl CodeActionContents {
         if let Some(actions) = &self.actions {
             if let Some(available) = actions.get(index) {
                 return Some(CodeActionsItem::CodeAction {
-                    excerpt_id: available.excerpt_id,
                     action: available.action.clone(),
                     provider: available.provider.clone(),
                 });
@@ -1483,7 +1475,6 @@ impl CodeActionContents {
 pub enum CodeActionsItem {
     Task(TaskSourceKind, ResolvedTask),
     CodeAction {
-        excerpt_id: ExcerptId,
         action: CodeAction,
         provider: Rc<dyn CodeActionProvider>,
     },
