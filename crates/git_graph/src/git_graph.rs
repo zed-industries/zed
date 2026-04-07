@@ -2536,11 +2536,19 @@ impl Render for GitGraph {
             }
         };
 
+        let error = self.get_repository(cx).and_then(|repo| {
+            repo.read(cx)
+                .get_graph_data(self.log_source.clone(), self.log_order)
+                .and_then(|data| data.error.clone())
+        });
+
         let content = if commit_count == 0 {
-            let message = if is_loading {
-                "Loading"
+            let message = if let Some(error) = &error {
+                format!("Error loading: {}", error)
+            } else if is_loading {
+                "Loading".to_string()
             } else {
-                "No commits found"
+                "No commits found".to_string()
             };
             let label = Label::new(message)
                 .color(Color::Muted)
@@ -2552,7 +2560,7 @@ impl Render for GitGraph {
                 .items_center()
                 .justify_center()
                 .child(label)
-                .when(is_loading, |this| {
+                .when(is_loading && error.is_none(), |this| {
                     this.child(self.render_loading_spinner(cx))
                 })
         } else {
@@ -3754,6 +3762,61 @@ mod tests {
             commits.len(),
             commit_count_after,
             "initial_graph_data should remain populated after events emitted by initial repository scan"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_propagates_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        fs.set_graph_error(
+            Path::new("/project/.git"),
+            Some("fatal: bad default revision 'HEAD'".to_string()),
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        repository.update(cx, |repo, cx| {
+            repo.graph_data(
+                crate::LogSource::default(),
+                crate::LogOrder::default(),
+                0..usize::MAX,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        let error = repository.read_with(cx, |repo, _| {
+            repo.get_graph_data(crate::LogSource::default(), crate::LogOrder::default())
+                .and_then(|data| data.error.clone())
+        });
+
+        assert!(
+            error.is_some(),
+            "graph data should contain an error after initial_graph_data fails"
+        );
+        let error_message = error.unwrap();
+        assert!(
+            error_message.contains("bad default revision"),
+            "error should contain the git error message, got: {}",
+            error_message
         );
     }
 

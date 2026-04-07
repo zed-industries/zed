@@ -2784,10 +2784,11 @@ impl GitRepository for RealGitRepository {
                 log_source.get_arg()?,
             ]);
             command.stdout(Stdio::piped());
-            command.stderr(Stdio::null());
+            command.stderr(Stdio::piped());
 
             let mut child = command.spawn()?;
             let stdout = child.stdout.take().context("failed to get stdout")?;
+            let stderr = child.stderr.take().context("failed to get stderr")?;
             let mut reader = BufReader::new(stdout);
 
             let mut line_buffer = String::new();
@@ -2822,7 +2823,20 @@ impl GitRepository for RealGitRepository {
                 }
             }
 
-            child.status().await?;
+            let status = child.status().await?;
+            if !status.success() {
+                let mut stderr_output = String::new();
+                BufReader::new(stderr)
+                    .read_to_string(&mut stderr_output)
+                    .await
+                    .log_err();
+
+                if stderr_output.is_empty() {
+                    anyhow::bail!("git log command failed with {}", status);
+                } else {
+                    anyhow::bail!("git log command failed with {}: {}", status, stderr_output);
+                }
+            }
             Ok(())
         }
         .boxed()

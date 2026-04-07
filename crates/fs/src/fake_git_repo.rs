@@ -61,6 +61,7 @@ pub struct FakeGitRepositoryState {
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub simulated_create_worktree_error: Option<String>,
+    pub simulated_graph_error: Option<String>,
     pub refs: HashMap<String, String>,
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub stash_entries: GitStash,
@@ -78,6 +79,7 @@ impl FakeGitRepositoryState {
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
             simulated_create_worktree_error: Default::default(),
+            simulated_graph_error: None,
             refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
             merge_base_contents: Default::default(),
             oids: Default::default(),
@@ -1327,8 +1329,17 @@ impl GitRepository for FakeGitRepository {
         let fs = self.fs.clone();
         let dot_git_path = self.dot_git_path.clone();
         async move {
-            let graph_commits =
-                fs.with_git_state(&dot_git_path, false, |state| state.graph_commits.clone())?;
+            let (graph_commits, simulated_error) =
+                fs.with_git_state(&dot_git_path, false, |state| {
+                    (
+                        state.graph_commits.clone(),
+                        state.simulated_graph_error.clone(),
+                    )
+                })?;
+
+            if let Some(error) = simulated_error {
+                anyhow::bail!("{}", error);
+            }
 
             for chunk in graph_commits.chunks(GRAPH_CHUNK_SIZE) {
                 request_tx.send(chunk.to_vec()).await.ok();
