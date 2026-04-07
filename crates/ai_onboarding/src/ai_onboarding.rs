@@ -453,24 +453,26 @@ pub struct AgentLayoutOnboarding {
 
 impl Render for AgentLayoutOnboarding {
     fn render(&mut self, _window: &mut ui::Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let description = "Introducing a threads sidebar, positioned in the far left of your workspace, that allows you to manage agents across many projects. Your agent thread lives right to the side of it, and all other panels move to the right.";
+        let description = "The new threads sidebar, positioned in the far left of your workspace, allows you to manage agents across many projects. Your agent thread lives alongside it, and all other panels live on the right.";
 
-        let dismiss_button = Button::new("old_default", "Maybe Later")
-            .label_size(LabelSize::Small)
-            .on_click({
-                let dismiss = self.dismissed.clone();
-                telemetry::event!("Agentic Layout Onboarding Dismissed");
-                move |_, window, cx| dismiss(window, cx)
-            });
+        let dismiss_button = div().absolute().top_1().right_1().child(
+            IconButton::new("dismiss", IconName::Close)
+                .icon_size(IconSize::Small)
+                .on_click({
+                    let dismiss = self.dismissed.clone();
+                    telemetry::event!("Agentic Layout Onboarding Dismissed");
+                    move |_, window, cx| dismiss(window, cx)
+                }),
+        );
 
         let primary_button = if self.is_agent_layout {
-            Button::new("revert", "Revert to Editor Layout")
+            Button::new("revert", "Use Previous Layout")
                 .label_size(LabelSize::Small)
                 .style(ButtonStyle::Outlined)
                 .on_click({
                     let revert = self.revert_to_editor_layout.clone();
                     let dismiss = self.dismissed.clone();
-                    telemetry::event!("Revert To Editor Layout");
+                    telemetry::event!("Clicked to Use Previous Layout");
                     move |_, window, cx| {
                         revert(window, cx);
                         dismiss(window, cx);
@@ -483,7 +485,7 @@ impl Render for AgentLayoutOnboarding {
                 .on_click({
                     let use_layout = self.use_agent_layout.clone();
                     let dismiss = self.dismissed.clone();
-                    telemetry::event!("Use New Agentic Layout");
+                    telemetry::event!("Clicked to Use New Layout");
                     move |_, window, cx| {
                         use_layout(window, cx);
                         dismiss(window, cx);
@@ -500,12 +502,8 @@ impl Render for AgentLayoutOnboarding {
             .child(Label::new(description).color(Color::Muted).mb_2())
             .child(
                 List::new()
-                    .child(ListBulletItem::new(
-                        "Use your favorite agents and run them in parallel",
-                    ))
-                    .child(ListBulletItem::new(
-                        "Isolate agents from each other using worktrees",
-                    ))
+                    .child(ListBulletItem::new("Use your favorite agents in parallel"))
+                    .child(ListBulletItem::new("Isolate agents using worktrees"))
                     .child(ListBulletItem::new(
                         "Combine multiple projects in one window",
                     )),
@@ -516,9 +514,9 @@ impl Render for AgentLayoutOnboarding {
                     .gap_1()
                     .flex_wrap()
                     .justify_end()
-                    .child(dismiss_button)
                     .child(primary_button),
-            );
+            )
+            .child(dismiss_button);
 
         AgentPanelOnboardingCard::new().child(content)
     }

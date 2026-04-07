@@ -358,7 +358,7 @@ impl WelcomePage {
                             .color(Color::Muted)
                             .size(IconSize::Small),
                     )
-                    .child(Label::new("Get Started with Agents")),
+                    .child(Label::new("Collaborate with Agents")),
             )
             .child(
                 Label::new(description)

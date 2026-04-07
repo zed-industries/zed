@@ -26,9 +26,9 @@ impl AnnouncementToast {
             heading: None,
             description: None,
             bullet_items: SmallVec::new(),
-            primary_action_label: "Learn More".into(),
+            primary_action_label: "Try Now".into(),
             primary_on_click: Box::new(|_, _, _| {}),
-            secondary_action_label: "View Release Notes".into(),
+            secondary_action_label: "Learn More".into(),
             secondary_on_click: Box::new(|_, _, _| {}),
             dismiss_on_click: Box::new(|_, _, _| {}),
         }
@@ -134,12 +134,13 @@ impl RenderOnce for AnnouncementToast {
                             .gap_1()
                             .child(
                                 Button::new("try-now", self.primary_action_label)
-                                    .style(ButtonStyle::Outlined)
+                                    .style(ButtonStyle::Tinted(crate::TintColor::Accent))
                                     .full_width()
                                     .on_click(self.primary_on_click),
                             )
                             .child(
                                 Button::new("release-notes", self.secondary_action_label)
+                                    .style(ButtonStyle::OutlinedGhost)
                                     .full_width()
                                     .on_click(self.secondary_on_click),
                             ),
@@ -208,19 +209,26 @@ impl Component for AnnouncementToast {
 
         let examples = vec![single_example(
             "Basic",
-            div().w_80().child(
-                AnnouncementToast::new()
-                    .illustration(illustration)
-                    .heading("What's new in Zed")
-                    .description(
-                        "This version comes in with some changes to the workspace for a better experience.",
-                    )
-                    .bullet_item(ListBulletItem::new("Improved agent performance"))
-                    .bullet_item(ListBulletItem::new("New agentic features"))
-                    .bullet_item(ListBulletItem::new("Better agent capabilities"))
-
-            )
-            .into_any_element(),
+            div()
+                .w_80()
+                .child(
+                    AnnouncementToast::new()
+                        .illustration(illustration)
+                        .heading("Introducing Parallel Agents")
+                        .description("Run multiple agent threads simultaneously across projects.")
+                        .bullet_item(ListBulletItem::new(
+                            "Mix and match Zed's agent with any ACP-compatible agent",
+                        ))
+                        .bullet_item(ListBulletItem::new(
+                            "Optional worktree isolation keeps agents from conflicting",
+                        ))
+                        .bullet_item(ListBulletItem::new(
+                            "Updated workspace layout designed for agentic workflows",
+                        ))
+                        .primary_action_label("Try Now")
+                        .secondary_action_label("Learn More"),
+                )
+                .into_any_element(),
         )];
 
         Some(

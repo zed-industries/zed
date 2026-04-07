@@ -175,6 +175,7 @@ struct AnnouncementContent {
     primary_action_label: SharedString,
     primary_action_url: Option<SharedString>,
     primary_action_callback: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
+    secondary_action_url: Option<SharedString>,
     on_dismiss: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
 }
 
@@ -195,19 +196,16 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                     matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
 
                 Some(AnnouncementContent {
-                    heading: "What's new in Zed 0.232".into(),
-                    description: "This release includes some exciting improvements.".into(),
+                    heading: "Introducing Parallel Agents".into(),
+                    description: "Run multiple agent threads simultaneously across projects."
+                        .into(),
                     bullet_items: vec![
-                        "Improved agent performance".into(),
-                        "New agentic features".into(),
-                        "Better agent capabilities".into(),
+                        "Mix and match Zed's agent with any ACP-compatible agent".into(),
+                        "Optional worktree isolation keeps agents from conflicting".into(),
+                        "Updated workspace layout designed for agentic workflows".into(),
                     ],
-                    primary_action_label: if already_agent_layout {
-                        "Learn More".into()
-                    } else {
-                        "Try It Now".into()
-                    },
-                    primary_action_url: Some("https://zed.dev/".into()),
+                    primary_action_label: "Try Now".into(),
+                    primary_action_url: None,
                     primary_action_callback: if already_agent_layout {
                         None
                     } else {
@@ -218,6 +216,7 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                     on_dismiss: Some(Arc::new(|cx| {
                         ParallelAgentAnnouncement::set_dismissed(true, cx)
                     })),
+                    secondary_action_url: Some("https://zed.dev/blog/parallel-agents".into()),
                 })
             }
         }
@@ -283,7 +282,7 @@ impl Render for AnnouncementToastNotification {
                 }
             }))
             .secondary_on_click(cx.listener({
-                let url = self.content.primary_action_url.clone();
+                let url = self.content.secondary_action_url.clone();
                 telemetry::event!("Parallel Agent Announcement Secondary Click");
                 move |this, _, _window, cx| {
                     if let Some(url) = &url {
