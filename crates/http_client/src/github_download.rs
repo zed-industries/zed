@@ -226,14 +226,12 @@ async fn unpack_tar_archive(
     url: &str,
     archive_bytes: impl AsyncRead + Unpin,
 ) -> Result<(), anyhow::Error> {
-    let mut archive = async_tar::ArchiveBuilder::new(archive_bytes);
-
     // We don't need to set the modified time. It's irrelevant to downloaded
     // archive verification, and some filesystems return errors when asked to
     // apply it after extraction.
-    archive.set_preserve_mtime(false);
-
-    let archive = archive.build();
+    let archive = async_tar::ArchiveBuilder::new(archive_bytes)
+        .set_preserve_mtime(false)
+        .build();
     archive
         .unpack(&destination_path)
         .await
