@@ -557,6 +557,11 @@ impl ThreadsArchiveView {
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
+                            let side = match AgentSettings::get_global(cx).sidebar_side() {
+                                settings::SidebarSide::Left => "left",
+                                settings::SidebarSide::Right => "right",
+                            };
+                            telemetry::event!("Archived Thread Opened", side = side);
                             this.unarchive_thread(thread.clone(), window, cx);
                         })
                     })

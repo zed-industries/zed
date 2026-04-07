@@ -80,6 +80,11 @@ pub fn sidebar_side_context_menu(
                     IconPosition::Start,
                     None,
                     move |_window, cx| {
+                        let side = match position {
+                            SidebarDockPosition::Left => "left",
+                            SidebarDockPosition::Right => "right",
+                        };
+                        telemetry::event!("Sidebar Side Changed", side = side);
                         settings::update_settings_file(fs.clone(), cx, move |settings, _cx| {
                             settings
                                 .agent

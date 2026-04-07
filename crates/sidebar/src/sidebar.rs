@@ -3841,7 +3841,14 @@ impl Sidebar {
 
     fn toggle_archive(&mut self, _: &ToggleArchive, window: &mut Window, cx: &mut Context<Self>) {
         match &self.view {
-            SidebarView::ThreadList => self.show_archive(window, cx),
+            SidebarView::ThreadList => {
+                let side = match AgentSettings::get_global(cx).sidebar_side() {
+                    SidebarSide::Left => "left",
+                    SidebarSide::Right => "right",
+                };
+                telemetry::event!("Sidebar Archive Viewed", side = side);
+                self.show_archive(window, cx);
+            }
             SidebarView::Archive(_) => self.show_thread_list(window, cx),
         }
     }

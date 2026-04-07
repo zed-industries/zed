@@ -655,6 +655,10 @@ impl ConversationView {
         let connect_result = connection_entry.read(cx).wait_for_connection();
 
         let load_session_id = resume_session_id.clone();
+        let side = match AgentSettings::get_global(cx).dock {
+            settings::DockPosition::Left => "left",
+            settings::DockPosition::Right | settings::DockPosition::Bottom => "right",
+        };
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let (connection, history) = match connect_result.await {
                 Ok(AgentConnectedState {
@@ -671,7 +675,11 @@ impl ConversationView {
                 }
             };
 
-            telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
+            telemetry::event!(
+                "Agent Thread Started",
+                agent = connection.telemetry_id(),
+                side = side
+            );
 
             let mut resumed_without_history = false;
             let result = if let Some(session_id) = load_session_id.clone() {
