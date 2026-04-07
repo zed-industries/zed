@@ -3736,12 +3736,12 @@ impl BufferSnapshot {
     pub fn chunks<T: ToOffset>(
         &self,
         range: Range<T>,
-        language_aware: LanguageAware,
+        language_aware: LanguageAwareStyling,
     ) -> BufferChunks<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
-        if language_aware.tree_sitter_syntax {
+        if language_aware.tree_sitter {
             syntax = Some(self.get_highlights(range.clone()));
         }
         BufferChunks::new(
@@ -4485,7 +4485,13 @@ impl BufferSnapshot {
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
-        let mut chunks = self.chunks(source_range_for_text.clone(), true.into());
+        let mut chunks = self.chunks(
+            source_range_for_text.clone(),
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: true,
+            },
+        );
         let mut last_buffer_range_end = 0;
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
@@ -5410,7 +5416,13 @@ impl BufferSnapshot {
         let mut words = BTreeMap::default();
         let mut current_word_start_ix = None;
         let mut chunk_ix = query.range.start;
-        for chunk in self.chunks(query.range, false.into()) {
+        for chunk in self.chunks(
+            query.range,
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+        ) {
             for (i, c) in chunk.text.char_indices() {
                 let ix = chunk_ix + i;
                 if classifier.is_word(c) {
@@ -5449,19 +5461,13 @@ impl BufferSnapshot {
     }
 }
 
+/// A configuration to use when producing styled text chunks.
 #[derive(Clone, Copy)]
-pub struct LanguageAware {
-    pub tree_sitter_syntax: bool,
+pub struct LanguageAwareStyling {
+    /// Whether to highlight text chunks using tree-sitter.
+    pub tree_sitter: bool,
+    /// Whether to highlight text chunks based on the diagnostics data.
     pub diagnostics: bool,
-}
-
-impl From<bool> for LanguageAware {
-    fn from(value: bool) -> Self {
-        Self {
-            tree_sitter_syntax: value,
-            diagnostics: value,
-        }
-    }
 }
 
 pub struct WordsQuery<'a> {

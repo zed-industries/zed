@@ -475,13 +475,17 @@ mod tests {
     use gpui::{
         AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext, UpdateGlobal as _,
     };
-    use language::{Language, LanguageConfig, LanguageMatcher};
+    use language::{
+        Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageAwareStyling, LanguageConfig,
+        LanguageMatcher,
+    };
     use languages::FakeLspAdapter;
+    use lsp::LanguageServerId;
     use multi_buffer::{
         AnchorRangeExt, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset, PathKey,
     };
     use project::Project;
-    use rope::Point;
+    use rope::{Point, PointUtf16};
     use serde_json::json;
     use settings::{
         GlobalLspSettingsContent, LanguageSettingsContent, SemanticTokenRule, SemanticTokenRules,
@@ -2090,11 +2094,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_diagnostics_visible_when_semantic_token_set_to_full(cx: &mut TestAppContext) {
-        use language::{
-            Diagnostic, DiagnosticEntry, DiagnosticSet, LanguageAware, LanguageServerId,
-        };
-        use rope::PointUtf16;
-
         init_test(cx, |_| {});
 
         update_test_language_settings(cx, &|language_settings| {
@@ -2174,26 +2173,25 @@ mod tests {
 
         cx.run_until_parked();
         let chunks = cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let use_tree_sitter = !snapshot.semantic_tokens_enabled
-                || snapshot.use_tree_sitter_for_syntax(crate::display_map::DisplayRow(0), cx);
-
-            let mut chunks = Vec::new();
-            for chunk in snapshot.display_snapshot.chunks(
-                crate::display_map::DisplayRow(0)..crate::display_map::DisplayRow(1),
-                LanguageAware {
-                    tree_sitter_syntax: use_tree_sitter,
-                    diagnostics: true,
-                },
-                crate::HighlightStyles::default(),
-            ) {
-                chunks.push((
-                    chunk.text.to_string(),
-                    chunk.diagnostic_severity,
-                    chunk.highlight_style,
-                ));
-            }
-            chunks
+            editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .chunks(
+                    crate::display_map::DisplayRow(0)..crate::display_map::DisplayRow(1),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: true,
+                    },
+                    crate::HighlightStyles::default(),
+                )
+                .map(|chunk| {
+                    (
+                        chunk.text.to_string(),
+                        chunk.diagnostic_severity,
+                        chunk.highlight_style,
+                    )
+                })
+                .collect::<Vec<_>>()
         });
 
         assert_eq!(
