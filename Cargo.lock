@@ -288,6 +288,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "workspace",
  "zed_credentials_provider",
 ]
 

@@ -67,10 +67,15 @@ impl ProjectEnvironment {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_cli_environment(&mut self, env: HashMap<String, String>) {
+        self.cli_environment = Some(env);
+    }
+
     /// Returns the inherited CLI environment, if this project was opened from the Zed CLI.
     pub(crate) fn get_cli_environment(&self) -> Option<HashMap<String, String>> {
         if cfg!(any(test, feature = "test-support")) {
-            return Some(HashMap::default());
+            return Some(self.cli_environment.clone().unwrap_or_default());
         }
         if let Some(mut env) = self.cli_environment.clone() {
             set_origin_marker(&mut env, EnvironmentOrigin::Cli);

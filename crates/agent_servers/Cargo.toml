@@ -67,4 +67,6 @@ indoc.workspace = true
 acp_thread = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
+project = { workspace = true, features = ["test-support"] }
 reqwest_client = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

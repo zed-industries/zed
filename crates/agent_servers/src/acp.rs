@@ -187,6 +187,67 @@ pub async fn connect(
 
 const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::ProtocolVersion::V1;
 
+/// Resolved project context for spawning an agent server subprocess.
+///
+/// Contains the merged environment (project env as base, command-specific on top)
+/// and the working directory. Produced by [`resolve_agent_context`] and consumed
+/// by [`AcpConnection::stdio`] when building the actual process command.
+pub struct AgentContext {
+    pub path: PathBuf,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+    pub cwd: Option<PathBuf>,
+}
+
+impl AgentContext {
+    pub fn into_command(self, cx: &mut AsyncApp) -> std::process::Command {
+        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
+        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
+        let mut command =
+            builder.build_std_command(Some(self.path.display().to_string()), &self.args);
+        command.envs(self.env);
+        if let Some(cwd) = self.cwd {
+            command.current_dir(cwd);
+        }
+        command
+    }
+}
+
+/// Resolves the project environment (e.g. from direnv), working directory,
+/// and command details for spawning an agent server subprocess.
+///
+/// Project environment is applied first as a base layer, then command-specific
+/// env vars are applied on top, so explicit agent configuration takes precedence.
+pub async fn resolve_agent_context(
+    project: &Entity<Project>,
+    command: AgentServerCommand,
+    cx: &mut AsyncApp,
+) -> AgentContext {
+    let (env_task, cwd) = project.update(cx, |project, cx| {
+        let env_task = project
+            .environment()
+            .update(cx, |env, cx| env.default_environment(cx));
+        let cwd = if project.is_local() {
+            project
+                .default_path_list(cx)
+                .ordered_paths()
+                .next()
+                .cloned()
+        } else {
+            None
+        };
+        (env_task, cwd)
+    });
+    let mut env = env_task.await.unwrap_or_default();
+    env.extend(command.env.into_iter().flatten());
+    AgentContext {
+        path: command.path,
+        args: command.args,
+        env,
+        cwd,
+    }
+}
+
 impl AcpConnection {
     pub async fn stdio(
         agent_id: AgentId,
@@ -197,42 +258,18 @@ impl AcpConnection {
         default_config_options: HashMap<String, String>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let (env_task, cwd) = project.update(cx, |project, cx| {
-            let env_task = project
-                .environment()
-                .update(cx, |env, cx| env.default_environment(cx));
-            let cwd = if project.is_local() {
-                project
-                    .default_path_list(cx)
-                    .ordered_paths()
-                    .next()
-                    .cloned()
-            } else {
-                None
-            };
-            (env_task, cwd)
-        });
-        let project_env = env_task.await.unwrap_or_default();
-
-        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
-        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
-        let mut child =
-            builder.build_std_command(Some(command.path.display().to_string()), &command.args);
-        child.envs(project_env.iter());
-        child.envs(command.env.iter().flatten());
-        if let Some(cwd) = cwd {
-            child.current_dir(cwd);
-        }
-        let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
-
-        let stdout = child.stdout.take().context("Failed to take stdout")?;
-        let stdin = child.stdin.take().context("Failed to take stdin")?;
-        let stderr = child.stderr.take().context("Failed to take stderr")?;
         log::debug!(
             "Spawning external agent server: {:?}, {:?}",
             command.path,
             command.args
         );
+        let context = resolve_agent_context(&project, command.clone(), cx).await;
+        let child = context.into_command(cx);
+        let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
+
+        let stdout = child.stdout.take().context("Failed to take stdout")?;
+        let stdin = child.stdin.take().context("Failed to take stdin")?;
+        let stderr = child.stderr.take().context("Failed to take stderr")?;
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -1081,6 +1118,69 @@ fn map_acp_error(err: acp::Error) -> anyhow::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Verifies that `resolve_agent_context` incorporates the project environment
+    /// (e.g. from direnv) into the agent's environment, alongside agent-specific env.
+    #[gpui::test]
+    async fn test_resolve_agent_context_includes_project_environment(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = project::FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/project", serde_json::json!({"src": {}}))
+            .await;
+        let project = Project::test(fs, [std::path::Path::new("/project")], cx).await;
+
+        let mut project_env = collections::HashMap::default();
+        project_env.insert("DIRENV_VAR".to_string(), "from_direnv".to_string());
+        project_env.insert("CUSTOM_PATH".to_string(), "/direnv/bin".to_string());
+
+        project.update(cx, |project, cx| {
+            project.environment().update(cx, |env, _cx| {
+                env.set_cli_environment(project_env);
+            });
+        });
+
+        let command = AgentServerCommand {
+            path: PathBuf::from("agent-binary"),
+            args: vec![],
+            env: Some(
+                [("AGENT_SPECIFIC".to_string(), "from_agent".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+        };
+
+        let context = cx
+            .update(|cx| {
+                let project = project.clone();
+                let command = command.clone();
+                cx.spawn(async move |mut cx| {
+                    resolve_agent_context(&project, command, &mut cx).await
+                })
+            })
+            .await;
+
+        assert_eq!(
+            context.env.get("DIRENV_VAR").map(|s| s.as_str()),
+            Some("from_direnv"),
+            "Project environment variables (e.g. from direnv) should be included"
+        );
+        assert_eq!(
+            context.env.get("CUSTOM_PATH").map(|s| s.as_str()),
+            Some("/direnv/bin"),
+            "Project PATH-like variables should be included"
+        );
+        assert_eq!(
+            context.env.get("AGENT_SPECIFIC").map(|s| s.as_str()),
+            Some("from_agent"),
+            "Agent-specific environment variables should be included"
+        );
+    }
 
     #[test]
     fn terminal_auth_task_reuses_command_and_merges_args_and_env() {
