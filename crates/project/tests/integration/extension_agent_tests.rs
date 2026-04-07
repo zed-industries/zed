@@ -1,9 +1,8 @@
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, AsyncApp, SharedString, Task, TestAppContext};
+use gpui::{AsyncApp, SharedString, Task, TestAppContext};
 use node_runtime::NodeRuntime;
-use project::worktree_store::WorktreeStore;
-use project::{agent_server_store::*, worktree_store::WorktreeIdCounter};
+use project::agent_server_store::*;
 use std::{any::Any, path::PathBuf, sync::Arc};
 
 #[test]
@@ -129,17 +128,11 @@ fn archive_launcher_constructs_with_all_fields() {
 async fn archive_agent_uses_extension_and_agent_id_for_cache_key(cx: &mut TestAppContext) {
     let fs = fs::FakeFs::new(cx.background_executor.clone());
     let http_client = http_client::FakeHttpClient::with_404_response();
-    let worktree_store =
-        cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
-    let project_environment = cx.new(|cx| {
-        crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
-    });
 
     let agent = LocalExtensionArchiveAgent {
         fs,
         http_client,
         node_runtime: node_runtime::NodeRuntime::unavailable(),
-        project_environment,
         extension_id: Arc::from("my-extension"),
         agent_id: Arc::from("my-agent"),
         version: Some(SharedString::from("1.0.0")),
@@ -213,17 +206,11 @@ async fn test_node_command_uses_managed_runtime(cx: &mut TestAppContext) {
     let fs = fs::FakeFs::new(cx.background_executor.clone());
     let http_client = http_client::FakeHttpClient::with_404_response();
     let node_runtime = NodeRuntime::unavailable();
-    let worktree_store =
-        cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
-    let project_environment = cx.new(|cx| {
-        crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
-    });
 
     let agent = LocalExtensionArchiveAgent {
         fs: fs.clone(),
         http_client,
         node_runtime,
-        project_environment,
         extension_id: Arc::from("node-extension"),
         agent_id: Arc::from("node-agent"),
         version: Some(SharedString::from("1.0.0")),
@@ -259,17 +246,11 @@ async fn test_commands_run_in_extraction_directory(cx: &mut TestAppContext) {
     let fs = fs::FakeFs::new(cx.background_executor.clone());
     let http_client = http_client::FakeHttpClient::with_404_response();
     let node_runtime = NodeRuntime::unavailable();
-    let worktree_store =
-        cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
-    let project_environment = cx.new(|cx| {
-        crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
-    });
 
     let agent = LocalExtensionArchiveAgent {
         fs: fs.clone(),
         http_client,
         node_runtime,
-        project_environment,
         extension_id: Arc::from("test-ext"),
         agent_id: Arc::from("test-agent"),
         version: Some(SharedString::from("1.0.0")),
