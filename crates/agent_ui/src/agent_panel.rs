@@ -2503,49 +2503,66 @@ impl AgentPanel {
         };
 
         // Rollback all attempted worktrees (both successful and failed)
-        let mut rollback_receivers = Vec::new();
+        let mut rollback_futures = Vec::new();
         for (rollback_repo, rollback_path) in &repos_and_paths {
-            if let Ok(receiver) = cx.update(|_, cx| {
-                rollback_repo.update(cx, |repo, _cx| {
-                    repo.remove_worktree(rollback_path.clone(), true)
+            let receiver = cx
+                .update(|_, cx| {
+                    rollback_repo.update(cx, |repo, _cx| {
+                        repo.remove_worktree(rollback_path.clone(), true)
+                    })
                 })
-            }) {
-                rollback_receivers.push((rollback_path.clone(), receiver));
-            }
+                .ok();
+
+            rollback_futures.push((rollback_path.clone(), receiver));
         }
+
         let mut rollback_failures: Vec<String> = Vec::new();
-        for (path, receiver) in rollback_receivers {
-            match receiver.await {
-                Ok(Ok(())) => {}
-                Ok(Err(rollback_err)) => {
-                    log::error!(
-                        "git worktree remove failed for {}: {rollback_err}",
-                        path.display()
-                    );
+        for (path, receiver_opt) in rollback_futures {
+            let mut git_remove_failed = false;
+
+            if let Some(receiver) = receiver_opt {
+                match receiver.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(rollback_err)) => {
+                        log::error!(
+                            "git worktree remove failed for {}: {rollback_err}",
+                            path.display()
+                        );
+                        git_remove_failed = true;
+                    }
+                    Err(canceled) => {
+                        log::error!(
+                            "git worktree remove failed for {}: {canceled}",
+                            path.display()
+                        );
+                        git_remove_failed = true;
+                    }
                 }
-                Err(canceled) => {
-                    log::error!(
-                        "git worktree remove failed for {}: {canceled}",
-                        path.display()
-                    );
-                }
+            } else {
+                log::error!(
+                    "failed to dispatch git worktree remove for {}",
+                    path.display()
+                );
+                git_remove_failed = true;
             }
 
             // `git worktree remove` normally removes this directory, but since
-            // `git worktree remove` failed, manually rm the directory.
-            if let Err(fs_err) = fs
-                .remove_dir(
-                    &path,
-                    fs::RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: true,
-                    },
-                )
-                .await
-            {
-                let msg = format!("{}: failed to remove directory: {fs_err}", path.display());
-                log::error!("{}", msg);
-                rollback_failures.push(msg);
+            // `git worktree remove` failed (or wasn't dispatched), manually rm the directory.
+            if git_remove_failed {
+                if let Err(fs_err) = fs
+                    .remove_dir(
+                        &path,
+                        fs::RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await
+                {
+                    let msg = format!("{}: failed to remove directory: {fs_err}", path.display());
+                    log::error!("{}", msg);
+                    rollback_failures.push(msg);
+                }
             }
         }
         let mut error_message = format!("Failed to create worktree: {err}");
