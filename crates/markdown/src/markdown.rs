@@ -263,6 +263,7 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
+    details_open_states: BTreeMap<usize, bool>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
 }
@@ -432,6 +433,7 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
+            details_open_states: BTreeMap::default(),
             search_highlights: Vec::new(),
             active_search_highlight: None,
         };

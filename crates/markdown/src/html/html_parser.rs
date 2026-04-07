@@ -8,6 +8,8 @@ use markup5ever_rcdom::{Node, NodeData, RcDom};
 use pulldown_cmark::{Alignment, HeadingLevel};
 use stacksafe::stacksafe;
 
+use std::cell::Cell;
+
 use crate::html::html_minifier::{Minifier, MinifierOptions};
 
 #[derive(Debug, Clone, Default)]
@@ -26,6 +28,7 @@ pub(crate) enum ParsedHtmlElement {
     BlockQuote(ParsedHtmlBlockQuote),
     Paragraph(HtmlParagraph),
     Image(HtmlImage),
+    Details(ParsedHtmlDetails),
 }
 
 impl ParsedHtmlElement {
@@ -40,8 +43,18 @@ impl ParsedHtmlElement {
                 HtmlParagraphChunk::Image(image) => image.source_range.clone(),
             },
             Self::Image(image) => image.source_range.clone(),
+            Self::Details(details) => details.source_range.clone(),
         })
     }
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
+pub(crate) struct ParsedHtmlDetails {
+    pub id: usize,
+    pub source_range: Range<usize>,
+    pub summary: HtmlParagraph,
+    pub children: Vec<ParsedHtmlElement>,
 }
 
 pub(crate) type HtmlParagraph = Vec<HtmlParagraphChunk>;
@@ -173,11 +186,15 @@ impl HtmlImage {
 #[derive(Debug)]
 struct ParseHtmlNodeContext {
     list_item_depth: u16,
+    details_counter: Cell<usize>,
 }
 
 impl Default for ParseHtmlNodeContext {
     fn default() -> Self {
-        Self { list_item_depth: 1 }
+        Self {
+            list_item_depth: 1,
+            details_counter: Cell::new(0),
+        }
     }
 }
 
@@ -310,10 +327,53 @@ fn parse_html_node(
                     node,
                     name.local == local_name!("ol"),
                     context.list_item_depth,
-                    source_range,
+                    source_range.clone(),
                 ) {
                     elements.push(ParsedHtmlElement::List(list));
                 }
+                // Also process any non-<li> block children (e.g. <details> placed directly
+                // inside <ul>/<ol> without a wrapping <li>, which is technically invalid HTML
+                // but common in Markdown documents with <details>/<summary> trees).
+                for child in node.children.borrow().iter() {
+                    if let NodeData::Element { name, .. } = &child.data {
+                        if name.local != local_name!("li") {
+                            parse_html_node(source_range.clone(), child, elements, context);
+                        }
+                    }
+                }
+            } else if name.local == local_name!("details") {
+                let mut summary = HtmlParagraph::new();
+                let mut children = Vec::new();
+                for child in node.children.borrow().iter() {
+                    if let NodeData::Element {
+                        name: child_name, ..
+                    } = &child.data
+                    {
+                        if child_name.local == local_name!("summary") {
+                            consume_paragraph(
+                                source_range.clone(),
+                                child,
+                                &mut summary,
+                                &mut Vec::new(),
+                                &mut Vec::new(),
+                            );
+                        } else {
+                            parse_html_node(source_range.clone(), child, &mut children, context);
+                        }
+                    } else {
+                        parse_html_node(source_range.clone(), child, &mut children, context);
+                    }
+                }
+                elements.push(ParsedHtmlElement::Details(ParsedHtmlDetails {
+                    id: {
+                        let id = context.details_counter.get();
+                        context.details_counter.set(id + 1);
+                        id
+                    },
+                    source_range,
+                    summary,
+                    children,
+                }));
             } else if name.local == local_name!("blockquote") {
                 if let Some(blockquote) = extract_html_blockquote(node, source_range) {
                     elements.push(ParsedHtmlElement::BlockQuote(blockquote));
@@ -653,6 +713,7 @@ fn extract_html_list(
                 &mut content,
                 &ParseHtmlNodeContext {
                     list_item_depth: depth + 1,
+                    details_counter: Cell::new(0),
                 },
             );
 
@@ -879,5 +940,81 @@ mod tests {
             panic!("expected second item text");
         };
         assert_eq!(second_text.contents.as_ref(), "sibling");
+    }
+
+    #[test]
+    fn parses_details_summary() {
+        // Basic <details>/<summary> structure.
+        let parsed = parse_html_block(
+            "<details><summary>Title</summary><p>Body text</p></details>",
+            0..59,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.children.len(), 1);
+        let ParsedHtmlElement::Details(details) = &parsed.children[0] else {
+            panic!("expected Details element, got {:?}", &parsed.children[0]);
+        };
+
+        // summary text
+        let HtmlParagraphChunk::Text(summary_text) = &details.summary[0] else {
+            panic!("expected text in summary");
+        };
+        assert_eq!(summary_text.contents.as_ref(), "Title");
+
+        // body child
+        assert_eq!(details.children.len(), 1);
+        let ParsedHtmlElement::Paragraph(body) = &details.children[0] else {
+            panic!("expected paragraph child");
+        };
+        let HtmlParagraphChunk::Text(body_text) = &body[0] else {
+            panic!("expected text in body");
+        };
+        assert_eq!(body_text.contents.as_ref(), "Body text");
+    }
+
+    #[test]
+    fn parses_details_summary_in_list() {
+        // <details> placed directly inside <ul> without <li> wrappers (common in Markdown).
+        let parsed = parse_html_block(
+            "<details><summary>Outer</summary><ul><details><summary>Inner</summary><p>Body</p></details></ul></details>",
+            0..105,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.children.len(), 1);
+        let ParsedHtmlElement::Details(outer) = &parsed.children[0] else {
+            panic!("expected outer Details element");
+        };
+
+        // Outer summary
+        let HtmlParagraphChunk::Text(outer_summary) = &outer.summary[0] else {
+            panic!("expected text in outer summary");
+        };
+        assert_eq!(outer_summary.contents.as_ref(), "Outer");
+
+        // The <ul> with the inner <details> is a child of outer <details>.
+        // The inner <details> is a non-<li> child of <ul>, so it surfaces as a Details element.
+        let inner_details = outer.children.iter().find_map(|el| {
+            if let ParsedHtmlElement::Details(d) = el {
+                Some(d)
+            } else {
+                None
+            }
+        });
+        let inner = inner_details.expect("inner <details> must be parsed");
+
+        let HtmlParagraphChunk::Text(inner_summary) = &inner.summary[0] else {
+            panic!("expected text in inner summary");
+        };
+        assert_eq!(inner_summary.contents.as_ref(), "Inner");
+
+        let ParsedHtmlElement::Paragraph(body) = &inner.children[0] else {
+            panic!("expected paragraph in inner details children");
+        };
+        let HtmlParagraphChunk::Text(body_text) = &body[0] else {
+            panic!("expected text in body");
+        };
+        assert_eq!(body_text.contents.as_ref(), "Body");
     }
 }

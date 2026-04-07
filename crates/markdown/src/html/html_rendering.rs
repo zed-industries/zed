@@ -6,8 +6,8 @@ use ui::prelude::*;
 
 use crate::html::html_parser::{
     HtmlHighlightStyle, HtmlImage, HtmlParagraph, HtmlParagraphChunk, ParsedHtmlBlock,
-    ParsedHtmlElement, ParsedHtmlList, ParsedHtmlListItemType, ParsedHtmlTable, ParsedHtmlTableRow,
-    ParsedHtmlText,
+    ParsedHtmlDetails, ParsedHtmlElement, ParsedHtmlList, ParsedHtmlListItemType, ParsedHtmlTable,
+    ParsedHtmlTableRow, ParsedHtmlText,
 };
 use crate::{MarkdownElement, MarkdownElementBuilder};
 
@@ -119,6 +119,74 @@ impl MarkdownElement {
             ParsedHtmlElement::Image(image) => {
                 self.render_html_image(image, builder);
             }
+            ParsedHtmlElement::Details(details) => {
+                self.render_html_details(details, source_allocator, builder, markdown_end, cx);
+            }
+        }
+    }
+
+    fn render_html_details(
+        &self,
+        details: &ParsedHtmlDetails,
+        source_allocator: &mut HtmlSourceAllocator,
+        builder: &mut MarkdownElementBuilder,
+        markdown_end: usize,
+        cx: &mut App,
+    ) {
+        let details_id = details.id;
+        let is_open = self
+            .markdown
+            .read(cx)
+            .details_open_states
+            .get(&details_id)
+            .copied()
+            .unwrap_or(true);
+
+        let markdown = self.markdown.clone();
+        let summary_text: String = details
+            .summary
+            .iter()
+            .filter_map(|chunk| {
+                if let crate::html::html_parser::HtmlParagraphChunk::Text(t) = chunk {
+                    Some(t.contents.as_ref().to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let indicator = if is_open { "▼ " } else { "▶ " };
+        let label = format!("{}{}", indicator, summary_text);
+
+        let summary_div = div()
+            .id(("html-details-summary", details_id))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .cursor_pointer()
+            .on_click(move |_, _window, cx| {
+                markdown.update(cx, |m, cx| {
+                    let open = m.details_open_states.entry(details_id).or_insert(true);
+                    *open = !*open;
+                    cx.notify();
+                });
+            });
+
+        builder.push_div(summary_div, &details.source_range, markdown_end);
+        builder.push_text(&label, details.source_range.clone());
+        builder.pop_div();
+
+        if is_open {
+            builder.push_div(div().pl_4(), &details.source_range, markdown_end);
+            self.render_html_elements(
+                &details.children,
+                source_allocator,
+                builder,
+                markdown_end,
+                cx,
+            );
+            builder.pop_div();
         }
     }
 
