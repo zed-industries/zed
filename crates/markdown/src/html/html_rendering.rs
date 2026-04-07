@@ -79,7 +79,12 @@ impl MarkdownElement {
 
         match element {
             ParsedHtmlElement::Paragraph(paragraph) => {
-                self.push_markdown_paragraph(builder, &source_range, markdown_end, paragraph.text_align);
+                self.push_markdown_paragraph(
+                    builder,
+                    &source_range,
+                    markdown_end,
+                    paragraph.text_align,
+                );
                 self.render_html_paragraph(
                     &paragraph.contents,
                     source_allocator,

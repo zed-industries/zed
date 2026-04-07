@@ -985,21 +985,19 @@ impl MarkdownElement {
     ) {
         let align = builder.text_style().text_align;
         builder.modify_current_div(|el| {
-            let mut row = div().flex().flex_row().w_full().items_center();
+            let mut image_container = el.flex().flex_row().items_center();
 
-            row = match align {
-                TextAlign::Left => row.justify_start(),
-                TextAlign::Center => row.justify_center(),
-                TextAlign::Right => row.justify_end(),
+            image_container = match align {
+                TextAlign::Left => image_container.justify_start(),
+                TextAlign::Center => image_container.justify_center(),
+                TextAlign::Right => image_container.justify_end(),
             };
 
-            el.child(
-                row.child(
-                    img(source)
-                        .max_w_full()
-                        .when_some(height, |this, height| this.h(height))
-                        .when_some(width, |this, width| this.w(width)),
-                ),
+            image_container.child(
+                img(source)
+                    .max_w_full()
+                    .when_some(height, |this, height| this.h(height))
+                    .when_some(width, |this, width| this.w(width)),
             )
         });
         let _ = range;

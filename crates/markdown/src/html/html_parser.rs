@@ -257,7 +257,7 @@ fn parse_html_node(
         NodeData::Comment { .. } => {}
         NodeData::Element { name, attrs, .. } => {
             let styles_map = extract_styles_from_attributes(attrs);
-            let text_align = text_align_from_styles(&styles_map);
+            let text_align = text_align_from_attributes(attrs, &styles_map);
             let mut styles = if let Some(styles) = html_style_from_html_styles(styles_map) {
                 vec![styles]
             } else {
@@ -602,15 +602,28 @@ fn html_style_from_html_styles(styles: HashMap<String, String>) -> Option<HtmlHi
     }
 }
 
+fn parse_text_align(value: &str) -> Option<TextAlign> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "left" => Some(TextAlign::Left),
+        "center" => Some(TextAlign::Center),
+        "right" => Some(TextAlign::Right),
+        _ => None,
+    }
+}
+
 fn text_align_from_styles(styles: &HashMap<String, String>) -> Option<TextAlign> {
     styles
         .get("text-align")
-        .and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
-            "left" => Some(TextAlign::Left),
-            "center" => Some(TextAlign::Center),
-            "right" => Some(TextAlign::Right),
-            _ => None,
-        })
+        .and_then(|value| parse_text_align(value))
+}
+
+fn text_align_from_attributes(
+    attrs: &RefCell<Vec<Attribute>>,
+    styles: &HashMap<String, String>,
+) -> Option<TextAlign> {
+    text_align_from_styles(styles).or_else(|| {
+        attr_value(attrs, local_name!("align")).and_then(|value| parse_text_align(&value))
+    })
 }
 
 fn extract_styles_from_attributes(attrs: &RefCell<Vec<Attribute>>) -> HashMap<String, String> {
@@ -922,5 +935,36 @@ mod tests {
             panic!("expected heading");
         };
         assert_eq!(heading.text_align, Some(TextAlign::Right));
+    }
+
+    #[test]
+    fn parses_paragraph_text_align_from_align_attribute() {
+        let parsed = parse_html_block("<p align=\"center\">x</p>", 0..24).unwrap();
+        let ParsedHtmlElement::Paragraph(paragraph) = &parsed.children[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.text_align, Some(TextAlign::Center));
+    }
+
+    #[test]
+    fn parses_heading_text_align_from_align_attribute() {
+        let parsed = parse_html_block("<h2 align=\"right\">Title</h2>", 0..30).unwrap();
+        let ParsedHtmlElement::Heading(heading) = &parsed.children[0] else {
+            panic!("expected heading");
+        };
+        assert_eq!(heading.text_align, Some(TextAlign::Right));
+    }
+
+    #[test]
+    fn prefers_style_text_align_over_align_attribute() {
+        let parsed = parse_html_block(
+            "<p align=\"left\" style=\"text-align: center\">x</p>",
+            0..50,
+        )
+        .unwrap();
+        let ParsedHtmlElement::Paragraph(paragraph) = &parsed.children[0] else {
+            panic!("expected paragraph");
+        };
+        assert_eq!(paragraph.text_align, Some(TextAlign::Center));
     }
 }
