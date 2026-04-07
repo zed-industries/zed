@@ -422,9 +422,15 @@ message Push {
   uint64 askpass_id = 7;
   string remote_branch_name = 8;
 
-  enum PushOptions {
-    SET_UPSTREAM = 0;
-    FORCE = 1;
+  message PushOptions {
+    bool set_upstream = 1;
+    PushMode push_mode = 2;
+
+    enum PushMode {
+      NORMAL = 0;
+      FORCE_WITH_LEASE = 1;
+      FORCE = 2;
+    }
   }
 }
 

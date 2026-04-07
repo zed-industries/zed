@@ -1056,9 +1056,34 @@ pub enum DiffType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
-pub enum PushOptions {
-    SetUpstream,
+pub enum PushMode {
+    Normal,
+    ForceWithLease,
     Force,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+pub struct PushOptions {
+    pub set_upstream: bool,
+    pub push_mode: PushMode,
+}
+
+impl PushOptions {
+    pub fn command_args(self) -> Vec<&'static str> {
+        let mut args = Vec::new();
+
+        if self.set_upstream {
+            args.push("--set-upstream");
+        }
+
+        match self.push_mode {
+            PushMode::Normal => {}
+            PushMode::ForceWithLease => args.push("--force-with-lease"),
+            PushMode::Force => args.push("--force"),
+        }
+
+        args
+    }
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -2644,10 +2669,7 @@ impl GitRepository for RealGitRepository {
             let mut command = git.build_command(&["push"]);
             command
                 .envs(env.iter())
-                .args(options.map(|option| match option {
-                    PushOptions::SetUpstream => "--set-upstream",
-                    PushOptions::Force => "--force-with-lease",
-                }))
+                .args(options.into_iter().flat_map(PushOptions::command_args))
                 .arg(remote_name)
                 .arg(format!("{}:{}", branch_name, remote_branch_name))
                 .stdin(Stdio::null())
@@ -4707,6 +4729,50 @@ mod tests {
         assert_eq!(
             source.get_args().unwrap(),
             vec!["--exclude=refs/stash", "--reflog", "--all"]
+        );
+    }
+
+    #[test]
+    fn test_push_options_command_args() {
+        assert_eq!(
+            PushOptions {
+                set_upstream: false,
+                push_mode: PushMode::Normal,
+            }
+            .command_args(),
+            Vec::<&'static str>::new()
+        );
+        assert_eq!(
+            PushOptions {
+                set_upstream: true,
+                push_mode: PushMode::Normal,
+            }
+            .command_args(),
+            vec!["--set-upstream"]
+        );
+        assert_eq!(
+            PushOptions {
+                set_upstream: false,
+                push_mode: PushMode::ForceWithLease,
+            }
+            .command_args(),
+            vec!["--force-with-lease"]
+        );
+        assert_eq!(
+            PushOptions {
+                set_upstream: false,
+                push_mode: PushMode::Force,
+            }
+            .command_args(),
+            vec!["--force"]
+        );
+        assert_eq!(
+            PushOptions {
+                set_upstream: true,
+                push_mode: PushMode::ForceWithLease,
+            }
+            .command_args(),
+            vec!["--set-upstream", "--force-with-lease"]
         );
     }
 

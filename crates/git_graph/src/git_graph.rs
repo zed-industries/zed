@@ -7,7 +7,7 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDiff, CommitFile, DropCommitSupport, GraphLogOptions, InitialGraphCommitData,
-        LogOrder, LogSource, PushOptions, Remote, RepoPath, ResetMode, SearchCommitArgs,
+        LogOrder, LogSource, PushMode, PushOptions, Remote, RepoPath, ResetMode, SearchCommitArgs,
         UpstreamTracking,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
@@ -48,11 +48,12 @@ use theme_settings::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     Button, ButtonLike, ButtonStyle, Checkbox, Chip, Color, ColumnWidthConfig,
-    CommonAnimationExt as _, ContextMenu, DiffStat, Divider, HeaderResizeInfo, HighlightedLabel,
-    ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, RedistributableColumnsState,
-    ScrollableHandle, Table, TableInteractionState, TableRenderContext, TableResizeBehavior,
-    ToggleState, Tooltip, WithScrollbar, bind_redistributable_columns, prelude::*,
-    render_redistributable_columns_resize_handles, render_table_header, table_row::TableRow,
+    CommonAnimationExt as _, ContextMenu, DiffStat, Divider, DropdownMenu, DropdownStyle,
+    HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle,
+    RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
+    TableRenderContext, TableResizeBehavior, ToggleState, Tooltip, WithScrollbar,
+    bind_redistributable_columns, prelude::*, render_redistributable_columns_resize_handles,
+    render_table_header, table_row::TableRow,
 };
 use ui_input::ErasedEditor;
 use workspace::{
@@ -449,7 +450,7 @@ impl ResetPromptMode {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct BranchPushTarget {
     branch: Branch,
     remote: Remote,
@@ -457,9 +458,106 @@ struct BranchPushTarget {
     options: Option<PushOptions>,
 }
 
+#[derive(Clone, Debug)]
+struct PushBranchDialogState {
+    branch: Branch,
+    available_remotes: Vec<SharedString>,
+    selected_remote: SharedString,
+    set_upstream: bool,
+    push_mode: PushMode,
+}
+
 pub struct SplitState {
     left_ratio: f32,
     visible_left_ratio: f32,
+}
+
+impl PushBranchDialogState {
+    fn new(branch: Branch, available_remotes: Vec<SharedString>) -> anyhow::Result<Self> {
+        let selected_remote = Self::default_remote_name(&branch, &available_remotes)?;
+        let set_upstream = Self::default_set_upstream(&branch, selected_remote.as_ref());
+
+        Ok(Self {
+            branch,
+            available_remotes,
+            selected_remote,
+            set_upstream,
+            push_mode: PushMode::Normal,
+        })
+    }
+
+    fn default_remote_name(
+        branch: &Branch,
+        available_remotes: &[SharedString],
+    ) -> anyhow::Result<SharedString> {
+        if let Some(remote_name) = Self::tracked_upstream_remote_name(branch)
+            && let Some(remote) = available_remotes
+                .iter()
+                .find(|remote| remote.as_ref() == remote_name)
+        {
+            return Ok(remote.clone());
+        }
+
+        available_remotes
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("No remote configured for repository"))
+    }
+
+    fn tracked_upstream_remote_name(branch: &Branch) -> Option<&str> {
+        branch
+            .upstream
+            .as_ref()
+            .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+            .and_then(|upstream| upstream.remote_name())
+    }
+
+    fn tracked_upstream_branch_name(branch: &Branch) -> Option<&str> {
+        branch
+            .upstream
+            .as_ref()
+            .filter(|upstream| matches!(upstream.tracking, UpstreamTracking::Tracked(_)))
+            .and_then(|upstream| upstream.branch_name())
+    }
+
+    fn default_set_upstream(branch: &Branch, selected_remote: &str) -> bool {
+        Self::tracked_upstream_remote_name(branch) != Some(selected_remote)
+    }
+
+    fn select_remote(&mut self, remote_name: SharedString) {
+        self.selected_remote = remote_name;
+        self.set_upstream = Self::default_set_upstream(&self.branch, self.selected_remote.as_ref());
+    }
+
+    fn push_target(&self) -> BranchPushTarget {
+        let remote_branch_name = if Self::tracked_upstream_remote_name(&self.branch)
+            == Some(self.selected_remote.as_ref())
+        {
+            Self::tracked_upstream_branch_name(&self.branch)
+                .unwrap_or_else(|| self.branch.name())
+                .to_string()
+                .into()
+        } else {
+            self.branch.name().to_string().into()
+        };
+
+        let options = match (self.set_upstream, self.push_mode) {
+            (false, PushMode::Normal) => None,
+            (set_upstream, push_mode) => Some(PushOptions {
+                set_upstream,
+                push_mode,
+            }),
+        };
+
+        BranchPushTarget {
+            branch: self.branch.clone(),
+            remote: Remote {
+                name: self.selected_remote.clone(),
+            },
+            remote_branch_name,
+            options,
+        }
+    }
 }
 
 impl SplitState {
@@ -2110,7 +2208,7 @@ impl GitGraph {
                 let context_menu = if is_remote {
                     context_menu
                 } else {
-                    context_menu.entry("Push Branch", None, {
+                    context_menu.entry("Push Branch...", None, {
                         let branch_name = branch_name_for_push;
                         let weak = weak.clone();
                         move |window, cx| {
@@ -3114,103 +3212,45 @@ impl GitGraph {
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
-        let receiver = repository.update(cx, |repository, _| repository.branches());
-        let default_remote_name = repository
-            .read(cx)
-            .remote_upstream_url
-            .as_ref()
-            .map(|_| SharedString::from("upstream"))
-            .or_else(|| {
-                repository
-                    .read(cx)
-                    .remote_origin_url
-                    .as_ref()
-                    .map(|_| SharedString::from("origin"))
-            });
-        let askpass = self.askpass_delegate("git push", window, cx);
+        let branches_receiver = repository.update(cx, |repository, _| repository.branches());
+        let remotes_receiver = repository.update(cx, |repository, _| {
+            repository.get_remotes(Some(branch_name.clone()), true)
+        });
+
+        self.context_menu = None;
+        self.commit_context_menu_state = None;
 
         cx.spawn_in(window, async move |this, cx| {
-            let branches = receiver
+            let branches = branches_receiver
+                .await
+                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+            let remotes = remotes_receiver
                 .await
                 .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
             let branch = branches
                 .into_iter()
-                .find(|branch| branch.name() == branch_name)
+                .find(|branch| branch.name() == branch_name.as_str())
                 .ok_or_else(|| anyhow::anyhow!("Branch '{}' not found", branch_name))?;
-            let target = {
-                if branch.is_remote() {
-                    anyhow::bail!("Cannot push a remote-tracking branch");
-                }
+            if branch.is_remote() {
+                anyhow::bail!("Cannot push a remote-tracking branch");
+            }
 
-                let (remote, remote_branch_name, options) = match branch.upstream.as_ref() {
-                    Some(upstream) if matches!(upstream.tracking, UpstreamTracking::Tracked(_)) => {
-                        let remote_name = upstream
-                            .remote_name()
-                            .ok_or_else(|| anyhow::anyhow!("Branch has no configured remote"))?;
-                        (
-                            Remote {
-                                name: remote_name.to_string().into(),
-                            },
-                            upstream
-                                .branch_name()
-                                .unwrap_or_else(|| branch.name())
-                                .to_string()
-                                .into(),
-                            None,
-                        )
-                    }
-                    Some(upstream) if matches!(upstream.tracking, UpstreamTracking::Gone) => (
-                        Remote {
-                            name: default_remote_name.clone().ok_or_else(|| {
-                                anyhow::anyhow!("No remote configured for repository")
-                            })?,
-                        },
-                        branch.name().to_string().into(),
-                        Some(PushOptions::SetUpstream),
-                    ),
-                    _ => (
-                        Remote {
-                            name: default_remote_name.clone().ok_or_else(|| {
-                                anyhow::anyhow!("No remote configured for repository")
-                            })?,
-                        },
-                        branch.name().to_string().into(),
-                        Some(PushOptions::SetUpstream),
-                    ),
+            let dialog_state = PushBranchDialogState::new(
+                branch,
+                remotes.into_iter().map(|remote| remote.name).collect(),
+            )?;
+
+            let _ = this.update_in(cx, |this, window, cx| {
+                let Some(workspace) = this.workspace.upgrade() else {
+                    return anyhow::Ok(());
                 };
-
-                anyhow::Ok(BranchPushTarget {
-                    branch,
-                    remote,
-                    remote_branch_name,
-                    options,
-                })
-            }?;
-
-            this.update_in(cx, |this, window, cx| {
-                let branch_name: SharedString = target.branch.name().to_string().into();
-                let remote_branch_name = target.remote_branch_name.clone();
-                let remote_name = target.remote.name.clone();
-                let options = target.options;
-                let askpass = askpass;
-                let repository = repository.clone();
-                let task = cx.spawn(async move |_, cx| {
-                    repository
-                        .update(cx, |repository, cx| {
-                            repository.push(
-                                branch_name,
-                                remote_branch_name,
-                                remote_name,
-                                options,
-                                askpass,
-                                cx,
-                            )
-                        })
-                        .await
-                        .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
-                    Ok(())
+                let graph = cx.weak_entity();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        PushBranchModal::new(graph.clone(), dialog_state.clone(), window, cx)
+                    });
                 });
-                this.run_git_operation(task, "Failed to push branch", window, cx);
+                anyhow::Ok(())
             })?;
 
             Ok(())
@@ -3218,6 +3258,40 @@ impl GitGraph {
         .detach_and_prompt_err("Failed to push branch", window, cx, |error, _, _| {
             Some(error.to_string())
         });
+    }
+
+    fn perform_push_branch(
+        &mut self,
+        target: BranchPushTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let branch_name: SharedString = target.branch.name().to_string().into();
+        let remote_branch_name = target.remote_branch_name.clone();
+        let remote_name = target.remote.name.clone();
+        let options = target.options;
+        let askpass = self.askpass_delegate(format!("git push {}", remote_name), window, cx);
+
+        let task = cx.spawn(async move |_, cx| {
+            repository
+                .update(cx, |repository, cx| {
+                    repository.push(
+                        branch_name,
+                        remote_branch_name,
+                        remote_name,
+                        options,
+                        askpass,
+                        cx,
+                    )
+                })
+                .await
+                .map_err(|_| anyhow::anyhow!("Operation was canceled"))??;
+            Ok(())
+        });
+        self.run_git_operation(task, "Failed to push branch", window, cx);
     }
 
     fn push_tag(&mut self, tag_name: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -5336,6 +5410,207 @@ impl Render for RenameBranchModal {
     }
 }
 
+struct PushBranchModal {
+    graph: WeakEntity<GitGraph>,
+    state: PushBranchDialogState,
+    focus_handle: FocusHandle,
+}
+
+impl PushBranchModal {
+    fn new(
+        graph: WeakEntity<GitGraph>,
+        state: PushBranchDialogState,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            graph,
+            state,
+            focus_handle: cx.focus_handle(),
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.state.push_target();
+        if let Some(graph) = self.graph.upgrade() {
+            graph.update(cx, |graph, cx| {
+                graph.perform_push_branch(target, window, cx);
+            });
+        }
+
+        cx.emit(DismissEvent);
+    }
+
+    fn render_remote_dropdown(&self, window: &mut Window, cx: &mut Context<Self>) -> DropdownMenu {
+        let weak = cx.weak_entity();
+        let remotes = self.state.available_remotes.clone();
+        let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+            for remote_name in remotes.clone() {
+                let weak = weak.clone();
+                menu = menu.entry(remote_name.clone(), None, move |_window, cx| {
+                    if let Some(entity) = weak.upgrade() {
+                        entity.update(cx, |this, cx| {
+                            this.state.select_remote(remote_name.clone());
+                            cx.notify();
+                        });
+                    }
+                });
+            }
+            menu
+        });
+
+        DropdownMenu::new(
+            "push-branch-remote-dropdown",
+            self.state.selected_remote.clone(),
+            menu,
+        )
+        .style(DropdownStyle::Outlined)
+        .full_width(true)
+    }
+
+    fn render_push_mode_option(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        push_mode: PushMode,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        Checkbox::new(
+            id,
+            if self.state.push_mode == push_mode {
+                ToggleState::Selected
+            } else {
+                ToggleState::Unselected
+            },
+        )
+        .label(label)
+        .label_size(LabelSize::Small)
+        .on_click(
+            cx.listener(move |this: &mut PushBranchModal, _, _window, cx| {
+                this.state.push_mode = push_mode;
+                cx.notify();
+            }),
+        )
+    }
+}
+
+impl EventEmitter<DismissEvent> for PushBranchModal {}
+impl ModalView for PushBranchModal {}
+impl Focusable for PushBranchModal {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for PushBranchModal {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("PushBranchModal")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(ui::rems(36.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
+                    .child(Label::new(format!(
+                        "Push Branch ({})",
+                        self.state.branch.name()
+                    ))),
+            )
+            .child(
+                v_flex()
+                    .px_3()
+                    .pb_3()
+                    .w_full()
+                    .gap_3()
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Push to Remote(s):").size(LabelSize::Small))
+                            .child(self.render_remote_dropdown(window, cx)),
+                    )
+                    .child(
+                        Checkbox::new(
+                            "push-branch-set-upstream",
+                            if self.state.set_upstream {
+                                ToggleState::Selected
+                            } else {
+                                ToggleState::Unselected
+                            },
+                        )
+                        .label("Set Upstream")
+                        .label_size(LabelSize::Small)
+                        .on_click(cx.listener(
+                            |this: &mut PushBranchModal, _, _window, cx| {
+                                this.state.set_upstream = !this.state.set_upstream;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new("Push Mode:").size(LabelSize::Small))
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(self.render_push_mode_option(
+                                        "push-branch-mode-normal",
+                                        "Normal",
+                                        PushMode::Normal,
+                                        cx,
+                                    ))
+                                    .child(self.render_push_mode_option(
+                                        "push-branch-mode-force-with-lease",
+                                        "Force With Lease",
+                                        PushMode::ForceWithLease,
+                                        cx,
+                                    ))
+                                    .child(self.render_push_mode_option(
+                                        "push-branch-mode-force",
+                                        "Force",
+                                        PushMode::Force,
+                                        cx,
+                                    )),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                Button::new("push-branch-cancel", "Cancel")
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(
+                                        |this: &mut PushBranchModal, _, window, cx| {
+                                            this.cancel(&Cancel, window, cx);
+                                        },
+                                    )),
+                            )
+                            .child(
+                                Button::new("push-branch-confirm", "Push")
+                                    .style(ButtonStyle::Filled)
+                                    .on_click(cx.listener(
+                                        |this: &mut PushBranchModal, _, window, cx| {
+                                            this.confirm(&Confirm, window, cx);
+                                        },
+                                    )),
+                            ),
+                    ),
+            )
+    }
+}
+
 struct DeleteBranchModal {
     graph: WeakEntity<GitGraph>,
     branch_name: SharedString,
@@ -6573,6 +6848,15 @@ mod tests {
             .collect()
     }
 
+    fn test_branch(branch_name: &str, upstream: Option<git::repository::Upstream>) -> Branch {
+        Branch {
+            is_head: false,
+            ref_name: SharedString::from(format!("refs/heads/{branch_name}")),
+            upstream,
+            most_recent_commit: None,
+        }
+    }
+
     fn visible_ref_names_for_test(
         settings: GraphSettings,
         available_branches: &[BranchInfo],
@@ -6853,6 +7137,111 @@ mod tests {
                 SharedString::from("tag: v1.0.0".to_string()),
                 SharedString::from("stash@{0}".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn test_push_branch_dialog_state_defaults_to_tracked_upstream_remote() {
+        let branch = test_branch(
+            "feature",
+            Some(git::repository::Upstream {
+                ref_name: "refs/remotes/origin/feature".into(),
+                tracking: git::repository::UpstreamTracking::Tracked(
+                    git::repository::UpstreamTrackingStatus {
+                        ahead: 1,
+                        behind: 0,
+                    },
+                ),
+            }),
+        );
+
+        let state = PushBranchDialogState::new(
+            branch,
+            vec![SharedString::from("origin"), SharedString::from("upstream")],
+        )
+        .unwrap();
+
+        assert_eq!(state.selected_remote, SharedString::from("origin"));
+        assert!(!state.set_upstream);
+        assert_eq!(state.push_mode, PushMode::Normal);
+    }
+
+    #[test]
+    fn test_push_branch_dialog_state_defaults_to_set_upstream_for_unpublished_branch() {
+        let branch = test_branch("feature", None);
+
+        let state = PushBranchDialogState::new(
+            branch,
+            vec![SharedString::from("upstream"), SharedString::from("origin")],
+        )
+        .unwrap();
+
+        assert_eq!(state.selected_remote, SharedString::from("upstream"));
+        assert!(state.set_upstream);
+        assert_eq!(state.push_mode, PushMode::Normal);
+    }
+
+    #[test]
+    fn test_push_branch_dialog_state_switching_remote_enables_set_upstream() {
+        let branch = test_branch(
+            "feature",
+            Some(git::repository::Upstream {
+                ref_name: "refs/remotes/origin/feature".into(),
+                tracking: git::repository::UpstreamTracking::Tracked(
+                    git::repository::UpstreamTrackingStatus {
+                        ahead: 0,
+                        behind: 0,
+                    },
+                ),
+            }),
+        );
+
+        let mut state = PushBranchDialogState::new(
+            branch,
+            vec![SharedString::from("origin"), SharedString::from("upstream")],
+        )
+        .unwrap();
+        state.set_upstream = false;
+        state.select_remote(SharedString::from("upstream"));
+
+        assert_eq!(state.selected_remote, SharedString::from("upstream"));
+        assert!(state.set_upstream);
+    }
+
+    #[test]
+    fn test_push_branch_dialog_state_builds_push_target_with_selected_mode() {
+        let branch = test_branch(
+            "feature",
+            Some(git::repository::Upstream {
+                ref_name: "refs/remotes/origin/review/feature".into(),
+                tracking: git::repository::UpstreamTracking::Tracked(
+                    git::repository::UpstreamTrackingStatus {
+                        ahead: 2,
+                        behind: 0,
+                    },
+                ),
+            }),
+        );
+
+        let mut state =
+            PushBranchDialogState::new(branch.clone(), vec![SharedString::from("origin")]).unwrap();
+        state.set_upstream = true;
+        state.push_mode = PushMode::Force;
+
+        let target = state.push_target();
+
+        assert_eq!(target.branch, branch);
+        assert_eq!(target.remote.name, SharedString::from("origin"));
+        assert_eq!(
+            target.remote_branch_name,
+            SharedString::from("review/feature")
+        );
+        assert_eq!(
+            target.options,
+            Some(PushOptions {
+                set_upstream: true,
+                push_mode: PushMode::Force,
+            })
         );
     }
 
