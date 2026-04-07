@@ -634,7 +634,7 @@ impl StartThreadIn {
                         .collect();
 
                     for linked in repo.linked_worktrees() {
-                        if visible_paths.iter().any(|p| *p == linked.path) {
+                        if visible_paths.contains(&linked.path) {
                             return Some(SharedString::from(format!(
                                 "({})",
                                 linked.display_name()
