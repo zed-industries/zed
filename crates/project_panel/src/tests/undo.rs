@@ -87,30 +87,21 @@ impl TestContext {
 
     fn assert_exists(&mut self, file: &str) {
         assert!(
-            find_project_entry(
-                &self.panel,
-                &path(format!("workspace/{file}")),
-                &mut self.cx
-            )
-            .is_some(),
+            find_project_entry(&self.panel, &format!("workspace/{file}"), &mut self.cx).is_some(),
             "{file} should exist"
         );
     }
 
     fn assert_not_exists(&mut self, file: &str) {
         assert_eq!(
-            find_project_entry(
-                &self.panel,
-                &path(format!("workspace/{file}")),
-                &mut self.cx
-            ),
+            find_project_entry(&self.panel, &format!("workspace/{file}"), &mut self.cx),
             None,
             "{file} should not exist"
         );
     }
 
     async fn rename(&mut self, from: &str, to: &str) {
-        let from = path(format!("workspace/{from}"));
+        let from = format!("workspace/{from}");
         let Self { panel, cx, .. } = self;
         select_path(&panel, &from, cx);
         panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
@@ -168,13 +159,13 @@ impl TestContext {
         files.into_iter().for_each(|file| {
             project_panel_tests::select_path_with_mark(
                 &self.panel,
-                &path(format!("workspace/{file}")),
+                &format!("workspace/{file}"),
                 &mut self.cx,
             )
         });
         project_panel_tests::drag_selection_to(
             &self.panel,
-            &path(format!("workspace/{directory}")),
+            &format!("workspace/{directory}"),
             false,
             &mut self.cx,
         );
@@ -185,7 +176,7 @@ impl TestContext {
     async fn cut(&mut self, file: &str) {
         project_panel_tests::select_path_with_mark(
             &self.panel,
-            &path(format!("workspace/{file}")),
+            &format!("workspace/{file}"),
             &mut self.cx,
         );
         self.panel.update_in(&mut self.cx, |panel, window, cx| {
@@ -196,11 +187,7 @@ impl TestContext {
     /// Only supports files in root (otherwise would need toggle_expand_dir).
     /// For undo redo the paths themselves do not matter so this is fine
     async fn paste(&mut self, directory: &str) {
-        select_path(
-            &self.panel,
-            &path(format!("workspace/{directory}")),
-            &mut self.cx,
-        );
+        select_path(&self.panel, &format!("workspace/{directory}"), &mut self.cx);
         self.panel.update_in(&mut self.cx, |panel, window, cx| {
             panel.paste(&Default::default(), window, cx);
         });
@@ -211,7 +198,7 @@ impl TestContext {
         paths.iter().for_each(|p| {
             project_panel_tests::select_path_with_mark(
                 &self.panel,
-                &path(format!("workspace/{p}")),
+                &format!("workspace/{p}"),
                 &mut self.cx,
             )
         });
