@@ -2207,10 +2207,14 @@ fn randomly_mutate_worktree(
     match rng.random_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != RelPath::empty() => {
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.to_usize());
-            worktree
+            let task = worktree
                 .delete_entry(entry.id, false, cx)
-                .map(|_| Task::ready(Ok(())))
-                .unwrap()
+                .unwrap_or_else(|| Task::ready(Ok(None)));
+
+            cx.background_spawn(async move {
+                task.await?;
+                Ok(())
+            })
         }
         _ => {
             if entry.is_dir() {
