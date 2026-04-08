@@ -190,6 +190,7 @@ pub struct ThreadMetadataStore {
     reload_task: Option<Shared<Task<()>>>,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
     pending_thread_ops_tx: smol::channel::Sender<DbOperation>,
+    in_flight_archives: HashMap<acp::SessionId, (Task<()>, smol::channel::Sender<()>)>,
     _db_operations_task: Task<()>,
 }
 
@@ -403,12 +404,53 @@ impl ThreadMetadataStore {
         }
     }
 
-    pub fn archive(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+    pub fn archive(
+        &mut self,
+        session_id: &acp::SessionId,
+        archive_job: Option<(Task<()>, smol::channel::Sender<()>)>,
+        cx: &mut Context<Self>,
+    ) {
         self.update_archived(session_id, true, cx);
+
+        if let Some(job) = archive_job {
+            self.in_flight_archives.insert(session_id.clone(), job);
+        }
     }
 
     pub fn unarchive(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
         self.update_archived(session_id, false, cx);
+        // Dropping the Sender triggers cancellation in the background task.
+        self.in_flight_archives.remove(session_id);
+    }
+
+    pub fn cleanup_completed_archive(&mut self, session_id: &acp::SessionId) {
+        self.in_flight_archives.remove(session_id);
+    }
+
+    /// Updates a thread's `folder_paths` after an archived worktree has been
+    /// restored to disk. The restored worktree may land at a different path
+    /// than it had before archival, so each `(old_path, new_path)` pair in
+    /// `path_replacements` is applied to the thread's stored folder paths.
+    pub fn update_restored_worktree_paths(
+        &mut self,
+        session_id: &acp::SessionId,
+        path_replacements: &[(PathBuf, PathBuf)],
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.threads.get(session_id).cloned() {
+            let mut paths: Vec<PathBuf> = thread.folder_paths.paths().to_vec();
+            for (old_path, new_path) in path_replacements {
+                if let Some(pos) = paths.iter().position(|p| p == old_path) {
+                    paths[pos] = new_path.clone();
+                }
+            }
+            let new_folder_paths = PathList::new(&paths);
+            self.save_internal(ThreadMetadata {
+                folder_paths: new_folder_paths,
+                ..thread
+            });
+            cx.notify();
+        }
     }
 
     pub fn create_archived_worktree(
@@ -460,6 +502,30 @@ impl ThreadMetadataStore {
     pub fn delete_archived_worktree(&self, id: i64, cx: &App) -> Task<anyhow::Result<()>> {
         let db = self.db.clone();
         cx.background_spawn(async move { db.delete_archived_worktree(id).await })
+    }
+
+    pub fn unlink_thread_from_all_archived_worktrees(
+        &self,
+        session_id: String,
+        cx: &App,
+    ) -> Task<anyhow::Result<()>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            db.unlink_thread_from_all_archived_worktrees(session_id)
+                .await
+        })
+    }
+
+    pub fn is_archived_worktree_referenced(
+        &self,
+        archived_worktree_id: i64,
+        cx: &App,
+    ) -> Task<anyhow::Result<bool>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            db.is_archived_worktree_referenced(archived_worktree_id)
+                .await
+        })
     }
 
     fn update_archived(
@@ -564,6 +630,7 @@ impl ThreadMetadataStore {
             reload_task: None,
             session_subscriptions: HashMap::default(),
             pending_thread_ops_tx: tx,
+            in_flight_archives: HashMap::default(),
             _db_operations_task,
         };
         let _ = this.reload(cx);
@@ -871,6 +938,31 @@ impl ThreadMetadataDb {
             stmt.exec()
         })
         .await
+    }
+
+    pub async fn unlink_thread_from_all_archived_worktrees(
+        &self,
+        session_id: String,
+    ) -> anyhow::Result<()> {
+        self.write(move |conn| {
+            let mut stmt = Statement::prepare(
+                conn,
+                "DELETE FROM thread_archived_worktrees WHERE session_id = ?",
+            )?;
+            stmt.bind(&session_id, 1)?;
+            stmt.exec()
+        })
+        .await
+    }
+
+    pub async fn is_archived_worktree_referenced(
+        &self,
+        archived_worktree_id: i64,
+    ) -> anyhow::Result<bool> {
+        self.select_row_bound::<i64, i64>(
+            "SELECT COUNT(*) FROM thread_archived_worktrees WHERE archived_worktree_id = ?1",
+        )?(archived_worktree_id)
+        .map(|count| count.unwrap_or(0) > 0)
     }
 }
 
@@ -1812,10 +1904,11 @@ mod tests {
         cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
             store.update(cx, |store, cx| {
-                store.archive(&acp::SessionId::new("session-1"), cx);
+                store.archive(&acp::SessionId::new("session-1"), None, cx);
             });
         });
 
+        // Thread 1 should now be archived
         cx.run_until_parked();
 
         cx.update(|cx| {
@@ -1889,7 +1982,7 @@ mod tests {
         cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
             store.update(cx, |store, cx| {
-                store.archive(&acp::SessionId::new("session-2"), cx);
+                store.archive(&acp::SessionId::new("session-2"), None, cx);
             });
         });
 
@@ -1989,7 +2082,7 @@ mod tests {
         cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
             store.update(cx, |store, cx| {
-                store.archive(&acp::SessionId::new("session-1"), cx);
+                store.archive(&acp::SessionId::new("session-1"), None, cx);
             });
         });
 
@@ -2037,7 +2130,7 @@ mod tests {
         cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
             store.update(cx, |store, cx| {
-                store.archive(&acp::SessionId::new("nonexistent"), cx);
+                store.archive(&acp::SessionId::new("nonexistent"), None, cx);
             });
         });
 
@@ -2066,7 +2159,7 @@ mod tests {
             let store = ThreadMetadataStore::global(cx);
             store.update(cx, |store, cx| {
                 store.save(metadata.clone(), cx);
-                store.archive(&session_id, cx);
+                store.archive(&session_id, None, cx);
             });
         });
 
@@ -2224,6 +2317,97 @@ mod tests {
         assert_eq!(wt1.len(), 1);
         assert_eq!(wt2.len(), 1);
         assert_eq!(wt1[0].id, wt2[0].id);
+    }
+
+    #[gpui::test]
+    async fn test_update_restored_worktree_paths_multiple(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let original_paths = PathList::new(&[
+            Path::new("/projects/worktree-a"),
+            Path::new("/projects/worktree-b"),
+            Path::new("/other/unrelated"),
+        ]);
+        let meta = make_metadata("session-multi", "Multi Thread", Utc::now(), original_paths);
+
+        store.update(cx, |store, cx| {
+            store.save_manually(meta, cx);
+        });
+
+        let replacements = vec![
+            (
+                PathBuf::from("/projects/worktree-a"),
+                PathBuf::from("/restored/worktree-a"),
+            ),
+            (
+                PathBuf::from("/projects/worktree-b"),
+                PathBuf::from("/restored/worktree-b"),
+            ),
+        ];
+
+        store.update(cx, |store, cx| {
+            store.update_restored_worktree_paths(
+                &acp::SessionId::new("session-multi"),
+                &replacements,
+                cx,
+            );
+        });
+
+        let entry = store.read_with(cx, |store, _cx| {
+            store.entry(&acp::SessionId::new("session-multi")).cloned()
+        });
+        let entry = entry.unwrap();
+        let paths = entry.folder_paths.paths();
+        assert_eq!(paths.len(), 3);
+        assert!(paths.contains(&PathBuf::from("/restored/worktree-a")));
+        assert!(paths.contains(&PathBuf::from("/restored/worktree-b")));
+        assert!(paths.contains(&PathBuf::from("/other/unrelated")));
+    }
+
+    #[gpui::test]
+    async fn test_update_restored_worktree_paths_preserves_unmatched(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let original_paths =
+            PathList::new(&[Path::new("/projects/worktree-a"), Path::new("/other/path")]);
+        let meta = make_metadata("session-partial", "Partial", Utc::now(), original_paths);
+
+        store.update(cx, |store, cx| {
+            store.save_manually(meta, cx);
+        });
+
+        let replacements = vec![
+            (
+                PathBuf::from("/projects/worktree-a"),
+                PathBuf::from("/new/worktree-a"),
+            ),
+            (
+                PathBuf::from("/nonexistent/path"),
+                PathBuf::from("/should/not/appear"),
+            ),
+        ];
+
+        store.update(cx, |store, cx| {
+            store.update_restored_worktree_paths(
+                &acp::SessionId::new("session-partial"),
+                &replacements,
+                cx,
+            );
+        });
+
+        let entry = store.read_with(cx, |store, _cx| {
+            store
+                .entry(&acp::SessionId::new("session-partial"))
+                .cloned()
+        });
+        let entry = entry.unwrap();
+        let paths = entry.folder_paths.paths();
+        assert_eq!(paths.len(), 2);
+        assert!(paths.contains(&PathBuf::from("/new/worktree-a")));
+        assert!(paths.contains(&PathBuf::from("/other/path")));
+        assert!(!paths.contains(&PathBuf::from("/should/not/appear")));
     }
 
     #[gpui::test]

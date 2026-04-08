@@ -603,6 +603,9 @@ impl ThreadsArchiveView {
                 .wait_for_connection()
         });
         cx.spawn(async move |_this, cx| {
+            crate::thread_worktree_archive::cleanup_thread_archived_worktrees(&session_id, cx)
+                .await;
+
             let state = task.await?;
             let task = cx.update(|cx| {
                 if let Some(list) = state.connection.session_list(cx) {
