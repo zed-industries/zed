@@ -5240,13 +5240,13 @@ mod property_test {
                 7 => Operation::ToggleAgentPanel,
                 8 => Operation::CreateDraftThread,
                 9 => Operation::AddProject {
-                    use_worktree: !self.unopened_worktrees.is_empty() && extra % 4 == 0,
+                    use_worktree: !self.unopened_worktrees.is_empty() && extra.is_multiple_of(4),
                 },
                 10..=11 if !self.saved_thread_ids.is_empty() => Operation::ArchiveThread {
                     index: extra % self.saved_thread_ids.len(),
                 },
                 10..=11 => Operation::AddProject {
-                    use_worktree: !self.unopened_worktrees.is_empty() && extra % 4 == 0,
+                    use_worktree: !self.unopened_worktrees.is_empty() && extra.is_multiple_of(4),
                 },
                 12..=13 if !self.saved_thread_ids.is_empty() => Operation::SwitchToThread {
                     index: extra % self.saved_thread_ids.len(),
