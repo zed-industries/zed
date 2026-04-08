@@ -177,18 +177,13 @@ pub(crate) fn add_compliance_notification_steps(
     };
 
     let script = formatdoc! {r#"
-        REPORT_CONTENT=""
-        if [ -f "{COMPLIANCE_REPORT_FILE}" ]; then
-            REPORT_CONTENT=$(cat "{COMPLIANCE_REPORT_FILE}")
-        fi
-
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
             STATUS="{success_prefix} for $COMPLIANCE_TAG"
         else
             STATUS="{failure_prefix} for $COMPLIANCE_TAG"
         fi
 
-        MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s\n\n%s" "$STATUS" "$ARTIFACT_URL" "{NEEDS_REVIEW_PULLS_URL}" "$REPORT_CONTENT")
+        MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "{NEEDS_REVIEW_PULLS_URL}")
 
         curl -X POST -H 'Content-type: application/json' \
             --data "$(jq -n --arg text "$MESSAGE" '{{"text": $text}}')" \
