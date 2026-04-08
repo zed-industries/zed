@@ -8712,34 +8712,92 @@ pub async fn restore_multiworkspace(
         ..
     } = state;
 
-    let window_handle = if active_workspace.paths.is_empty() {
+    let workspace_result = if active_workspace.paths.is_empty() {
         cx.update(|cx| {
             open_workspace_by_id(active_workspace.workspace_id, app_state.clone(), None, cx)
         })
-        .await?
+        .await
     } else {
-        let OpenResult { window, .. } = cx
-            .update(|cx| {
-                Workspace::new_local(
-                    active_workspace.paths.paths().to_vec(),
-                    app_state.clone(),
-                    None,
-                    None,
-                    None,
-                    OpenMode::Activate,
-                    cx,
-                )
-            })
-            .await?;
-        window
+        cx.update(|cx| {
+            Workspace::new_local(
+                active_workspace.paths.paths().to_vec(),
+                app_state.clone(),
+                None,
+                None,
+                None,
+                OpenMode::Activate,
+                cx,
+            )
+        })
+        .await
+        .map(|result| result.window)
+    };
+
+    let window_handle = match workspace_result {
+        Ok(handle) => handle,
+        Err(err) => {
+            log::error!("Failed to restore active workspace: {err:#}");
+
+            // Try each project group's paths as a fallback.
+            let mut fallback_handle = None;
+            for key in &project_group_keys {
+                let key: ProjectGroupKey = key.clone().into();
+                let paths = key.path_list().paths().to_vec();
+                match cx
+                    .update(|cx| {
+                        Workspace::new_local(
+                            paths,
+                            app_state.clone(),
+                            None,
+                            None,
+                            None,
+                            OpenMode::Activate,
+                            cx,
+                        )
+                    })
+                    .await
+                {
+                    Ok(OpenResult { window, .. }) => {
+                        fallback_handle = Some(window);
+                        break;
+                    }
+                    Err(fallback_err) => {
+                        log::error!("Fallback project group also failed: {fallback_err:#}");
+                    }
+                }
+            }
+
+            fallback_handle.ok_or(err)?
+        }
     };
 
     if !project_group_keys.is_empty() {
-        let restored_keys: Vec<ProjectGroupKey> =
-            project_group_keys.into_iter().map(Into::into).collect();
+        let fs = app_state.fs.clone();
+
+        // Resolve linked worktree paths to their main repo paths so
+        // stale keys from previous sessions get normalized and deduped.
+        let mut resolved_keys: Vec<ProjectGroupKey> = Vec::new();
+        for key in project_group_keys.into_iter().map(ProjectGroupKey::from) {
+            let mut resolved_paths = Vec::new();
+            for path in key.path_list().paths() {
+                if let Some(common_dir) =
+                    project::discover_root_repo_common_dir(path, fs.as_ref()).await
+                {
+                    let main_path = common_dir.parent().unwrap_or(&common_dir);
+                    resolved_paths.push(main_path.to_path_buf());
+                } else {
+                    resolved_paths.push(path.to_path_buf());
+                }
+            }
+            let resolved = ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths));
+            if !resolved_keys.contains(&resolved) {
+                resolved_keys.push(resolved);
+            }
+        }
+
         window_handle
             .update(cx, |multi_workspace, _window, _cx| {
-                multi_workspace.restore_project_group_keys(restored_keys);
+                multi_workspace.restore_project_group_keys(resolved_keys);
             })
             .ok();
     }

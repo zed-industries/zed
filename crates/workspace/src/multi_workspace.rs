@@ -606,7 +606,12 @@ impl MultiWorkspace {
     }
 
     pub fn restore_project_group_keys(&mut self, keys: Vec<ProjectGroupKey>) {
-        let mut restored = keys;
+        let mut restored: Vec<ProjectGroupKey> = Vec::with_capacity(keys.len());
+        for key in keys {
+            if !restored.contains(&key) {
+                restored.push(key);
+            }
+        }
         for existing_key in &self.project_group_keys {
             if !restored.contains(existing_key) {
                 restored.push(existing_key.clone());
