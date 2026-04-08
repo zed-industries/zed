@@ -4949,23 +4949,19 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Sort Order (Lexicographic)",
+                title: "Sort Order",
                 description: "Whether to sort file and folder names case-sensitively in the project panel.",
                 field: Box::new(SettingField {
                     pick: |settings_content| {
-                        settings_content
-                            .project_panel
-                            .as_ref()?
-                            .sort_order_lexicographic
-                            .as_ref()
+                        settings_content.project_panel.as_ref()?.sort_order.as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
-                            .sort_order_lexicographic = value;
+                            .sort_order = value;
                     },
-                    json_path: Some("project_panel.sort_order_lexicographic"),
+                    json_path: Some("project_panel.sort_order"),
                 }),
                 metadata: None,
                 files: USER,

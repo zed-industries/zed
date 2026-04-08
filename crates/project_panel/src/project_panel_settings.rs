@@ -3,7 +3,7 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, ProjectPanelSortOrderLexicographic,
+    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, ProjectPanelSortOrder,
     RegisterSetting, Settings, ShowDiagnostics, ShowIndentGuides,
 };
 use ui::{
@@ -35,7 +35,7 @@ pub struct ProjectPanelSettings {
     pub drag_and_drop: bool,
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
-    pub sort_order_lexicographic: ProjectPanelSortOrderLexicographic,
+    pub sort_order: ProjectPanelSortOrder,
     pub diagnostic_badges: bool,
     pub git_status_indicator: bool,
 }
@@ -142,7 +142,7 @@ impl Settings for ProjectPanelSettings {
                 }
             },
             sort_mode: project_panel.sort_mode.unwrap(),
-            sort_order_lexicographic: project_panel.sort_order_lexicographic.unwrap(),
+            sort_order: project_panel.sort_order.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
             git_status_indicator: project_panel.git_status_indicator.unwrap(),
         }

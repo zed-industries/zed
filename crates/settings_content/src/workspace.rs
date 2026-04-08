@@ -751,7 +751,7 @@ pub struct ProjectPanelSettingsContent {
     /// directories are grouped, while this setting controls how names are compared.
     ///
     /// Default: default
-    pub sort_order_lexicographic: Option<ProjectPanelSortOrderLexicographic>,
+    pub sort_order: Option<ProjectPanelSortOrder>,
     /// Whether to show error and warning count badges next to file names in the project panel.
     ///
     /// Default: false
@@ -825,7 +825,7 @@ pub enum ProjectPanelSortMode {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum ProjectPanelSortOrderLexicographic {
+pub enum ProjectPanelSortOrder {
     /// Case-insensitive natural sort with lowercase preferred in ties.
     /// Numbers in file names are compared by value (e.g., `file2` before `file10`).
     #[default]
@@ -851,13 +851,13 @@ impl From<ProjectPanelSortMode> for util::paths::SortMode {
     }
 }
 
-impl From<ProjectPanelSortOrderLexicographic> for util::paths::SortOrderLexicographic {
-    fn from(order: ProjectPanelSortOrderLexicographic) -> Self {
+impl From<ProjectPanelSortOrder> for util::paths::SortOrder {
+    fn from(order: ProjectPanelSortOrder) -> Self {
         match order {
-            ProjectPanelSortOrderLexicographic::Default => Self::Default,
-            ProjectPanelSortOrderLexicographic::Upper => Self::Upper,
-            ProjectPanelSortOrderLexicographic::Lower => Self::Lower,
-            ProjectPanelSortOrderLexicographic::Unicode => Self::Unicode,
+            ProjectPanelSortOrder::Default => Self::Default,
+            ProjectPanelSortOrder::Upper => Self::Upper,
+            ProjectPanelSortOrder::Lower => Self::Lower,
+            ProjectPanelSortOrder::Unicode => Self::Unicode,
         }
     }
 }

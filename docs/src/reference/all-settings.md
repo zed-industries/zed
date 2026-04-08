@@ -5021,10 +5021,10 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
-### Sort Order (Lexicographic)
+### Sort Order
 
 - Description: Whether to sort file and folder names case-sensitively in the project panel. This setting works in combination with `sort_mode`. `sort_mode` controls how files and directories are grouped (e.g., directories first), while this setting controls how names are compared within those groups.
-- Setting: `sort_order_lexicographic`
+- Setting: `sort_order`
 - Default: `default`
 
 **Options**
@@ -5034,7 +5034,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json [settings]
 {
   "project_panel": {
-    "sort_order_lexicographic": "default"
+    "sort_order": "default"
   }
 }
 ```
@@ -5044,7 +5044,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json [settings]
 {
   "project_panel": {
-    "sort_order_lexicographic": "upper"
+    "sort_order": "upper"
   }
 }
 ```
@@ -5054,7 +5054,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json [settings]
 {
   "project_panel": {
-    "sort_order_lexicographic": "lower"
+    "sort_order": "lower"
   }
 }
 ```
@@ -5064,7 +5064,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json [settings]
 {
   "project_panel": {
-    "sort_order_lexicographic": "unicode"
+    "sort_order": "unicode"
   }
 }
 ```

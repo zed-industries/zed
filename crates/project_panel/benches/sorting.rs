@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use project::{Entry, EntryKind, GitEntry, ProjectEntryId};
 use project_panel::par_sort_worktree_entries;
-use settings::{ProjectPanelSortMode, ProjectPanelSortOrderLexicographic};
+use settings::{ProjectPanelSortMode, ProjectPanelSortOrder};
 use std::sync::Arc;
 use util::rel_path::RelPath;
 
@@ -51,10 +51,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         ("FilesFirst", ProjectPanelSortMode::FilesFirst),
     ];
     let orders = [
-        ("Default", ProjectPanelSortOrderLexicographic::Default),
-        ("Upper", ProjectPanelSortOrderLexicographic::Upper),
-        ("Lower", ProjectPanelSortOrderLexicographic::Lower),
-        ("Unicode", ProjectPanelSortOrderLexicographic::Unicode),
+        ("Default", ProjectPanelSortOrder::Default),
+        ("Upper", ProjectPanelSortOrder::Upper),
+        ("Lower", ProjectPanelSortOrder::Lower),
+        ("Unicode", ProjectPanelSortOrder::Unicode),
     ];
 
     for (mode_name, mode) in &modes {

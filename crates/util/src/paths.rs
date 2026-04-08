@@ -1111,7 +1111,7 @@ fn stem_and_extension(filename: &str) -> (Option<&str>, Option<&str>) {
 
 /// Controls the lexicographic sorting of file and folder names.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum SortOrderLexicographic {
+pub enum SortOrder {
     /// Case-insensitive natural sort with lowercase preferred in ties.
     /// Numbers in file names are compared by value (e.g., `file2` before `file10`).
     #[default]
@@ -1139,20 +1139,20 @@ pub enum SortMode {
     FilesFirst,
 }
 
-fn case_group_key(name: &str, order: SortOrderLexicographic) -> u8 {
+fn case_group_key(name: &str, order: SortOrder) -> u8 {
     let first = match name.chars().next() {
         Some(c) => c,
         None => return 0,
     };
     match order {
-        SortOrderLexicographic::Upper => {
+        SortOrder::Upper => {
             if first.is_lowercase() {
                 1
             } else {
                 0
             }
         }
-        SortOrderLexicographic::Lower => {
+        SortOrder::Lower => {
             if first.is_uppercase() {
                 1
             } else {
@@ -1163,16 +1163,16 @@ fn case_group_key(name: &str, order: SortOrderLexicographic) -> u8 {
     }
 }
 
-fn compare_strings(a: &str, b: &str, order: SortOrderLexicographic) -> Ordering {
+fn compare_strings(a: &str, b: &str, order: SortOrder) -> Ordering {
     match order {
-        SortOrderLexicographic::Unicode => a.cmp(b),
+        SortOrder::Unicode => a.cmp(b),
         _ => natural_sort(a, b),
     }
 }
 
-fn compare_strings_no_tiebreak(a: &str, b: &str, order: SortOrderLexicographic) -> Ordering {
+fn compare_strings_no_tiebreak(a: &str, b: &str, order: SortOrder) -> Ordering {
     match order {
-        SortOrderLexicographic::Unicode => a.cmp(b),
+        SortOrder::Unicode => a.cmp(b),
         _ => natural_sort_no_tiebreak(a, b),
     }
 }
@@ -1185,7 +1185,7 @@ pub fn compare_rel_paths(
         (path_a, a_is_file),
         (path_b, b_is_file),
         SortMode::DirectoriesFirst,
-        SortOrderLexicographic::Default,
+        SortOrder::Default,
     )
 }
 
@@ -1193,7 +1193,7 @@ pub fn compare_rel_paths_by(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
     mode: SortMode,
-    order: SortOrderLexicographic,
+    order: SortOrder,
 ) -> Ordering {
     let needs_final_tiebreak =
         mode != SortMode::DirectoriesFirst && !(std::ptr::eq(path_a, path_b) || path_a == path_b);
@@ -1256,7 +1256,7 @@ pub fn compare_rel_paths_by(
                         name_cmp.then_with(|| {
                             if a_leaf_file && b_leaf_file {
                                 match order {
-                                    SortOrderLexicographic::Unicode => {
+                                    SortOrder::Unicode => {
                                         a_ext.unwrap_or_default().cmp(b_ext.unwrap_or_default())
                                     }
                                     _ => {
@@ -1573,7 +1573,7 @@ mod tests {
     fn sorted_rel_paths(
         mut paths: Vec<(&'static RelPath, bool)>,
         mode: SortMode,
-        order: SortOrderLexicographic,
+        order: SortOrder,
     ) -> Vec<(&'static RelPath, bool)> {
         paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, mode, order));
         paths
@@ -1708,9 +1708,7 @@ mod tests {
             (RelPath::unix("Carrot").unwrap(), false),
             (RelPath::unix("aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         // Case-insensitive: aardvark < Apple < banana < Carrot < zebra
         assert_eq!(
             paths,
@@ -1734,9 +1732,8 @@ mod tests {
             (RelPath::unix("Carrot").unwrap(), false),
             (RelPath::unix("aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
-        });
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         // Files first (case-insensitive), then directories (case-insensitive)
         assert_eq!(
             paths,
@@ -1760,9 +1757,8 @@ mod tests {
             (RelPath::unix("carrot").unwrap(), false),
             (RelPath::unix("Aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
-        });
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -1785,9 +1781,8 @@ mod tests {
             (RelPath::unix("dir10").unwrap(), false),
             (RelPath::unix("file1.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
-        });
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -1808,9 +1803,7 @@ mod tests {
             (RelPath::unix("readme.txt").unwrap(), true),
             (RelPath::unix("ReadMe.rs").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         // All "readme" variants should group together, sorted by extension
         assert_eq!(
             paths,
@@ -1831,9 +1824,7 @@ mod tests {
             (RelPath::unix("file1.txt").unwrap(), true),
             (RelPath::unix("dir2").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         // Case-insensitive: dir1, dir2, file1, file2 (all mixed)
         assert_eq!(
             paths,
@@ -1852,9 +1843,7 @@ mod tests {
             (RelPath::unix("Hello.txt").unwrap(), true),
             (RelPath::unix("hello").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -1867,9 +1856,7 @@ mod tests {
             (RelPath::unix("hello").unwrap(), false),
             (RelPath::unix("Hello.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -1888,9 +1875,7 @@ mod tests {
             (RelPath::unix("src").unwrap(), false),
             (RelPath::unix("target").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -1911,9 +1896,8 @@ mod tests {
             (RelPath::unix("src").unwrap(), false),
             (RelPath::unix("tests").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
-        });
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -1934,9 +1918,7 @@ mod tests {
             (RelPath::unix(".github").unwrap(), false),
             (RelPath::unix("src").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -1957,9 +1939,8 @@ mod tests {
             (RelPath::unix(".github").unwrap(), false),
             (RelPath::unix("src").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
-        });
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -1979,9 +1960,7 @@ mod tests {
             (RelPath::unix("file.md").unwrap(), true),
             (RelPath::unix("file.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -2000,9 +1979,8 @@ mod tests {
             (RelPath::unix("main.c").unwrap(), true),
             (RelPath::unix("main").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
-        });
+        paths
+            .sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -2022,9 +2000,7 @@ mod tests {
             (RelPath::unix("a.txt").unwrap(), true),
             (RelPath::unix("A.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
-        });
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, SortMode::Mixed, SortOrder::Default));
         assert_eq!(
             paths,
             vec![
@@ -2052,7 +2028,7 @@ mod tests {
             sorted_rel_paths(
                 directories_only_paths,
                 SortMode::DirectoriesFirst,
-                SortOrderLexicographic::Upper,
+                SortOrder::Upper,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2079,7 +2055,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths.clone(),
                 SortMode::DirectoriesFirst,
-                SortOrderLexicographic::Upper,
+                SortOrder::Upper,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2095,7 +2071,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths.clone(),
                 SortMode::Mixed,
-                SortOrderLexicographic::Upper,
+                SortOrder::Upper,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2111,7 +2087,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths,
                 SortMode::FilesFirst,
-                SortOrderLexicographic::Upper,
+                SortOrder::Upper,
             ),
             vec![
                 rel_path_entry("Apple.txt", true),
@@ -2131,11 +2107,7 @@ mod tests {
             rel_path_entry("file2.txt", true),
         ];
         assert_eq!(
-            sorted_rel_paths(
-                natural_sort_paths,
-                SortMode::Mixed,
-                SortOrderLexicographic::Upper,
-            ),
+            sorted_rel_paths(natural_sort_paths, SortMode::Mixed, SortOrder::Upper,),
             vec![
                 rel_path_entry("file1.txt", true),
                 rel_path_entry("file2.txt", true),
@@ -2150,11 +2122,7 @@ mod tests {
             rel_path_entry("Apple.txt", true),
         ];
         assert_eq!(
-            sorted_rel_paths(
-                accented_paths,
-                SortMode::Mixed,
-                SortOrderLexicographic::Upper
-            ),
+            sorted_rel_paths(accented_paths, SortMode::Mixed, SortOrder::Upper),
             vec![
                 rel_path_entry("Apple.txt", true),
                 rel_path_entry("\u{00C9}something.txt", true),
@@ -2179,7 +2147,7 @@ mod tests {
             sorted_rel_paths(
                 directories_only_paths,
                 SortMode::DirectoriesFirst,
-                SortOrderLexicographic::Lower,
+                SortOrder::Lower,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2206,7 +2174,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths.clone(),
                 SortMode::DirectoriesFirst,
-                SortOrderLexicographic::Lower,
+                SortOrder::Lower,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2222,7 +2190,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths.clone(),
                 SortMode::Mixed,
-                SortOrderLexicographic::Lower,
+                SortOrder::Lower,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2238,7 +2206,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths,
                 SortMode::FilesFirst,
-                SortOrderLexicographic::Lower,
+                SortOrder::Lower,
             ),
             vec![
                 rel_path_entry("dog.md", true),
@@ -2268,7 +2236,7 @@ mod tests {
             sorted_rel_paths(
                 directories_only_paths,
                 SortMode::DirectoriesFirst,
-                SortOrderLexicographic::Unicode,
+                SortOrder::Unicode,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2295,7 +2263,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths.clone(),
                 SortMode::DirectoriesFirst,
-                SortOrderLexicographic::Unicode,
+                SortOrder::Unicode,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2311,7 +2279,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths.clone(),
                 SortMode::Mixed,
-                SortOrderLexicographic::Unicode,
+                SortOrder::Unicode,
             ),
             vec![
                 rel_path_entry(".hidden", false),
@@ -2327,7 +2295,7 @@ mod tests {
             sorted_rel_paths(
                 file_and_directory_paths,
                 SortMode::FilesFirst,
-                SortOrderLexicographic::Unicode,
+                SortOrder::Unicode,
             ),
             vec![
                 rel_path_entry("Apple.txt", true),
@@ -2347,11 +2315,7 @@ mod tests {
             rel_path_entry("file20.txt", true),
         ];
         assert_eq!(
-            sorted_rel_paths(
-                numeric_paths,
-                SortMode::Mixed,
-                SortOrderLexicographic::Unicode,
-            ),
+            sorted_rel_paths(numeric_paths, SortMode::Mixed, SortOrder::Unicode,),
             vec![
                 rel_path_entry("file1.txt", true),
                 rel_path_entry("file10.txt", true),
@@ -2366,11 +2330,7 @@ mod tests {
             rel_path_entry("Apple.txt", true),
         ];
         assert_eq!(
-            sorted_rel_paths(
-                accented_paths,
-                SortMode::Mixed,
-                SortOrderLexicographic::Unicode
-            ),
+            sorted_rel_paths(accented_paths, SortMode::Mixed, SortOrder::Unicode),
             vec![
                 rel_path_entry("Apple.txt", true),
                 rel_path_entry("zebra.txt", true),

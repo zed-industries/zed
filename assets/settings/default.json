@@ -806,7 +806,7 @@
     // 4. Pure Unicode codepoint comparison.
     //    No case folding, no natural number sorting:
     //    "unicode"
-    "sort_order_lexicographic": "default",
+    "sort_order": "default",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
     // Whether to show the git status indicator next to file names in the project panel.

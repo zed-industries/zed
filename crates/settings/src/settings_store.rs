@@ -2027,6 +2027,30 @@ mod tests {
             cx,
         );
 
+        // explorer sort settings
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "explorer.sortOrder": "mixed",
+              "explorer.sortOrderLexicographicOptions": "lower"
+            }"#
+            .unindent(),
+            r#"{
+              "project_panel": {
+                "sort_mode": "mixed",
+                "sort_order": "lower"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
         // font-family
         check_vscode_import(
             &mut store,

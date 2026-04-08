@@ -847,9 +847,7 @@ impl ProjectPanel {
                     if project_panel_settings.sort_mode != new_settings.sort_mode {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
-                    if project_panel_settings.sort_order_lexicographic
-                        != new_settings.sort_order_lexicographic
-                    {
+                    if project_panel_settings.sort_order != new_settings.sort_order {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
@@ -2497,7 +2495,7 @@ impl ProjectPanel {
                 .collect();
 
         let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
-        let sort_order = ProjectPanelSettings::get_global(cx).sort_order_lexicographic;
+        let sort_order = ProjectPanelSettings::get_global(cx).sort_order;
         sort_worktree_entries(&mut siblings, sort_mode, sort_order);
         let sibling_entry_index = siblings
             .iter()
@@ -3927,7 +3925,7 @@ impl ProjectPanel {
         let auto_collapse_dirs = settings.auto_fold_dirs;
         let hide_gitignore = settings.hide_gitignore;
         let sort_mode = settings.sort_mode;
-        let sort_order = settings.sort_order_lexicographic;
+        let sort_order = settings.sort_order;
         let project = self.project.read(cx);
         let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
 
@@ -7285,7 +7283,7 @@ fn cmp_worktree_entries(
     a: &Entry,
     b: &Entry,
     mode: &settings::ProjectPanelSortMode,
-    order: &settings::ProjectPanelSortOrderLexicographic,
+    order: &settings::ProjectPanelSortOrder,
 ) -> cmp::Ordering {
     let a = (&*a.path, a.is_file());
     let b = (&*b.path, b.is_file());
@@ -7295,7 +7293,7 @@ fn cmp_worktree_entries(
 pub fn sort_worktree_entries(
     entries: &mut [impl AsRef<Entry>],
     mode: settings::ProjectPanelSortMode,
-    order: settings::ProjectPanelSortOrderLexicographic,
+    order: settings::ProjectPanelSortOrder,
 ) {
     entries.sort_by(|lhs, rhs| cmp_worktree_entries(lhs.as_ref(), rhs.as_ref(), &mode, &order));
 }
@@ -7303,7 +7301,7 @@ pub fn sort_worktree_entries(
 pub fn par_sort_worktree_entries(
     entries: &mut Vec<GitEntry>,
     mode: settings::ProjectPanelSortMode,
-    order: settings::ProjectPanelSortOrderLexicographic,
+    order: settings::ProjectPanelSortOrder,
 ) {
     entries.par_sort_by(|lhs, rhs| cmp_worktree_entries(lhs, rhs, &mode, &order));
 }
