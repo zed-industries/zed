@@ -219,11 +219,10 @@ impl DevContainerManifest {
     async fn dockerfile_location(&self) -> Option<PathBuf> {
         let dev_container = self.dev_container();
         match dev_container.build_type() {
-            DevContainerBuildType::Image => None,
-            DevContainerBuildType::Dockerfile => dev_container
-                .build
-                .as_ref()
-                .map(|build| self.config_directory.join(&build.dockerfile)),
+            DevContainerBuildType::Image(_) => None,
+            DevContainerBuildType::Dockerfile(build) => {
+                Some(self.config_directory.join(&build.dockerfile))
+            }
             DevContainerBuildType::DockerCompose => {
                 let Ok(docker_compose_manifest) = self.docker_compose_manifest().await else {
                     return None;
@@ -262,52 +261,48 @@ impl DevContainerManifest {
     /// - The image sourced in the docker-compose main service dockerfile, if one is specified
     /// If no such image is available, return an error
     async fn get_base_image_from_config(&self) -> Result<String, DevContainerError> {
-        if let Some(image) = &self.dev_container().image {
-            return Ok(image.to_string());
-        }
-        // TODO I think this justifies the configtype refactor
-        if let Some(_) = self.dev_container().build.as_ref().map(|b| &b.dockerfile) {
-            let dockerfile_contents = self.expanded_dockerfile_content().await?;
-            return image_from_dockerfile(
-                dockerfile_contents,
-                self.dev_container()
-                    .build
-                    .as_ref()
-                    .and_then(|b| b.target.clone()),
-            )
-            .ok_or_else(|| {
-                log::error!("Unable to find base image in Dockerfile");
-                DevContainerError::DevContainerParseFailed
-            });
-        }
-        if self.dev_container().docker_compose_file.is_some() {
-            let docker_compose_manifest = self.docker_compose_manifest().await?;
-            let (_, main_service) = find_primary_service(&docker_compose_manifest, &self)?;
-
-            if let Some(_) = main_service
-                .build
-                .as_ref()
-                .and_then(|b| b.dockerfile.as_ref())
-            {
+        match self.dev_container().build_type() {
+            DevContainerBuildType::Image(image) => {
+                return Ok(image.to_string());
+            }
+            DevContainerBuildType::Dockerfile(build) => {
                 let dockerfile_contents = self.expanded_dockerfile_content().await?;
-                return image_from_dockerfile(
-                    dockerfile_contents,
-                    main_service.build.as_ref().and_then(|b| b.target.clone()),
-                )
-                .ok_or_else(|| {
+                return image_from_dockerfile(dockerfile_contents, build.target).ok_or_else(|| {
                     log::error!("Unable to find base image in Dockerfile");
                     DevContainerError::DevContainerParseFailed
                 });
             }
-            if let Some(image) = &main_service.image {
-                return Ok(image.to_string());
-            }
+            DevContainerBuildType::DockerCompose => {
+                let docker_compose_manifest = self.docker_compose_manifest().await?;
+                let (_, main_service) = find_primary_service(&docker_compose_manifest, &self)?;
 
-            log::error!("No valid base image found in docker-compose configuration");
-            return Err(DevContainerError::DevContainerParseFailed);
+                if let Some(_) = main_service
+                    .build
+                    .as_ref()
+                    .and_then(|b| b.dockerfile.as_ref())
+                {
+                    let dockerfile_contents = self.expanded_dockerfile_content().await?;
+                    return image_from_dockerfile(
+                        dockerfile_contents,
+                        main_service.build.as_ref().and_then(|b| b.target.clone()),
+                    )
+                    .ok_or_else(|| {
+                        log::error!("Unable to find base image in Dockerfile");
+                        DevContainerError::DevContainerParseFailed
+                    });
+                }
+                if let Some(image) = &main_service.image {
+                    return Ok(image.to_string());
+                }
+
+                log::error!("No valid base image found in docker-compose configuration");
+                return Err(DevContainerError::DevContainerParseFailed);
+            }
+            DevContainerBuildType::None => {
+                log::error!("Not a valid devcontainer config for build");
+                return Err(DevContainerError::NotInValidProject);
+            }
         }
-        log::error!("No valid base image found in dev container configuration");
-        Err(DevContainerError::DevContainerParseFailed)
     }
 
     async fn download_feature_and_dockerfile_resources(&mut self) -> Result<(), DevContainerError> {
@@ -511,7 +506,10 @@ impl DevContainerManifest {
 
         // --- Phase 3: Generate extended Dockerfile from the inflated manifests ---
 
-        let is_compose = dev_container.build_type() == DevContainerBuildType::DockerCompose;
+        let is_compose = match dev_container.build_type() {
+            DevContainerBuildType::DockerCompose => true,
+            _ => false,
+        };
         let use_buildkit = self.docker_client.supports_compose_buildkit() || !is_compose;
 
         let dockerfile_base_content = if let Some(location) = &self.dockerfile_location().await {
@@ -709,20 +707,17 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         }
         let dev_container = self.dev_container();
         match dev_container.build_type() {
-            DevContainerBuildType::Image => {
+            DevContainerBuildType::Image(base_image) => {
                 let built_docker_image = self.build_docker_image().await?;
-                let Some(base_image) = dev_container.image.as_ref() else {
-                    log::error!("Dev container is using and image which can't be referenced");
-                    return Err(DevContainerError::DevContainerParseFailed);
-                };
+
                 let built_docker_image = self
-                    .update_remote_user_uid(built_docker_image, base_image)
+                    .update_remote_user_uid(built_docker_image, &base_image)
                     .await?;
 
                 let resources = self.build_merged_resources(built_docker_image)?;
                 Ok(DevContainerBuildResources::Docker(resources))
             }
-            DevContainerBuildType::Dockerfile => {
+            DevContainerBuildType::Dockerfile(_) => {
                 let built_docker_image = self.build_docker_image().await?;
                 let Some(features_build_info) = &self.features_build_info else {
                     log::error!(
@@ -1269,11 +1264,8 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         };
 
         match dev_container.build_type() {
-            DevContainerBuildType::Image => {
-                let Some(image_tag) = &dev_container.image else {
-                    return Err(DevContainerError::DevContainerParseFailed);
-                };
-                let base_image = self.docker_client.inspect(image_tag).await?;
+            DevContainerBuildType::Image(image_tag) => {
+                let base_image = self.docker_client.inspect(&image_tag).await?;
                 if dev_container
                     .features
                     .as_ref()
@@ -1283,7 +1275,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     return Ok(base_image);
                 }
             }
-            DevContainerBuildType::Dockerfile => {}
+            DevContainerBuildType::Dockerfile(_) => {}
             DevContainerBuildType::DockerCompose | DevContainerBuildType::None => {
                 return Err(DevContainerError::DevContainerParseFailed);
             }
@@ -1620,7 +1612,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         command.args(["-t", &features_build_info.image_tag]);
 
-        if dev_container.build_type() == DevContainerBuildType::Dockerfile {
+        if let DevContainerBuildType::Dockerfile(_) = dev_container.build_type() {
             command.arg(self.config_directory.display().to_string());
         } else {
             // Use an empty folder as the build context to avoid pulling in unneeded files.
