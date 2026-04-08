@@ -4,12 +4,15 @@ pub mod query;
 // Re-export
 pub use anyhow;
 use anyhow::Context as _;
-use gpui::{App, AppContext};
+pub use gpui;
+use gpui::{App, AppContext, Global};
 pub use indoc::indoc;
+pub use inventory;
 pub use paths::database_dir;
 pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
+pub use uuid;
 
 pub use release_channel::RELEASE_CHANNEL;
 use sqlez::domain::Migrator;
@@ -21,6 +24,103 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{LazyLock, atomic::Ordering};
 use util::{ResultExt, maybe};
 use zed_env_vars::ZED_STATELESS;
+
+/// A migration registered via `static_connection!` and collected at link time.
+pub struct DomainMigration {
+    pub name: &'static str,
+    pub migrations: &'static [&'static str],
+    pub dependencies: &'static [&'static str],
+    pub should_allow_migration_change: fn(usize, &str, &str) -> bool,
+}
+
+inventory::collect!(DomainMigration);
+
+/// The shared database connection backing all domain-specific DB wrappers.
+/// Set as a GPUI global per-App. Falls back to a shared LazyLock if not set.
+pub struct AppDatabase(pub ThreadSafeConnection);
+
+impl Global for AppDatabase {}
+
+/// Migrator that runs all inventory-registered domain migrations.
+pub struct AppMigrator;
+
+impl Migrator for AppMigrator {
+    fn migrate(connection: &sqlez::connection::Connection) -> anyhow::Result<()> {
+        let registrations: Vec<&DomainMigration> = inventory::iter::<DomainMigration>().collect();
+        let sorted = topological_sort(&registrations);
+        for reg in &sorted {
+            let mut should_allow = reg.should_allow_migration_change;
+            connection.migrate(reg.name, reg.migrations, &mut should_allow)?;
+        }
+        Ok(())
+    }
+}
+
+impl AppDatabase {
+    /// Opens the production database and runs all inventory-registered
+    /// migrations in dependency order.
+    pub fn new() -> Self {
+        let db_dir = database_dir();
+        let scope = RELEASE_CHANNEL.dev_name();
+        let connection = smol::block_on(open_db::<AppMigrator>(db_dir, scope));
+        Self(connection)
+    }
+
+    /// Creates a new in-memory database with a unique name and runs all
+    /// inventory-registered migrations in dependency order.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_new() -> Self {
+        let name = format!("test-db-{}", uuid::Uuid::new_v4());
+        let connection = smol::block_on(open_test_db::<AppMigrator>(&name));
+        Self(connection)
+    }
+
+    /// Returns the per-App connection if set, otherwise falls back to
+    /// the shared LazyLock.
+    pub fn global(cx: &App) -> &ThreadSafeConnection {
+        #[allow(unreachable_code)]
+        if let Some(db) = cx.try_global::<Self>() {
+            return &db.0;
+        } else {
+            #[cfg(any(feature = "test-support", test))]
+            return &TEST_APP_DATABASE.0;
+
+            panic!("database not initialized")
+        }
+    }
+}
+
+fn topological_sort<'a>(registrations: &[&'a DomainMigration]) -> Vec<&'a DomainMigration> {
+    let mut sorted: Vec<&DomainMigration> = Vec::new();
+    let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
+
+    fn visit<'a>(
+        name: &str,
+        registrations: &[&'a DomainMigration],
+        sorted: &mut Vec<&'a DomainMigration>,
+        visited: &mut std::collections::HashSet<&'a str>,
+    ) {
+        if visited.contains(name) {
+            return;
+        }
+        if let Some(reg) = registrations.iter().find(|r| r.name == name) {
+            for dep in reg.dependencies {
+                visit(dep, registrations, sorted, visited);
+            }
+            visited.insert(reg.name);
+            sorted.push(reg);
+        }
+    }
+
+    for reg in registrations {
+        visit(reg.name, registrations, &mut sorted, &mut visited);
+    }
+    sorted
+}
+
+/// Shared fallback `AppDatabase` used when no per-App global is set.
+#[cfg(any(test, feature = "test-support"))]
+static TEST_APP_DATABASE: LazyLock<AppDatabase> = LazyLock::new(AppDatabase::test_new);
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
     PRAGMA foreign_keys=TRUE;
@@ -110,12 +210,11 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection {
 /// Implements a basic DB wrapper for a given domain
 ///
 /// Arguments:
-/// - static variable name for connection
 /// - type of connection wrapper
 /// - dependencies, whose migrations should be run prior to this domain's migrations
 #[macro_export]
 macro_rules! static_connection {
-    ($id:ident, $t:ident, [ $($d:ty),* ] $(, $global:ident)?) => {
+    ($t:ident, [ $($d:ty),* ]) => {
         impl ::std::ops::Deref for $t {
             type Target = $crate::sqlez::thread_safe_connection::ThreadSafeConnection;
 
@@ -124,30 +223,33 @@ macro_rules! static_connection {
             }
         }
 
+        impl ::std::clone::Clone for $t {
+            fn clone(&self) -> Self {
+                $t(self.0.clone())
+            }
+        }
+
         impl $t {
+            /// Returns an instance backed by the per-App database if set,
+            /// or the shared fallback connection otherwise.
+            pub fn global(cx: &$crate::gpui::App) -> Self {
+                $t($crate::AppDatabase::global(cx).clone())
+            }
+
             #[cfg(any(test, feature = "test-support"))]
             pub async fn open_test_db(name: &'static str) -> Self {
                 $t($crate::open_test_db::<$t>(name).await)
             }
         }
 
-        #[cfg(any(test, feature = "test-support"))]
-        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            #[allow(unused_parens)]
-            $t($crate::smol::block_on($crate::open_test_db::<($($d,)* $t)>(stringify!($id))))
-        });
-
-        #[cfg(not(any(test, feature = "test-support")))]
-        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            let db_dir = $crate::database_dir();
-            let scope = if false $(|| stringify!($global) == "global")? {
-                "global"
-            } else {
-                $crate::RELEASE_CHANNEL.dev_name()
-            };
-            #[allow(unused_parens)]
-            $t($crate::smol::block_on($crate::open_db::<($($d,)* $t)>(db_dir, scope)))
-        });
+        $crate::inventory::submit! {
+            $crate::DomainMigration {
+                name: <$t as $crate::sqlez::domain::Domain>::NAME,
+                migrations: <$t as $crate::sqlez::domain::Domain>::MIGRATIONS,
+                dependencies: &[$(<$d as $crate::sqlez::domain::Domain>::NAME),*],
+                should_allow_migration_change: <$t as $crate::sqlez::domain::Domain>::should_allow_migration_change,
+            }
+        }
     }
 }
 

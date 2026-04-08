@@ -12,6 +12,7 @@ use gpui::{App, Task, Window};
 use icons::IconName;
 use livekit_client::ConnectionQuality;
 use project::WorktreeSettings;
+use remote_connection::RemoteConnectionModal;
 use rpc::proto::{self};
 use settings::{Settings as _, SettingsLocation};
 use theme::ActiveTheme;
@@ -342,7 +343,11 @@ impl TitleBar {
 
         let is_connecting_to_project = self
             .workspace
-            .update(cx, |workspace, cx| workspace.has_active_modal(window, cx))
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_modal::<RemoteConnectionModal>(cx)
+                    .is_some()
+            })
             .unwrap_or(false);
 
         let room = room.read(cx);
@@ -378,10 +383,29 @@ impl TitleBar {
             ConnectionQuality::Poor => (IconName::SignalMedium, Some(Color::Warning), "Poor"),
             ConnectionQuality::Lost => (IconName::SignalLow, Some(Color::Error), "Lost"),
         };
+
         let quality_label: SharedString = quality_label.into();
+
+        children.push(
+            h_flex()
+                .gap_1()
+                .child(
+                    IconButton::new("leave-call", IconName::Exit)
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(Tooltip::text("Leave Call"))
+                        .icon_size(IconSize::Small)
+                        .on_click(move |_, _window, cx| {
+                            ActiveCall::global(cx)
+                                .update(cx, |call, cx| call.hang_up(cx))
+                                .detach_and_log_err(cx);
+                        }),
+                )
+                .child(Divider::vertical().color(DividerColor::Border))
+                .into_any_element(),
+        );
+
         children.push(
             IconButton::new("call-quality", signal_icon)
-                .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .when_some(signal_color, |button, color| button.icon_color(color))
                 .tooltip(move |_window, cx| {
@@ -406,23 +430,6 @@ impl TitleBar {
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(ShowCallStats), cx);
                 })
-                .into_any_element(),
-        );
-        children.push(
-            h_flex()
-                .gap_1()
-                .child(
-                    IconButton::new("leave-call", IconName::Exit)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Leave Call"))
-                        .icon_size(IconSize::Small)
-                        .on_click(move |_, _window, cx| {
-                            ActiveCall::global(cx)
-                                .update(cx, |call, cx| call.hang_up(cx))
-                                .detach_and_log_err(cx);
-                        }),
-                )
-                .child(Divider::vertical().color(DividerColor::Border))
                 .into_any_element(),
         );
 
@@ -543,6 +550,11 @@ impl TitleBar {
         );
 
         if can_use_microphone && screen_sharing_supported {
+            #[cfg(target_os = "linux")]
+            let is_wayland = gpui::guess_compositor() == "Wayland";
+            #[cfg(not(target_os = "linux"))]
+            let is_wayland = false;
+
             let trigger = IconButton::new("screen-share", IconName::Screen)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
@@ -559,28 +571,56 @@ impl TitleBar {
                         .room()
                         .is_some_and(|room| !room.read(cx).is_sharing_screen());
 
-                    window
-                        .spawn(cx, async move |cx| {
-                            let screen = if should_share {
-                                cx.update(|_, cx| pick_default_screen(cx))?.await
-                            } else {
-                                Ok(None)
-                            };
-                            cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
+                    #[cfg(target_os = "linux")]
+                    {
+                        if is_wayland
+                            && let Some(room) = ActiveCall::global(cx).read(cx).room().cloned()
+                        {
+                            let task = room.update(cx, |room, cx| {
+                                if should_share {
+                                    room.share_screen_wayland(cx)
+                                } else {
+                                    room.unshare_screen(true, cx)
+                                        .map(|()| Task::ready(Ok(())))
+                                        .unwrap_or_else(|e| Task::ready(Err(e)))
+                                }
+                            });
+                            task.detach_and_prompt_err(
+                                "Sharing Screen Failed",
+                                window,
+                                cx,
+                                |e, _, _| Some(format!("{e:?}")),
+                            );
+                        }
+                    }
+                    if !is_wayland {
+                        window
+                            .spawn(cx, async move |cx| {
+                                let screen = if should_share {
+                                    cx.update(|_, cx| pick_default_screen(cx))?.await
+                                } else {
+                                    Ok(None)
+                                };
+                                cx.update(|window, cx| toggle_screen_sharing(screen, window, cx))?;
 
-                            Result::<_, anyhow::Error>::Ok(())
-                        })
-                        .detach();
+                                Result::<_, anyhow::Error>::Ok(())
+                            })
+                            .detach();
+                    }
                 });
 
-            children.push(
-                SplitButton::new(
-                    trigger.render(window, cx),
-                    self.render_screen_list().into_any_element(),
-                )
-                .style(SplitButtonStyle::Transparent)
-                .into_any_element(),
-            );
+            if is_wayland {
+                children.push(trigger.into_any_element());
+            } else {
+                children.push(
+                    SplitButton::new(
+                        trigger.render(window, cx),
+                        self.render_screen_list().into_any_element(),
+                    )
+                    .style(SplitButtonStyle::Transparent)
+                    .into_any_element(),
+                );
+            }
         }
 
         children.push(div().pr_2().into_any_element());

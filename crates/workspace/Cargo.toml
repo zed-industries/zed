@@ -27,6 +27,7 @@ test-support = [
 
 [dependencies]
 any_vec.workspace = true
+agent_settings.workspace = true
 anyhow.workspace = true
 async-recursion.workspace = true
 client.workspace = true
@@ -62,9 +63,11 @@ strum.workspace = true
 task.workspace = true
 telemetry.workspace = true
 theme.workspace = true
+theme_settings.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
+vim_mode_setting.workspace = true
 zed_actions.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

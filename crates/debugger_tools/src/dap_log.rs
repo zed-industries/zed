@@ -1087,6 +1087,7 @@ impl SearchableItem for DapLogView {
             // DAP log is read-only.
             replacement: false,
             selection: false,
+            select_all: true,
         }
     }
     fn active_match_index(

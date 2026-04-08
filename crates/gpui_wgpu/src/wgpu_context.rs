@@ -78,11 +78,12 @@ impl WgpuContext {
 
     #[cfg(target_family = "wasm")]
     pub async fn new_web() -> anyhow::Result<Self> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: None,
         });
 
         let adapter = instance
@@ -148,12 +149,13 @@ impl WgpuContext {
     }
 
     #[cfg(not(target_family = "wasm"))]
-    pub fn instance() -> wgpu::Instance {
-        wgpu::Instance::new(&wgpu::InstanceDescriptor {
+    pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            display: Some(display),
         })
     }
 
@@ -198,9 +200,8 @@ impl WgpuContext {
         //
         // 1. ZED_DEVICE_ID match — explicit user override
         // 2. Compositor GPU match — the GPU the display server is rendering on
-        // 3. Device type — WGPU HighPerformance order (Discrete > Integrated >
-        //    Other > Virtual > Cpu). "Other" ranks above "Virtual" because
-        //    backends like OpenGL may report real hardware as "Other".
+        // 3. Device type (Discrete > Integrated > Other > Virtual > Cpu).
+        //    "Other" ranks above "Virtual" because OpenGL seems to count as "Other".
         // 4. Backend — prefer Vulkan/Metal/Dx12 over GL/etc.
         adapters.sort_by_key(|adapter| {
             let info = adapter.get_info();
@@ -305,10 +306,7 @@ impl WgpuContext {
             anyhow::bail!("no compatible alpha modes");
         }
 
-        // Create the real device with full features
         let (device, queue, dual_source_blending) = Self::create_device(adapter).await?;
-
-        // Use an error scope to capture any validation errors during configure
         let error_scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
 
         let test_config = wgpu::SurfaceConfiguration {
@@ -324,7 +322,6 @@ impl WgpuContext {
 
         surface.configure(&device, &test_config);
 
-        // Check if there was a validation error
         let error = error_scope.pop().await;
         if let Some(e) = error {
             anyhow::bail!("surface configuration failed: {e}");

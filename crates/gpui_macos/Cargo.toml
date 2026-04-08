@@ -48,6 +48,7 @@ mach2.workspace = true
 media.workspace = true
 metal.workspace = true
 objc.workspace = true
+objc2-app-kit.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry = "0.5"
 raw-window-handle = "0.6"

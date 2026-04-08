@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, FluentBuilder, NamedJob, named},
+    steps::{self, FluentBuilder, NamedJob, RepositoryTarget, TokenPermissions, named},
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -161,7 +161,13 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
         .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(RepositoryTarget::current())
+        .with_permissions([
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
+        ])
+        .into();
 
     named::job(
         Job::default()

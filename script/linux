@@ -50,6 +50,8 @@ if [[ -n $apt ]]; then
     musl-tools
     musl-dev
     build-essential
+    pipewire
+    xdg-desktop-portal
   )
   if (grep -qP 'PRETTY_NAME="(Debian|Raspbian).+13' /etc/os-release); then
       # libstdc++-14-dev is in build-essential
@@ -110,6 +112,8 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
     libzstd-devel
     vulkan-loader
     sqlite-devel
+    pipewire
+    xdg-desktop-portal
     jq
     git
     tar
@@ -185,6 +189,8 @@ if [[ -n $zyp ]]; then
     tar
     wayland-devel
     xcb-util-devel
+    pipewire
+    xdg-desktop-portal
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   finalize
@@ -213,6 +219,8 @@ if [[ -n $pacman ]]; then
     pkgconf
     mold
     sqlite
+    pipewire
+    xdg-desktop-portal
     jq
     git
   )
@@ -244,6 +252,8 @@ if [[ -n $xbps ]]; then
     vulkan-loader
     mold
     sqlite-devel
+    pipewire
+    xdg-desktop-portal
   )
   $maysudo "$xbps" -Syu "${deps[@]}"
   finalize
@@ -269,6 +279,8 @@ if [[ -n $emerge ]]; then
     x11-libs/libxkbcommon
     sys-devel/mold
     dev-db/sqlite
+    media-video/pipewire
+    sys-apps/xdg-desktop-portal
   )
   $maysudo "$emerge" -u "${deps[@]}"
   finalize

@@ -25,7 +25,8 @@ use terminal::{
     },
     terminal_settings::TerminalSettings,
 };
-use theme::{ActiveTheme, Theme, ThemeSettings};
+use theme::{ActiveTheme, Theme};
+use theme_settings::ThemeSettings;
 use ui::utils::ensure_minimum_contrast;
 use ui::{ParentElement, Tooltip};
 use util::ResultExt;
@@ -913,7 +914,9 @@ impl Element for TerminalElement {
                     }
                     TerminalMode::Standalone => terminal_settings
                         .font_size
-                        .map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx)),
+                        .map_or(buffer_font_size, |size| {
+                            theme_settings::adjusted_font_size(size, cx)
+                        }),
                 };
 
                 let theme = cx.theme().clone();

@@ -47,6 +47,7 @@ pub struct OrganizationId(pub Arc<str>);
 pub struct Organization {
     pub id: OrganizationId,
     pub name: Arc<str>,
+    pub is_personal: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]

@@ -226,6 +226,14 @@ pub struct EditorSettingsContent {
     ///
     /// Default: split
     pub diff_view_style: Option<DiffViewStyle>,
+
+    /// The minimum width (in em-widths) at which the split diff view is used.
+    /// When the editor is narrower than this, the diff view automatically
+    /// switches to unified mode and switches back when the editor is wide
+    /// enough. Set to 0 to disable automatic switching.
+    ///
+    /// Default: 100
+    pub minimum_split_diff_width: Option<f32>,
 }
 
 #[derive(

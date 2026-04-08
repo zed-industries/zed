@@ -8,7 +8,7 @@ use crate::{
     openai_client::OpenAiClient,
     parse_output::parse_prediction_output,
     paths::{LATEST_EXAMPLE_RUN_DIR, RUN_DIR},
-    progress::{ExampleProgress, InfoStyle, Step, StepProgress},
+    progress::{ExampleProgress, InfoStyle, Progress, Step, StepProgress},
     retrieve_context::run_context_retrieval,
 };
 use anyhow::Context as _;
@@ -137,7 +137,6 @@ pub async fn run_prediction(
         let model = match provider {
             PredictionProvider::Zeta1 => edit_prediction::EditPredictionModel::Zeta,
             PredictionProvider::Zeta2(_) => edit_prediction::EditPredictionModel::Zeta,
-            PredictionProvider::Sweep => edit_prediction::EditPredictionModel::Sweep,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher(..)
             | PredictionProvider::TeacherMultiRegion(..)
@@ -263,6 +262,8 @@ pub async fn run_prediction(
                 actual_cursor: None,
                 error: None,
                 provider,
+                cumulative_logprob: None,
+                avg_logprob: None,
             });
 
         step_progress.set_substatus("requesting prediction");
@@ -455,6 +456,8 @@ async fn predict_anthropic(
                     _ => PredictionProvider::TeacherNonBatching(backend),
                 }
             },
+            cumulative_logprob: None,
+            avg_logprob: None,
         };
 
         example.predictions.push(prediction);
@@ -572,6 +575,8 @@ async fn predict_openai(
                     _ => PredictionProvider::TeacherNonBatching(backend),
                 }
             },
+            cumulative_logprob: None,
+            avg_logprob: None,
         };
 
         example.predictions.push(prediction);
@@ -656,6 +661,8 @@ pub async fn predict_baseten(
         actual_cursor,
         error: None,
         provider: PredictionProvider::Baseten(format),
+        cumulative_logprob: None,
+        avg_logprob: None,
     };
 
     example.predictions.push(prediction);
@@ -690,4 +697,87 @@ pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Resu
         _ => (),
     };
     Ok(())
+}
+
+pub async fn reprocess_after_batch_wait(
+    examples: &mut [Example],
+    args: &PredictArgs,
+) -> anyhow::Result<()> {
+    let Some(PredictionProvider::Teacher(backend)) = args.provider else {
+        return Ok(());
+    };
+
+    let mut reprocessed = 0;
+    for example in examples.iter_mut() {
+        let has_prediction = example
+            .predictions
+            .iter()
+            .any(|p| p.actual_patch.is_some() || !p.actual_output.is_empty());
+        if has_prediction || example.prompt.is_none() {
+            continue;
+        }
+
+        let example_progress = Progress::global().start_group(&example.spec.name);
+        let step_progress = example_progress.start(Step::Predict);
+        predict_teacher(
+            example,
+            backend,
+            true,
+            args.repetitions,
+            false,
+            &step_progress,
+        )
+        .await?;
+        reprocessed += 1;
+    }
+
+    if reprocessed > 0 {
+        eprintln!("Reprocessed {} example(s) with batch results", reprocessed);
+    }
+
+    Ok(())
+}
+
+pub async fn wait_for_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
+    let poll_interval = std::time::Duration::from_secs(30);
+
+    loop {
+        let pending = pending_batch_count(provider)?;
+        if pending == 0 {
+            break;
+        }
+
+        eprintln!(
+            "Waiting for {} pending batch request(s) to complete... (polling every {}s)",
+            pending,
+            poll_interval.as_secs()
+        );
+        std::thread::sleep(poll_interval);
+
+        sync_batches(provider).await?;
+    }
+
+    Ok(())
+}
+
+fn pending_batch_count(provider: Option<&PredictionProvider>) -> anyhow::Result<usize> {
+    match provider {
+        Some(PredictionProvider::Teacher(backend)) => match backend {
+            TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
+                let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
+                    AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
+                        .expect("Failed to create Anthropic client")
+                });
+                llm_client.pending_batch_count()
+            }
+            TeacherBackend::Gpt52 => {
+                let llm_client = OPENAI_CLIENT.get_or_init(|| {
+                    OpenAiClient::batch(&crate::paths::LLM_CACHE_DB)
+                        .expect("Failed to create OpenAI client")
+                });
+                llm_client.pending_batch_count()
+            }
+        },
+        _ => Ok(0),
+    }
 }

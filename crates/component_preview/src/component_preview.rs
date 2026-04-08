@@ -9,7 +9,7 @@ use gpui::{
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use language::LanguageRegistry;
 use notifications::status_toast::{StatusToast, ToastIcon};
-use persistence::COMPONENT_PREVIEW_DB;
+use persistence::ComponentPreviewDb;
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, HighlightedLabel, ListItem, ListSubHeader, Tooltip, prelude::*};
@@ -784,7 +784,7 @@ impl SerializableItem for ComponentPreview {
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
         let deserialized_active_page =
-            match COMPONENT_PREVIEW_DB.get_active_page(item_id, workspace_id) {
+            match ComponentPreviewDb::global(cx).get_active_page(item_id, workspace_id) {
                 Ok(page) => {
                     if let Some(page) = page {
                         ActivePageId(page)
@@ -845,7 +845,7 @@ impl SerializableItem for ComponentPreview {
             alive_items,
             workspace_id,
             "component_previews",
-            &COMPONENT_PREVIEW_DB,
+            &ComponentPreviewDb::global(cx),
             cx,
         )
     }
@@ -860,9 +860,9 @@ impl SerializableItem for ComponentPreview {
     ) -> Option<Task<anyhow::Result<()>>> {
         let active_page = self.active_page_id(cx);
         let workspace_id = self.workspace_id?;
+        let db = ComponentPreviewDb::global(cx);
         Some(cx.background_spawn(async move {
-            COMPONENT_PREVIEW_DB
-                .save_active_page(item_id, workspace_id, active_page.0)
+            db.save_active_page(item_id, workspace_id, active_page.0)
                 .await
         }))
     }

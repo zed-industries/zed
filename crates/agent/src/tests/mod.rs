@@ -6,8 +6,7 @@ use acp_thread::{
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
 use anyhow::Result;
-use client::{Client, UserStore};
-use cloud_llm_client::CompletionIntent;
+use client::{Client, RefreshLlmTokenListener, UserStore};
 use collections::IndexMap;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use feature_flags::FeatureFlagAppExt as _;
@@ -26,8 +25,8 @@ use gpui::{
 };
 use indoc::indoc;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
     fake_provider::FakeLanguageModel,
@@ -841,14 +840,20 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     // Approve the first - send "allow" option_id (UI transforms "once" to "allow")
     tool_call_auth_1
         .response
-        .send(acp::PermissionOptionId::new("allow"))
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("allow"),
+            acp::PermissionOptionKind::AllowOnce,
+        ))
         .unwrap();
     cx.run_until_parked();
 
     // Reject the second - send "deny" option_id directly since Deny is now a button
     tool_call_auth_2
         .response
-        .send(acp::PermissionOptionId::new("deny"))
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("deny"),
+            acp::PermissionOptionKind::RejectOnce,
+        ))
         .unwrap();
     cx.run_until_parked();
 
@@ -892,8 +897,9 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let tool_call_auth_3 = next_tool_call_authorization(&mut events).await;
     tool_call_auth_3
         .response
-        .send(acp::PermissionOptionId::new(
-            "always_allow:tool_requiring_permission",
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("always_allow:tool_requiring_permission"),
+            acp::PermissionOptionKind::AllowAlways,
         ))
         .unwrap();
     cx.run_until_parked();
@@ -995,6 +1001,20 @@ async fn expect_tool_call_update_fields(
         .unwrap();
     match event {
         ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => update,
+        event => {
+            panic!("Unexpected event {event:?}");
+        }
+    }
+}
+
+async fn expect_plan(events: &mut UnboundedReceiver<Result<ThreadEvent>>) -> acp::Plan {
+    let event = events
+        .next()
+        .await
+        .expect("no plan event received")
+        .unwrap();
+    match event {
+        ThreadEvent::Plan(plan) => plan,
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -1183,32 +1203,88 @@ fn test_permission_option_ids_for_terminal() {
         panic!("Expected dropdown permission options");
     };
 
-    let allow_ids: Vec<String> = choices
-        .iter()
-        .map(|choice| choice.allow.option_id.0.to_string())
-        .collect();
-    let deny_ids: Vec<String> = choices
-        .iter()
-        .map(|choice| choice.deny.option_id.0.to_string())
-        .collect();
+    // Expect 3 choices: always-tool, always-pattern, once
+    assert_eq!(choices.len(), 3);
 
-    assert!(allow_ids.contains(&"always_allow:terminal".to_string()));
-    assert!(allow_ids.contains(&"allow".to_string()));
-    assert!(
-        allow_ids
-            .iter()
-            .any(|id| id.starts_with("always_allow_pattern:terminal\n")),
-        "Missing allow pattern option"
+    // First two choices both use the tool-level option IDs
+    assert_eq!(
+        choices[0].allow.option_id.0.as_ref(),
+        "always_allow:terminal"
     );
+    assert_eq!(choices[0].deny.option_id.0.as_ref(), "always_deny:terminal");
+    assert!(choices[0].sub_patterns.is_empty());
 
-    assert!(deny_ids.contains(&"always_deny:terminal".to_string()));
-    assert!(deny_ids.contains(&"deny".to_string()));
-    assert!(
-        deny_ids
-            .iter()
-            .any(|id| id.starts_with("always_deny_pattern:terminal\n")),
-        "Missing deny pattern option"
+    assert_eq!(
+        choices[1].allow.option_id.0.as_ref(),
+        "always_allow:terminal"
     );
+    assert_eq!(choices[1].deny.option_id.0.as_ref(), "always_deny:terminal");
+    assert_eq!(choices[1].sub_patterns, vec!["^cargo\\s+build(\\s|$)"]);
+
+    // Third choice is the one-time allow/deny
+    assert_eq!(choices[2].allow.option_id.0.as_ref(), "allow");
+    assert_eq!(choices[2].deny.option_id.0.as_ref(), "deny");
+    assert!(choices[2].sub_patterns.is_empty());
+}
+
+#[test]
+fn test_permission_options_terminal_pipeline_produces_dropdown_with_patterns() {
+    let permission_options = ToolPermissionContext::new(
+        TerminalTool::NAME,
+        vec!["cargo test 2>&1 | tail".to_string()],
+    )
+    .build_permission_options();
+
+    let PermissionOptions::DropdownWithPatterns {
+        choices,
+        patterns,
+        tool_name,
+    } = permission_options
+    else {
+        panic!("Expected DropdownWithPatterns permission options for pipeline command");
+    };
+
+    assert_eq!(tool_name, TerminalTool::NAME);
+
+    // Should have "Always for terminal" and "Only this time" choices
+    assert_eq!(choices.len(), 2);
+    let labels: Vec<&str> = choices
+        .iter()
+        .map(|choice| choice.allow.name.as_ref())
+        .collect();
+    assert!(labels.contains(&"Always for terminal"));
+    assert!(labels.contains(&"Only this time"));
+
+    // Should have per-command patterns for "cargo test" and "tail"
+    assert_eq!(patterns.len(), 2);
+    let pattern_names: Vec<&str> = patterns.iter().map(|cp| cp.display_name.as_str()).collect();
+    assert!(pattern_names.contains(&"cargo test"));
+    assert!(pattern_names.contains(&"tail"));
+
+    // Verify patterns are valid regex patterns
+    let regex_patterns: Vec<&str> = patterns.iter().map(|cp| cp.pattern.as_str()).collect();
+    assert!(regex_patterns.contains(&"^cargo\\s+test(\\s|$)"));
+    assert!(regex_patterns.contains(&"^tail\\b"));
+}
+
+#[test]
+fn test_permission_options_terminal_pipeline_with_chaining() {
+    let permission_options = ToolPermissionContext::new(
+        TerminalTool::NAME,
+        vec!["npm install && npm test | tail".to_string()],
+    )
+    .build_permission_options();
+
+    let PermissionOptions::DropdownWithPatterns { patterns, .. } = permission_options else {
+        panic!("Expected DropdownWithPatterns for chained pipeline command");
+    };
+
+    // With subcommand-aware patterns, "npm install" and "npm test" are distinct
+    assert_eq!(patterns.len(), 3);
+    let pattern_names: Vec<&str> = patterns.iter().map(|cp| cp.display_name.as_str()).collect();
+    assert!(pattern_names.contains(&"npm install"));
+    assert!(pattern_names.contains(&"npm test"));
+    assert!(pattern_names.contains(&"tail"));
 }
 
 #[gpui::test]
@@ -3054,7 +3130,7 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_text_chunk("Hey!");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
-    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "New Thread"));
+    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), None));
 
     // Ensure the summary model has been invoked to generate a title.
     summary_model.send_last_completion_stream_text_chunk("Hello ");
@@ -3063,7 +3139,9 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     summary_model.end_last_completion_stream();
     send.collect::<Vec<_>>().await;
     cx.run_until_parked();
-    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Hello world".into()))
+    });
 
     // Send another message, ensuring no title is generated this time.
     let send = thread
@@ -3077,7 +3155,9 @@ async fn test_title_generation(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(summary_model.pending_completions(), Vec::new());
     send.collect::<Vec<_>>().await;
-    thread.read_with(cx, |thread, _| assert_eq!(thread.title(), "Hello world"));
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Hello world".into()))
+    });
 }
 
 #[gpui::test]
@@ -3173,7 +3253,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         let clock = Arc::new(clock::FakeSystemClock::new());
         let client = Client::new(clock, http_client, cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        language_model::init(user_store.clone(), client.clone(), cx);
+        language_model::init(cx);
+        RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
         language_models::init(user_store, client.clone(), cx);
         LanguageModelRegistry::test(cx);
     });
@@ -3358,6 +3439,118 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             acp::ToolCallUpdateFields::new()
                 .status(acp::ToolCallStatus::Completed)
                 .raw_output("Hello!")
+        )
+    );
+}
+
+#[gpui::test]
+async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    thread.update(cx, |thread, _cx| thread.add_tool(UpdatePlanTool));
+    let fake_model = model.as_fake();
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Make a plan"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let input = json!({
+        "plan": [
+            {
+                "step": "Inspect the code",
+                "status": "completed",
+            },
+            {
+                "step": "Implement the tool",
+                "status": "in_progress"
+            },
+            {
+                "step": "Run tests",
+                "status": "pending",
+            }
+        ]
+    });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "plan_1".into(),
+            name: UpdatePlanTool::NAME.into(),
+            raw_input: input.to_string(),
+            input,
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let tool_call = expect_tool_call(&mut events).await;
+    assert_eq!(
+        tool_call,
+        acp::ToolCall::new("plan_1", "Update plan")
+            .kind(acp::ToolKind::Think)
+            .raw_input(json!({
+                "plan": [
+                    {
+                        "step": "Inspect the code",
+                        "status": "completed",
+                    },
+                    {
+                        "step": "Implement the tool",
+                        "status": "in_progress"
+                    },
+                    {
+                        "step": "Run tests",
+                        "status": "pending",
+                    }
+                ]
+            }))
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "update_plan".into()
+            )]))
+    );
+
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate::new(
+            "plan_1",
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress)
+        )
+    );
+
+    let plan = expect_plan(&mut events).await;
+    assert_eq!(
+        plan,
+        acp::Plan::new(vec![
+            acp::PlanEntry::new(
+                "Inspect the code",
+                acp::PlanEntryPriority::Medium,
+                acp::PlanEntryStatus::Completed,
+            ),
+            acp::PlanEntry::new(
+                "Implement the tool",
+                acp::PlanEntryPriority::Medium,
+                acp::PlanEntryStatus::InProgress,
+            ),
+            acp::PlanEntry::new(
+                "Run tests",
+                acp::PlanEntryPriority::Medium,
+                acp::PlanEntryStatus::Pending,
+            ),
+        ])
+    );
+
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate::new(
+            "plan_1",
+            acp::ToolCallUpdateFields::new()
+                .status(acp::ToolCallStatus::Completed)
+                .raw_output("Plan updated")
         )
     );
 }
@@ -3710,6 +3903,117 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
     });
 }
 
+#[gpui::test]
+async fn test_streaming_tool_json_parse_error_is_forwarded_to_running_tool(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(StreamingJsonErrorContextTool);
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                UserMessageId::new(),
+                ["Use the streaming_json_error_context tool"],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let tool_use = LanguageModelToolUse {
+        id: "tool_1".into(),
+        name: StreamingJsonErrorContextTool::NAME.into(),
+        raw_input: r#"{"text": "partial"#.into(),
+        input: json!({"text": "partial"}),
+        is_input_complete: false,
+        thought_signature: None,
+    };
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(tool_use));
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(
+        LanguageModelCompletionEvent::ToolUseJsonParseError {
+            id: "tool_1".into(),
+            tool_name: StreamingJsonErrorContextTool::NAME.into(),
+            raw_input: r#"{"text": "partial"#.into(),
+            json_parse_error: "EOF while parsing a string at line 1 column 17".into(),
+        },
+    );
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.run_until_parked();
+
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("No running turn");
+
+    let tool_results: Vec<_> = completion
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .filter_map(|content| match content {
+            MessageContent::ToolResult(result)
+                if result.tool_use_id == language_model::LanguageModelToolUseId::from("tool_1") =>
+            {
+                Some(result)
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        tool_results.len(),
+        1,
+        "Expected exactly 1 tool result for tool_1, got {}: {:#?}",
+        tool_results.len(),
+        tool_results
+    );
+
+    let result = tool_results[0];
+    assert!(result.is_error);
+    let content_text = match &result.content {
+        language_model::LanguageModelToolResultContent::Text(text) => text.to_string(),
+        other => panic!("Expected text content, got {:?}", other),
+    };
+    assert!(
+        content_text.contains("Saw partial text 'partial' before invalid JSON"),
+        "Expected tool-enriched partial context, got: {content_text}"
+    );
+    assert!(
+        content_text
+            .contains("Error parsing input JSON: EOF while parsing a string at line 1 column 17"),
+        "Expected forwarded JSON parse error, got: {content_text}"
+    );
+    assert!(
+        !content_text.contains("tool input was not fully received"),
+        "Should not contain orphaned sender error, got: {content_text}"
+    );
+
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _cx| {
+        assert!(
+            thread.is_turn_complete(),
+            "Thread should not be stuck; the turn should have completed",
+        );
+    });
+}
+
 /// Filters out the stop events for asserting against in tests
 fn stop_events(result_events: Vec<Result<ThreadEvent>>) -> Vec<acp::StopReason> {
     result_events
@@ -3766,8 +4070,10 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
                             StreamingEchoTool::NAME: true,
+                            StreamingJsonErrorContextTool::NAME: true,
                             StreamingFailingEchoTool::NAME: true,
                             TerminalTool::NAME: true,
+                            UpdatePlanTool::NAME: true,
                         }
                     }
                 }
@@ -3789,7 +4095,8 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                 cx.set_http_client(Arc::new(http_client));
                 let client = Client::production(cx);
                 let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-                language_model::init(user_store.clone(), client.clone(), cx);
+                language_model::init(cx);
+                RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
                 language_models::init(user_store, client.clone(), cx);
             }
         };
@@ -4958,48 +5265,6 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_subagent_tool_is_present_when_feature_flag_enabled(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["subagents".to_string()]);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
-    let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
-    let context_server_registry =
-        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
-
-    let environment = Rc::new(cx.update(|cx| {
-        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
-    }));
-
-    let thread = cx.new(|cx| {
-        let mut thread = Thread::new(
-            project.clone(),
-            project_context,
-            context_server_registry,
-            Templates::new(),
-            Some(model),
-            cx,
-        );
-        thread.add_default_tools(environment, cx);
-        thread
-    });
-
-    thread.read_with(cx, |thread, _| {
-        assert!(
-            thread.has_registered_tool(SpawnAgentTool::NAME),
-            "subagent tool should be present when feature flag is enabled"
-        );
-    });
-}
-
-#[gpui::test]
 async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -5039,6 +5304,11 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
             subagent_thread.parent_thread_id(),
             Some(parent_thread.read(cx).id().clone())
         );
+
+        let request = subagent_thread
+            .build_completion_request(CompletionIntent::UserPrompt, cx)
+            .unwrap();
+        assert_eq!(request.intent, Some(CompletionIntent::Subagent));
     });
 }
 
@@ -6050,9 +6320,9 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     cx.run_until_parked();
 
-    let event = rx.try_next();
+    let event = rx.try_recv();
     assert!(
-        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
         "expected no authorization request for allowed .md file"
     );
 }
@@ -6194,9 +6464,9 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     cx.run_until_parked();
 
-    let event = rx.try_next();
+    let event = rx.try_recv();
     assert!(
-        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
         "expected no authorization request for allowed docs.rs URL"
     );
 }

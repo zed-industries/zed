@@ -9,7 +9,7 @@ use collections::{HashMap, HashSet};
 pub use custom::*;
 use fs::Fs;
 use http_client::read_no_proxy_from_env;
-use project::{AgentId, agent_server_store::AgentServerStore};
+use project::{AgentId, Project, agent_server_store::AgentServerStore};
 
 use acp_thread::AgentConnection;
 use anyhow::Result;
@@ -17,7 +17,7 @@ use gpui::{App, AppContext, Entity, Task};
 use settings::SettingsStore;
 use std::{any::Any, rc::Rc, sync::Arc};
 
-pub use acp::AcpConnection;
+pub use acp::{AcpConnection, GEMINI_TERMINAL_AUTH_METHOD_ID};
 
 pub struct AgentServerDelegate {
     store: Entity<AgentServerStore>,
@@ -42,6 +42,7 @@ pub trait AgentServer: Send {
     fn connect(
         &self,
         delegate: AgentServerDelegate,
+        project: Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>>;
 
