@@ -2363,115 +2363,153 @@ impl Sidebar {
             .entry(session_id)
             .map(|m| m.folder_paths.clone());
 
+        // Find the neighbor thread in the sidebar (by display position).
+        // Look below first, then above, for the nearest thread that isn't
+        // the one being archived. We capture both the neighbor's metadata
+        // (for activation) and its workspace paths (for the workspace
+        // removal fallback).
+        let current_pos = self.contents.entries.iter().position(
+            |entry| matches!(entry, ListEntry::Thread(t) if &t.metadata.session_id == session_id),
+        );
+        let neighbor = current_pos.and_then(|pos| {
+            self.contents.entries[pos + 1..]
+                .iter()
+                .chain(self.contents.entries[..pos].iter().rev())
+                .find_map(|entry| match entry {
+                    ListEntry::Thread(t) if t.metadata.session_id != *session_id => {
+                        let workspace_paths = match &t.workspace {
+                            ThreadEntryWorkspace::Open(ws) => {
+                                PathList::new(&ws.read(cx).root_paths(cx))
+                            }
+                            ThreadEntryWorkspace::Closed(paths) => paths.clone(),
+                        };
+                        Some((t.metadata.clone(), workspace_paths))
+                    }
+                    _ => None,
+                })
+        });
+
         // Check if archiving this thread would leave its worktree workspace
-        // with no threads. If so, we need to remove the workspace first
-        // (which may prompt for unsaved changes). The thread is only
-        // archived after removal succeeds.
-        let should_remove_workspace = thread_folder_paths.as_ref().is_some_and(|folder_paths| {
+        // with no threads, requiring workspace removal.
+        let workspace_to_remove = thread_folder_paths.as_ref().and_then(|folder_paths| {
             if folder_paths.is_empty() {
-                return false;
+                return None;
             }
 
-            // After archiving, would there be any threads left?
-            // (Count non-archived threads excluding this one.)
             let remaining = ThreadMetadataStore::global(cx)
                 .read(cx)
                 .entries_for_path(folder_paths)
                 .filter(|t| t.session_id != *session_id)
                 .count();
             if remaining > 0 {
-                return false;
+                return None;
             }
 
-            let Some(multi_workspace) = self.multi_workspace.upgrade() else {
-                return false;
-            };
-
-            // Find the workspace for this thread's folder_paths.
-            let Some(workspace) = multi_workspace
+            let multi_workspace = self.multi_workspace.upgrade()?;
+            let workspace = multi_workspace
                 .read(cx)
-                .workspace_for_paths(folder_paths, cx)
-            else {
-                return false;
-            };
+                .workspace_for_paths(folder_paths, cx)?;
 
             // Don't remove the main worktree workspace — the project
             // header always provides access to it.
             let group_key = workspace.read(cx).project_group_key(cx);
-            group_key.path_list() != folder_paths
+            (group_key.path_list() != folder_paths).then_some(workspace)
         });
 
-        if !should_remove_workspace {
-            // Simple case: just archive, no workspace removal needed.
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store.archive(session_id, cx);
+        if let Some(workspace_to_remove) = workspace_to_remove {
+            let multi_workspace = self.multi_workspace.upgrade().unwrap();
+            let session_id = session_id.clone();
+
+            // For the workspace-removal fallback, use the neighbor's workspace
+            // paths if available, otherwise fall back to the project group key.
+            let fallback_paths = neighbor
+                .as_ref()
+                .map(|(_, paths)| paths.clone())
+                .unwrap_or_else(|| {
+                    workspace_to_remove
+                        .read(cx)
+                        .project_group_key(cx)
+                        .path_list()
+                        .clone()
+                });
+
+            let remove_task = multi_workspace.update(cx, |mw, cx| {
+                mw.remove(
+                    [workspace_to_remove],
+                    move |this, window, cx| {
+                        this.find_or_create_local_workspace(fallback_paths, window, cx)
+                    },
+                    window,
+                    cx,
+                )
             });
+
+            let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
+            cx.spawn_in(window, async move |this, cx| {
+                let removed = remove_task.await?;
+                if removed {
+                    this.update_in(cx, |this, window, cx| {
+                        this.archive_and_activate(
+                            &session_id,
+                            neighbor_metadata.as_ref(),
+                            window,
+                            cx,
+                        );
+                    })?;
+                }
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        } else {
+            // Simple case: no workspace removal needed.
+            let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
+            self.archive_and_activate(session_id, neighbor_metadata.as_ref(), window, cx);
+        }
+    }
+
+    /// Archive a thread and activate the nearest neighbor or a draft.
+    fn archive_and_activate(
+        &mut self,
+        session_id: &acp::SessionId,
+        neighbor: Option<&ThreadMetadata>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.archive(session_id, cx);
+        });
+
+        // Only manage focus if the archived thread is the one currently active.
+        if !self
+            .active_entry
+            .as_ref()
+            .is_some_and(|e| e.is_active_thread(session_id))
+        {
             return;
         }
 
-        // We need to remove the workspace. Do that first (async, may
-        // prompt), then archive the thread only on success.
-        let folder_paths = thread_folder_paths.unwrap();
-        let multi_workspace = self.multi_workspace.upgrade().unwrap();
-
-        let workspace = multi_workspace
-            .read(cx)
-            .workspace_for_paths(&folder_paths, cx)
-            .unwrap();
-
-        // Find the neighbor thread in the sidebar to determine the fallback
-        // workspace. Look below first (pos+1), then above (pos-1).
-        let current_pos = self.contents.entries.iter().position(
-            |entry| matches!(entry, ListEntry::Thread(t) if &t.metadata.session_id == session_id),
-        );
-        let neighbor_workspace_paths = current_pos.and_then(|pos| {
-            // Look below, then above, for the nearest thread that isn't
-            // the one being archived.
-            self.contents.entries[pos + 1..]
-                .iter()
-                .chain(self.contents.entries[..pos].iter().rev())
-                .find_map(|entry| match entry {
-                    ListEntry::Thread(t) if t.metadata.session_id != *session_id => {
-                        match &t.workspace {
-                            ThreadEntryWorkspace::Open(ws) => {
-                                Some(PathList::new(&ws.read(cx).root_paths(cx)))
-                            }
-                            ThreadEntryWorkspace::Closed(paths) => Some(paths.clone()),
-                        }
-                    }
-                    _ => None,
-                })
-        });
-
-        // Fall back to the project group's main worktree paths.
-        let fallback_paths = neighbor_workspace_paths
-            .unwrap_or_else(|| workspace.read(cx).project_group_key(cx).path_list().clone());
-
-        let session_id = session_id.clone();
-
-        let remove_task = multi_workspace.update(cx, |mw, cx| {
-            mw.remove(
-                [workspace],
-                move |this, window, cx| {
-                    this.find_or_create_local_workspace(fallback_paths, window, cx)
-                },
-                window,
-                cx,
-            )
-        });
-
-        cx.spawn_in(window, async move |_this, cx| {
-            let removed = remove_task.await?;
-            if removed {
-                cx.update(|_, cx| {
-                    ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                        store.archive(&session_id, cx);
-                    });
-                })?;
+        // Try to activate the neighbor thread. If its workspace is open,
+        // tell the panel to load it. `rebuild_contents` will reconcile
+        // `active_entry` once the thread finishes loading.
+        if let Some(metadata) = neighbor {
+            if let Some(workspace) = self
+                .multi_workspace
+                .upgrade()
+                .and_then(|mw| mw.read(cx).workspace_for_paths(&metadata.folder_paths, cx))
+            {
+                Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);
+                return;
             }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        }
+
+        // No neighbor or its workspace isn't open — fall back to a draft.
+        if let Some(workspace) = self.active_entry_workspace().cloned() {
+            if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                agent_panel.update(cx, |panel, cx| {
+                    panel.new_thread(&NewThread, window, cx);
+                });
+            }
+        }
     }
 
     fn remove_selected_thread(
