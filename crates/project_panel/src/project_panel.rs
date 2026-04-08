@@ -4175,7 +4175,6 @@ impl ProjectPanel {
                             &worktree_snapshot,
                             sort_mode,
                             sort_order,
-                            sort_order,
                             sort_by,
                             sort_direction,
                         );
@@ -7309,17 +7308,32 @@ fn cmp_worktree_entries(
 
 #[inline]
 fn cmp_directories_first(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
+    util::paths::compare_rel_paths_by(
+        (&a.path, a.is_file()),
+        (&b.path, b.is_file()),
+        util::paths::SortMode::DirectoriesFirst,
+        util::paths::SortOrder::Default,
+    )
 }
 
 #[inline]
 fn cmp_mixed(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths_mixed((&a.path, a.is_file()), (&b.path, b.is_file()))
+    util::paths::compare_rel_paths_by(
+        (&a.path, a.is_file()),
+        (&b.path, b.is_file()),
+        util::paths::SortMode::Mixed,
+        util::paths::SortOrder::Default,
+    )
 }
 
 #[inline]
 fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
-    util::paths::compare_rel_paths_files_first((&a.path, a.is_file()), (&b.path, b.is_file()))
+    util::paths::compare_rel_paths_by(
+        (&a.path, a.is_file()),
+        (&b.path, b.is_file()),
+        util::paths::SortMode::FilesFirst,
+        util::paths::SortOrder::Default,
+    )
 }
 
 #[inline]

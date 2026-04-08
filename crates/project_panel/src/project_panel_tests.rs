@@ -10274,6 +10274,7 @@ fn test_sort_by_name_descending_preserves_grouping() {
     sort_worktree_entries(
         &mut entries,
         settings::ProjectPanelSortMode::DirectoriesFirst,
+        settings::ProjectPanelSortOrder::Default,
         settings::ProjectPanelSortBy::Name,
         settings::ProjectPanelSortDirection::Descending,
     );
@@ -10295,6 +10296,7 @@ fn test_sort_by_modified_time_places_missing_mtime_after_known_entries() {
     sort_worktree_entries(
         &mut entries,
         settings::ProjectPanelSortMode::Mixed,
+        settings::ProjectPanelSortOrder::Default,
         settings::ProjectPanelSortBy::ModifiedTime,
         settings::ProjectPanelSortDirection::Descending,
     );
@@ -10321,6 +10323,7 @@ fn test_sort_by_modified_time_with_mixed_known_and_missing_mtimes_is_stable() {
     sort_worktree_entries(
         &mut entries,
         settings::ProjectPanelSortMode::Mixed,
+        settings::ProjectPanelSortOrder::Default,
         settings::ProjectPanelSortBy::ModifiedTime,
         settings::ProjectPanelSortDirection::Descending,
     );
@@ -10337,6 +10340,7 @@ fn test_sort_by_modified_time_with_mixed_known_and_missing_mtimes_is_stable() {
     sort_worktree_entries(
         &mut entries,
         settings::ProjectPanelSortMode::Mixed,
+        settings::ProjectPanelSortOrder::Default,
         settings::ProjectPanelSortBy::ModifiedTime,
         settings::ProjectPanelSortDirection::Ascending,
     );
@@ -10367,6 +10371,7 @@ fn test_sort_by_modified_time_preserves_grouping() {
     sort_worktree_entries(
         &mut entries,
         settings::ProjectPanelSortMode::DirectoriesFirst,
+        settings::ProjectPanelSortOrder::Default,
         settings::ProjectPanelSortBy::ModifiedTime,
         settings::ProjectPanelSortDirection::Descending,
     );
