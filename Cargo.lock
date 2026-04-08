@@ -16079,7 +16079,6 @@ dependencies = [
  "chrono",
  "editor",
  "fs",
- "futures 0.3.32",
  "git",
  "gpui",
  "language_model",

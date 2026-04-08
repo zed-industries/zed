@@ -5341,7 +5341,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
     // Save a sibling thread on the main project.
     let main_thread_id = acp::SessionId::new(Arc::from("main-project-thread"));
     save_thread_metadata(
-        main_thread_id.clone(),
+        main_thread_id,
         "Main Project Thread".into(),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         None,
