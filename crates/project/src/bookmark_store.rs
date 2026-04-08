@@ -22,7 +22,7 @@ impl BookmarkAnchor {
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct BookmarkRow(pub u32);
+pub struct SerializedBookmark(pub u32);
 
 #[derive(Debug)]
 pub struct BufferBookmarks {
@@ -62,7 +62,7 @@ impl BufferBookmarks {
 #[derive(Debug)]
 pub enum BookmarkEntry {
     Loaded(BufferBookmarks),
-    Unloaded(Vec<BookmarkRow>),
+    Unloaded(Vec<SerializedBookmark>),
 }
 
 impl BookmarkEntry {
@@ -91,7 +91,7 @@ impl BookmarkStore {
 
     pub fn load_serialized_bookmarks(
         &mut self,
-        bookmark_rows: BTreeMap<Arc<Path>, Vec<BookmarkRow>>,
+        bookmark_rows: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         self.bookmarks.clear();
@@ -366,7 +366,10 @@ impl BookmarkStore {
         }
     }
 
-    pub fn all_serialized_bookmarks(&self, cx: &App) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
+    pub fn all_serialized_bookmarks(
+        &self,
+        cx: &App,
+    ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         self.bookmarks
             .iter()
             .filter_map(|(path, entry)| {
@@ -383,7 +386,7 @@ impl BookmarkStore {
                                 }
                                 let row =
                                     snapshot.summary_for_anchor::<Point>(&bookmark.anchor()).row;
-                                Some(BookmarkRow(row))
+                                Some(SerializedBookmark(row))
                             })
                             .collect()
                     }

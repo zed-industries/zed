@@ -41,7 +41,7 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs, Project,
-    bookmark_store::BookmarkRow,
+    bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -26472,7 +26472,7 @@ impl BookmarkTestContext {
         })
     }
 
-    fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
+    fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         self.project.read_with(&self.cx, |project, cx| {
             project
                 .bookmark_store()

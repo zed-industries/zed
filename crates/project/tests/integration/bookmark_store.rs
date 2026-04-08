@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use collections::BTreeMap;
 use gpui::{Entity, TestAppContext};
 use language::Buffer;
-use project::{Project, bookmark_store::BookmarkRow};
+use project::{Project, bookmark_store::SerializedBookmark};
 use serde_json::json;
 use util::path;
 
@@ -58,7 +58,7 @@ mod integration {
     fn get_all_bookmarks(
         project: &Entity<Project>,
         cx: &mut TestAppContext,
-    ) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
+    ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         project.read_with(cx, |project, cx| {
             project
                 .bookmark_store()
@@ -67,13 +67,15 @@ mod integration {
         })
     }
 
-    fn build_serialized(entries: &[(&str, &[u32])]) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
+    fn build_serialized(
+        entries: &[(&str, &[u32])],
+    ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         let mut map = BTreeMap::new();
         for &(path_str, rows) in entries {
             let path = project_path(path_str);
             map.insert(
                 path.clone(),
-                rows.iter().map(|&row| BookmarkRow(row)).collect(),
+                rows.iter().map(|&row| SerializedBookmark(row)).collect(),
             );
         }
         map
@@ -81,7 +83,7 @@ mod integration {
 
     async fn restore_bookmarks(
         project: &Entity<Project>,
-        serialized: BTreeMap<Arc<Path>, Vec<BookmarkRow>>,
+        serialized: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
         cx: &mut TestAppContext,
     ) {
         project
@@ -103,7 +105,7 @@ mod integration {
     }
 
     fn assert_bookmark_rows(
-        bookmarks: &BTreeMap<Arc<Path>, Vec<BookmarkRow>>,
+        bookmarks: &BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
         path: &str,
         expected_rows: &[u32],
     ) {

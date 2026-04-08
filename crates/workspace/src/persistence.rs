@@ -21,7 +21,7 @@ use db::{
 };
 use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
-    bookmark_store::BookmarkRow,
+    bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
 };
@@ -1246,7 +1246,7 @@ impl WorkspaceDb {
         })
     }
 
-    fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<BookmarkRow>> {
+    fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         let bookmarks: Result<Vec<(PathBuf, Bookmark)>> = self
             .select_bound(sql! {
                 SELECT path, row
@@ -1262,13 +1262,13 @@ impl WorkspaceDb {
                     log::debug!("Bookmarks are empty after querying database for them");
                 }
 
-                let mut map: BTreeMap<Arc<Path>, Vec<BookmarkRow>> = BTreeMap::default();
+                let mut map: BTreeMap<Arc<Path>, Vec<SerializedBookmark>> = BTreeMap::default();
 
                 for (path, bookmark) in bookmarks {
                     let path: Arc<Path> = path.into();
                     map.entry(path.clone())
                         .or_default()
-                        .push(BookmarkRow(bookmark.row))
+                        .push(SerializedBookmark(bookmark.row))
                 }
 
                 map
