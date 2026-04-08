@@ -2661,7 +2661,7 @@ impl Sidebar {
         session_id: &acp::SessionId,
         neighbor: Option<&ThreadMetadata>,
         thread_folder_paths: Option<&PathList>,
-        in_flight_archive: Option<(Task<()>, futures::channel::oneshot::Sender<()>)>,
+        in_flight_archive: Option<(Task<()>, smol::channel::Sender<()>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2748,12 +2748,12 @@ impl Sidebar {
         session_id: &acp::SessionId,
         roots: Vec<thread_worktree_archive::RootPlan>,
         cx: &mut Context<Self>,
-    ) -> Option<(Task<()>, futures::channel::oneshot::Sender<()>)> {
+    ) -> Option<(Task<()>, smol::channel::Sender<()>)> {
         if roots.is_empty() {
             return None;
         }
 
-        let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
+        let (cancel_tx, cancel_rx) = smol::channel::bounded::<()>(1);
         let session_id = session_id.clone();
         let task = cx.spawn(async move |_this, cx| {
             match Self::archive_worktree_roots(roots, cancel_rx, cx).await {
@@ -2781,7 +2781,7 @@ impl Sidebar {
 
     async fn archive_worktree_roots(
         roots: Vec<thread_worktree_archive::RootPlan>,
-        mut cancel_rx: futures::channel::oneshot::Receiver<()>,
+        cancel_rx: smol::channel::Receiver<()>,
         cx: &mut gpui::AsyncApp,
     ) -> anyhow::Result<ArchiveWorktreeOutcome> {
         let mut completed_persists: Vec<(
@@ -2790,7 +2790,7 @@ impl Sidebar {
         )> = Vec::new();
 
         for root in &roots {
-            if cancel_rx.try_recv() != Ok(None) {
+            if cancel_rx.is_closed() {
                 for (outcome, completed_root) in completed_persists.iter().rev() {
                     thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
                 }
@@ -2812,7 +2812,7 @@ impl Sidebar {
                 }
             }
 
-            if cancel_rx.try_recv() != Ok(None) {
+            if cancel_rx.is_closed() {
                 for (outcome, completed_root) in completed_persists.iter().rev() {
                     thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
                 }

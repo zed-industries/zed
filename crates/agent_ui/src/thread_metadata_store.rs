@@ -16,7 +16,7 @@ use db::{
     },
     sqlez_macros::sql,
 };
-use futures::{FutureExt as _, StreamExt as _, future::Shared};
+use futures::{FutureExt as _, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
 use ui::{App, Context, SharedString};
@@ -189,9 +189,9 @@ pub struct ThreadMetadataStore {
     threads_by_main_paths: HashMap<PathList, HashSet<acp::SessionId>>,
     reload_task: Option<Shared<Task<()>>>,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
-    pending_thread_ops_tx: futures::channel::mpsc::UnboundedSender<DbOperation>,
+    pending_thread_ops_tx: smol::channel::Sender<DbOperation>,
     _db_operations_task: Task<()>,
-    in_flight_archives: HashMap<acp::SessionId, (Task<()>, futures::channel::oneshot::Sender<()>)>,
+    in_flight_archives: HashMap<acp::SessionId, (Task<()>, smol::channel::Sender<()>)>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -226,7 +226,7 @@ impl ThreadMetadataStore {
         let thread = std::thread::current();
         let test_name = thread.name().unwrap_or("unknown_test");
         let db_name = format!("THREAD_METADATA_DB_{}", test_name);
-        let db = futures::executor::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
+        let db = smol::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
         let thread_store = cx.new(|cx| Self::new(ThreadMetadataDb(db), cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
     }
@@ -385,7 +385,7 @@ impl ThreadMetadataStore {
         }
 
         self.pending_thread_ops_tx
-            .unbounded_send(DbOperation::Upsert(metadata))
+            .try_send(DbOperation::Upsert(metadata))
             .log_err();
     }
 
@@ -407,12 +407,12 @@ impl ThreadMetadataStore {
     pub fn archive(
         &mut self,
         session_id: &acp::SessionId,
-        in_flight: Option<(Task<()>, futures::channel::oneshot::Sender<()>)>,
+        cleanup_job: Option<(Task<()>, smol::channel::Sender<()>)>,
         cx: &mut Context<Self>,
     ) {
         self.update_archived(session_id, true, cx);
 
-        if let Some(in_flight) = in_flight {
+        if let Some(in_flight) = cleanup_job {
             self.in_flight_archives
                 .insert(session_id.clone(), in_flight);
         }
@@ -556,7 +556,7 @@ impl ThreadMetadataStore {
         }
         self.threads.remove(&session_id);
         self.pending_thread_ops_tx
-            .unbounded_send(DbOperation::Delete(session_id))
+            .try_send(DbOperation::Delete(session_id))
             .log_err();
         cx.notify();
     }
@@ -595,13 +595,13 @@ impl ThreadMetadataStore {
         })
         .detach();
 
-        let (tx, mut rx) = futures::channel::mpsc::unbounded();
+        let (tx, rx) = smol::channel::unbounded();
         let _db_operations_task = cx.background_spawn({
             let db = db.clone();
             async move {
-                while let Some(first_update) = rx.next().await {
+                while let Ok(first_update) = rx.recv().await {
                     let mut updates = vec![first_update];
-                    while let Some(Some(update)) = rx.next().now_or_never() {
+                    while let Ok(update) = rx.try_recv() {
                         updates.push(update);
                     }
                     let updates = Self::dedup_db_operations(updates);
@@ -1122,9 +1122,9 @@ mod tests {
         let thread = std::thread::current();
         let test_name = thread.name().unwrap_or("unknown_test");
         let db_name = format!("THREAD_METADATA_DB_{}", test_name);
-        let db = ThreadMetadataDb(futures::executor::block_on(db::open_test_db::<
-            ThreadMetadataDb,
-        >(&db_name)));
+        let db = ThreadMetadataDb(smol::block_on(db::open_test_db::<ThreadMetadataDb>(
+            &db_name,
+        )));
 
         db.save(make_metadata(
             "session-1",
