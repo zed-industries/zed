@@ -63,7 +63,7 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use project::project_settings::ProjectSettings;
-use project::{Project, ProjectPath, Worktree};
+use project::{Project, ProjectPath, Worktree, linked_worktree_short_name};
 use prompt_store::{PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
@@ -627,7 +627,8 @@ impl StartThreadIn {
             Self::LocalProject => {
                 let suffix = project.active_repository(cx).and_then(|repo| {
                     let repo = repo.read(cx);
-                    let work_dir = &repo.work_directory_abs_path;
+                    let work_dir = &repo.original_repo_abs_path;
+
                     let visible_paths: Vec<_> = project
                         .visible_worktrees(cx)
                         .map(|wt| wt.read(cx).abs_path().to_path_buf())
@@ -639,6 +640,18 @@ impl StartThreadIn {
                                 "({})",
                                 linked.display_name()
                             )));
+                        }
+                    }
+
+                    if let Some(name) = linked_worktree_short_name(
+                        repo.original_repo_abs_path.as_ref(),
+                        repo.work_directory_abs_path.as_ref(),
+                    ) {
+                        if visible_paths
+                            .iter()
+                            .any(|p| p.as_path() == repo.work_directory_abs_path.as_ref())
+                        {
+                            return Some(SharedString::from(format!("({})", name)));
                         }
                     }
 
