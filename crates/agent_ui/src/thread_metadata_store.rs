@@ -525,15 +525,6 @@ impl ThreadMetadataStore {
         })
     }
 
-    pub fn all_session_ids_for_path<'a>(
-        &'a self,
-        path_list: &PathList,
-    ) -> impl Iterator<Item = &'a acp::SessionId> {
-        self.threads_by_paths
-            .get(path_list)
-            .into_iter()
-            .flat_map(|session_ids| session_ids.iter())
-    }
     fn update_archived(
         &mut self,
         session_id: &acp::SessionId,
@@ -2323,51 +2314,6 @@ mod tests {
         assert_eq!(wt1.len(), 1);
         assert_eq!(wt2.len(), 1);
         assert_eq!(wt1[0].id, wt2[0].id);
-    }
-
-    // Verifies that all_session_ids_for_path returns both archived and
-    // unarchived threads. This is intentional: the method is used during
-    // archival to find every thread referencing a worktree so they can
-    // all be linked to the archived worktree record.
-    #[gpui::test]
-    async fn test_all_session_ids_for_path(cx: &mut TestAppContext) {
-        init_test(cx);
-        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
-        let paths = PathList::new(&[Path::new("/project-x")]);
-
-        let meta1 = ThreadMetadata {
-            session_id: acp::SessionId::new("session-1"),
-            agent_id: agent::ZED_AGENT_ID.clone(),
-            title: "Thread 1".into(),
-            updated_at: Utc::now(),
-            created_at: Some(Utc::now()),
-            folder_paths: paths.clone(),
-            main_worktree_paths: PathList::default(),
-            archived: false,
-        };
-        let meta2 = ThreadMetadata {
-            session_id: acp::SessionId::new("session-2"),
-            agent_id: agent::ZED_AGENT_ID.clone(),
-            title: "Thread 2".into(),
-            updated_at: Utc::now(),
-            created_at: Some(Utc::now()),
-            folder_paths: paths.clone(),
-            main_worktree_paths: PathList::default(),
-            archived: true,
-        };
-
-        store.update(cx, |store, _cx| {
-            store.save_internal(meta1);
-            store.save_internal(meta2);
-        });
-
-        let ids: HashSet<acp::SessionId> = store.read_with(cx, |store, _cx| {
-            store.all_session_ids_for_path(&paths).cloned().collect()
-        });
-
-        assert!(ids.contains(&acp::SessionId::new("session-1")));
-        assert!(ids.contains(&acp::SessionId::new("session-2")));
-        assert_eq!(ids.len(), 2);
     }
 
     #[gpui::test]

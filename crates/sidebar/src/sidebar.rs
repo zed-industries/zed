@@ -2708,7 +2708,7 @@ impl Sidebar {
 
         for root in &roots {
             // Check for cancellation before each root
-            if cancel_rx.try_recv().is_err() {
+            if cancel_rx.try_recv() != Ok(None) {
                 for (outcome, completed_root) in completed_persists.iter().rev() {
                     thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
                 }
@@ -2729,6 +2729,14 @@ impl Sidebar {
                         return Err(error);
                     }
                 }
+            }
+
+            // Check for cancellation again before destroying the physical worktree
+            if cancel_rx.try_recv() != Ok(None) {
+                for (outcome, completed_root) in completed_persists.iter().rev() {
+                    thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
+                }
+                return Ok(ArchiveStatus::UserCancelledPrompt);
             }
 
             // Remove the root (remove from projects + delete git worktree from disk)
