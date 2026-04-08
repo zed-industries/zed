@@ -80,7 +80,6 @@ use zed_actions;
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
-
 actions!(
     agent,
     [
@@ -515,10 +514,6 @@ pub fn init(
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
-    if !should_run {
-        return;
-    }
-
     let kvp = db::kvp::KeyValueStore::global(cx);
     let already_backfilled =
         util::ResultExt::log_err(kvp.read_kvp(PARALLEL_AGENT_LAYOUT_BACKFILL_KEY))
@@ -681,7 +676,6 @@ mod tests {
     use command_palette_hooks::CommandPaletteFilter;
     use db::kvp::KeyValueStore;
     use editor::actions::AcceptEditPrediction;
-    use feature_flags::FeatureFlagAppExt;
     use gpui::{BorrowAppContext, TestAppContext, px};
     use project::DisableAiSettings;
     use settings::{
