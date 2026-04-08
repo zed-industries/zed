@@ -3328,7 +3328,7 @@ async fn test_invisible_worktree_does_not_track_ancestor_git_repository(
 }
 
 #[gpui::test]
-async fn test_linked_worktree_git_file_event_does_not_panic(
+async fn test_linked_worktree_git_dir_events_do_not_panic(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
@@ -3389,10 +3389,10 @@ async fn test_linked_worktree_git_file_event_does_not_panic(
         .await;
     cx.run_until_parked();
 
-    // Trigger a filesystem event inside the main repo's .git directory
-    // (which the linked worktree scanner watches via the commondir). This
-    // uses the sentinel-file helper to ensure the event goes through the
-    // real watcher path, exactly as it would in production.
+    // Trigger an fs event in the common git dir (main repo's .git),
+    // which is outside the linked worktree root. The watcher monitors
+    // this directory, so events from it flow through process_events.
+    // This must not panic when the .git path is outside the worktree root.
     tree.flush_fs_events_in_root_git_repository(cx).await;
 
     // The worktree should still be intact.
@@ -3400,6 +3400,7 @@ async fn test_linked_worktree_git_file_event_does_not_panic(
         assert_eq!(
             tree.snapshot().root_repo_common_dir().map(|p| p.as_ref()),
             Some(Path::new(path!("/main_repo/.git"))),
+            "linked worktree should still have its git repository after git dir events"
         );
     });
 }
