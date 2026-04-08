@@ -102,8 +102,7 @@ impl BookmarkStore {
             }
 
             let count = rows.len();
-            let word = if count == 1 { "bookmark" } else { "bookmarks" };
-            log::debug!("Stored {count} unloaded {word} at {}", path.display());
+            log::debug!("Stored {count} unloaded bookmark(s) at {}", path.display());
 
             self.bookmarks.insert(path, BookmarkEntry::Unloaded(rows));
         }
