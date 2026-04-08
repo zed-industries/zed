@@ -694,7 +694,19 @@ pub async fn fetch_protected_resource_metadata(
     www_authenticate: &WwwAuthenticate,
 ) -> Result<ProtectedResourceMetadata> {
     let candidate_urls = match &www_authenticate.resource_metadata {
-        Some(url) if url.origin() == server_url.origin() => vec![url.clone()],
+        Some(url) if url.origin() == server_url.origin() => {
+            // Try the header-provided URL first (per MCP spec: "use the resource
+            // metadata URL from the parsed WWW-Authenticate headers when present"),
+            // then fall back to RFC 9728 well-known URIs in case the header URL is
+            // wrong (e.g. a buggy server that doubles the path component).
+            let mut urls = vec![url.clone()];
+            for fallback in protected_resource_metadata_urls(server_url) {
+                if !urls.contains(&fallback) {
+                    urls.push(fallback);
+                }
+            }
+            urls
+        }
         Some(url) => {
             log::warn!(
                 "Ignoring cross-origin resource_metadata URL {} \
@@ -1917,6 +1929,71 @@ mod tests {
                 .unwrap();
 
             assert_eq!(metadata.authorization_servers.len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_fetch_protected_resource_metadata_falls_back_when_header_url_fails() {
+        // Reproduces the Pydantic Logfire case: the server's WWW-Authenticate
+        // header contains a resource_metadata URL with a doubled path (e.g.
+        // /mcp/mcp), which returns HTML instead of JSON. The client should
+        // fall back to the RFC 9728 well-known URL, which works correctly.
+        gpui::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri
+                        == "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp/mcp"
+                    {
+                        // Buggy header URL returns HTML (like a SPA catch-all).
+                        Ok(Response::builder()
+                            .status(200)
+                            .header("Content-Type", "text/html")
+                            .body(AsyncBody::from(b"<!doctype html><html></html>".to_vec()))
+                            .unwrap())
+                    } else if uri
+                        == "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp"
+                    {
+                        // Correct well-known URL returns valid metadata.
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com/api/mcp",
+                                "authorization_servers": ["https://auth.example.com"]
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com/api/mcp").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: Some(
+                    // Buggy URL with doubled path component.
+                    Url::parse(
+                        "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp/mcp",
+                    )
+                    .unwrap(),
+                ),
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let metadata = fetch_protected_resource_metadata(&client, &server_url, &www_auth)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                metadata.resource.as_str(),
+                "https://mcp.example.com/api/mcp"
+            );
+            assert_eq!(
+                metadata.authorization_servers[0].as_str(),
+                "https://auth.example.com/"
+            );
         });
     }
 
