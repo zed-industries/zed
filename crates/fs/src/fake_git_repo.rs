@@ -161,8 +161,6 @@ impl FakeGitRepository {
 }
 
 impl GitRepository for FakeGitRepository {
-    fn reload_index(&self) {}
-
     fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
         let fut = self.with_state_async(false, move |state| {
             state

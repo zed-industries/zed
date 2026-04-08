@@ -38,7 +38,6 @@ fs.workspace = true
 futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
-git2 = { workspace = true, features = ["vendored-libgit2"] }
 gpui.workspace = true
 gpui_platform.workspace = true
 gpui_tokio.workspace = true
@@ -113,4 +112,4 @@ cargo_toml.workspace = true
 toml.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["git2", "rust-embed", "paths"]
+ignored = ["rust-embed", "paths"]

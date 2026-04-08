@@ -7319,8 +7319,8 @@ dependencies = [
  "collections",
  "derive_more",
  "futures 0.3.32",
- "git2",
  "gpui",
+ "hex",
  "http_client",
  "itertools 0.14.0",
  "log",
@@ -7344,19 +7344,6 @@ dependencies = [
  "util",
  "uuid",
  "ztracing",
-]
-
-[[package]]
-name = "git2"
-version = "0.20.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b88256088d75a56f8ecfa070513a775dd9107f6530ef14919dac831af9cfe2b"
-dependencies = [
- "bitflags 2.10.0",
- "libc",
- "libgit2-sys",
- "log",
- "url",
 ]
 
 [[package]]
@@ -9951,18 +9938,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libgit2-sys"
-version = "0.18.3+1.9.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9b3acc4b91781bb0b3386669d325163746af5f6e4f73e6d2d630e09a35f3487"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "pkg-config",
-]
-
-[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10032,18 +10007,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "webrtc-sys",
-]
-
-[[package]]
-name = "libz-sys"
-version = "1.1.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b70e7a7df205e92a1a4cd9aaae7898dac0aa555503cc0a649494d0d60e7651d"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "vcpkg",
 ]
 
 [[package]]
@@ -13519,7 +13482,6 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "git",
- "git2",
  "git_hosting_providers",
  "globset",
  "gpui",
@@ -14687,7 +14649,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
- "git2",
  "git_hosting_providers",
  "gpui",
  "gpui_platform",
@@ -19454,7 +19415,6 @@ dependencies = [
  "dunce",
  "futures 0.3.32",
  "futures-lite 1.13.0",
- "git2",
  "globset",
  "gpui_util",
  "itertools 0.14.0",

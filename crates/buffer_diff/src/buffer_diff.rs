@@ -1,6 +1,8 @@
 use futures::channel::oneshot;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
-use imara_diff::{Algorithm, Sink, intern::InternedInput, sources::lines_with_terminator};
+use imara_diff::{
+    Algorithm, Sink, diff as imara_diff, intern::InternedInput, sources::lines_with_terminator,
+};
 use language::{
     Capability, Diff, DiffOptions, Language, LanguageName, LanguageRegistry,
     language_settings::LanguageSettings, word_diff_ranges,
@@ -1155,7 +1157,7 @@ fn compute_hunks(
             lines_with_terminator(buffer_text.as_str()),
         );
         let sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
-        let hunks = imara_diff::diff(Algorithm::Histogram, &input, sink);
+        let hunks = imara_diff(Algorithm::Histogram, &input, sink);
         for hunk in hunks {
             tree.push(hunk, buffer);
         }
