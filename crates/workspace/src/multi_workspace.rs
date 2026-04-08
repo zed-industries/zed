@@ -491,7 +491,15 @@ impl MultiWorkspace {
                 workspace.set_sidebar_focus_handle(None);
             });
         }
-        self.restore_previous_focus(true, window, cx);
+        let sidebar_has_focus = self
+            .sidebar
+            .as_ref()
+            .is_some_and(|s| s.focus_handle(cx).contains_focused(window, cx));
+        if sidebar_has_focus {
+            self.restore_previous_focus(true, window, cx);
+        } else {
+            self.previous_focus_handle.take();
+        }
         self.serialize(cx);
         cx.notify();
     }
@@ -506,9 +514,21 @@ impl MultiWorkspace {
         if let Some(previous_focus) = focus_handle {
             previous_focus.focus(window, cx);
         } else {
-            let pane = self.workspace().read(cx).active_pane().clone();
-            window.focus(&pane.read(cx).focus_handle(cx), cx);
+            self.focus_zoomed_panel_or_center_pane(window, cx);
         }
+    }
+
+    fn focus_zoomed_panel_or_center_pane(&self, window: &mut Window, cx: &mut App) {
+        let workspace = self.workspace().read(cx);
+        if let Some(zoomed_position) = workspace.zoomed_position {
+            let dock = workspace.dock_at_position(zoomed_position).read(cx);
+            if let Some(panel) = dock.active_panel() {
+                panel.panel_focus_handle(cx).focus(window, cx);
+                return;
+            }
+        }
+        let pane = workspace.active_pane().clone();
+        window.focus(&pane.read(cx).focus_handle(cx), cx);
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
