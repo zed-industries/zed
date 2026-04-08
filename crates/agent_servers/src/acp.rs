@@ -207,6 +207,7 @@ impl AcpConnection {
                 .next()
                 .cloned()
         });
+        let original_command = command.clone();
         let (path, args, env) = project
             .read_with(cx, |project, cx| {
                 project.remote_client().and_then(|client| {
@@ -368,13 +369,13 @@ impl AcpConnection {
 
         // TODO: Remove this override once Google team releases their official auth methods
         let auth_methods = if agent_id.0.as_ref() == GEMINI_ID {
-            let mut args = args.clone();
-            args.retain(|a| a != "--experimental-acp" && a != "--acp");
+            let mut gemini_args = original_command.args.clone();
+            gemini_args.retain(|a| a != "--experimental-acp" && a != "--acp");
             let value = serde_json::json!({
                 "label": "gemini /auth",
-                "command": path,
-                "args": args,
-                "env": env,
+                "command": original_command.path.to_string_lossy(),
+                "args": gemini_args,
+                "env": original_command.env.unwrap_or_default(),
             });
             let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
             vec![acp::AuthMethod::Agent(
