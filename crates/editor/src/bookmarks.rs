@@ -9,7 +9,8 @@ use util::ResultExt as _;
 use workspace::{Workspace, searchable::Direction};
 
 use crate::{
-    Editor, MultibufferSelectionMode, SelectionEffects, ViewBookmarks, scroll::Autoscroll,
+    Editor, GoToNextBookmark, GoToPreviousBookmark, MultibufferSelectionMode, SelectionEffects,
+    ToggleBookmark, ViewBookmarks, scroll::Autoscroll,
 };
 
 impl Editor {
@@ -20,7 +21,7 @@ impl Editor {
 
     pub fn toggle_bookmark(
         &mut self,
-        _: &crate::actions::ToggleBookmark,
+        _: &ToggleBookmark,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -59,7 +60,7 @@ impl Editor {
 
     pub fn go_to_next_bookmark(
         &mut self,
-        _: &crate::actions::GoToNextBookmark,
+        _: &GoToNextBookmark,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -68,7 +69,7 @@ impl Editor {
 
     pub fn go_to_previous_bookmark(
         &mut self,
-        _: &crate::actions::GoToPreviousBookmark,
+        _: &GoToPreviousBookmark,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
