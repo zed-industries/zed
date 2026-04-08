@@ -1583,72 +1583,76 @@ impl Sidebar {
                 let multi_workspace = multi_workspace.clone();
                 let project_group_key = project_group_key.clone();
 
-                let menu = ContextMenu::build_persistent(window, cx, move |menu, _window, _cx| {
-                    let mut menu = menu
-                        .header("Project Folders")
-                        .end_slot_action(Box::new(menu::EndSlot));
+                let menu =
+                    ContextMenu::build_persistent(window, cx, move |menu, _window, menu_cx| {
+                        let mut menu = menu
+                            .header("Project Folders")
+                            .end_slot_action(Box::new(menu::EndSlot));
 
-                    for path in project_group_key.path_list().paths() {
-                        let Some(name) = path.file_name() else {
-                            continue;
-                        };
-                        let name: SharedString = name.to_string_lossy().into_owned().into();
-                        let path = path.clone();
-                        let project_group_key = project_group_key.clone();
-                        let multi_workspace = multi_workspace.clone();
-                        menu = menu.entry_with_end_slot_on_hover(
-                            name.clone(),
-                            None,
-                            |_, _| {},
-                            IconName::Close,
-                            "Remove Folder".into(),
-                            move |_window, cx| {
-                                multi_workspace
-                                    .update(cx, |multi_workspace, cx| {
-                                        multi_workspace.remove_folder_from_project_group(
-                                            &project_group_key,
-                                            &path,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
+                        for path in project_group_key.path_list().paths() {
+                            let Some(name) = path.file_name() else {
+                                continue;
+                            };
+                            let name: SharedString = name.to_string_lossy().into_owned().into();
+                            let path = path.clone();
+                            let project_group_key = project_group_key.clone();
+                            let multi_workspace = multi_workspace.clone();
+                            menu = menu.entry_with_end_slot_on_hover(
+                                name.clone(),
+                                None,
+                                |_, _| {},
+                                IconName::Close,
+                                "Remove Folder".into(),
+                                move |_window, cx| {
+                                    multi_workspace
+                                        .update(cx, |multi_workspace, cx| {
+                                            multi_workspace.remove_folder_from_project_group(
+                                                &project_group_key,
+                                                &path,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                },
+                            );
+                        }
+
+                        let menu = menu.separator().entry(
+                            "Add Folder to Project",
+                            Some(Box::new(AddFolderToProject)),
+                            {
+                                let project_group_key = project_group_key.clone();
+                                let multi_workspace = multi_workspace.clone();
+                                move |window, cx| {
+                                    multi_workspace
+                                        .update(cx, |multi_workspace, cx| {
+                                            multi_workspace.prompt_to_add_folders_to_project_group(
+                                                &project_group_key,
+                                                window,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
                             },
                         );
                     }
 
-                    let menu = menu.separator().entry(
-                        "Add Folder to Project",
-                        Some(Box::new(AddFolderToProject)),
-                        {
-                            let project_group_key = project_group_key.clone();
-                            let multi_workspace = multi_workspace.clone();
-                            move |window, cx| {
+                        let project_group_key = project_group_key.clone();
+                        let multi_workspace = multi_workspace.clone();
+                        let weak_menu = menu_cx.weak_entity();
+                        menu.separator()
+                            .entry("Remove Project", None, move |window, cx| {
                                 multi_workspace
                                     .update(cx, |multi_workspace, cx| {
-                                        multi_workspace.prompt_to_add_folders_to_project_group(
-                                            &project_group_key,
-                                            window,
-                                            cx,
-                                        );
+                                        multi_workspace
+                                            .remove_project_group(&project_group_key, window, cx)
+                                            .detach_and_log_err(cx);
                                     })
                                     .ok();
-                            }
-                        },
-                    );
-
-                    let project_group_key = project_group_key.clone();
-                    let multi_workspace = multi_workspace.clone();
-                    menu.separator()
-                        .entry("Remove Project", None, move |window, cx| {
-                            multi_workspace
-                                .update(cx, |multi_workspace, cx| {
-                                    multi_workspace
-                                        .remove_project_group(&project_group_key, window, cx)
-                                        .detach_and_log_err(cx);
-                                })
-                                .ok();
-                        })
-                });
+                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                            })
+                    });
 
                 let this = this.clone();
                 window
