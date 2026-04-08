@@ -1,4 +1,3 @@
-use remote::Interactive;
 use std::{
     any::Any,
     path::{Path, PathBuf},
@@ -115,10 +114,15 @@ pub enum ExternalAgentSource {
 }
 
 pub trait ExternalAgentServer {
+    /// Returns the command to run the agent server.
+    ///
+    /// When `for_terminal` is true, returns the raw command without SSH wrapping,
+    /// since the terminal infrastructure handles remote connections itself.
     fn get_command(
         &self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
+        for_terminal: bool,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>>;
 
@@ -803,7 +807,7 @@ impl AgentServerStore {
                 if let Some(new_version_available_tx) = new_version_available_tx {
                     agent.set_new_version_available_tx(new_version_available_tx);
                 }
-                anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
+                anyhow::Ok(agent.get_command(vec![], extra_env, false, &mut cx.to_async()))
             })?
             .await?;
         Ok(proto::AgentServerCommand {
@@ -988,6 +992,7 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
         &self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
+        for_terminal: bool,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let project_id = self.project_id;
@@ -1013,24 +1018,33 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                         })
                 })?
                 .await?;
-            let root_dir = response.root_dir;
             response.args.extend(extra_args);
             response.env.extend(extra_env);
-            let command = upstream_client.update(cx, |client, _| {
-                client.build_command_with_options(
-                    Some(response.path),
-                    &response.args,
-                    &response.env.into_iter().collect(),
-                    Some(root_dir.clone()),
-                    None,
-                    Interactive::No,
-                )
-            })??;
-            Ok(AgentServerCommand {
-                path: command.program.into(),
-                args: command.args,
-                env: Some(command.env),
-            })
+
+            // if for_terminal {
+            return Ok(AgentServerCommand {
+                path: response.path.into(),
+                args: response.args,
+                env: Some(response.env.into_iter().collect()),
+            });
+            // }
+
+            // let root_dir = response.root_dir;
+            // let command = upstream_client.update(cx, |client, _| {
+            //     client.build_command_with_options(
+            //         Some(response.path),
+            //         &response.args,
+            //         &response.env.into_iter().collect(),
+            //         Some(root_dir.clone()),
+            //         None,
+            //         Interactive::No,
+            //     )
+            // })??;
+            // Ok(AgentServerCommand {
+            //     path: command.program.into(),
+            //     args: command.args,
+            //     env: Some(command.env),
+            // })
         })
     }
 
@@ -1164,6 +1178,7 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
         &self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
+        _for_terminal: bool,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let fs = self.fs.clone();
@@ -1358,6 +1373,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         &self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
+        _for_terminal: bool,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let fs = self.fs.clone();
@@ -1536,6 +1552,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         &self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
+        _for_terminal: bool,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let node_runtime = self.node_runtime.clone();
@@ -1600,6 +1617,7 @@ impl ExternalAgentServer for LocalCustomAgent {
         &self,
         extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
+        _for_terminal: bool,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let mut command = self.command.clone();

@@ -2258,6 +2258,7 @@ async fn test_remote_external_agent_server(
                     .get_command(
                         vec![],
                         HashMap::from_iter([("OTHER_VAR".into(), "other-val".into())]),
+                        false,
                         &mut cx.to_async(),
                     )
             })
