@@ -1516,7 +1516,14 @@ impl Sidebar {
                             move |this, _, window, cx| {
                                 this.collapsed_groups.remove(&path_list);
                                 this.selection = None;
-                                if let Some(workspace) = this.workspace_for_group(&path_list, cx) {
+                                let workspace = this
+                                    .active_workspace(cx)
+                                    .filter(|ws| {
+                                        let key = ws.read(cx).project_group_key(cx);
+                                        *key.path_list() == path_list
+                                    })
+                                    .or_else(|| this.workspace_for_group(&path_list, cx));
+                                if let Some(workspace) = workspace {
                                     this.create_new_thread(&workspace, window, cx);
                                 } else {
                                     this.open_workspace_for_group(&path_list, window, cx);
