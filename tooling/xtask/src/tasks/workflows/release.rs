@@ -226,9 +226,9 @@ fn compliance_check() -> NamedJob {
             "#,
         })
         .id("run-compliance-check")
-        .continue_on_error(true)
         .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
         .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+        .continue_on_error(true)
     }
 
     let job = release_job(&[])
