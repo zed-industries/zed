@@ -146,7 +146,7 @@ impl<'a> Reporter<'a> {
         if commit.co_authors().is_some()
             && let Some(commit_authors) = self
                 .github_client
-                .get_commit_authors([commit.sha()])
+                .get_commit_authors(&[commit.sha()])
                 .await?
                 .get(commit.sha())
                 .and_then(|authors| authors.co_authors())
@@ -156,7 +156,7 @@ impl<'a> Reporter<'a> {
                 if let Some(github_login) = co_author.user()
                     && self
                         .github_client
-                        .check_org_membership(github_login)
+                        .actor_has_repository_write_permission(github_login)
                         .await?
                 {
                     org_co_authors.push(co_author.clone());
@@ -180,7 +180,7 @@ impl<'a> Reporter<'a> {
         if let Some(user) = pull_request.user
             && self
                 .github_client
-                .check_org_membership(&GithubLogin::new(user.login))
+                .actor_has_repository_write_permission(&GithubLogin::new(user.login))
                 .await?
                 .not()
         {
@@ -219,7 +219,9 @@ impl<'a> Reporter<'a> {
                         .is_some_and(|state| state == ReviewState::Approved)
                     && self
                         .github_client
-                        .check_org_membership(&GithubLogin::new(github_login.login.clone()))
+                        .actor_has_repository_write_permission(&GithubLogin::new(
+                            github_login.login.clone(),
+                        ))
                         .await?
                 {
                     org_approving_reviews.push(review);
@@ -258,7 +260,9 @@ impl<'a> Reporter<'a> {
                     })
                     && self
                         .github_client
-                        .check_org_membership(&GithubLogin::new(comment.user.login.clone()))
+                        .actor_has_repository_write_permission(&GithubLogin::new(
+                            comment.user.login.clone(),
+                        ))
                         .await?
                 {
                     org_approving_comments.push(comment);
@@ -354,6 +358,10 @@ mod tests {
                 .org_members
                 .iter()
                 .any(|member| member == login.as_str()))
+        }
+
+        async fn check_repo_write_permission(&self, _login: &GithubLogin) -> anyhow::Result<bool> {
+            Ok(false)
         }
 
         async fn ensure_pull_request_has_label(

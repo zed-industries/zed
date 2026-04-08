@@ -44,7 +44,7 @@ pub struct GithubLogin {
 }
 
 impl GithubLogin {
-    pub(crate) fn new(login: String) -> Self {
+    pub fn new(login: String) -> Self {
         Self { login }
     }
 }
@@ -114,9 +114,18 @@ pub trait GitHubApiClient {
     async fn get_pull_request_comments(&self, pr_number: u64) -> Result<Vec<PullRequestComment>>;
     async fn get_commit_authors(&self, commit_shas: &[&CommitSha]) -> Result<AuthorsForCommits>;
     async fn check_org_membership(&self, login: &GithubLogin) -> Result<bool>;
+    async fn check_repo_write_permission(&self, login: &GithubLogin) -> Result<bool>;
+    async fn actor_has_repository_write_permission(
+        &self,
+        login: &GithubLogin,
+    ) -> anyhow::Result<bool> {
+        Ok(self.check_org_membership(login).await?
+            || self.check_repo_write_permission(login).await?)
+    }
     async fn ensure_pull_request_has_label(&self, label: &str, pr_number: u64) -> Result<()>;
 }
 
+#[derive(Deref)]
 pub struct GitHubClient {
     api: Rc<dyn GitHubApiClient>,
 }
@@ -130,39 +139,6 @@ impl GitHubClient {
     pub async fn for_app(app_id: u64, app_private_key: &str) -> Result<Self> {
         let client = OctocrabClient::new(app_id, app_private_key).await?;
         Ok(Self::new(Rc::new(client)))
-    }
-
-    pub async fn get_pull_request(&self, pr_number: u64) -> Result<PullRequestData> {
-        self.api.get_pull_request(pr_number).await
-    }
-
-    pub async fn get_pull_request_reviews(&self, pr_number: u64) -> Result<Vec<PullRequestReview>> {
-        self.api.get_pull_request_reviews(pr_number).await
-    }
-
-    pub async fn get_pull_request_comments(
-        &self,
-        pr_number: u64,
-    ) -> Result<Vec<PullRequestComment>> {
-        self.api.get_pull_request_comments(pr_number).await
-    }
-
-    pub async fn get_commit_authors<'a>(
-        &self,
-        commit_shas: impl IntoIterator<Item = &'a CommitSha>,
-    ) -> Result<AuthorsForCommits> {
-        let shas: Vec<&CommitSha> = commit_shas.into_iter().collect();
-        self.api.get_commit_authors(&shas).await
-    }
-
-    pub async fn check_org_membership(&self, login: &GithubLogin) -> Result<bool> {
-        self.api.check_org_membership(login).await
-    }
-
-    pub async fn add_label_to_pull_request(&self, label: &str, pr_number: u64) -> Result<()> {
-        self.api
-            .ensure_pull_request_has_label(label, pr_number)
-            .await
     }
 }
 
@@ -393,6 +369,44 @@ mod octo_client {
             Ok(members
                 .into_iter()
                 .any(|member| member.login == login.as_str()))
+        }
+
+        async fn check_repo_write_permission(&self, login: &GithubLogin) -> Result<bool> {
+            // TODO: octocrab fails to deserialize the permission response and
+            // does not adhere to the scheme laid out at
+            // https://docs.github.com/en/rest/collaborators/collaborators?apiVersion=2026-03-10#get-repository-permissions-for-a-user
+
+            #[derive(serde::Deserialize)]
+            #[serde(rename_all = "lowercase")]
+            enum RepoPermission {
+                Admin,
+                Write,
+                Read,
+                #[serde(other)]
+                Other,
+            }
+
+            #[derive(serde::Deserialize)]
+            struct RepositoryPermissions {
+                permission: RepoPermission,
+            }
+
+            self.client
+                .get::<RepositoryPermissions, _, _>(
+                    format!(
+                        "/repos/{ORG}/{REPO}/collaborators/{user}/permission",
+                        user = login.as_str()
+                    ),
+                    None::<&()>,
+                )
+                .await
+                .map(|response| {
+                    matches!(
+                        response.permission,
+                        RepoPermission::Write | RepoPermission::Admin
+                    )
+                })
+                .map_err(Into::into)
         }
 
         async fn ensure_pull_request_has_label(&self, label: &str, pr_number: u64) -> Result<()> {
