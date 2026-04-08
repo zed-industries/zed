@@ -884,7 +884,10 @@ pub async fn resolve_client_registration(
                 http_client,
                 &registration_endpoint,
                 redirect_uri,
-                discovery.auth_server_metadata.grant_types_supported.as_deref(),
+                discovery
+                    .auth_server_metadata
+                    .grant_types_supported
+                    .as_deref(),
             )
             .await
         }
@@ -2130,9 +2133,7 @@ mod tests {
                         Ok(Response::builder()
                             .status(200)
                             .header("Content-Type", "text/html")
-                            .body(AsyncBody::from(
-                                b"<!doctype html><html></html>".to_vec(),
-                            ))
+                            .body(AsyncBody::from(b"<!doctype html><html></html>".to_vec()))
                             .unwrap())
                     } else if uri
                         == "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp"
@@ -2169,7 +2170,10 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(metadata.resource.as_str(), "https://mcp.example.com/api/mcp");
+            assert_eq!(
+                metadata.resource.as_str(),
+                "https://mcp.example.com/api/mcp"
+            );
             assert_eq!(
                 metadata.authorization_servers[0].as_str(),
                 "https://auth.example.com/"
