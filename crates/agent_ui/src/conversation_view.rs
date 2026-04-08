@@ -508,6 +508,7 @@ impl ConversationView {
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -554,6 +555,7 @@ impl ConversationView {
                 title,
                 project,
                 initial_content,
+                source,
                 window,
                 cx,
             ),
@@ -597,6 +599,7 @@ impl ConversationView {
             title,
             self.project.clone(),
             None,
+            "agent_panel",
             window,
             cx,
         );
@@ -621,6 +624,7 @@ impl ConversationView {
         title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -682,6 +686,7 @@ impl ConversationView {
             telemetry::event!(
                 "Agent Thread Started",
                 agent = connection.telemetry_id(),
+                source = source,
                 side = side,
                 thread_location = thread_location
             );

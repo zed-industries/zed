@@ -214,6 +214,7 @@ pub fn init(cx: &mut App) {
                                 None,
                                 initial_content,
                                 true,
+                                "agent_panel",
                                 window,
                                 cx,
                             )
@@ -351,6 +352,7 @@ pub fn init(cx: &mut App) {
                                 auto_submit: true,
                             }),
                             true,
+                            "agent_panel",
                             window,
                             cx,
                         );
@@ -377,6 +379,7 @@ pub fn init(cx: &mut App) {
                                     auto_submit: true,
                                 }),
                                 true,
+                                "agent_panel",
                                 window,
                                 cx,
                             );
@@ -405,6 +408,7 @@ pub fn init(cx: &mut App) {
                                     auto_submit: true,
                                 }),
                                 true,
+                                "agent_panel",
                                 window,
                                 cx,
                             );
@@ -1269,6 +1273,7 @@ impl AgentPanel {
             title,
             None,
             true,
+            "agent_panel",
             window,
             cx,
         );
@@ -1304,27 +1309,27 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        telemetry::event!(
-            "New Thread Clicked",
-            source = "agent_panel",
-            thread_location = thread_location_str(cx)
-        );
-        self.do_new_thread(window, cx);
+        self.do_new_thread("agent_panel", window, cx);
     }
 
     pub fn new_thread_from_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        telemetry::event!(
-            "New Thread Clicked",
-            source = "sidebar",
-            thread_location = thread_location_str(cx)
-        );
-        self.do_new_thread(window, cx);
+        self.do_new_thread("sidebar", window, cx);
     }
 
-    fn do_new_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn do_new_thread(&mut self, source: &'static str, window: &mut Window, cx: &mut Context<Self>) {
         self.reset_start_thread_in_to_default(cx);
         let initial_content = self.take_active_draft_initial_content(cx);
-        self.external_thread(None, None, None, None, initial_content, true, window, cx);
+        self.external_thread(
+            None,
+            None,
+            None,
+            None,
+            initial_content,
+            true,
+            source,
+            window,
+            cx,
+        );
     }
 
     fn take_active_draft_initial_content(
@@ -1392,6 +1397,7 @@ impl AgentPanel {
                         title: thread.title,
                     }),
                     true,
+                    "agent_panel",
                     window,
                     cx,
                 );
@@ -1409,6 +1415,7 @@ impl AgentPanel {
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         focus: bool,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1436,6 +1443,7 @@ impl AgentPanel {
             project,
             agent,
             focus,
+            source,
             window,
             cx,
         );
@@ -2434,6 +2442,7 @@ impl AgentPanel {
             None,
             external_source_prompt.map(AgentInitialContent::from),
             true,
+            "agent_panel",
             window,
             cx,
         );
@@ -2459,6 +2468,7 @@ impl AgentPanel {
             None,
             initial_content,
             focus,
+            "agent_panel",
             window,
             cx,
         );
@@ -2520,6 +2530,7 @@ impl AgentPanel {
             title,
             None,
             focus,
+            "agent_panel",
             window,
             cx,
         );
@@ -2536,6 +2547,7 @@ impl AgentPanel {
         project: Entity<Project>,
         agent: Agent,
         focus: bool,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2574,6 +2586,7 @@ impl AgentPanel {
                 project,
                 thread_store,
                 self.prompt_store.clone(),
+                source,
                 window,
                 cx,
             )
@@ -3266,6 +3279,7 @@ impl AgentPanel {
                             None,
                             Some(initial_content),
                             true,
+                            "agent_panel",
                             window,
                             cx,
                         );
@@ -3329,14 +3343,6 @@ fn agent_panel_side_str(cx: &App) -> &'static str {
     match agent_panel_dock_position(cx) {
         DockPosition::Left => "left",
         DockPosition::Right | DockPosition::Bottom => "right",
-    }
-}
-
-fn thread_location_str(cx: &App) -> &'static str {
-    use settings::{NewThreadLocation, Settings};
-    match AgentSettings::get_global(cx).new_thread_location {
-        NewThreadLocation::LocalProject => "current_worktree",
-        NewThreadLocation::NewWorktree => "new_worktree",
     }
 }
 
@@ -3801,12 +3807,6 @@ impl AgentPanel {
             let agent_server_store = agent_server_store;
 
             Rc::new(move |window, cx| {
-                telemetry::event!(
-                    "New Thread Clicked",
-                    source = "agent_panel",
-                    thread_location = thread_location_str(cx)
-                );
-
                 let active_thread = active_thread.clone();
                 Some(ContextMenu::build(window, cx, |menu, _window, cx| {
                     menu.context(focus_handle.clone())
@@ -4700,7 +4700,18 @@ impl AgentPanel {
         };
 
         self.create_agent_thread(
-            server, None, None, None, None, workspace, project, ext_agent, true, window, cx,
+            server,
+            None,
+            None,
+            None,
+            None,
+            workspace,
+            project,
+            ext_agent,
+            true,
+            "agent_panel",
+            window,
+            cx,
         );
     }
 
