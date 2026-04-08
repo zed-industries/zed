@@ -138,6 +138,7 @@ pub enum Operator {
     RecordRegister,
     ReplayRegister,
     ToggleComments,
+    ToggleBlockComments,
     ReplaceWithRegister,
     Exchange,
     HelixMatch,
@@ -1078,6 +1079,7 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::ToggleBlockComments => "gb",
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
@@ -1157,6 +1159,7 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
@@ -1180,6 +1183,7 @@ impl Operator {
             | Operator::Rot13
             | Operator::Rot47
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::ReplaceWithRegister
             | Operator::Rewrap
             | Operator::ShellCommand

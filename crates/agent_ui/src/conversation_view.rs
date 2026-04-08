@@ -2663,6 +2663,13 @@ impl ConversationView {
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
             store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
         }
+
+        let session_id = session_id.clone();
+        cx.spawn(async move |_this, cx| {
+            crate::thread_worktree_archive::cleanup_thread_archived_worktrees(&session_id, cx)
+                .await;
+        })
+        .detach();
     }
 }
 

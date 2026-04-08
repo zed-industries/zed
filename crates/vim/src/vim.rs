@@ -247,6 +247,8 @@ actions!(
         PushReplaceWithRegister,
         /// Toggles comments.
         PushToggleComments,
+        /// Toggles block comments.
+        PushToggleBlockComments,
         /// Selects (count) next menu item
         MenuSelectNext,
         /// Selects (count) previous menu item
@@ -898,6 +900,14 @@ impl Vim {
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)
             });
+
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &PushToggleBlockComments, window, cx| {
+                    vim.push_operator(Operator::ToggleBlockComments, window, cx)
+                },
+            );
 
             Vim::action(editor, cx, |vim, _: &ClearOperators, window, cx| {
                 vim.clear_operator(window, cx)

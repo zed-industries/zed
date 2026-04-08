@@ -878,6 +878,14 @@ impl EditPreview {
         })
     }
 
+    pub fn result_text_snapshot(&self) -> &text::BufferSnapshot {
+        &self.applied_edits_snapshot
+    }
+
+    pub fn result_syntax_snapshot(&self) -> &SyntaxSnapshot {
+        &self.syntax_snapshot
+    }
+
     pub fn anchor_to_offset_in_result(&self, anchor: Anchor) -> usize {
         anchor
             .bias_right(&self.old_snapshot)

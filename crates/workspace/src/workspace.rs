@@ -3322,6 +3322,18 @@ impl Workspace {
         state.task.clone().unwrap()
     }
 
+    /// Prompts the user to save or discard each dirty item, returning
+    /// `true` if they confirmed (saved/discarded everything) or `false`
+    /// if they cancelled. Used before removing worktree roots during
+    /// thread archival.
+    pub fn prompt_to_save_or_discard_dirty_items(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<bool>> {
+        self.save_all_internal(SaveIntent::Close, window, cx)
+    }
+
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,

@@ -334,6 +334,7 @@ mod tests {
                 login: "reviewer".to_owned(),
             }),
             state: Some(ReviewState::Approved),
+            body: None,
         }])
     }
 

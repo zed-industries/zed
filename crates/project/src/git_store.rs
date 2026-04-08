@@ -6126,15 +6126,16 @@ impl Repository {
         })
     }
 
-    pub fn commit_exists(&mut self, sha: String) -> oneshot::Receiver<Result<bool>> {
+    pub fn stage_all_including_untracked(&mut self) -> oneshot::Receiver<Result<()>> {
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let results = backend.revparse_batch(vec![sha]).await?;
-                    Ok(results.into_iter().next().flatten().is_some())
+                    backend.stage_all_including_untracked().await
                 }
                 RepositoryState::Remote(_) => {
-                    anyhow::bail!("commit_exists is not supported for remote repositories")
+                    anyhow::bail!(
+                        "stage_all_including_untracked is not supported for remote repositories"
+                    )
                 }
             }
         })
