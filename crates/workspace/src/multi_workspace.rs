@@ -514,21 +514,9 @@ impl MultiWorkspace {
         if let Some(previous_focus) = focus_handle {
             previous_focus.focus(window, cx);
         } else {
-            self.focus_zoomed_panel_or_center_pane(window, cx);
+            let pane = self.workspace().read(cx).active_pane().clone();
+            window.focus(&pane.read(cx).focus_handle(cx), cx);
         }
-    }
-
-    fn focus_zoomed_panel_or_center_pane(&self, window: &mut Window, cx: &mut App) {
-        let workspace = self.workspace().read(cx);
-        if let Some(zoomed_position) = workspace.zoomed_position {
-            let dock = workspace.dock_at_position(zoomed_position).read(cx);
-            if let Some(panel) = dock.active_panel() {
-                panel.panel_focus_handle(cx).focus(window, cx);
-                return;
-            }
-        }
-        let pane = workspace.active_pane().clone();
-        window.focus(&pane.read(cx).focus_handle(cx), cx);
     }
 
     pub fn close_window(&mut self, _: &CloseWindow, window: &mut Window, cx: &mut Context<Self>) {
