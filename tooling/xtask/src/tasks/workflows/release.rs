@@ -151,8 +151,7 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
     .add_with(("environment", "production"))
 }
 
-pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report";
-const COMPLIANCE_REPORT_FILE: &str = "target/compliance-report.md";
+pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report.md";
 const NEEDS_REVIEW_PULLS_URL: &str = "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22";
 
 pub(crate) enum ComplianceContext {
@@ -166,7 +165,7 @@ pub(crate) fn add_compliance_notification_steps(
     compliance_step_id: &str,
 ) -> gh_workflow::Job {
     let upload_step =
-        upload_artifact(COMPLIANCE_REPORT_FILE).if_condition(Expression::new("always()"));
+        upload_artifact(COMPLIANCE_REPORT_PATH).if_condition(Expression::new("always()"));
 
     let (success_prefix, failure_prefix) = match context {
         ComplianceContext::Release => ("✅ Compliance check passed", "❌ Compliance check failed"),
@@ -178,8 +177,8 @@ pub(crate) fn add_compliance_notification_steps(
 
     let script = formatdoc! {r#"
         REPORT_CONTENT=""
-        if [ -f "{COMPLIANCE_REPORT_FILE}" ]; then
-            REPORT_CONTENT=$(cat "{COMPLIANCE_REPORT_FILE}")
+        if [ -f "{COMPLIANCE_REPORT_PATH}" ]; then
+            REPORT_CONTENT=$(cat "{COMPLIANCE_REPORT_PATH}")
         fi
 
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then

@@ -311,7 +311,7 @@ jobs:
     - id: run-compliance-check
       name: release::compliance_check::run_compliance_check
       run: |
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report.md
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -320,14 +320,14 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: compliance-report.md
-        path: target/compliance-report.md
+        path: compliance-report.md
         if-no-files-found: error
     - name: send_compliance_slack_notification
       if: always()
       run: |
         REPORT_CONTENT=""
-        if [ -f "target/compliance-report.md" ]; then
-            REPORT_CONTENT=$(cat "target/compliance-report.md")
+        if [ -f "compliance-report.md" ]; then
+            REPORT_CONTENT=$(cat "compliance-report.md")
         fi
 
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
@@ -681,7 +681,7 @@ jobs:
     - id: run-post-upload-compliance-check
       name: release::validate_release_assets::run_post_upload_compliance_check
       run: |
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report.md
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -690,14 +690,14 @@ jobs:
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
         name: compliance-report.md
-        path: target/compliance-report.md
+        path: compliance-report.md
         if-no-files-found: error
     - name: send_compliance_slack_notification
       if: always()
       run: |
         REPORT_CONTENT=""
-        if [ -f "target/compliance-report.md" ]; then
-            REPORT_CONTENT=$(cat "target/compliance-report.md")
+        if [ -f "compliance-report.md" ]; then
+            REPORT_CONTENT=$(cat "compliance-report.md")
         fi
 
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
