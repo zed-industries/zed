@@ -66,5 +66,6 @@ vercel = { workspace = true, features = ["schemars"] }
 x_ai = { workspace = true, features = ["schemars"] }
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
