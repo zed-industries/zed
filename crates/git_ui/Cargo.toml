@@ -17,6 +17,7 @@ test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
 
 [dependencies]
 agent_settings.workspace = true
+alacritty_terminal.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 buffer_diff.workspace = true

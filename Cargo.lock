@@ -7361,6 +7361,7 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
+ "alacritty_terminal",
  "anyhow",
  "askpass",
  "buffer_diff",
