@@ -94,7 +94,13 @@ async fn capture_unix(
         _ => command.args(["-i", "-c"]),
     };
 
+    // Prefix with "./" if the path starts with "-" to prevent cd from interpreting it as a flag
     let dir_str = directory.to_string_lossy();
+    let dir_str = if dir_str.starts_with('-') {
+        format!("./{dir_str}").into()
+    } else {
+        dir_str
+    };
     let quoted_dir = shell_kind
         .try_quote(&dir_str)
         .context("unexpected null in directory name")?;
@@ -171,7 +177,13 @@ async fn capture_windows(
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
 
     let shell_kind = ShellKind::new(shell_path, true);
+    // Prefix with "./" if the path starts with "-" to prevent cd from interpreting it as a flag
     let directory_string = directory.display().to_string();
+    let directory_string = if directory_string.starts_with('-') {
+        format!("./{directory_string}")
+    } else {
+        directory_string
+    };
     let zed_path_string = zed_path.display().to_string();
     let quote_for_shell = |value: &str| {
         shell_kind
