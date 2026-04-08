@@ -46,8 +46,7 @@ use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
     NextProject, NextThread, Open, PreviousProject, PreviousThread, SerializedProjectGroupKey,
     ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide,
-    ToggleWorkspaceSidebar, Workspace, notifications::DetachAndPromptErr,
-    sidebar_side_context_menu,
+    ToggleWorkspaceSidebar, Workspace, sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -404,6 +403,41 @@ fn worktree_info_from_thread_paths(
     })
 }
 
+/// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
+/// an SSH connection. Suitable for passing to
+/// [`MultiWorkspace::find_or_create_workspace`] as the `connect_remote`
+/// argument.
+fn connect_remote(
+    modal_workspace: Entity<Workspace>,
+    connection_options: RemoteConnectionOptions,
+    window: &mut Window,
+    cx: &mut Context<MultiWorkspace>,
+) -> gpui::Task<anyhow::Result<Option<Entity<remote::RemoteClient>>>> {
+    modal_workspace.update(cx, |workspace, cx| {
+        workspace.toggle_modal(window, cx, |window, cx| {
+            remote_connection::RemoteConnectionModal::new(
+                &connection_options,
+                Vec::new(),
+                window,
+                cx,
+            )
+        });
+        let prompt = workspace
+            .active_modal::<remote_connection::RemoteConnectionModal>(cx)
+            .expect("Modal just created")
+            .read(cx)
+            .prompt
+            .clone();
+        remote_connection::connect(
+            remote::remote_client::ConnectionIdentifier::setup(),
+            connection_options,
+            prompt,
+            window,
+            cx,
+        )
+    })
+}
+
 /// The sidebar re-derives its entire entry list from scratch on every
 /// change via `update_entries` → `rebuild_contents`. Avoid adding
 /// incremental or inter-event coordination state — if something can
@@ -732,17 +766,6 @@ impl Sidebar {
         result
     }
 
-    /// Finds the main worktree workspace for a project group.
-    fn workspace_for_group(
-        &self,
-        project_group_key: &ProjectGroupKey,
-        cx: &App,
-    ) -> Option<Entity<Workspace>> {
-        let mw = self.multi_workspace.upgrade()?;
-        mw.read(cx)
-            .workspace_for_paths(project_group_key.path_list(), cx)
-    }
-
     /// Opens a new workspace for a group that has no open workspaces.
     fn open_workspace_for_group(
         &mut self,
@@ -754,10 +777,20 @@ impl Sidebar {
             return;
         };
         let path_list = project_group_key.path_list().clone();
+        let host = project_group_key.host();
+        let provisional_key = Some(project_group_key.clone());
+        let active_workspace = multi_workspace.read(cx).workspace().clone();
 
         multi_workspace
             .update(cx, |this, cx| {
-                this.find_or_create_workspace(path_list, project_group_key.host(), window, cx)
+                this.find_or_create_workspace(
+                    path_list,
+                    host,
+                    provisional_key,
+                    |options, window, cx| connect_remote(active_workspace, options, window, cx),
+                    window,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     }
@@ -1433,7 +1466,10 @@ impl Sidebar {
             )
         });
         let show_new_thread_button = !has_new_thread_entry && !self.has_filter_query(cx);
-        let workspace = self.workspace_for_group(key, cx);
+        let workspace = self.multi_workspace.upgrade().and_then(|mw| {
+            mw.read(cx)
+                .workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
+        });
 
         let key_for_toggle = key.clone();
         let key_for_collapse = key.clone();
@@ -1583,7 +1619,13 @@ impl Sidebar {
                     .when(!is_active, |this| this.hover(|s| s.bg(hover_color)))
                     .tooltip(Tooltip::text("Open Workspace"))
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        if let Some(workspace) = this.workspace_for_group(&key, cx) {
+                        if let Some(workspace) = this.multi_workspace.upgrade().and_then(|mw| {
+                            mw.read(cx).workspace_for_paths(
+                                key.path_list(),
+                                key.host().as_ref(),
+                                cx,
+                            )
+                        }) {
                             this.active_entry = Some(ActiveEntry::Draft(workspace.clone()));
                             if let Some(multi_workspace) = this.multi_workspace.upgrade() {
                                 multi_workspace.update(cx, |multi_workspace, cx| {
@@ -2034,7 +2076,12 @@ impl Sidebar {
             ListEntry::NewThread { key, workspace, .. } => {
                 let key = key.clone();
                 let workspace = workspace.clone();
-                if let Some(workspace) = workspace.or_else(|| self.workspace_for_group(&key, cx)) {
+                if let Some(workspace) = workspace.or_else(|| {
+                    self.multi_workspace.upgrade().and_then(|mw| {
+                        mw.read(cx)
+                            .workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
+                    })
+                }) {
                     self.create_new_thread(&workspace, window, cx);
                 } else {
                     self.open_workspace_for_group(&key, window, cx);
@@ -2212,147 +2259,46 @@ impl Sidebar {
             return;
         };
 
-        if let Some(connection_options) = project_group_key.host() {
-            // If there's already an open workspace for this remote host,
-            // reuse it instead of establishing a new SSH connection.
-            if let Some(workspace) = multi_workspace
-                .read(cx)
-                .workspace_for_paths(&folder_paths, cx)
-            {
-                multi_workspace.update(cx, |mw, cx| mw.activate(workspace.clone(), window, cx));
-                self.activate_thread(metadata, &workspace, false, window, cx);
-                return;
-            }
-
-            let pending_session_id = metadata.session_id.clone();
+        let pending_session_id = metadata.session_id.clone();
+        let is_remote = project_group_key.host().is_some();
+        if is_remote {
             self.pending_remote_thread_activation = Some(pending_session_id.clone());
+        }
 
-            let window_handle = window.window_handle().downcast::<MultiWorkspace>();
-            let Some(window_handle) = window_handle else {
-                self.pending_remote_thread_activation = None;
-                return;
-            };
+        let host = project_group_key.host();
+        let provisional_key = Some(project_group_key.clone());
+        let active_workspace = multi_workspace.read(cx).workspace().clone();
 
-            let app_state = multi_workspace
-                .read(cx)
-                .workspace()
-                .read(cx)
-                .app_state()
-                .clone();
-            let paths = folder_paths.paths().to_vec();
-            let provisional_project_group_key = project_group_key.clone();
+        let open_task = multi_workspace.update(cx, |this, cx| {
+            this.find_or_create_workspace(
+                folder_paths,
+                host,
+                provisional_key,
+                |options, window, cx| connect_remote(active_workspace, options, window, cx),
+                window,
+                cx,
+            )
+        });
 
-            let active_workspace = multi_workspace.read(cx).workspace().clone();
-            let connect_task = active_workspace.update(cx, |workspace, cx| {
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    remote_connection::RemoteConnectionModal::new(
-                        &connection_options,
-                        Vec::new(),
-                        window,
-                        cx,
-                    )
-                });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = open_task.await;
 
-                let prompt = workspace
-                    .active_modal::<remote_connection::RemoteConnectionModal>(cx)
-                    .expect("Modal just created")
-                    .read(cx)
-                    .prompt
-                    .clone();
-
-                remote_connection::connect(
-                    remote::remote_client::ConnectionIdentifier::setup(),
-                    connection_options.clone(),
-                    prompt,
-                    window,
-                    cx,
-                )
-                .prompt_err("Failed to connect", window, cx, |_, _, _| None)
-            });
-
-            cx.spawn_in(window, async move |this, cx| {
-                let session = connect_task.await;
-
-                active_workspace
-                    .update_in(cx, |workspace, _window, cx| {
-                        if let Some(modal) =
-                            workspace.active_modal::<remote_connection::RemoteConnectionModal>(cx)
-                        {
-                            modal.update(cx, |modal, cx| modal.finished(cx));
-                        }
-                    })
-                    .ok();
-
-                let Some(Some(session)) = session else {
-                    this.update(cx, |this, _cx| {
-                        if this.pending_remote_thread_activation.as_ref()
-                            == Some(&pending_session_id)
-                        {
-                            this.pending_remote_thread_activation = None;
-                        }
-                    })
-                    .ok();
-                    return anyhow::Ok(());
-                };
-
-                let new_project = cx.update(|_, cx| {
-                    project::Project::remote(
-                        session,
-                        app_state.client.clone(),
-                        app_state.node_runtime.clone(),
-                        app_state.user_store.clone(),
-                        app_state.languages.clone(),
-                        app_state.fs.clone(),
-                        true,
-                        cx,
-                    )
-                })?;
-
-                workspace::open_remote_project_with_existing_connection(
-                    connection_options,
-                    new_project,
-                    paths,
-                    app_state,
-                    window_handle,
-                    Some(provisional_project_group_key),
-                    cx,
-                )
-                .await?;
-
-                let workspace = window_handle.update(cx, |multi_workspace, window, cx| {
-                    let workspace = multi_workspace.workspace().clone();
-                    multi_workspace.add(workspace.clone(), window, cx);
-                    workspace
-                })?;
-
-                this.update_in(cx, |this, window, cx| {
-                    this.activate_thread(metadata, &workspace, false, window, cx);
-                })?;
-
+            if result.is_err() || is_remote {
                 this.update(cx, |this, _cx| {
                     if this.pending_remote_thread_activation.as_ref() == Some(&pending_session_id) {
                         this.pending_remote_thread_activation = None;
                     }
                 })
                 .ok();
+            }
 
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        } else {
-            let open_task = multi_workspace.update(cx, |this, cx| {
-                this.find_or_create_workspace(folder_paths, project_group_key.host(), window, cx)
-            });
-
-            cx.spawn_in(window, async move |this, cx| {
-                let workspace = open_task.await?;
-                this.update_in(cx, |this, window, cx| {
-                    this.activate_thread(metadata, &workspace, false, window, cx);
-                })?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
-        }
+            let workspace = result?;
+            this.update_in(cx, |this, window, cx| {
+                this.activate_thread(metadata, &workspace, false, window, cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn find_current_workspace_for_path_list(
@@ -2605,9 +2551,12 @@ impl Sidebar {
             }
 
             let multi_workspace = self.multi_workspace.upgrade()?;
+            // Thread metadata doesn't carry host info yet, so we pass
+            // `None` here. This may match a local workspace with the same
+            // paths instead of the intended remote one.
             let workspace = multi_workspace
                 .read(cx)
-                .workspace_for_paths(folder_paths, cx)?;
+                .workspace_for_paths(folder_paths, None, cx)?;
 
             // Don't remove the main worktree workspace — the project
             // header always provides access to it.
@@ -2621,22 +2570,22 @@ impl Sidebar {
 
             // For the workspace-removal fallback, use the neighbor's workspace
             // paths if available, otherwise fall back to the project group key.
-            let fallback_key = workspace_to_remove.read(cx).project_group_key(cx);
             let fallback_paths = neighbor
                 .as_ref()
                 .map(|(_, paths)| paths.clone())
-                .unwrap_or_else(|| fallback_key.path_list().clone());
+                .unwrap_or_else(|| {
+                    workspace_to_remove
+                        .read(cx)
+                        .project_group_key(cx)
+                        .path_list()
+                        .clone()
+                });
 
             let remove_task = multi_workspace.update(cx, |mw, cx| {
                 mw.remove(
                     [workspace_to_remove],
                     move |this, window, cx| {
-                        this.find_or_create_workspace(
-                            fallback_paths,
-                            fallback_key.host(),
-                            window,
-                            cx,
-                        )
+                        this.find_or_create_local_workspace(fallback_paths, window, cx)
                     },
                     window,
                     cx,
@@ -2700,7 +2649,7 @@ impl Sidebar {
                 if let Some(workspace) = self
                     .multi_workspace
                     .upgrade()
-                    .and_then(|mw| mw.read(cx).workspace_for_paths(folder_paths, cx))
+                    .and_then(|mw| mw.read(cx).workspace_for_paths(folder_paths, None, cx))
                 {
                     if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
                         let panel_shows_archived = panel
@@ -2723,11 +2672,10 @@ impl Sidebar {
         // tell the panel to load it. `rebuild_contents` will reconcile
         // `active_entry` once the thread finishes loading.
         if let Some(metadata) = neighbor {
-            if let Some(workspace) = self
-                .multi_workspace
-                .upgrade()
-                .and_then(|mw| mw.read(cx).workspace_for_paths(&metadata.folder_paths, cx))
-            {
+            if let Some(workspace) = self.multi_workspace.upgrade().and_then(|mw| {
+                mw.read(cx)
+                    .workspace_for_paths(&metadata.folder_paths, None, cx)
+            }) {
                 Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);
                 return;
             }
@@ -2820,9 +2768,17 @@ impl Sidebar {
                 ListEntry::Thread(thread) => {
                     let workspace = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
-                        ThreadEntryWorkspace::Closed { .. } => current_header_key
-                            .as_ref()
-                            .and_then(|key| self.workspace_for_group(key, cx)),
+                        ThreadEntryWorkspace::Closed { .. } => {
+                            current_header_key.as_ref().and_then(|key| {
+                                self.multi_workspace.upgrade().and_then(|mw| {
+                                    mw.read(cx).workspace_for_paths(
+                                        key.path_list(),
+                                        key.host().as_ref(),
+                                        cx,
+                                    )
+                                })
+                            })
+                        }
                     }?;
                     let notified = self
                         .contents
@@ -3331,7 +3287,15 @@ impl Sidebar {
                 .rev()
                 .find(|&&header_ix| header_ix <= selected_ix)
                 .and_then(|&header_ix| match &self.contents.entries[header_ix] {
-                    ListEntry::ProjectHeader { key, .. } => self.workspace_for_group(key, cx),
+                    ListEntry::ProjectHeader { key, .. } => {
+                        self.multi_workspace.upgrade().and_then(|mw| {
+                            mw.read(cx).workspace_for_paths(
+                                key.path_list(),
+                                key.host().as_ref(),
+                                cx,
+                            )
+                        })
+                    }
                     _ => None,
                 })
         } else {
@@ -3426,7 +3390,10 @@ impl Sidebar {
         // Uncollapse the target group so that threads become visible.
         self.collapsed_groups.remove(&key);
 
-        if let Some(workspace) = self.workspace_for_group(&key, cx) {
+        if let Some(workspace) = self.multi_workspace.upgrade().and_then(|mw| {
+            mw.read(cx)
+                .workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
+        }) {
             multi_workspace.update(cx, |multi_workspace, cx| {
                 multi_workspace.activate(workspace, window, cx);
                 multi_workspace.retain_active_workspace(cx);
@@ -3675,7 +3642,10 @@ impl Sidebar {
             .focused(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.selection = None;
-                if let Some(workspace) = this.workspace_for_group(&key, cx) {
+                if let Some(workspace) = this.multi_workspace.upgrade().and_then(|mw| {
+                    mw.read(cx)
+                        .workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
+                }) {
                     this.create_new_thread(&workspace, window, cx);
                 } else {
                     this.open_workspace_for_group(&key, window, cx);
