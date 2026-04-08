@@ -16,15 +16,31 @@ use workspace::{AppState, MultiWorkspace, Workspace};
 
 use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadMetadataStore};
 
+/// The plan for archiving a single git worktree root.
+///
+/// A thread can have multiple folder paths open, so there may be multiple
+/// `RootPlan`s per archival operation. Each one captures everything needed to
+/// persist the worktree's git state and then remove it from disk.
 #[derive(Clone)]
 pub struct RootPlan {
+    /// Absolute path of the git worktree on disk.
     pub root_path: PathBuf,
+    /// Absolute path to the main git repository this worktree is linked to.
     pub main_repo_path: PathBuf,
+    /// Every open `Project` that has this worktree loaded, so they can all
+    /// release it during removal.
     pub affected_projects: Vec<AffectedProject>,
+    /// The `Repository` entity for this worktree, used to run git commands
+    /// (commit, reset, etc.). `None` if this path isn't a git worktree.
     pub worktree_repo: Option<Entity<Repository>>,
+    /// The branch the worktree was on, so it can be restored later.
     pub branch_name: Option<String>,
 }
 
+/// A `Project` that references a worktree being archived, paired with the
+/// `WorktreeId` it uses for that worktree. The same worktree path can appear
+/// in multiple open workspaces/projects, and each one needs to remove it
+/// during archival.
 #[derive(Clone)]
 pub struct AffectedProject {
     pub project: Entity<Project>,
@@ -35,11 +51,23 @@ fn archived_worktree_ref_name(id: i64) -> String {
     format!("refs/archived-worktrees/{}", id)
 }
 
+/// The result of a successful [`persist_worktree_state`] call.
+///
+/// Carries exactly the information needed to roll back the persist via
+/// [`rollback_persist`]: the DB row ID (to delete the record and the
+/// corresponding `refs/archived-worktrees/<id>` git ref) and the staged
+/// commit hash (to `git reset` back past both WIP commits).
 pub struct PersistOutcome {
     pub archived_worktree_id: i64,
     pub staged_commit_hash: String,
 }
 
+/// Builds a [`RootPlan`] for archiving the git worktree at `path`.
+///
+/// This is a synchronous planning step that inspects all open workspaces to
+/// find which projects have this worktree loaded and to locate the
+/// `Repository` entity for it. Returns `None` if the path isn't a linked
+/// git worktree in any open workspace.
 pub fn build_root_plan(
     path: &Path,
     workspaces: &[Entity<Workspace>],
@@ -96,6 +124,9 @@ pub fn build_root_plan(
     })
 }
 
+/// Returns `true` if any unarchived thread other than `current_session_id`
+/// references `path` in its folder paths. Used to determine whether a
+/// worktree can safely be removed from disk.
 pub fn path_is_referenced_by_other_unarchived_threads(
     current_session_id: &acp::SessionId,
     path: &Path,
@@ -115,6 +146,14 @@ pub fn path_is_referenced_by_other_unarchived_threads(
         })
 }
 
+/// Removes a worktree from all affected projects and deletes it from disk
+/// via `git worktree remove`.
+///
+/// This is the destructive counterpart to [`persist_worktree_state`]. It
+/// first detaches the worktree from every [`AffectedProject`], waits for
+/// each project to fully release it, then asks the main repository to
+/// delete the worktree directory. If the git removal fails, the worktree
+/// is re-added to each project via [`rollback_root`].
 pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
     let release_tasks: Vec<_> = root
         .affected_projects
@@ -156,6 +195,8 @@ async fn remove_root_after_worktree_removal(
     let result = receiver
         .await
         .map_err(|_| anyhow!("git worktree removal was canceled"))?;
+    // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
+    drop(_temp_project);
     result
 }
 
@@ -244,6 +285,8 @@ async fn find_or_create_repository(
     Ok((repo, Some(temp_project)))
 }
 
+/// Re-adds the worktree to every affected project after a failed
+/// [`remove_root`].
 async fn rollback_root(root: &RootPlan, cx: &mut AsyncApp) {
     for affected in &root.affected_projects {
         let task = affected.project.update(cx, |project, cx| {
@@ -253,6 +296,23 @@ async fn rollback_root(root: &RootPlan, cx: &mut AsyncApp) {
     }
 }
 
+/// Saves the worktree's full git state so it can be restored later.
+///
+/// This is a multi-step operation:
+/// 1. Records the original HEAD SHA.
+/// 2. Creates WIP commit #1 ("staged") capturing the current index.
+/// 3. Stages everything including untracked files, then creates WIP commit
+///    #2 ("unstaged") capturing the full working directory.
+/// 4. Creates a DB record (`ArchivedGitWorktree`) with all the SHAs, the
+///    branch name, and both paths.
+/// 5. Links every thread that references this worktree to the DB record.
+/// 6. Creates a git ref (`refs/archived-worktrees/<id>`) on the main repo
+///    pointing at the unstaged commit, preventing git from
+///    garbage-collecting the WIP commits after the worktree is deleted.
+///
+/// Each step has rollback logic: if step N fails, steps 1..N-1 are undone.
+/// On success, returns a [`PersistOutcome`] that can be passed to
+/// [`rollback_persist`] if a later step in the archival pipeline fails.
 pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Result<PersistOutcome> {
     let worktree_repo = root
         .worktree_repo
@@ -454,6 +514,8 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
                     ref_name
                 );
             }
+            // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
+            drop(_temp_project);
         }
         Err(error) => {
             log::warn!(
@@ -469,6 +531,9 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
     })
 }
 
+/// Undoes a successful [`persist_worktree_state`] by resetting the WIP
+/// commits, deleting the git ref on the main repo, and removing the DB
+/// record.
 pub async fn rollback_persist(outcome: &PersistOutcome, root: &RootPlan, cx: &mut AsyncApp) {
     // Undo WIP commits on the worktree repo
     if let Some(worktree_repo) = &root.worktree_repo {
@@ -489,6 +554,8 @@ pub async fn rollback_persist(outcome: &PersistOutcome, root: &RootPlan, cx: &mu
         let ref_name = archived_worktree_ref_name(outcome.archived_worktree_id);
         let rx = main_repo.update(cx, |repo, _cx| repo.delete_ref(ref_name));
         rx.await.ok().and_then(|r| r.log_err());
+        // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
+        drop(_temp_project);
     }
 
     // Delete the DB record
@@ -503,6 +570,12 @@ pub async fn rollback_persist(outcome: &PersistOutcome, root: &RootPlan, cx: &mu
     }
 }
 
+/// Restores a previously archived worktree back to disk from its DB record.
+///
+/// Re-creates the git worktree (or adopts an existing directory), resets
+/// past the two WIP commits to recover the original working directory
+/// state, verifies HEAD matches the expected commit, and restores the
+/// original branch if one was recorded.
 pub async fn restore_worktree_via_git(
     row: &ArchivedGitWorktree,
     cx: &mut AsyncApp,
@@ -676,6 +749,8 @@ pub async fn restore_worktree_via_git(
     Ok(worktree_path.clone())
 }
 
+/// Deletes the git ref and DB records for a single archived worktree.
+/// Used when an archived worktree is no longer referenced by any thread.
 pub async fn cleanup_archived_worktree_record(row: &ArchivedGitWorktree, cx: &mut AsyncApp) {
     // Delete the git ref from the main repo
     if let Ok((main_repo, _temp_project)) = find_or_create_repository(&row.main_repo_path, cx).await
@@ -687,6 +762,8 @@ pub async fn cleanup_archived_worktree_record(row: &ArchivedGitWorktree, cx: &mu
             Ok(Err(error)) => log::warn!("Failed to delete archive ref: {error}"),
             Err(_) => log::warn!("Archive ref deletion was canceled"),
         }
+        // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
+        drop(_temp_project);
     }
 
     // Delete the DB records
@@ -759,6 +836,7 @@ pub async fn cleanup_thread_archived_worktrees(session_id: &acp::SessionId, cx: 
     }
 }
 
+/// Collects every `Workspace` entity across all open `MultiWorkspace` windows.
 pub fn all_open_workspaces(cx: &App) -> Vec<Entity<Workspace>> {
     cx.windows()
         .into_iter()
