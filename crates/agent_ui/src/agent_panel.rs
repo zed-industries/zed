@@ -1271,6 +1271,14 @@ impl AgentPanel {
             .unwrap_or(false)
     }
 
+    /// Reset the panel to the uninitialized state, clearing any active
+    /// thread without creating a new draft. Running threads are retained
+    /// in the background. The sidebar suppresses the uninitialized state
+    /// so no "Draft" entry appears.
+    pub fn clear_active_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_active_view(ActiveView::Uninitialized, false, window, cx);
+    }
+
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         self.reset_start_thread_in_to_default(cx);
         self.external_thread(None, None, None, None, None, true, window, cx);
