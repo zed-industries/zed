@@ -47,8 +47,8 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder, SpawnInTerminal,
-    TaskContext, ZedDebugConfig, substitute_variables_in_str,
+    BuildTaskDefinition, DebugScenario, SharedTaskContext, Shell, ShellBuilder,
+    SpawnInTerminal,TaskContext, ZedDebugConfig, substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
 use ui::{
@@ -1145,6 +1145,9 @@ impl RunningState {
                     args,
                     ..task.resolved.clone()
                 };
+
+                Workspace::save_for_task(&weak_workspace, task_with_shell.save, cx).await;
+
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
