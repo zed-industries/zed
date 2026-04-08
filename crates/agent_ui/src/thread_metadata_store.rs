@@ -407,14 +407,13 @@ impl ThreadMetadataStore {
     pub fn archive(
         &mut self,
         session_id: &acp::SessionId,
-        cleanup_job: Option<(Task<()>, smol::channel::Sender<()>)>,
+        archive_job: Option<(Task<()>, smol::channel::Sender<()>)>,
         cx: &mut Context<Self>,
     ) {
         self.update_archived(session_id, true, cx);
 
-        if let Some(in_flight) = cleanup_job {
-            self.in_flight_archives
-                .insert(session_id.clone(), in_flight);
+        if let Some(job) = archive_job {
+            self.in_flight_archives.insert(session_id.clone(), job);
         }
     }
 
