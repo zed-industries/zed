@@ -8633,27 +8633,28 @@ impl ThreadView {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
-        let v2_empty_state = !has_messages;
-
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        let list_state = self.list_state.clone();
 
         let conversation = v_flex()
-            .mx_auto()
-            .max_w(max_content_width)
-            .when(!v2_empty_state, |this| this.flex_1().size_full())
+            .when(self.resumed_without_history, |this| {
+                this.child(Self::render_resume_notice(cx))
+            })
             .map(|this| {
-                let this = this.when(self.resumed_without_history, |this| {
-                    this.child(Self::render_resume_notice(cx))
-                });
                 if has_messages {
-                    let list_state = self.list_state.clone();
-                    this.child(self.render_entries(cx))
+                    this.flex_1()
+                        .size_full()
+                        .child(
+                            v_flex()
+                                .mx_auto()
+                                .max_w(max_content_width)
+                                .size_full()
+                                .child(self.render_entries(cx)),
+                        )
                         .vertical_scrollbar_for(&list_state, window, cx)
                         .into_any()
-                } else if v2_empty_state {
-                    this.into_any()
                 } else {
-                    this.child(self.render_recent_history(cx)).into_any()
+                    this.into_any()
                 }
             });
 
