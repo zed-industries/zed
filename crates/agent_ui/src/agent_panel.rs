@@ -61,6 +61,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
+use project::git_store::{GitStoreEvent, RepositoryEvent};
 use project::project_settings::ProjectSettings;
 use project::{Project, ProjectPath, Worktree, linked_worktree_short_name};
 use prompt_store::{PromptStore, UserPromptId};
@@ -807,6 +808,7 @@ pub struct AgentPanel {
     agent_navigation_menu: Option<Entity<ContextMenu>>,
     _extension_subscription: Option<Subscription>,
     _project_subscription: Subscription,
+    _git_store_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
@@ -1139,6 +1141,26 @@ impl AgentPanel {
                 }
                 _ => {}
             });
+        let git_store = project.read(cx).git_store().clone();
+        let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
+            let should_sync = matches!(
+                event,
+                GitStoreEvent::ActiveRepositoryChanged(_)
+                    | GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::RepositoryRemoved(_)
+                    | GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::HeadChanged
+                            | RepositoryEvent::BranchListChanged
+                            | RepositoryEvent::GitWorktreeListChanged,
+                        _,
+                    )
+            );
+
+            if should_sync {
+                this.sync_start_thread_in_with_git_state(cx);
+            }
+        });
 
         let mut panel = Self {
             workspace_id,
@@ -1164,6 +1186,7 @@ impl AgentPanel {
             agent_navigation_menu: None,
             _extension_subscription: extension_subscription,
             _project_subscription,
+            _git_store_subscription,
             zoomed: false,
             pending_serialization: None,
             new_user_onboarding: onboarding,
@@ -2209,6 +2232,108 @@ impl AgentPanel {
         }
     }
 
+    fn sync_start_thread_in_with_git_state(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.start_thread_in, StartThreadIn::LocalProject) {
+            return;
+        }
+
+        let visible_worktree_paths: Vec<_> = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+            .collect();
+        let repositories = self.project.read(cx).repositories(cx);
+        let linked_worktrees = if repositories.len() > 1 {
+            Vec::new()
+        } else {
+            repositories
+                .values()
+                .flat_map(|repo| repo.read(cx).linked_worktrees().iter().cloned())
+                .filter(|worktree| !visible_worktree_paths.contains(&worktree.path))
+                .collect::<Vec<_>>()
+        };
+
+        let updated_start_thread_in = match &self.start_thread_in {
+            StartThreadIn::NewWorktree {
+                worktree_name: Some(worktree_name),
+                branch_target,
+            } => {
+                let normalized_worktree_name = worktree_name.replace(' ', "-");
+                linked_worktrees
+                    .iter()
+                    .find(|worktree| {
+                        worktree.display_name() == normalized_worktree_name
+                            && self.linked_worktree_matches_branch_target(
+                                worktree,
+                                branch_target,
+                                cx,
+                            )
+                    })
+                    .map(|worktree| StartThreadIn::LinkedWorktree {
+                        path: worktree.path.clone(),
+                        display_name: worktree.display_name().to_string(),
+                    })
+            }
+            StartThreadIn::LinkedWorktree { path, .. } => linked_worktrees
+                .iter()
+                .find(|worktree| worktree.path == *path)
+                .map(|worktree| StartThreadIn::LinkedWorktree {
+                    path: worktree.path.clone(),
+                    display_name: worktree.display_name().to_string(),
+                })
+                .or(Some(StartThreadIn::LocalProject)),
+            _ => None,
+        };
+
+        if let Some(updated_start_thread_in) = updated_start_thread_in {
+            if self.start_thread_in != updated_start_thread_in {
+                self.start_thread_in = updated_start_thread_in;
+                self.serialize(cx);
+            }
+            cx.notify();
+        }
+    }
+
+    fn linked_worktree_matches_branch_target(
+        &self,
+        worktree: &git::repository::Worktree,
+        branch_target: &NewWorktreeBranchTarget,
+        cx: &App,
+    ) -> bool {
+        let active_repository = self.project.read(cx).active_repository(cx);
+        let current_branch_name = active_repository.as_ref().and_then(|repo| {
+            repo.read(cx)
+                .branch
+                .as_ref()
+                .map(|branch| branch.name().to_string())
+        });
+        let existing_branch_names = active_repository
+            .as_ref()
+            .map(|repo| {
+                repo.read(cx)
+                    .branch_list
+                    .iter()
+                    .map(|branch| branch.name().to_string())
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+
+        match branch_target {
+            NewWorktreeBranchTarget::CurrentBranch => {
+                current_branch_name.as_deref() == worktree.branch_name()
+            }
+            NewWorktreeBranchTarget::ExistingBranch { name } => {
+                existing_branch_names.contains(name)
+                    && worktree.branch_name() == Some(name.as_str())
+            }
+            NewWorktreeBranchTarget::CreateBranch { name, .. } => {
+                !existing_branch_names.contains(name)
+                    && worktree.branch_name() == Some(name.as_str())
+            }
+        }
+    }
+
     pub(crate) fn selected_agent(&self) -> Option<Agent> {
         Some(self.selected_agent.clone())
     }
@@ -3100,6 +3225,8 @@ impl AgentPanel {
                 });
             }
 
+            this.start_thread_in = StartThreadIn::LocalProject;
+            this.serialize(cx);
             cx.notify();
         })?;
 
@@ -5518,6 +5645,99 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_thread_target_does_not_sync_to_external_linked_worktree_with_invalid_branch_target(
+        cx: &mut TestAppContext,
+    ) {
+        use git::repository::Worktree as GitWorktree;
+
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature-worktree"]);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(
+                &StartThreadIn::NewWorktree {
+                    worktree_name: Some("feature worktree".to_string()),
+                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                },
+                window,
+                cx,
+            );
+        });
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/linked-feature-worktree"),
+                ref_name: Some("refs/heads/feature-worktree".into()),
+                sha: "abcdef1".into(),
+                is_main: false,
+            },
+        )
+        .await;
+
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                *panel.start_thread_in(),
+                StartThreadIn::NewWorktree {
+                    worktree_name: Some("feature worktree".to_string()),
+                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                },
+                "thread target should remain a named new worktree when the external linked worktree does not match the selected branch target",
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_thread_target_serialization_round_trip(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -5918,6 +6138,14 @@ mod tests {
 
         // Let the async worktree creation + workspace setup complete.
         cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_eq!(
+                panel.start_thread_in(),
+                &StartThreadIn::LocalProject,
+                "the original panel should reset start_thread_in back to the local project after creating a worktree workspace",
+            );
+        });
 
         // Find the new workspace's AgentPanel and verify it used the Codex agent.
         let found_codex = multi_workspace
