@@ -27,9 +27,10 @@ use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
 
 use gpui::{
-    Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window, actions, div,
+    Action, Animation, AnimationExt, AnyElement, App, Context, Corner, Element, Entity, Focusable,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
+    pulsating_between,
 };
 use onboarding_banner::OnboardingBanner;
 use project::{Project, git_store::GitStoreEvent, trusted_worktrees::TrustedWorktrees};
@@ -38,6 +39,7 @@ use settings::Settings;
 use settings::WorktreeId;
 
 use std::sync::Arc;
+use std::time::Duration;
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
@@ -256,6 +258,18 @@ impl Render for TitleBar {
         let user = self.user_store.read(cx).current_user();
 
         let signed_in = user.is_some();
+        let is_signing_in = user.is_none()
+            && matches!(
+                status,
+                client::Status::Authenticating
+                    | client::Status::Authenticated
+                    | client::Status::Connecting
+            );
+        let is_signed_out_or_auth_error = user.is_none()
+            && matches!(
+                status,
+                client::Status::SignedOut | client::Status::AuthenticationError
+            );
 
         children.push(
             h_flex()
@@ -272,9 +286,25 @@ impl Render for TitleBar {
                 .children(self.render_connection_status(status, cx))
                 .child(self.update_version.clone())
                 .when(
-                    user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
+                    user.is_none()
+                        && is_signed_out_or_auth_error
+                        && TitleBarSettings::get_global(cx).show_sign_in,
                     |this| this.child(self.render_sign_in_button(cx)),
                 )
+                .when(is_signing_in, |this| {
+                    this.child(
+                        Label::new("Signing in…")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .with_animation(
+                                "signing-in",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                    )
+                })
                 .when(TitleBarSettings::get_global(cx).show_user_menu, |this| {
                     this.child(self.render_user_menu_button(cx))
                 })

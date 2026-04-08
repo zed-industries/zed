@@ -206,12 +206,13 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
+                            let initial_content = panel.take_active_draft_initial_content(cx);
                             panel.external_thread(
                                 action.agent.clone(),
                                 None,
                                 None,
                                 None,
-                                None,
+                                initial_content,
                                 true,
                                 window,
                                 cx,
@@ -1304,7 +1305,38 @@ impl AgentPanel {
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         self.reset_start_thread_in_to_default(cx);
-        self.external_thread(None, None, None, None, None, true, window, cx);
+        let initial_content = self.take_active_draft_initial_content(cx);
+        self.external_thread(None, None, None, None, initial_content, true, window, cx);
+    }
+
+    fn take_active_draft_initial_content(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<AgentInitialContent> {
+        self.active_thread_view(cx).and_then(|thread_view| {
+            thread_view.update(cx, |thread_view, cx| {
+                let draft_blocks = thread_view
+                    .thread
+                    .read(cx)
+                    .draft_prompt()
+                    .map(|draft| draft.to_vec())
+                    .filter(|draft| !draft.is_empty());
+
+                let draft_blocks = draft_blocks.or_else(|| {
+                    let text = thread_view.message_editor.read(cx).text(cx);
+                    if text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(vec![acp::ContentBlock::Text(acp::TextContent::new(text))])
+                    }
+                });
+
+                draft_blocks.map(|blocks| AgentInitialContent::ContentBlock {
+                    blocks,
+                    auto_submit: false,
+                })
+            })
+        })
     }
 
     fn new_native_agent_thread_from_summary(
@@ -2401,7 +2433,17 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.external_thread(Some(agent), None, None, None, None, focus, window, cx);
+        let initial_content = self.take_active_draft_initial_content(cx);
+        self.external_thread(
+            Some(agent),
+            None,
+            None,
+            None,
+            initial_content,
+            focus,
+            window,
+            cx,
+        );
     }
 
     pub fn load_agent_thread(

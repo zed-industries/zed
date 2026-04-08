@@ -2308,22 +2308,31 @@ impl ConversationView {
         self.show_notification(caption, icon, window, cx);
     }
 
-    fn agent_panel_visible(&self, multi_workspace: &Entity<MultiWorkspace>, cx: &App) -> bool {
+    fn is_visible(&self, multi_workspace: &Entity<MultiWorkspace>, cx: &Context<Self>) -> bool {
         let Some(workspace) = self.workspace.upgrade() else {
             return false;
         };
 
-        multi_workspace.read(cx).workspace() == &workspace && AgentPanel::is_visible(&workspace, cx)
+        multi_workspace.read(cx).workspace() == &workspace
+            && AgentPanel::is_visible(&workspace, cx)
+            && multi_workspace
+                .read(cx)
+                .workspace()
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .map_or(false, |p| {
+                    p.read(cx).active_conversation_view().map(|c| c.entity_id())
+                        == Some(cx.entity_id())
+                })
     }
 
-    fn agent_status_visible(&self, window: &Window, cx: &App) -> bool {
+    fn agent_status_visible(&self, window: &Window, cx: &Context<Self>) -> bool {
         if !window.is_window_active() {
             return false;
         }
 
         if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
-            multi_workspace.read(cx).sidebar_open()
-                || self.agent_panel_visible(&multi_workspace, cx)
+            self.is_visible(&multi_workspace, cx)
         } else {
             self.workspace
                 .upgrade()
@@ -2332,10 +2341,10 @@ impl ConversationView {
     }
 
     #[cfg(feature = "audio")]
-    fn play_notification_sound(&self, window: &Window, cx: &mut App) {
+    fn play_notification_sound(&self, window: &Window, cx: &mut Context<Self>) {
         let visible = window.is_window_active()
             && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
-                self.agent_panel_visible(&mw, cx)
+                self.is_visible(&mw, cx)
             } else {
                 self.workspace
                     .upgrade()
@@ -2366,19 +2375,47 @@ impl ConversationView {
             return;
         }
 
+        let Some(root_thread) = self.root_thread(cx) else {
+            return;
+        };
+        let root_thread = root_thread.read(cx).thread.read(cx);
+        let root_session_id = root_thread.session_id().clone();
+        let root_work_dirs = root_thread.work_dirs().cloned();
+        let root_title = root_thread.title();
+
         // TODO: Change this once we have title summarization for external agents.
         let title = self.agent.agent_id().0;
 
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
                 if let Some(primary) = cx.primary_display() {
-                    self.pop_up(icon, caption.into(), title, window, primary, cx);
+                    self.pop_up(
+                        icon,
+                        caption.into(),
+                        title,
+                        root_session_id,
+                        root_work_dirs,
+                        root_title,
+                        window,
+                        primary,
+                        cx,
+                    );
                 }
             }
             NotifyWhenAgentWaiting::AllScreens => {
                 let caption = caption.into();
                 for screen in cx.displays() {
-                    self.pop_up(icon, caption.clone(), title.clone(), window, screen, cx);
+                    self.pop_up(
+                        icon,
+                        caption.clone(),
+                        title.clone(),
+                        root_session_id.clone(),
+                        root_work_dirs.clone(),
+                        root_title.clone(),
+                        window,
+                        screen,
+                        cx,
+                    );
                 }
             }
             NotifyWhenAgentWaiting::Never => {
@@ -2392,6 +2429,9 @@ impl ConversationView {
         icon: IconName,
         caption: SharedString,
         title: SharedString,
+        root_session_id: acp::SessionId,
+        root_work_dirs: Option<PathList>,
+        root_title: Option<SharedString>,
         window: &mut Window,
         screen: Rc<dyn PlatformDisplay>,
         cx: &mut Context<Self>,
@@ -2421,7 +2461,7 @@ impl ConversationView {
                 .entry(screen_window)
                 .or_insert_with(Vec::new)
                 .push(cx.subscribe_in(&pop_up, window, {
-                    |this, _, event, window, cx| match event {
+                    move |this, _, event, window, cx| match event {
                         AgentNotificationEvent::Accepted => {
                             let Some(handle) = window.window_handle().downcast::<MultiWorkspace>()
                             else {
@@ -2431,6 +2471,10 @@ impl ConversationView {
                             cx.activate(true);
 
                             let workspace_handle = this.workspace.clone();
+                            let agent = this.connection_key.clone();
+                            let root_session_id = root_session_id.clone();
+                            let root_work_dirs = root_work_dirs.clone();
+                            let root_title = root_title.clone();
 
                             cx.defer(move |cx| {
                                 handle
@@ -2439,6 +2483,22 @@ impl ConversationView {
                                         if let Some(workspace) = workspace_handle.upgrade() {
                                             multi_workspace.activate(workspace.clone(), window, cx);
                                             workspace.update(cx, |workspace, cx| {
+                                                workspace.reveal_panel::<AgentPanel>(window, cx);
+                                                if let Some(panel) =
+                                                    workspace.panel::<AgentPanel>(cx)
+                                                {
+                                                    panel.update(cx, |panel, cx| {
+                                                        panel.load_agent_thread(
+                                                            agent.clone(),
+                                                            root_session_id.clone(),
+                                                            root_work_dirs.clone(),
+                                                            root_title.clone(),
+                                                            true,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
                                                 workspace.focus_panel::<AgentPanel>(window, cx);
                                             });
                                         }
@@ -3427,6 +3487,109 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_notification_when_different_conversation_is_active_in_visible_panel(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<crate::AgentPanel>(window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert!(crate::AgentPanel::is_visible(&workspace, cx));
+            assert!(panel.active_conversation_view().is_some());
+        });
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _cx| {
+            assert_ne!(
+                panel
+                    .active_conversation_view()
+                    .map(|view| view.entity_id()),
+                Some(conversation_view.entity_id()),
+                "The visible panel should still be showing a different conversation"
+            );
+        });
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification when a different conversation is active in the visible panel"
+        );
+    }
+
+    #[gpui::test]
     async fn test_notification_when_workspace_is_background_in_multi_workspace(
         cx: &mut TestAppContext,
     ) {
@@ -3454,12 +3617,23 @@ pub(crate) mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
 
-        workspace1.update_in(cx, |workspace, window, cx| {
+        let panel = workspace1.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx));
-            workspace.add_panel(panel, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
 
             // Open the dock and activate the agent panel so it's visible
             workspace.focus_panel::<crate::AgentPanel>(window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
+                window,
+                cx,
+            );
         });
 
         cx.run_until_parked();
@@ -3476,11 +3650,10 @@ pub(crate) mod tests {
         let connection_store =
             cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project1.clone(), cx)));
 
-        let agent = StubAgentServer::default_response();
         let conversation_view = cx.update(|window, cx| {
             cx.new(|cx| {
                 ConversationView::new(
-                    Rc::new(agent),
+                    Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
                     connection_store,
                     Agent::Custom { id: "Test".into() },
                     None,
@@ -3497,6 +3670,13 @@ pub(crate) mod tests {
             })
         });
         cx.run_until_parked();
+
+        let root_session_id = conversation_view
+            .read_with(cx, |view, cx| {
+                view.root_thread(cx)
+                    .map(|thread| thread.read(cx).thread.read(cx).session_id().clone())
+            })
+            .expect("Conversation view should have a root thread");
 
         let message_editor = message_editor(&conversation_view, cx);
         message_editor.update_in(cx, |editor, window, cx| {
@@ -3555,6 +3735,17 @@ pub(crate) mod tests {
                 );
             })
             .unwrap();
+
+        panel.read_with(cx, |panel, cx| {
+            let active_session_id = panel
+                .active_agent_thread(cx)
+                .map(|thread| thread.read(cx).session_id().clone());
+            assert_eq!(
+                active_session_id,
+                Some(root_session_id),
+                "Expected accepting the notification to load the notified thread in AgentPanel"
+            );
+        });
     }
 
     #[gpui::test]

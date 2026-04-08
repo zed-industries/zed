@@ -5021,6 +5021,54 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 }
 ```
 
+### Sort Order
+
+- Description: Whether to sort file and folder names case-sensitively in the project panel. This setting works in combination with `sort_mode`. `sort_mode` controls how files and directories are grouped (e.g., directories first), while this setting controls how names are compared within those groups.
+- Setting: `sort_order`
+- Default: `default`
+
+**Options**
+
+1. Case-insensitive natural sort with lowercase preferred in ties. Numbers in file names are compared by their numeric value (e.g., `file2` sorts before `file10`). Names that differ only in casing are sorted with lowercase first (e.g., `apple` before `Apple`).
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "default"
+  }
+}
+```
+
+2. Uppercase names are grouped before lowercase names, with case-insensitive natural sort within each group. Dot-prefixed names (e.g., `.gitignore`) sort before both groups. Accented uppercase letters like `É` are treated as uppercase.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "upper"
+  }
+}
+```
+
+3. Lowercase names are grouped before uppercase names, with case-insensitive natural sort within each group. Dot-prefixed names sort before both groups.
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "lower"
+  }
+}
+```
+
+4. Pure Unicode codepoint comparison. No case folding and no natural number sorting. Uppercase ASCII letters (`A`–`Z`) sort before lowercase (`a`–`z`) as a natural consequence of their codepoint values. Accented characters like `É` (U+00C9) sort after all ASCII letters. Numbers are compared lexicographically (`file10` sorts before `file2`).
+
+```json [settings]
+{
+  "project_panel": {
+    "sort_order": "unicode"
+  }
+}
+```
+
 ### Auto Open
 
 - Description: Control whether files are opened automatically after different creation flows in the project panel.

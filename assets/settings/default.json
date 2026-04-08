@@ -792,6 +792,21 @@
     // 3. Show files first, then directories:
     //    "files_first"
     "sort_mode": "directories_first",
+    // Whether to sort file and folder names case-sensitively in the project panel.
+    // This setting can take four values:
+    //
+    // 1. Case-insensitive natural sort with lowercase preferred in ties (default):
+    //    "default"
+    // 2. Uppercase names are grouped before lowercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "upper"
+    // 3. Lowercase names are grouped before uppercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "lower"
+    // 4. Pure Unicode codepoint comparison.
+    //    No case folding, no natural number sorting:
+    //    "unicode"
+    "sort_order": "default",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
     // Whether to show the git status indicator next to file names in the project panel.
