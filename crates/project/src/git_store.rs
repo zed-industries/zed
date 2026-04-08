@@ -6529,6 +6529,38 @@ impl Repository {
         })
     }
 
+    pub fn create_archive_checkpoint(&mut self) -> oneshot::Receiver<Result<(String, String)>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.create_archive_checkpoint().await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("archive checkpoints are not supported on remote repositories")
+                }
+            }
+        })
+    }
+
+    pub fn restore_archive_checkpoint(
+        &mut self,
+        staged_sha: String,
+        unstaged_sha: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend
+                        .restore_archive_checkpoint(staged_sha, unstaged_sha)
+                        .await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("archive checkpoints are not supported on remote repositories")
+                }
+            }
+        })
+    }
+
     pub fn restore_checkpoint(
         &mut self,
         checkpoint: GitRepositoryCheckpoint,
