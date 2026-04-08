@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 36183b5df9e5e2521c5366af3f6b295559b5c72b9477169e394f2c640d1d54f5 # shrinks to TestSidebarInvariantsArgs = TestSidebarInvariantsArgs { __seed: 18181010490781345706, raw_operations: [16, 69, 72] }
