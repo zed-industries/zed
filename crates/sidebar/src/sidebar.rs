@@ -1403,6 +1403,8 @@ impl Sidebar {
             .element_active
             .blend(color.element_background.opacity(0.2));
 
+        let is_ellipsis_menu_open = self.project_header_menu_ix == Some(ix);
+
         h_flex()
             .id(id)
             .group(&group_name)
@@ -1473,11 +1475,13 @@ impl Sidebar {
             )
             .child(
                 h_flex()
-                    .visible_on_hover(&group_name)
+                    .when(!is_ellipsis_menu_open, |this| {
+                        this.visible_on_hover(&group_name)
+                    })
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
-                    .child(self.render_project_header_menu(ix, id_prefix, key, cx))
+                    .child(self.render_project_header_ellipsis_menu(ix, id_prefix, key, cx))
                     .when(view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
@@ -1562,7 +1566,7 @@ impl Sidebar {
             .into_any_element()
     }
 
-    fn render_project_header_menu(
+    fn render_project_header_ellipsis_menu(
         &self,
         ix: usize,
         id_prefix: &str,
