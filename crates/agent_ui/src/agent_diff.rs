@@ -1809,7 +1809,7 @@ mod tests {
             cx.set_global(settings_store);
             prompt_store::init(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            language_model::init_settings(cx);
+            language_model::init(cx);
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -1966,7 +1966,7 @@ mod tests {
             cx.set_global(settings_store);
             prompt_store::init(cx);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
-            language_model::init_settings(cx);
+            language_model::init(cx);
             workspace::register_project_item::<Editor>(cx);
         });
 

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use async_trait::async_trait;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use util::command::Command;
 
 use crate::{
@@ -31,9 +31,10 @@ pub(crate) struct DockerInspect {
     pub(crate) state: Option<DockerState>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 pub(crate) struct DockerConfigLabels {
     #[serde(
+        default,
         rename = "devcontainer.metadata",
         deserialize_with = "deserialize_metadata"
     )]
@@ -43,6 +44,7 @@ pub(crate) struct DockerConfigLabels {
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub(crate) struct DockerInspectConfig {
+    #[serde(default, deserialize_with = "deserialize_nullable_labels")]
     pub(crate) labels: DockerConfigLabels,
     #[serde(rename = "User")]
     pub(crate) image_user: Option<String>,
@@ -54,12 +56,11 @@ impl DockerInspectConfig {
     pub(crate) fn env_as_map(&self) -> Result<HashMap<String, String>, DevContainerError> {
         let mut map = HashMap::new();
         for env_var in &self.env {
-            let parts: Vec<&str> = env_var.split("=").collect();
-            if parts.len() != 2 {
-                log::error!("Unable to parse {env_var} into and environment key-value");
+            let Some((key, value)) = env_var.split_once('=') else {
+                log::error!("Unable to parse {env_var} into an environment key-value");
                 return Err(DevContainerError::DevContainerParseFailed);
-            }
-            map.insert(parts[0].to_string(), parts[1].to_string());
+            };
+            map.insert(key.to_string(), value.to_string());
         }
         Ok(map)
     }
@@ -85,6 +86,43 @@ pub(crate) struct DockerComposeServiceBuild {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
+pub(crate) struct DockerComposeServicePort {
+    #[serde(deserialize_with = "deserialize_string_or_int")]
+    pub(crate) target: String,
+    #[serde(deserialize_with = "deserialize_string_or_int")]
+    pub(crate) published: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) host_ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) app_protocol: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) name: Option<String>,
+}
+
+fn deserialize_string_or_int<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrInt {
+        String(String),
+        Int(u32),
+    }
+
+    match StringOrInt::deserialize(deserializer)? {
+        StringOrInt::String(s) => Ok(s),
+        StringOrInt::Int(b) => Ok(b.to_string()),
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
 pub(crate) struct DockerComposeService {
     pub(crate) image: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,19 +131,30 @@ pub(crate) struct DockerComposeService {
     pub(crate) cap_add: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) security_opt: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) labels: Option<Vec<String>>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        deserialize_with = "deserialize_labels"
+    )]
+    pub(crate) labels: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) build: Option<DockerComposeServiceBuild>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) privileged: Option<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) volumes: Vec<MountDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) env_file: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub(crate) ports: Vec<String>,
+    pub(crate) ports: Vec<DockerComposeServicePort>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) network_mode: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "deserialize_nullable_vec"
+    )]
+    pub(crate) command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq, Default)]
@@ -118,6 +167,7 @@ pub(crate) struct DockerComposeConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
     pub(crate) services: HashMap<String, DockerComposeService>,
+    #[serde(default)]
     pub(crate) volumes: HashMap<String, DockerComposeVolume>,
 }
 
@@ -355,6 +405,77 @@ pub(crate) trait DockerClient {
     fn docker_cli(&self) -> String;
 }
 
+fn deserialize_labels<'de, D>(deserializer: D) -> Result<Option<HashMap<String, String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct LabelsVisitor;
+
+    impl<'de> de::Visitor<'de> for LabelsVisitor {
+        type Value = Option<HashMap<String, String>>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a sequence of strings or a map of string key-value pairs")
+        }
+
+        fn visit_seq<A>(self, seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let values = Vec::<String>::deserialize(de::value::SeqAccessDeserializer::new(seq))?;
+
+            Ok(Some(
+                values
+                    .iter()
+                    .filter_map(|v| {
+                        let (key, value) = v.split_once('=')?;
+                        Some((key.to_string(), value.to_string()))
+                    })
+                    .collect(),
+            ))
+        }
+
+        fn visit_map<M>(self, map: M) -> Result<Self::Value, M::Error>
+        where
+            M: de::MapAccess<'de>,
+        {
+            HashMap::<String, String>::deserialize(de::value::MapAccessDeserializer::new(map))
+                .map(|v| Some(v))
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(LabelsVisitor)
+}
+
+fn deserialize_nullable_vec<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<Vec<T>>::deserialize(deserializer).map(|opt| opt.unwrap_or_default())
+}
+
+fn deserialize_nullable_labels<'de, D>(deserializer: D) -> Result<DockerConfigLabels, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<DockerConfigLabels>::deserialize(deserializer).map(|opt| opt.unwrap_or_default())
+}
+
 fn deserialize_metadata<'de, D>(
     deserializer: D,
 ) -> Result<Option<Vec<HashMap<String, serde_json_lenient::Value>>>, D::Error>
@@ -417,10 +538,50 @@ mod test {
         command_json::deserialize_json_output,
         devcontainer_json::MountDefinition,
         docker::{
-            Docker, DockerComposeConfig, DockerComposeService, DockerComposeVolume, DockerInspect,
-            DockerPs, get_remote_dir_from_config,
+            Docker, DockerComposeConfig, DockerComposeService, DockerComposeServicePort,
+            DockerComposeVolume, DockerInspect, DockerPs, get_remote_dir_from_config,
         },
     };
+
+    #[test]
+    fn should_parse_simple_env_var() {
+        let config = super::DockerInspectConfig {
+            labels: super::DockerConfigLabels { metadata: None },
+            image_user: None,
+            env: vec!["KEY=value".to_string()],
+        };
+
+        let map = config.env_as_map().unwrap();
+        assert_eq!(map.get("KEY").unwrap(), "value");
+    }
+
+    #[test]
+    fn should_parse_env_var_with_equals_in_value() {
+        let config = super::DockerInspectConfig {
+            labels: super::DockerConfigLabels { metadata: None },
+            image_user: None,
+            env: vec!["COMPLEX=key=val other>=1.0".to_string()],
+        };
+
+        let map = config.env_as_map().unwrap();
+        assert_eq!(map.get("COMPLEX").unwrap(), "key=val other>=1.0");
+    }
+
+    #[test]
+    fn should_parse_simple_label() {
+        let json = r#"{"volumes": [], "labels": ["com.example.key=value"]}"#;
+        let service: DockerComposeService = serde_json_lenient::from_str(json).unwrap();
+        let labels = service.labels.unwrap();
+        assert_eq!(labels.get("com.example.key").unwrap(), "value");
+    }
+
+    #[test]
+    fn should_parse_label_with_equals_in_value() {
+        let json = r#"{"volumes": [], "labels": ["com.example.key=value=with=equals"]}"#;
+        let service: DockerComposeService = serde_json_lenient::from_str(json).unwrap();
+        let labels = service.labels.unwrap();
+        assert_eq!(labels.get("com.example.key").unwrap(), "value=with=equals");
+    }
 
     #[test]
     fn should_create_docker_inspect_command() {
@@ -805,6 +966,22 @@ mod test {
                 "POSTGRES_PORT": "5432",
                 "POSTGRES_USER": "postgres"
                 },
+                "ports": [
+                    {
+                        "target": "5443",
+                        "published": "5442"
+                    },
+                    {
+                        "name": "custom port",
+                        "protocol": "udp",
+                        "host_ip": "127.0.0.1",
+                        "app_protocol": "http",
+                        "mode": "host",
+                        "target": "8081",
+                        "published": "8083"
+
+                    }
+                ],
                 "image": "mcr.microsoft.com/devcontainers/rust:2-1-bookworm",
                 "network_mode": "service:db",
                 "volumes": [
@@ -860,15 +1037,33 @@ mod test {
                 (
                     "app".to_string(),
                     DockerComposeService {
+                        command: vec!["sleep".to_string(), "infinity".to_string()],
                         image: Some(
                             "mcr.microsoft.com/devcontainers/rust:2-1-bookworm".to_string(),
                         ),
                         volumes: vec![MountDefinition {
                             mount_type: Some("bind".to_string()),
-                            source: "/path/to".to_string(),
+                            source: Some("/path/to".to_string()),
                             target: "/workspaces".to_string(),
                         }],
                         network_mode: Some("service:db".to_string()),
+
+                        ports: vec![
+                            DockerComposeServicePort {
+                                target: "5443".to_string(),
+                                published: "5442".to_string(),
+                                ..Default::default()
+                            },
+                            DockerComposeServicePort {
+                                target: "8081".to_string(),
+                                published: "8083".to_string(),
+                                mode: Some("host".to_string()),
+                                protocol: Some("udp".to_string()),
+                                host_ip: Some("127.0.0.1".to_string()),
+                                app_protocol: Some("http".to_string()),
+                                name: Some("custom port".to_string()),
+                            },
+                        ],
                         ..Default::default()
                     },
                 ),
@@ -878,7 +1073,7 @@ mod test {
                         image: Some("postgres:14.1".to_string()),
                         volumes: vec![MountDefinition {
                             mount_type: Some("volume".to_string()),
-                            source: "postgres-data".to_string(),
+                            source: Some("postgres-data".to_string()),
                             target: "/var/lib/postgresql/data".to_string(),
                         }],
                         ..Default::default()
@@ -894,5 +1089,176 @@ mod test {
         };
 
         assert_eq!(docker_compose_config, expected_config);
+    }
+
+    #[test]
+    fn should_deserialize_compose_labels_as_map() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "app": {
+                    "image": "node:22-alpine",
+                    "volumes": [],
+                    "labels": {
+                        "com.example.test": "value",
+                        "another.label": "another-value"
+                    }
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        let service = config.services.get("app").unwrap();
+        let labels = service.labels.clone().unwrap();
+        assert_eq!(
+            labels,
+            HashMap::from([
+                ("another.label".to_string(), "another-value".to_string()),
+                ("com.example.test".to_string(), "value".to_string())
+            ])
+        );
+    }
+
+    #[test]
+    fn should_deserialize_compose_labels_as_array() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "app": {
+                    "image": "node:22-alpine",
+                    "volumes": [],
+                    "labels": ["com.example.test=value"]
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        let service = config.services.get("app").unwrap();
+        assert_eq!(
+            service.labels,
+            Some(HashMap::from([(
+                "com.example.test".to_string(),
+                "value".to_string()
+            )]))
+        );
+    }
+
+    #[test]
+    fn should_deserialize_compose_without_volumes() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "app": {
+                    "image": "node:22-alpine",
+                    "volumes": []
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        assert!(config.volumes.is_empty());
+    }
+
+    #[test]
+    fn should_deserialize_compose_with_missing_volumes_field() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "sidecar": {
+                    "image": "ubuntu:24.04"
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        let service = config.services.get("sidecar").unwrap();
+        assert!(service.volumes.is_empty());
+    }
+
+    #[test]
+    fn should_deserialize_compose_volume_without_source() {
+        let given_config = r#"
+        {
+            "name": "devcontainer",
+            "services": {
+                "app": {
+                    "image": "ubuntu:24.04",
+                    "volumes": [
+                        {
+                            "type": "tmpfs",
+                            "target": "/tmp"
+                        }
+                    ]
+                }
+            }
+        }
+        "#;
+
+        let config: DockerComposeConfig = serde_json_lenient::from_str(given_config).unwrap();
+        let service = config.services.get("app").unwrap();
+        assert_eq!(service.volumes.len(), 1);
+        assert_eq!(service.volumes[0].source, None);
+        assert_eq!(service.volumes[0].target, "/tmp");
+        assert_eq!(service.volumes[0].mount_type, Some("tmpfs".to_string()));
+    }
+
+    #[test]
+    fn should_deserialize_inspect_without_labels() {
+        let given_config = r#"
+        {
+            "Id": "sha256:abc123",
+            "Config": {
+                "Env": ["PATH=/usr/bin"],
+                "Cmd": ["node"],
+                "WorkingDir": "/"
+            }
+        }
+        "#;
+
+        let inspect: DockerInspect = serde_json_lenient::from_str(given_config).unwrap();
+        assert!(inspect.config.labels.metadata.is_none());
+        assert!(inspect.config.image_user.is_none());
+    }
+
+    #[test]
+    fn should_deserialize_inspect_with_null_labels() {
+        let given_config = r#"
+        {
+            "Id": "sha256:abc123",
+            "Config": {
+                "Labels": null,
+                "Env": ["PATH=/usr/bin"]
+            }
+        }
+        "#;
+
+        let inspect: DockerInspect = serde_json_lenient::from_str(given_config).unwrap();
+        assert!(inspect.config.labels.metadata.is_none());
+    }
+
+    #[test]
+    fn should_deserialize_inspect_with_labels_but_no_metadata() {
+        let given_config = r#"
+        {
+            "Id": "sha256:abc123",
+            "Config": {
+                "Labels": {
+                    "com.example.test": "value"
+                },
+                "Env": ["PATH=/usr/bin"]
+            }
+        }
+        "#;
+
+        let inspect: DockerInspect = serde_json_lenient::from_str(given_config).unwrap();
+        assert!(inspect.config.labels.metadata.is_none());
     }
 }

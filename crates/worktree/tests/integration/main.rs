@@ -2736,6 +2736,97 @@ fn check_worktree_entries(
     }
 }
 
+#[gpui::test]
+async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor);
+
+    // Set up a main repo and a linked worktree pointing back to it.
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/linked_worktree")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    fs.write(
+        path!("/linked_worktree/file.txt").as_ref(),
+        "content".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        path!("/linked_worktree").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    // For a linked worktree, root_repo_common_dir should point to the
+    // main repo's .git, not the worktree-specific git directory.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot().root_repo_common_dir().map(|p| p.as_ref()),
+            Some(Path::new(path!("/main_repo/.git"))),
+        );
+    });
+
+    let event_count: Rc<Cell<usize>> = Rc::new(Cell::new(0));
+    tree.update(cx, {
+        let event_count = event_count.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if matches!(event, Event::UpdatedRootRepoCommonDir) {
+                    event_count.set(event_count.get() + 1);
+                }
+            })
+            .detach();
+        }
+    });
+
+    // Remove .git — root_repo_common_dir should become None.
+    fs.remove_file(
+        &PathBuf::from(path!("/linked_worktree/.git")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(tree.snapshot().root_repo_common_dir(), None);
+    });
+    assert_eq!(
+        event_count.get(),
+        1,
+        "should have emitted UpdatedRootRepoCommonDir on removal"
+    );
+}
+
 fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 

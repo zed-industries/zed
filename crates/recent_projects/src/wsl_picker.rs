@@ -246,7 +246,7 @@ impl WslOpenModal {
             false => !secondary,
         };
         let open_mode = if replace_current_window {
-            workspace::OpenMode::Replace
+            workspace::OpenMode::Activate
         } else {
             workspace::OpenMode::NewWindow
         };

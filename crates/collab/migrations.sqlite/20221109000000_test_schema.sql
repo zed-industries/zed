@@ -65,6 +65,7 @@ CREATE TABLE "worktrees" (
     "scan_id" INTEGER NOT NULL,
     "is_complete" BOOL NOT NULL DEFAULT FALSE,
     "completed_scan_id" INTEGER NOT NULL,
+    "root_repo_common_dir" VARCHAR,
     PRIMARY KEY (project_id, id)
 );
 

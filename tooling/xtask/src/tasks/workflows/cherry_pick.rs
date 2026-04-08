@@ -49,6 +49,7 @@ fn run_cherry_pick(
         .with_permissions([
             (TokenPermissions::Contents, Level::Write),
             (TokenPermissions::Workflows, Level::Write),
+            (TokenPermissions::PullRequests, Level::Write),
         ])
         .into();
 

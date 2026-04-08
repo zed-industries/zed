@@ -10,13 +10,13 @@ use crate::{
     reversal_tracking,
 };
 use anyhow::Context as _;
-use edit_prediction::udiff::{apply_diff_to_string, apply_diff_to_string_with_hunk_offset};
 use gpui::AsyncApp;
 use serde::Serialize;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
+use zeta_prompt::udiff::{apply_diff_to_string, apply_diff_to_string_with_hunk_offset};
 
 pub async fn run_scoring(
     example: &mut Example,

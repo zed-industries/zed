@@ -1,7 +1,4 @@
-use crate::{
-    CommonAnimationExt, DecoratedIcon, DiffStat, GradientFade, HighlightedLabel, IconDecoration,
-    IconDecorationKind, Tooltip, prelude::*,
-};
+use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
     Animation, AnimationExt, AnyView, ClickEvent, Hsla, MouseButton, SharedString,
@@ -19,11 +16,19 @@ pub enum AgentThreadStatus {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorktreeKind {
+    #[default]
+    Main,
+    Linked,
+}
+
 #[derive(Clone)]
 pub struct ThreadItemWorktreeInfo {
     pub name: SharedString,
     pub full_path: SharedString,
     pub highlight_positions: Vec<usize>,
+    pub kind: WorktreeKind,
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -218,7 +223,7 @@ impl RenderOnce for ThreadItem {
         let color = cx.theme().colors();
         let sidebar_base_bg = color
             .title_bar_background
-            .blend(color.panel_background.opacity(0.32));
+            .blend(color.panel_background.opacity(0.25));
 
         let raw_bg = self.base_bg.unwrap_or(sidebar_base_bg);
         let apparent_bg = color.background.blend(raw_bg);
@@ -266,31 +271,31 @@ impl RenderOnce for ThreadItem {
             Icon::new(self.icon).color(icon_color).size(IconSize::Small)
         };
 
-        let decoration = |icon: IconDecorationKind, color: Hsla| {
-            IconDecoration::new(icon, base_bg, cx)
-                .color(color)
-                .position(gpui::Point {
-                    x: px(-2.),
-                    y: px(-2.),
-                })
-        };
-
-        let (decoration, icon_tooltip) = if self.status == AgentThreadStatus::Error {
+        let (status_icon, icon_tooltip) = if self.status == AgentThreadStatus::Error {
             (
-                Some(decoration(IconDecorationKind::X, cx.theme().status().error)),
+                Some(
+                    Icon::new(IconName::Close)
+                        .size(IconSize::Small)
+                        .color(Color::Error),
+                ),
                 Some("Thread has an Error"),
             )
         } else if self.status == AgentThreadStatus::WaitingForConfirmation {
             (
-                Some(decoration(
-                    IconDecorationKind::Triangle,
-                    cx.theme().status().warning,
-                )),
+                Some(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::XSmall)
+                        .color(Color::Warning),
+                ),
                 Some("Thread is Waiting for Confirmation"),
             )
         } else if self.notified {
             (
-                Some(decoration(IconDecorationKind::Dot, color.text_accent)),
+                Some(
+                    Icon::new(IconName::Circle)
+                        .size(IconSize::Small)
+                        .color(Color::Accent),
+                ),
                 Some("Thread's Generation is Complete"),
             )
         } else {
@@ -306,9 +311,9 @@ impl RenderOnce for ThreadItem {
                         .with_rotate_animation(2),
                 )
                 .into_any_element()
-        } else if let Some(decoration) = decoration {
+        } else if let Some(status_icon) = status_icon {
             icon_container()
-                .child(DecoratedIcon::new(agent_icon, Some(decoration)))
+                .child(status_icon)
                 .when_some(icon_tooltip, |icon, tooltip| {
                     icon.tooltip(Tooltip::text(tooltip))
                 })
@@ -362,7 +367,10 @@ impl RenderOnce for ThreadItem {
 
         let has_project_name = self.project_name.is_some();
         let has_project_paths = project_paths.is_some();
-        let has_worktree = !self.worktrees.is_empty();
+        let has_worktree = self
+            .worktrees
+            .iter()
+            .any(|wt| wt.kind == WorktreeKind::Linked);
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
@@ -449,6 +457,10 @@ impl RenderOnce for ThreadItem {
 
                     for wt in self.worktrees {
                         if seen_names.contains(&wt.name) {
+                            continue;
+                        }
+
+                        if wt.kind == WorktreeKind::Main {
                             continue;
                         }
 
@@ -551,12 +563,17 @@ impl Component for ThreadItem {
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let color = cx.theme().colors();
+        let bg = color
+            .title_bar_background
+            .blend(color.panel_background.opacity(0.25));
+
         let container = || {
             v_flex()
                 .w_72()
                 .border_1()
-                .border_color(cx.theme().colors().border_variant)
-                .bg(cx.theme().colors().panel_background)
+                .border_color(color.border_variant)
+                .bg(bg)
         };
 
         let thread_item_examples = vec![
@@ -567,16 +584,6 @@ impl Component for ThreadItem {
                         ThreadItem::new("ti-1", "Linking to the Agent Panel Depending on Settings")
                             .icon(IconName::AiOpenAi)
                             .timestamp("15m"),
-                    )
-                    .into_any_element(),
-            ),
-            single_example(
-                "Timestamp Only (hours)",
-                container()
-                    .child(
-                        ThreadItem::new("ti-1b", "Thread with just a timestamp")
-                            .icon(IconName::AiClaude)
-                            .timestamp("3h"),
                     )
                     .into_any_element(),
             ),
@@ -632,6 +639,7 @@ impl Component for ThreadItem {
                                 name: "link-agent-panel".into(),
                                 full_path: "link-agent-panel".into(),
                                 highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
                             }]),
                     )
                     .into_any_element(),
@@ -658,6 +666,7 @@ impl Component for ThreadItem {
                                 name: "my-project".into(),
                                 full_path: "my-project".into(),
                                 highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
                             }])
                             .added(42)
                             .removed(17)
@@ -737,6 +746,7 @@ impl Component for ThreadItem {
                                 name: "my-project-name".into(),
                                 full_path: "my-project-name".into(),
                                 highlight_positions: vec![3, 4, 5, 6, 7, 8, 9, 10, 11],
+                                kind: WorktreeKind::Linked,
                             }]),
                     )
                     .into_any_element(),

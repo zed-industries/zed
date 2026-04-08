@@ -2349,6 +2349,22 @@ impl Project {
             .find(|tree| tree.read(cx).root_name() == root_name)
     }
 
+    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
+        let roots = self
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let snapshot = worktree.read(cx).snapshot();
+                snapshot
+                    .root_repo_common_dir()
+                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
+                    .unwrap_or(snapshot.abs_path().to_path_buf())
+            })
+            .collect::<Vec<_>>();
+        let host = self.remote_connection_options(cx);
+        let path_list = PathList::new(&roots);
+        ProjectGroupKey::new(host, path_list)
+    }
+
     #[inline]
     pub fn worktree_root_names<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
@@ -4747,6 +4763,19 @@ impl Project {
         });
     }
 
+    pub fn remove_worktree_for_main_worktree_path(
+        &mut self,
+        path: impl AsRef<Path>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = path.as_ref();
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            if let Some(worktree) = worktree_store.worktree_for_main_worktree_path(path, cx) {
+                worktree_store.remove_worktree(worktree.read(cx).id(), cx);
+            }
+        });
+    }
+
     fn add_worktree(&mut self, worktree: &Entity<Worktree>, cx: &mut Context<Self>) {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.add(worktree, cx);
@@ -6018,6 +6047,49 @@ impl Project {
     }
 }
 
+/// Identifies a project group by a set of paths the workspaces in this group
+/// have.
+///
+/// Paths are mapped to their main worktree path first so we can group
+/// workspaces by main repos.
+#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+pub struct ProjectGroupKey {
+    paths: PathList,
+    host: Option<RemoteConnectionOptions>,
+}
+
+impl ProjectGroupKey {
+    /// Creates a new `ProjectGroupKey` with the given path list.
+    ///
+    /// The path list should point to the git main worktree paths for a project.
+    pub fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
+        Self { paths, host }
+    }
+
+    pub fn display_name(&self) -> SharedString {
+        let mut names = Vec::with_capacity(self.paths.paths().len());
+        for abs_path in self.paths.paths() {
+            if let Some(name) = abs_path.file_name() {
+                names.push(name.to_string_lossy().to_string());
+            }
+        }
+        if names.is_empty() {
+            // TODO: Can we do something better in this case?
+            "Empty Workspace".into()
+        } else {
+            names.join(", ").into()
+        }
+    }
+
+    pub fn path_list(&self) -> &PathList {
+        &self.paths
+    }
+
+    pub fn host(&self) -> Option<RemoteConnectionOptions> {
+        self.host.clone()
+    }
+}
+
 pub struct PathMatchCandidateSet {
     pub snapshot: Snapshot,
     pub include_ignored: bool,
@@ -6110,6 +6182,76 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
                 is_dir: entry.kind.is_dir(),
                 path: &entry.path,
                 char_bag: entry.char_bag,
+            })
+    }
+}
+
+impl<'a> fuzzy_nucleo::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
+    type Candidates = PathMatchCandidateSetNucleoIter<'a>;
+    fn id(&self) -> usize {
+        self.snapshot.id().to_usize()
+    }
+    fn len(&self) -> usize {
+        match self.candidates {
+            Candidates::Files => {
+                if self.include_ignored {
+                    self.snapshot.file_count()
+                } else {
+                    self.snapshot.visible_file_count()
+                }
+            }
+            Candidates::Directories => {
+                if self.include_ignored {
+                    self.snapshot.dir_count()
+                } else {
+                    self.snapshot.visible_dir_count()
+                }
+            }
+            Candidates::Entries => {
+                if self.include_ignored {
+                    self.snapshot.entry_count()
+                } else {
+                    self.snapshot.visible_entry_count()
+                }
+            }
+        }
+    }
+    fn prefix(&self) -> Arc<RelPath> {
+        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
+            self.snapshot.root_name().into()
+        } else {
+            RelPath::empty().into()
+        }
+    }
+    fn root_is_file(&self) -> bool {
+        self.snapshot.root_entry().is_some_and(|f| f.is_file())
+    }
+    fn path_style(&self) -> PathStyle {
+        self.snapshot.path_style()
+    }
+    fn candidates(&'a self, start: usize) -> Self::Candidates {
+        PathMatchCandidateSetNucleoIter {
+            traversal: match self.candidates {
+                Candidates::Directories => self.snapshot.directories(self.include_ignored, start),
+                Candidates::Files => self.snapshot.files(self.include_ignored, start),
+                Candidates::Entries => self.snapshot.entries(self.include_ignored, start),
+            },
+        }
+    }
+}
+
+pub struct PathMatchCandidateSetNucleoIter<'a> {
+    traversal: Traversal<'a>,
+}
+
+impl<'a> Iterator for PathMatchCandidateSetNucleoIter<'a> {
+    type Item = fuzzy_nucleo::PathMatchCandidate<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.traversal
+            .next()
+            .map(|entry| fuzzy_nucleo::PathMatchCandidate {
+                is_dir: entry.kind.is_dir(),
+                path: &entry.path,
             })
     }
 }

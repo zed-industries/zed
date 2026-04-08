@@ -87,6 +87,7 @@ impl Database {
                         visible: ActiveValue::set(worktree.visible),
                         scan_id: ActiveValue::set(0),
                         completed_scan_id: ActiveValue::set(0),
+                        root_repo_common_dir: ActiveValue::set(None),
                     }
                 }))
                 .exec(&*tx)
@@ -203,6 +204,7 @@ impl Database {
                 visible: ActiveValue::set(worktree.visible),
                 scan_id: ActiveValue::set(0),
                 completed_scan_id: ActiveValue::set(0),
+                root_repo_common_dir: ActiveValue::set(None),
             }))
             .on_conflict(
                 OnConflict::columns([worktree::Column::ProjectId, worktree::Column::Id])
@@ -266,6 +268,7 @@ impl Database {
                     ActiveValue::default()
                 },
                 abs_path: ActiveValue::set(update.abs_path.clone()),
+                root_repo_common_dir: ActiveValue::set(update.root_repo_common_dir.clone()),
                 ..Default::default()
             })
             .exec(&*tx)
@@ -761,6 +764,7 @@ impl Database {
                         settings_files: Default::default(),
                         scan_id: db_worktree.scan_id as u64,
                         completed_scan_id: db_worktree.completed_scan_id as u64,
+                        root_repo_common_dir: db_worktree.root_repo_common_dir,
                         legacy_repository_entries: Default::default(),
                     },
                 )
