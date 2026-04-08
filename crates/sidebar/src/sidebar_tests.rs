@@ -4122,6 +4122,129 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppContext) {
+    // When the last non-archived thread for a linked worktree is archived,
+    // the linked worktree workspace should be removed from the multi-workspace.
+    // The main worktree workspace should remain (it's always reachable via
+    // the project header).
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/wt-feature-a",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-a",
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-a"),
+            ref_name: Some("refs/heads/feature-a".into()),
+            sha: "abc".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let _worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    // Save a thread for the main project.
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("main-thread")),
+        "Main Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
+        &main_project,
+        cx,
+    );
+
+    // Save a thread for the linked worktree.
+    let wt_thread_id = acp::SessionId::new(Arc::from("worktree-thread"));
+    save_thread_metadata(
+        wt_thread_id.clone(),
+        "Worktree Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &worktree_project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    // Should have 2 workspaces.
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        2,
+        "should start with 2 workspaces (main + linked worktree)"
+    );
+
+    // Archive the worktree thread (the only thread for /wt-feature-a).
+    sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
+        sidebar.archive_thread(&wt_thread_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    // The linked worktree workspace should have been removed.
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        1,
+        "linked worktree workspace should be removed after archiving its last thread"
+    );
+
+    // The main thread should still be visible.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries.iter().any(|e| e.contains("Main Thread")),
+        "main thread should still be visible: {entries:?}"
+    );
+    assert!(
+        !entries.iter().any(|e| e.contains("Worktree Thread")),
+        "archived worktree thread should not be visible: {entries:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut TestAppContext) {
     // When a multi-root workspace (e.g. [/other, /project]) shares a
     // repo with a single-root workspace (e.g. [/project]), linked
@@ -5092,7 +5215,7 @@ mod property_test {
         CreateDraftThread,
         AddWorkspace,
         OpenWorktreeAsWorkspace { worktree_index: usize },
-        RemoveWorkspace { index: usize },
+        ArchiveThread { index: usize },
         SwitchWorkspace { index: usize },
         AddLinkedWorktree { workspace_index: usize },
     }
@@ -5105,7 +5228,7 @@ mod property_test {
     //   CreateDraftThread:       2 slots (~9%)
     //   AddWorkspace:            1 slot  (~5%)
     //   OpenWorktreeAsWorkspace: 1 slot  (~5%)
-    //   RemoveWorkspace:         1 slot  (~5%)
+    //   ArchiveThread:           1 slot  (~5%)
     //   SwitchWorkspace:         2 slots (~9%)
     //   AddLinkedWorktree:       4 slots (~18%)
     const DISTRIBUTION_SLOTS: u32 = 22;
@@ -5137,8 +5260,8 @@ mod property_test {
                     worktree_index: extra % self.unopened_worktrees.len(),
                 },
                 13 => Operation::AddWorkspace,
-                14 if workspace_count > 1 => Operation::RemoveWorkspace {
-                    index: extra % workspace_count,
+                14 if !self.saved_thread_ids.is_empty() => Operation::ArchiveThread {
+                    index: extra % self.saved_thread_ids.len(),
                 },
                 14 => Operation::AddWorkspace,
                 15..=16 => Operation::SwitchWorkspace {
@@ -5203,7 +5326,7 @@ mod property_test {
         operation: Operation,
         state: &mut TestState,
         multi_workspace: &Entity<MultiWorkspace>,
-        _sidebar: &Entity<Sidebar>,
+        sidebar: &Entity<Sidebar>,
         cx: &mut gpui::VisualTestContext,
     ) {
         match operation {
@@ -5299,20 +5422,13 @@ mod property_test {
                 add_agent_panel(&workspace, cx);
                 state.workspace_paths.push(worktree.path);
             }
-            Operation::RemoveWorkspace { index } => {
-                let removed = multi_workspace.update_in(cx, |mw, window, cx| {
-                    let workspace = mw.workspaces().nth(index).unwrap().clone();
-                    mw.remove(&workspace, window, cx)
+            Operation::ArchiveThread { index } => {
+                let session_id = state.saved_thread_ids[index].clone();
+                sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
+                    sidebar.archive_thread(&session_id, window, cx);
                 });
-                if removed {
-                    state.workspace_paths.remove(index);
-                    state.main_repo_indices.retain(|i| *i != index);
-                    for i in &mut state.main_repo_indices {
-                        if *i > index {
-                            *i -= 1;
-                        }
-                    }
-                }
+                cx.run_until_parked();
+                state.saved_thread_ids.remove(index);
             }
             Operation::SwitchWorkspace { index } => {
                 let workspace = multi_workspace
@@ -5405,6 +5521,7 @@ mod property_test {
         verify_every_workspace_in_multiworkspace_is_shown(sidebar, cx)?;
         verify_all_threads_are_shown(sidebar, cx)?;
         verify_active_state_matches_current_workspace(sidebar, cx)?;
+        verify_all_workspaces_are_reachable(sidebar, cx)?;
         Ok(())
     }
 
@@ -5616,6 +5733,39 @@ mod property_test {
             "expected exactly 1 sidebar entry matching active_entry {:?}, found {}",
             entry,
             matching_count,
+        );
+
+        Ok(())
+    }
+
+    /// Every workspace in the multi-workspace should be "reachable" from
+    /// the sidebar — meaning there is at least one entry (thread, draft,
+    /// new-thread, or project header) that, when clicked, would activate
+    /// that workspace.
+    fn verify_all_workspaces_are_reachable(sidebar: &Sidebar, cx: &App) -> anyhow::Result<()> {
+        let Some(multi_workspace) = sidebar.multi_workspace.upgrade() else {
+            anyhow::bail!("sidebar should still have an associated multi-workspace");
+        };
+
+        let mw = multi_workspace.read(cx);
+
+        let reachable_workspaces: HashSet<gpui::EntityId> = sidebar
+            .contents
+            .entries
+            .iter()
+            .flat_map(|entry| entry.reachable_workspaces(mw, cx))
+            .map(|ws| ws.entity_id())
+            .collect();
+
+        let all_workspace_ids: HashSet<gpui::EntityId> =
+            mw.workspaces().map(|ws| ws.entity_id()).collect();
+
+        let unreachable = &all_workspace_ids - &reachable_workspaces;
+
+        anyhow::ensure!(
+            unreachable.is_empty(),
+            "The following workspaces are not reachable from any sidebar entry: {:?}",
+            unreachable,
         );
 
         Ok(())

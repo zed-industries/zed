@@ -788,6 +788,14 @@ impl MultiWorkspace {
         )
     }
 
+    /// Finds an existing workspace whose root paths exactly match the given path list.
+    pub fn workspace_for_paths(&self, path_list: &PathList, cx: &App) -> Option<Entity<Workspace>> {
+        self.workspaces
+            .iter()
+            .find(|ws| PathList::new(&ws.read(cx).root_paths(cx)) == *path_list)
+            .cloned()
+    }
+
     /// Finds an existing workspace in this multi-workspace whose paths match,
     /// or creates a new one (deserializing its saved state from the database).
     /// Never searches other windows or matches workspaces with a superset of
@@ -798,12 +806,7 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self
-            .workspaces
-            .iter()
-            .find(|ws| PathList::new(&ws.read(cx).root_paths(cx)) == path_list)
-            .cloned()
-        {
+        if let Some(workspace) = self.workspace_for_paths(&path_list, cx) {
             self.activate(workspace.clone(), window, cx);
             return Task::ready(Ok(workspace));
         }
