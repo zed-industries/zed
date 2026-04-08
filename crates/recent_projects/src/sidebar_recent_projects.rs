@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -11,6 +10,7 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
+use project::ProjectGroupKey;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
@@ -33,7 +33,7 @@ pub struct SidebarRecentProjects {
 impl SidebarRecentProjects {
     pub fn popover(
         workspace: WeakEntity<Workspace>,
-        sibling_workspace_ids: HashSet<WorkspaceId>,
+        window_project_groups: Vec<ProjectGroupKey>,
         _focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut App,
@@ -45,7 +45,7 @@ impl SidebarRecentProjects {
         cx.new(|cx| {
             let delegate = SidebarRecentProjectsDelegate {
                 workspace,
-                sibling_workspace_ids,
+                window_project_groups,
                 workspaces: Vec::new(),
                 filtered_workspaces: Vec::new(),
                 selected_index: 0,
@@ -116,7 +116,7 @@ impl Render for SidebarRecentProjects {
 
 pub struct SidebarRecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
-    sibling_workspace_ids: HashSet<WorkspaceId>,
+    window_project_groups: Vec<ProjectGroupKey>,
     workspaces: Vec<(
         WorkspaceId,
         SerializedWorkspaceLocation,
@@ -207,8 +207,12 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, _, _))| {
-                Some(*id) != current_workspace_id && !self.sibling_workspace_ids.contains(id)
+            .filter(|(_, (id, _, paths, _))| {
+                Some(*id) != current_workspace_id
+                    && !self
+                        .window_project_groups
+                        .iter()
+                        .any(|key| key.path_list() == paths)
             })
             .map(|(id, (_, _, paths, _))| {
                 let combined_string = paths
