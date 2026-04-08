@@ -8,8 +8,7 @@ pub mod status;
 
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
-use anyhow::{Context as _, Result};
-pub use git2 as libgit;
+use anyhow::Result;
 use gpui::{Action, actions};
 pub use repository::RemoteCommandOutput;
 use schemars::JsonSchema;
@@ -131,40 +130,42 @@ pub struct RestoreFile {
 /// The length of a Git short SHA.
 pub const SHORT_SHA_LENGTH: usize = 7;
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
-pub struct Oid(libgit::Oid);
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
+pub struct Oid([u8; 20]);
 
 impl Oid {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let oid = libgit::Oid::from_bytes(bytes).context("failed to parse bytes into git oid")?;
-        Ok(Self(oid))
+        let bytes: [u8; 20] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("expected 20 bytes for git oid, got {}", bytes.len()))?;
+        Ok(Self(bytes))
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn random(rng: &mut impl rand::Rng) -> Self {
-        let mut bytes = [0; 20];
+        let mut bytes = [0u8; 20];
         rng.fill(&mut bytes);
-        Self::from_bytes(&bytes).unwrap()
+        Self(bytes)
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        self.0.as_bytes()
+        &self.0
     }
 
     pub(crate) fn is_zero(&self) -> bool {
-        self.0.is_zero()
+        self.0 == [0u8; 20]
     }
 
     /// Returns this [`Oid`] as a short SHA.
     pub fn display_short(&self) -> String {
-        self.to_string().chars().take(SHORT_SHA_LENGTH).collect()
+        hex::encode(self.0)[..SHORT_SHA_LENGTH].to_string()
     }
 }
 
 impl TryFrom<&str> for Oid {
     type Error = anyhow::Error;
 
-    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
         Oid::from_str(value)
     }
 }
@@ -172,10 +173,17 @@ impl TryFrom<&str> for Oid {
 impl FromStr for Oid {
     type Err = anyhow::Error;
 
-    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-        libgit::Oid::from_str(s)
-            .context("parsing git oid")
-            .map(Self)
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        anyhow::ensure!(
+            !s.is_empty() && s.len() <= 40,
+            "invalid hex length {} for git oid",
+            s.len()
+        );
+        let mut padded = [b'0'; 40];
+        padded[..s.len()].copy_from_slice(s.as_bytes());
+        let mut bytes = [0u8; 20];
+        hex::decode_to_slice(&padded, &mut bytes)?;
+        Ok(Self(bytes))
     }
 }
 
@@ -187,21 +195,21 @@ impl fmt::Debug for Oid {
 
 impl fmt::Display for Oid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        f.write_str(&hex::encode(self.0))
     }
 }
 
 impl Serialize for Oid {
-    fn serialize<S>(&self, serializer: S) -> std::prelude::v1::Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.0.to_string())
+        serializer.serialize_str(&hex::encode(self.0))
     }
 }
 
 impl<'de> Deserialize<'de> for Oid {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
@@ -210,32 +218,18 @@ impl<'de> Deserialize<'de> for Oid {
     }
 }
 
-impl Default for Oid {
-    fn default() -> Self {
-        Self(libgit::Oid::zero())
-    }
-}
-
 impl From<Oid> for u32 {
     fn from(oid: Oid) -> Self {
-        let bytes = oid.0.as_bytes();
-        debug_assert!(bytes.len() > 4);
-
-        let mut u32_bytes: [u8; 4] = [0; 4];
-        u32_bytes.copy_from_slice(&bytes[..4]);
-
+        let mut u32_bytes = [0u8; 4];
+        u32_bytes.copy_from_slice(&oid.0[..4]);
         u32::from_ne_bytes(u32_bytes)
     }
 }
 
 impl From<Oid> for usize {
     fn from(oid: Oid) -> Self {
-        let bytes = oid.0.as_bytes();
-        debug_assert!(bytes.len() > 8);
-
-        let mut u64_bytes: [u8; 8] = [0; 8];
-        u64_bytes.copy_from_slice(&bytes[..8]);
-
+        let mut u64_bytes = [0u8; 8];
+        u64_bytes.copy_from_slice(&oid.0[..8]);
         u64::from_ne_bytes(u64_bytes) as usize
     }
 }

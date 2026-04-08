@@ -12,8 +12,6 @@ use time::UtcOffset;
 use time::macros::format_description;
 use util::command::Stdio;
 
-pub use git2 as libgit;
-
 #[derive(Debug, Clone, Default)]
 pub struct Blame {
     pub entries: Vec<BlameEntry>,
