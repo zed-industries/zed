@@ -5,7 +5,7 @@ use clap::Parser;
 
 use compliance::{
     checks::Reporter,
-    git::{CommitsFromVersionToHead, GetVersionTags, GitCommand, VersionTag},
+    git::{CommitsFromVersionToHead, FetchRefs, GetVersionTags, GitCommand, VersionTag},
     github::GitHubClient,
     report::ReportReviewSummary,
 };
@@ -44,6 +44,10 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
     let key = std::env::var("GITHUB_APP_KEY").context("Missing GITHUB_APP_KEY")?;
 
     let tag = args.version_tag();
+    let version_branch = args.version_branch();
+
+    println!("Fetching tags and branch {version_branch}...");
+    GitCommand::run(FetchRefs::new(version_branch.clone()))?;
 
     let previous_version = GitCommand::run(GetVersionTags)?
         .sorted()
@@ -64,7 +68,7 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     let commits = GitCommand::run(CommitsFromVersionToHead::new(
         previous_version,
-        args.version_branch(),
+        version_branch,
     ))?;
 
     let Some(range) = commits.range() else {

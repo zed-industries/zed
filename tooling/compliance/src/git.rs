@@ -343,6 +343,32 @@ impl FromStr for NoOutput {
     }
 }
 
+pub struct FetchRefs {
+    branch: String,
+}
+
+impl FetchRefs {
+    pub fn new(branch: String) -> Self {
+        Self { branch }
+    }
+}
+
+impl Subcommand for FetchRefs {
+    type ParsedOutput = NoOutput;
+
+    fn args(&self) -> impl IntoIterator<Item = String> {
+        [
+            "fetch".to_string(),
+            "origin".to_string(),
+            "refs/tags/*:refs/tags/*".to_string(),
+            format!(
+                "refs/heads/{}:refs/remotes/origin/{}",
+                self.branch, self.branch
+            ),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
