@@ -719,7 +719,7 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     // it as part of its list of files, restore it and verify that the list of
     // files and trash has been updated accordingly.
     let path = path!("/root/src/file_a.txt").as_ref();
-    let trashed_entry = fs.trash_file(path, Default::default()).await.unwrap();
+    let trashed_entry = fs.trash_file(path).await.unwrap();
 
     assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(
@@ -745,12 +745,8 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     // Deleting and restoring a directory should also remove all of its files
     // but create a single trashed entry, which should be removed after
     // restoration.
-    let options = RemoveOptions {
-        recursive: true,
-        ..Default::default()
-    };
     let path = path!("/root/src/").as_ref();
-    let trashed_entry = fs.trash_dir(path, options).await.unwrap();
+    let trashed_entry = fs.trash_dir(path).await.unwrap();
 
     assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
@@ -770,7 +766,7 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     // A collision error should be returned in case a file is being restored to
     // a path where a file already exists.
     let path = path!("/root/src/file_a.txt").as_ref();
-    let trashed_entry = fs.trash_file(path, Default::default()).await.unwrap();
+    let trashed_entry = fs.trash_file(path).await.unwrap();
 
     assert_eq!(fs.trash_entries().len(), 1);
     assert_eq!(
@@ -802,12 +798,8 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
 
     // A collision error should be returned in case a directory is being
     // restored to a path where a directory already exists.
-    let options = RemoveOptions {
-        recursive: true,
-        ..Default::default()
-    };
     let path = path!("/root/src/").as_ref();
-    let trashed_entry = fs.trash_dir(path, options).await.unwrap();
+    let trashed_entry = fs.trash_dir(path).await.unwrap();
 
     assert_eq!(fs.trash_entries().len(), 2);
     assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);

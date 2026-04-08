@@ -188,7 +188,7 @@ pub trait Fs: Send + Sync {
 // tests from changes to that crate's API surface.
 /// Represents a file or directory that has been moved to the system trash,
 /// retaining enough information to restore it to its original location.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct TrashedEntry {
     /// Platform-specific identifier for the file/directory in the trash.
     ///
