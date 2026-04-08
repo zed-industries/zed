@@ -459,12 +459,17 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
             })
             .await;
         if let Err(error) = link_result {
-            store
+            if let Err(delete_error) = store
                 .read_with(cx, |store, cx| {
                     store.delete_archived_worktree(archived_worktree_id, cx)
                 })
                 .await
-                .log_err();
+            {
+                log::error!(
+                    "Failed to delete archived worktree DB record during link rollback: \
+                     {delete_error:#}"
+                );
+            }
             return Err(error.context("failed to link thread to archived worktree"));
         }
     }
