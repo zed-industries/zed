@@ -4316,6 +4316,18 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     cx.run_until_parked();
     cx.run_until_parked();
 
+    // The workspace removal is immediate, but the on-disk cleanup runs in a
+    // background archive task. Give the task time to finish.
+    for _ in 0..10 {
+        if !fs.is_dir(Path::new("/wt-feature-a")).await {
+            break;
+        }
+        cx.run_until_parked();
+        cx.background_executor
+            .timer(std::time::Duration::from_millis(10))
+            .await;
+    }
+
     // The linked worktree workspace should have been removed.
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
