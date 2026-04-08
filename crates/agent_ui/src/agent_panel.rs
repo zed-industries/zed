@@ -4119,9 +4119,20 @@ impl AgentPanel {
             ),
             WorktreeCreationStatus::Error(message) => Some(
                 Callout::new()
-                    .icon(IconName::Warning)
-                    .severity(Severity::Warning)
-                    .title(message.clone())
+                    .icon(IconName::XCircleFilled)
+                    .severity(Severity::Error)
+                    .title("Worktree Creation Error")
+                    .description(message.clone())
+                    .border_position(ui::BorderPosition::Bottom)
+                    .dismiss_action(
+                        IconButton::new("dismiss-worktree-error", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Dismiss"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.worktree_creation_status = None;
+                                cx.notify();
+                            })),
+                    )
                     .into_any_element(),
             ),
         }
