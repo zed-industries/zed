@@ -908,6 +908,12 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    fn run_commit_msg_hook(
+        &self,
+        message: String,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<String>>;
+
     fn commit(
         &self,
         message: SharedString,
@@ -2370,13 +2376,17 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary_in_worktree();
         let executor = self.executor.clone();
+        let commit_msg_hook = self.run_commit_msg_hook(message.to_string(), env.clone());
         // Note: Do not spawn this command on the background thread, it might pop open the credential helper
         // which we want to block on.
         async move {
             let git = git?;
+
+            let message = commit_msg_hook.await?;
+
             let mut cmd = git.build_command(&["commit", "--quiet", "-m"]);
             cmd.envs(env.iter())
-                .arg(&message.to_string())
+                .arg(&message)
                 .arg("--cleanup=strip")
                 .arg("--no-verify")
                 .stdout(Stdio::piped())
@@ -2950,20 +2960,24 @@ impl GitRepository for RealGitRepository {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary_in_worktree();
-        let git_dir = self.git_dir.clone();
         let help_output = self.any_git_binary_help_output();
 
         // Note: Do not spawn these commands on the background thread, as this causes some git hooks to hang.
         async move {
             let git_binary = git_binary?;
+
+            if !git_binary.is_trusted {
+                return Ok(());
+            }
+
             let working_directory = git_binary.working_directory.clone();
             if !help_output
                 .await
                 .lines()
                 .any(|line| line.trim().starts_with("hook "))
             {
-                let hook_abs_path = git_dir.join("hooks").join(hook.as_str());
-                if hook_abs_path.is_file() && git_binary.is_trusted {
+                let hook_abs_path = git_binary.hooks_path().await?.join(hook.as_str());
+                if hook_abs_path.is_file() {
                     #[allow(clippy::disallowed_methods)]
                     let output = new_command(&hook_abs_path)
                         .envs(env.iter())
@@ -2984,13 +2998,75 @@ impl GitRepository for RealGitRepository {
                 return Ok(());
             }
 
-            if git_binary.is_trusted {
-                let git_binary = git_binary.envs(HashMap::clone(&env));
-                git_binary
-                    .run(&["hook", "run", "--ignore-missing", hook.as_str()])
-                    .await?;
-            }
+            let git_binary = git_binary.envs(HashMap::clone(&env));
+            git_binary
+                .run(&["hook", "run", "--ignore-missing", hook.as_str()])
+                .await?;
             Ok(())
+        }
+        .boxed()
+    }
+
+    fn run_commit_msg_hook(
+        &self,
+        message: String,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<String>> {
+        let git_binary = self.git_binary_in_worktree();
+        let help_output = self.any_git_binary_help_output();
+
+        async move {
+            let git_binary = git_binary?;
+
+            if !git_binary.is_trusted {
+                return Ok(message);
+            }
+
+            let commit_editmsg_path = git_binary.git_path("COMMIT_EDITMSG").await?;
+            smol::fs::write(&commit_editmsg_path, message.as_bytes()).await?;
+
+            let working_directory = git_binary.working_directory.clone();
+            if !help_output
+                .await
+                .lines()
+                .any(|line| line.trim().starts_with("hook "))
+            {
+                let hook_abs_path = git_binary.hooks_path().await?.join("commit-msg");
+                if hook_abs_path.is_file() {
+                    #[allow(clippy::disallowed_methods)]
+                    let output = new_command(&hook_abs_path)
+                        .envs(env.iter())
+                        .current_dir(&working_directory)
+                        .arg(&commit_editmsg_path)
+                        .output()
+                        .await?;
+
+                    if !output.status.success() {
+                        return Err(GitBinaryCommandError {
+                            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                            status: output.status,
+                        }
+                        .into());
+                    }
+                }
+
+                return Ok(smol::fs::read_to_string(&commit_editmsg_path).await?);
+            }
+
+            let git_binary = git_binary.envs(HashMap::clone(&env));
+            git_binary
+                .run(&[
+                    "hook",
+                    "run",
+                    "--ignore-missing",
+                    "commit-msg",
+                    "--",
+                    &commit_editmsg_path.to_string_lossy().into_owned(),
+                ])
+                .await?;
+
+            Ok(smol::fs::read_to_string(&commit_editmsg_path).await?)
         }
         .boxed()
     }
@@ -3517,6 +3593,28 @@ impl GitBinary {
             }
         );
         Ok(String::from_utf8(output.stdout)?)
+    }
+
+    async fn git_path(&self, path: &str) -> Result<PathBuf> {
+        let resolved_path = match self
+            .run(&["rev-parse", "--path-format=absolute", "--git-path", path])
+            .await
+        {
+            Ok(path) => PathBuf::from(path),
+            Err(_) => {
+                let path = PathBuf::from(self.run(&["rev-parse", "--git-path", path]).await?);
+                if path.is_absolute() {
+                    path
+                } else {
+                    self.working_directory.join(path)
+                }
+            }
+        };
+        Ok(resolved_path)
+    }
+
+    async fn hooks_path(&self) -> Result<PathBuf> {
+        self.git_path("hooks").await
     }
 
     #[allow(clippy::disallowed_methods)]
@@ -4173,6 +4271,14 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    fn write_executable_hook(path: &Path, script: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::write(path, script).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
     #[gpui::test]
     async fn test_build_command_untrusted_includes_both_safety_args(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -4337,6 +4443,103 @@ mod tests {
         assert_eq!(
             path,
             git_directory.join(format!("index-{}.tmp", Uuid::nil()))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_hooks_path_uses_custom_hooks_path(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            repo_dir.path().to_path_buf(),
+            repo_dir.path().join(".git"),
+            cx.executor(),
+            true,
+        );
+
+        let custom_hooks_path = repo_dir.path().join("custom-hooks");
+        fs::create_dir_all(&custom_hooks_path).unwrap();
+        let custom_hooks_path_str = custom_hooks_path.to_string_lossy().into_owned();
+        git.run(&["config", "core.hooksPath", &custom_hooks_path_str])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            git.hooks_path().await.unwrap().canonicalize().unwrap(),
+            custom_hooks_path.canonicalize().unwrap()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_hooks_path_uses_common_git_dir_for_linked_worktree(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        let worktrees_dir = temp_dir.path().join("worktrees");
+        fs::create_dir_all(&repo_dir).unwrap();
+        fs::create_dir_all(&worktrees_dir).unwrap();
+        git_init_repo(&repo_dir);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.set_trusted(true);
+
+        let file_path = repo_dir.join("file.txt");
+        smol::fs::write(&file_path, "content").await.unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let worktree_path = worktrees_dir.join("feature");
+        repo.create_worktree(
+                CreateWorktreeTarget::NewBranch {
+                    branch_name: "feature".to_string(),
+                    base_sha: None,
+                },
+                worktree_path.clone(),
+            )
+            .await
+            .unwrap();
+
+        let worktree_repo = RealGitRepository::new(
+            &worktree_path.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        worktree_repo.set_trusted(true);
+
+        let hooks_path = worktree_repo
+            .git_binary_in_worktree()
+            .unwrap()
+            .hooks_path()
+            .await
+            .unwrap();
+        assert_eq!(
+            hooks_path.canonicalize().unwrap(),
+            repo_dir.join(".git").join("hooks").canonicalize().unwrap()
         );
     }
 
@@ -5197,5 +5400,190 @@ mod tests {
                 })
                 .boxed()
         }
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_msg_hook_modifies_message(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let hooks_dir = repo_dir.path().join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+
+        let hook_path = hooks_dir.join("commit-msg");
+        write_executable_hook(
+            &hook_path,
+            "#!/bin/sh\necho \"$(cat \"$1\")\n\nSigned-off-by: Hook\" > \"$1\"\n",
+        );
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.set_trusted(true);
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "content").await.unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Test commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let git = repo.git_binary_in_worktree().unwrap();
+        let log_output = git.run(&["log", "-1", "--format=%B"]).await.unwrap();
+        assert!(
+            log_output.contains("Signed-off-by: Hook"),
+            "commit-msg hook should have appended sign-off, got: {log_output}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_commit_msg_hook_rejects_commit(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let hooks_dir = repo_dir.path().join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+
+        let hook_path = hooks_dir.join("commit-msg");
+        write_executable_hook(&hook_path, "#!/bin/sh\nexit 1\n");
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.set_trusted(true);
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "content").await.unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        let result = repo
+            .commit(
+                "Test commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await;
+
+        assert!(
+            result.is_err(),
+            "commit should fail when commit-msg hook exits non-zero"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_commit_msg_hook_skipped_when_untrusted(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let hooks_dir = repo_dir.path().join(".git").join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+
+        let hook_path = hooks_dir.join("commit-msg");
+        #[cfg(unix)]
+        write_executable_hook(&hook_path, "#!/bin/sh\nexit 1\n");
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        // Do not call set_trusted(true) — repo stays untrusted
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "content").await.unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        let result = repo
+            .commit(
+                "Test commit".into(),
+                None,
+                CommitOptions::default(),
+                AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+                Arc::new(checkpoint_author_envs()),
+            )
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "commit should succeed when untrusted (hook skipped), got: {:?}",
+            result.err()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_commit_without_commit_msg_hook(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        repo.set_trusted(true);
+
+        let file_path = repo_dir.path().join("file.txt");
+        smol::fs::write(&file_path, "content").await.unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+
+        repo.commit(
+            "Original message".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let git = repo.git_binary_in_worktree().unwrap();
+        let log_output = git.run(&["log", "-1", "--format=%B"]).await.unwrap();
+        assert!(
+            log_output.contains("Original message"),
+            "message should be preserved when no hook exists, got: {log_output}"
+        );
     }
 }
