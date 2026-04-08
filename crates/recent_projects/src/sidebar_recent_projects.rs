@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window,
@@ -235,7 +235,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 })
                 .collect();
         } else {
-            let mut matches = smol::block_on(fuzzy::match_strings(
+            let mut matches = smol::block_on(fuzzy_nucleo::match_strings(
                 &candidates,
                 query,
                 smart_case,

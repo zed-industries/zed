@@ -24,7 +24,7 @@ pub struct WslPickerDismissed;
 pub(crate) struct WslPickerDelegate {
     selected_index: usize,
     distro_list: Option<Vec<String>>,
-    matches: Vec<fuzzy::StringMatch>,
+    matches: Vec<fuzzy_nucleo::StringMatch>,
 }
 
 impl WslPickerDelegate {
@@ -103,7 +103,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        use fuzzy::StringMatchCandidate;
+        use fuzzy_nucleo::StringMatchCandidate;
 
         let needs_fetch = self.distro_list.is_none();
         if needs_fetch {
@@ -122,7 +122,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
 
             let query = query.trim_start();
             let smart_case = query.chars().any(|c| c.is_uppercase());
-            self.matches = smol::block_on(fuzzy::match_strings(
+            self.matches = smol::block_on(fuzzy_nucleo::match_strings(
                 candidates.as_slice(),
                 query,
                 smart_case,

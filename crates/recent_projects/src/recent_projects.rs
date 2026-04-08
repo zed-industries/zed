@@ -22,7 +22,7 @@ pub use remote_connection::{RemoteConnectionModal, connect};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window, actions, px,
@@ -951,7 +951,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .map(|(id, folder)| StringMatchCandidate::new(id, folder.name.as_ref()))
                 .collect();
 
-            smol::block_on(fuzzy::match_strings(
+            smol::block_on(fuzzy_nucleo::match_strings(
                 &candidates,
                 query,
                 smart_case,
@@ -977,7 +977,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let mut project_group_matches = smol::block_on(fuzzy::match_strings(
+        let mut project_group_matches = smol::block_on(fuzzy_nucleo::match_strings(
             &project_group_candidates,
             query,
             smart_case,
@@ -1009,7 +1009,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let mut recent_matches = smol::block_on(fuzzy::match_strings(
+        let mut recent_matches = smol::block_on(fuzzy_nucleo::match_strings(
             &recent_candidates,
             query,
             smart_case,
