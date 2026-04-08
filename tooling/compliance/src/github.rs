@@ -30,6 +30,16 @@ pub enum ReviewState {
 pub struct PullRequestReview {
     pub user: Option<GitHubUser>,
     pub state: Option<ReviewState>,
+    pub body: Option<String>,
+}
+
+impl PullRequestReview {
+    pub fn with_body(self, body: impl ToString) -> Self {
+        Self {
+            body: Some(body.to_string()),
+            ..self
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -294,6 +304,7 @@ mod octo_client {
                         OctocrabReviewState::Approved => ReviewState::Approved,
                         _ => ReviewState::Other,
                     }),
+                    body: review.body,
                 })
                 .collect())
         }
