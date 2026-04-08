@@ -4872,9 +4872,20 @@ impl ThreadView {
                 },
             );
 
-        if AgentSettings::get_global(cx).enable_feedback
-            && self.thread.read(cx).connection().telemetry().is_some()
-        {
+        let enable_thread_feedback = util::maybe!({
+            let project = thread.read(cx).project().read(cx);
+            let user_store = project.user_store();
+            if let Some(configuration) = user_store.read(cx).current_organization_configuration() {
+                if !configuration.is_agent_thread_feedback_enabled {
+                    return false;
+                }
+            }
+
+            AgentSettings::get_global(cx).enable_feedback
+                && self.thread.read(cx).connection().telemetry().is_some()
+        });
+
+        if enable_thread_feedback {
             let feedback = self.thread_feedback.feedback;
 
             let tooltip_meta = || {
