@@ -1893,6 +1893,14 @@ impl AgentPanel {
         }
     }
 
+    pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
+        self.active_conversation_view()
+            .into_iter()
+            .cloned()
+            .chain(self.background_threads.values().cloned())
+            .collect()
+    }
+
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
         let server_view = self.active_conversation_view()?;
         server_view.read(cx).active_thread().cloned()

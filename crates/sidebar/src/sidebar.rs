@@ -4107,11 +4107,14 @@ fn all_thread_infos_for_workspace(
         return None.into_iter().flatten();
     };
     let agent_panel = agent_panel.read(cx);
-
     let threads = agent_panel
-        .parent_threads(cx)
+        .conversation_views()
         .into_iter()
-        .map(|thread_view| {
+        .filter_map(|conversation_view| {
+            let has_pending_tool_call = conversation_view
+                .read(cx)
+                .root_thread_has_pending_tool_call(cx);
+            let thread_view = conversation_view.read(cx).root_thread(cx)?;
             let thread_view_ref = thread_view.read(cx);
             let thread = thread_view_ref.thread.read(cx);
 
@@ -4125,7 +4128,7 @@ fn all_thread_infos_for_workspace(
             let session_id = thread.session_id().clone();
             let is_background = agent_panel.is_background_thread(&session_id);
 
-            let status = if thread.is_waiting_for_confirmation() {
+            let status = if has_pending_tool_call {
                 AgentThreadStatus::WaitingForConfirmation
             } else if thread.had_error() {
                 AgentThreadStatus::Error
@@ -4138,7 +4141,7 @@ fn all_thread_infos_for_workspace(
 
             let diff_stats = thread.action_log().read(cx).diff_stats(cx);
 
-            ActiveThreadInfo {
+            Some(ActiveThreadInfo {
                 session_id,
                 title,
                 status,
@@ -4147,7 +4150,7 @@ fn all_thread_infos_for_workspace(
                 is_background,
                 is_title_generating,
                 diff_stats,
-            }
+            })
         });
 
     Some(threads).into_iter().flatten()
@@ -4310,7 +4313,14 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             let entry_count = thread.entries().len();
             write!(output, "Active thread: {title} (session: {session_id})").ok();
             write!(output, " [{status}, {entry_count} entries").ok();
-            if thread.is_waiting_for_confirmation() {
+            if panel
+                .active_conversation_view()
+                .is_some_and(|conversation_view| {
+                    conversation_view
+                        .read(cx)
+                        .root_thread_has_pending_tool_call(cx)
+                })
+            {
                 write!(output, ", awaiting confirmation").ok();
             }
             writeln!(output, "]").ok();
@@ -4337,7 +4347,10 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
                     let entry_count = thread.entries().len();
                     write!(output, "  - {title} (session: {session_id})").ok();
                     write!(output, " [{status}, {entry_count} entries").ok();
-                    if thread.is_waiting_for_confirmation() {
+                    if conversation_view
+                        .read(cx)
+                        .root_thread_has_pending_tool_call(cx)
+                    {
                         write!(output, ", awaiting confirmation").ok();
                     }
                     writeln!(output, "]").ok();
