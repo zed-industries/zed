@@ -805,7 +805,16 @@ impl VsCodeSettings {
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
             sort_mode: None,
-            sort_order_lexicographic: None,
+            sort_order_lexicographic: self.read_enum(
+                "search.quickOpen.history.filterSortOrder",
+                |s| match s {
+                    "default" => Some(ProjectPanelSortOrderLexicographic::Default),
+                    "upper" => Some(ProjectPanelSortOrderLexicographic::Upper),
+                    "lower" => Some(ProjectPanelSortOrderLexicographic::Lower),
+                    "unicode" => Some(ProjectPanelSortOrderLexicographic::Unicode),
+                    _ => None,
+                },
+            ),
             starts_open: None,
             sticky_scroll: None,
             auto_open: None,

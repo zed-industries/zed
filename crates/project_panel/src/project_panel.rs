@@ -847,6 +847,11 @@ impl ProjectPanel {
                     if project_panel_settings.sort_mode != new_settings.sort_mode {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
+                    if project_panel_settings.sort_order_lexicographic
+                        != new_settings.sort_order_lexicographic
+                    {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
                         this.sticky_items_count = 0;
                     }
