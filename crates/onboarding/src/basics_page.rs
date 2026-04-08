@@ -628,8 +628,6 @@ fn render_zed_agent_button(user_store: &Entity<UserStore>, cx: &mut App) -> impl
             .into_any_element()
     };
 
-    let is_active = !is_signed_out && !is_signing_in;
-
     AgentSetupButton::new("zed-agent-onboarding")
         .icon(
             Icon::new(IconName::ZedAgent)
@@ -640,7 +638,7 @@ fn render_zed_agent_button(user_store: &Entity<UserStore>, cx: &mut App) -> impl
         .state(state_element)
         .disabled(is_trial || is_pro)
         .map(|this| {
-            if is_active || is_free {
+            if is_signed_in && is_free {
                 this.on_click(move |_, _window, cx| {
                     telemetry::event!("Start Trial Clicked", state = "post-sign-in");
                     cx.open_url(&zed_urls::start_trial_url(cx))

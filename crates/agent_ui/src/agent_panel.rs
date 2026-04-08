@@ -1168,7 +1168,6 @@ impl AgentPanel {
             _worktree_creation_task: None,
             show_trust_workspace_message: false,
             new_user_onboarding_upsell_dismissed: AtomicBool::new(OnboardingUpsell::dismissed(cx)),
-            // new_user_onboarding_upsell_dismissed: AtomicBool::new(true), // todo: Clean up hardcoded testing bool
             agent_layout_onboarding_dismissed: AtomicBool::new(AgentLayoutOnboarding::dismissed(
                 cx,
             )),
