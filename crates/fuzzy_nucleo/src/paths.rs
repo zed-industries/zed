@@ -12,6 +12,7 @@ use nucleo::Utf32Str;
 use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 
 use crate::matcher::{self, LENGTH_PENALTY};
+use crate::Cancelled;
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
@@ -74,7 +75,7 @@ impl Ord for PathMatch {
     }
 }
 
-fn make_atoms(query: &str, smart_case: bool) -> Vec<Atom> {
+pub(crate) fn make_atoms(query: &str, smart_case: bool) -> Vec<Atom> {
     let case = if smart_case {
         CaseMatching::Smart
     } else {
@@ -121,7 +122,6 @@ fn get_filename_match_bonus(
     }
     total_score as f64 / filename.len().max(1) as f64
 }
-struct Cancelled;
 
 fn path_match_helper<'a>(
     matcher: &mut nucleo::Matcher,
