@@ -746,6 +746,12 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: directories_first
     pub sort_mode: Option<ProjectPanelSortMode>,
+    /// Whether to sort file and folder names case-sensitively in the project panel.
+    /// This works in combination with `sort_mode`. `sort_mode` controls how files and
+    /// directories are grouped, while this setting controls how names are compared.
+    ///
+    /// Default: default
+    pub sort_order_lexicographic: Option<ProjectPanelSortOrderLexicographic>,
     /// Whether to show error and warning count badges next to file names in the project panel.
     ///
     /// Default: false
@@ -754,12 +760,6 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
-    /// Whether to sort file and folder names case-sensitively in the project panel.
-    /// This works in combination with `sort_mode`. `sort_mode` controls how files and
-    /// directories are grouped, while this setting controls how names are compared.
-    ///
-    /// Default: default
-    pub sort_order_lexicographic: Option<ProjectPanelSortOrderLexicographic>,
 }
 
 #[derive(

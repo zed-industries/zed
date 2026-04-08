@@ -2491,9 +2491,9 @@ impl ProjectPanel {
                 .map(|entry| entry.to_owned())
                 .collect();
 
-        let mode = ProjectPanelSettings::get_global(cx).sort_mode;
+        let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
         let sort_order = ProjectPanelSettings::get_global(cx).sort_order_lexicographic;
-        sort_worktree_entries(&mut siblings, mode, sort_order);
+        sort_worktree_entries(&mut siblings, sort_mode, sort_order);
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;

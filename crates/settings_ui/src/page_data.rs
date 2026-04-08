@@ -4949,6 +4949,28 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Sort Order (Lexicographic)",
+                description: "Whether to sort file and folder names case-sensitively in the project panel.",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .sort_order_lexicographic
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .sort_order_lexicographic = value;
+                    },
+                    json_path: Some("project_panel.sort_order_lexicographic"),
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto Open Files On Create",
                 description: "Whether to automatically open newly created files in the editor.",
                 field: Box::new(SettingField {
@@ -5041,28 +5063,6 @@ fn panels_page() -> SettingsPage {
                     }
                     .unimplemented(),
                 ),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Sort Order (Lexicographic)",
-                description: "Whether to sort file and folder names case-sensitively in the project panel.",
-                field: Box::new(SettingField {
-                    pick: |settings_content| {
-                        settings_content
-                            .project_panel
-                            .as_ref()?
-                            .sort_order_lexicographic
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project_panel
-                            .get_or_insert_default()
-                            .sort_order_lexicographic = value;
-                    },
-                    json_path: Some("project_panel.sort_order_lexicographic"),
-                }),
                 metadata: None,
                 files: USER,
             }),

@@ -805,12 +805,12 @@ impl VsCodeSettings {
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
             sort_mode: None,
+            sort_order_lexicographic: None,
             starts_open: None,
             sticky_scroll: None,
             auto_open: None,
             diagnostic_badges: None,
             git_status_indicator: None,
-            sort_order_lexicographic: None,
         };
 
         if let (Some(false), Some(false)) = (

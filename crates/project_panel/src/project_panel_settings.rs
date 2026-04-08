@@ -35,9 +35,9 @@ pub struct ProjectPanelSettings {
     pub drag_and_drop: bool,
     pub auto_open: AutoOpenSettings,
     pub sort_mode: ProjectPanelSortMode,
+    pub sort_order_lexicographic: ProjectPanelSortOrderLexicographic,
     pub diagnostic_badges: bool,
     pub git_status_indicator: bool,
-    pub sort_order_lexicographic: ProjectPanelSortOrderLexicographic,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -142,9 +142,9 @@ impl Settings for ProjectPanelSettings {
                 }
             },
             sort_mode: project_panel.sort_mode.unwrap(),
+            sort_order_lexicographic: project_panel.sort_order_lexicographic.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
             git_status_indicator: project_panel.git_status_indicator.unwrap(),
-            sort_order_lexicographic: project_panel.sort_order_lexicographic.unwrap(),
         }
     }
 }
