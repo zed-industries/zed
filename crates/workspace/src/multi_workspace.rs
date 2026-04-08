@@ -129,13 +129,7 @@ pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     }
 
     /// Activates the next or previous project.
-    fn cycle_project(
-        &mut self,
-        _forward: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) {
-    }
+    fn cycle_project(&mut self, _forward: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     /// Activates the next or previous thread in sidebar order.
     fn cycle_thread(&mut self, _forward: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
@@ -1512,20 +1506,18 @@ impl Render for MultiWorkspace {
                             }
                         },
                     ))
+                    .on_action(cx.listener(|this: &mut Self, _: &NextProject, window, cx| {
+                        if let Some(sidebar) = &this.sidebar {
+                            sidebar.cycle_project(true, window, cx);
+                        }
+                    }))
                     .on_action(
-                        cx.listener(|this: &mut Self, _: &NextProject, window, cx| {
-                            if let Some(sidebar) = &this.sidebar {
-                                sidebar.cycle_project(true, window, cx);
-                            }
-                        }),
-                    )
-                    .on_action(cx.listener(
-                        |this: &mut Self, _: &PreviousProject, window, cx| {
+                        cx.listener(|this: &mut Self, _: &PreviousProject, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
                                 sidebar.cycle_project(false, window, cx);
                             }
-                        },
-                    ))
+                        }),
+                    )
                     .on_action(cx.listener(|this: &mut Self, _: &NextThread, window, cx| {
                         if let Some(sidebar) = &this.sidebar {
                             sidebar.cycle_thread(true, window, cx);
