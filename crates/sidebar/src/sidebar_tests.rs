@@ -443,7 +443,7 @@ async fn test_single_workspace_no_threads(cx: &mut TestAppContext) {
 
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [my-project]", "  [+ New Thread]"]
+        vec!["v [my-project]"]
     );
 }
 
@@ -694,6 +694,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 has_running_threads: false,
                 waiting_thread_count: 0,
                 is_active: true,
+                has_threads: true,
             },
             ListEntry::Thread(ThreadEntry {
                 metadata: ThreadMetadata {
@@ -822,6 +823,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 has_running_threads: false,
                 waiting_thread_count: 0,
                 is_active: false,
+                has_threads: false,
             },
         ];
 
@@ -1141,10 +1143,10 @@ async fn test_keyboard_navigation_on_empty_list(cx: &mut TestAppContext) {
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
 
-    // An empty project has the header and a new thread button.
+    // An empty project has only the header.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [empty-project]", "  [+ New Thread]"]
+        vec!["v [empty-project]"]
     );
 
     // Focus sidebar — focus_in does not set a selection
@@ -1155,11 +1157,7 @@ async fn test_keyboard_navigation_on_empty_list(cx: &mut TestAppContext) {
     cx.dispatch_action(SelectNext);
     assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
-    // SelectNext moves to the new thread button
-    cx.dispatch_action(SelectNext);
-    assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(1));
-
-    // At the end, wraps back to first entry
+    // At the end (only one entry), wraps back to first entry
     cx.dispatch_action(SelectNext);
     assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(0));
 
@@ -2606,7 +2604,7 @@ async fn test_git_worktree_added_live_updates_sidebar(cx: &mut TestAppContext) {
     // Thread is not visible yet — no worktree knows about this path.
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project]", "  [+ New Thread]"]
+        vec!["v [project]"]
     );
 
     // Now add the worktree to the git state and trigger a rescan.
@@ -4323,7 +4321,6 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
         visible_entries_as_strings(&sidebar, cx),
         vec![
             "v [other, project]",
-            "  [+ New Thread]",
             "v [project]",
             "  Worktree Thread {wt-feature-a}",
         ]
