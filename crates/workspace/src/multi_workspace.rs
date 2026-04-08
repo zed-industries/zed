@@ -586,6 +586,9 @@ impl MultiWorkspace {
     pub fn restore_project_group_keys(&mut self, keys: Vec<ProjectGroupKey>) {
         let mut restored: Vec<ProjectGroupKey> = Vec::with_capacity(keys.len());
         for key in keys {
+            if key.path_list().paths().is_empty() {
+                continue;
+            }
             if !restored.contains(&key) {
                 restored.push(key);
             }
