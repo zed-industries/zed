@@ -27870,9 +27870,9 @@ async fn test_bookmark_navigation_lands_at_column_zero(cx: &mut TestAppContext) 
         });
 
     let column_before_toggle = ctx.cursor_point().column;
-    assert!(
-        column_before_toggle > 0,
-        "Cursor should be at non-zero column before toggling bookmark, got column {column_before_toggle}"
+    assert_eq!(
+        column_before_toggle, 11,
+        "Cursor should be at the 11th column before toggling bookmark, got column {column_before_toggle}"
     );
 
     ctx.toggle_bookmark();

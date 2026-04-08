@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use gpui::Entity;
-use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _, ToPoint as _};
+use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
 use project::{Project, bookmark_store::BookmarkStore};
 use rope::Point;
 use ui::{Context, Window};
@@ -40,24 +40,15 @@ impl Editor {
 
         for selection in &selections {
             let head = selection.head();
-            let anchor = multi_buffer_snapshot.anchor_before(head);
-            if let Some((buffer_snapshot, _, _excerpt_id)) = multi_buffer_snapshot
-                .range_to_buffer_ranges(head..=head)
-                .into_iter()
-                .next()
+            let multibuffer_anchor = multi_buffer_snapshot.anchor_before(Point::new(head.row, 0));
+
+            if let Some((buffer_anchor, _)) =
+                multi_buffer_snapshot.anchor_to_buffer_anchor(multibuffer_anchor)
             {
-                if let Some(buffer) = project
-                    .read(cx)
-                    .buffer_for_id(buffer_snapshot.remote_id(), cx)
-                {
-                    let text_anchor = {
-                        let point = anchor.to_point(&multi_buffer_snapshot);
-                        multi_buffer_snapshot
-                            .anchor_before(Point::new(point.row, 0))
-                            .text_anchor
-                    };
+                let buffer_id = buffer_anchor.buffer_id;
+                if let Some(buffer) = project.read(cx).buffer_for_id(buffer_id, cx) {
                     bookmark_store.update(cx, |store, cx| {
-                        store.toggle_bookmark(buffer, text_anchor, cx);
+                        store.toggle_bookmark(buffer, buffer_anchor, cx);
                     });
                 }
             }
@@ -180,7 +171,7 @@ impl Editor {
         multi_buffer_snapshot
             .range_to_buffer_ranges(range)
             .into_iter()
-            .flat_map(|(buffer_snapshot, buffer_range, excerpt_id)| {
+            .flat_map(|(buffer_snapshot, buffer_range, _excerpt_range)| {
                 let Some(buffer) = project
                     .read(cx)
                     .buffer_for_id(buffer_snapshot.remote_id(), cx)
@@ -193,12 +184,14 @@ impl Editor {
                             buffer,
                             buffer_snapshot.anchor_before(buffer_range.start)
                                 ..buffer_snapshot.anchor_after(buffer_range.end),
-                            buffer_snapshot,
+                            &buffer_snapshot,
                             cx,
                         )
                     })
                     .into_iter()
-                    .map(|bookmark| Anchor::in_buffer(excerpt_id, bookmark.anchor()))
+                    .filter_map(|bookmark| {
+                        multi_buffer_snapshot.anchor_in_buffer(bookmark.anchor())
+                    })
                     .collect::<Vec<_>>()
             })
             .collect()

@@ -9017,8 +9017,8 @@ impl Editor {
         let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
             ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
 
-        for (buffer_snapshot, range, excerpt_id) in
-            multi_buffer_snapshot.range_to_buffer_ranges(range.start..=range.end)
+        for (buffer_snapshot, range, _excerpt_range) in
+            multi_buffer_snapshot.range_to_buffer_ranges(range.start..range.end)
         {
             let Some(buffer) = project
                 .read(cx)
@@ -9031,12 +9031,16 @@ impl Editor {
                     buffer,
                     buffer_snapshot.anchor_before(range.start)
                         ..buffer_snapshot.anchor_after(range.end),
-                    buffer_snapshot,
+                    &buffer_snapshot,
                     cx,
                 )
             });
             for bookmark in bookmarks {
-                let multi_buffer_anchor = Anchor::in_buffer(excerpt_id, bookmark.anchor());
+                let Some(multi_buffer_anchor) =
+                    multi_buffer_snapshot.anchor_in_buffer(bookmark.anchor())
+                else {
+                    continue;
+                };
                 let position = multi_buffer_anchor
                     .to_point(&multi_buffer_snapshot)
                     .to_display_point(&snapshot);
