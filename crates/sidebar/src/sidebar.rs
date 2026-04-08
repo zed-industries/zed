@@ -757,7 +757,7 @@ impl Sidebar {
 
         multi_workspace
             .update(cx, |this, cx| {
-                this.find_or_create_workspace(path_list, project_group_key, window, cx)
+                this.find_or_create_workspace(path_list, project_group_key.host(), window, cx)
             })
             .detach_and_log_err(cx);
     }
@@ -2341,7 +2341,7 @@ impl Sidebar {
             .detach_and_log_err(cx);
         } else {
             let open_task = multi_workspace.update(cx, |this, cx| {
-                this.find_or_create_workspace(folder_paths, project_group_key, window, cx)
+                this.find_or_create_workspace(folder_paths, project_group_key.host(), window, cx)
             });
 
             cx.spawn_in(window, async move |this, cx| {
@@ -2631,7 +2631,12 @@ impl Sidebar {
                 mw.remove(
                     [workspace_to_remove],
                     move |this, window, cx| {
-                        this.find_or_create_workspace(fallback_paths, &fallback_key, window, cx)
+                        this.find_or_create_workspace(
+                            fallback_paths,
+                            fallback_key.host(),
+                            window,
+                            cx,
+                        )
                     },
                     window,
                     cx,

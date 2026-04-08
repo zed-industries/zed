@@ -6,6 +6,7 @@ use gpui::{
     actions, deferred, px,
 };
 use project::{DirectoryLister, DisableAiSettings, Project, ProjectGroupKey};
+use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
 use std::collections::{HashMap, HashSet};
@@ -869,20 +870,15 @@ impl MultiWorkspace {
     pub fn find_or_create_workspace(
         &mut self,
         folder_paths: PathList,
-        project_group_key: &ProjectGroupKey,
+        host: Option<RemoteConnectionOptions>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        let Some(remote_options) = project_group_key.host() else {
+        let Some(remote_options) = host else {
             return self.find_or_create_local_workspace(folder_paths, window, cx);
         };
 
         if let Some(workspace) = self.workspace_for_paths(&folder_paths, cx) {
-            self.activate(workspace.clone(), window, cx);
-            return Task::ready(Ok(workspace));
-        }
-
-        if let Some(workspace) = self.workspace_for_paths(project_group_key.path_list(), cx) {
             self.activate(workspace.clone(), window, cx);
             return Task::ready(Ok(workspace));
         }

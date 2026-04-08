@@ -6725,7 +6725,6 @@ mod tests {
         init_test(cx);
 
         let app_state = cx.update(|cx| {
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
 
