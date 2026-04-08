@@ -285,12 +285,11 @@ impl Render for AnnouncementToastNotification {
             }))
             .secondary_on_click(cx.listener({
                 let url = self.content.secondary_action_url.clone();
-                move |this, _, _window, cx| {
+                move |_, _, _window, cx| {
                     telemetry::event!("Parallel Agent Announcement Secondary Click");
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }
-                    this.dismiss(cx);
                 }
             }))
             .dismiss_on_click(cx.listener(|this, _, _window, cx| {
