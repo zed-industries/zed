@@ -106,6 +106,9 @@ pub struct NodeBinarySettings {
     pub npm_path: Option<String>,
     /// If enabled, Zed will download its own copy of Node.
     pub ignore_system_version: bool,
+    /// Whether Zed may automatically download Node if it isn't found on the
+    /// system.
+    pub auto_install: bool,
 }
 
 impl From<settings::NodeBinarySettings> for NodeBinarySettings {
@@ -114,6 +117,7 @@ impl From<settings::NodeBinarySettings> for NodeBinarySettings {
             path: settings.path,
             npm_path: settings.npm_path,
             ignore_system_version: settings.ignore_system_version.unwrap_or(false),
+            auto_install: settings.auto_install.unwrap_or(true),
         }
     }
 }

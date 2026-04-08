@@ -729,7 +729,11 @@ where
 
             if !binary_options.allow_binary_download {
                 return (
-                    Err(anyhow::anyhow!("downloading language servers disabled")),
+                    Err(anyhow::anyhow!(
+                        "Language server \"{}\" not found and auto-install is disabled. \
+                         Install it manually or set `\"node\": {{\"auto_install\": true}}` in settings.",
+                        self.name()
+                    )),
                     None,
                 );
             }

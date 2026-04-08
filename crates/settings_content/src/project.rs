@@ -736,6 +736,13 @@ pub struct NodeBinarySettings {
     pub npm_path: Option<String>,
     /// If enabled, Zed will download its own copy of Node.
     pub ignore_system_version: Option<bool>,
+    /// Whether Zed may automatically download Node if it isn't
+    /// found on the system. Set to `false` to prevent any
+    /// automatic downloads. When disabled, Zed will only use a
+    /// Node binary found on your PATH or at the configured `path`.
+    ///
+    /// Default: true
+    pub auto_install: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]

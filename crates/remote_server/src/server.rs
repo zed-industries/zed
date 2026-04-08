@@ -1102,8 +1102,7 @@ fn initialize_settings(
             log::info!("Got new node settings: {new_node_settings:?}");
             let options = NodeBinaryOptions {
                 allow_path_lookup: !new_node_settings.ignore_system_version,
-                // TODO: Implement this setting
-                allow_binary_download: true,
+                allow_binary_download: new_node_settings.auto_install,
                 use_paths: new_node_settings.path.as_ref().map(|node_path| {
                     let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
                     let npm_path = new_node_settings

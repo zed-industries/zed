@@ -183,25 +183,23 @@ impl NodeRuntime {
             }
         } else if let Some(system_node_error) = system_node_error {
             // failure case not cached, since it's cheap to check again
-            //
-            // TODO: When support is added for setting `options.allow_binary_download`, update this
-            // error message.
             return Box::new(UnavailableNodeRuntime {
                 error_message: format!(
-                    "failure while checking system Node.js from PATH: {}",
+                    "Node.js not found on system and auto-install is disabled: {}. \
+                     Install Node.js manually or set `\"node\": {{\"auto_install\": true}}` in settings.",
                     system_node_error
                 )
                 .into(),
             });
         } else {
             // failure case is cached because it will always happen with these options
-            //
-            // TODO: When support is added for setting `options.allow_binary_download`, update this
-            // error message.
             Box::new(UnavailableNodeRuntime {
-                error_message: "`node` settings do not allow any way to use Node.js"
-                    .to_string()
-                    .into(),
+                error_message:
+                    "Node.js auto-install is disabled and no system Node.js is configured. \
+                     Set `\"node\": {\"path\": \"/path/to/node\"}` or \
+                     `\"node\": {\"auto_install\": true}` in settings."
+                        .to_string()
+                        .into(),
             })
         };
 
