@@ -2817,6 +2817,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
 
