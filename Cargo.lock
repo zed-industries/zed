@@ -275,6 +275,7 @@ dependencies = [
  "nix 0.29.0",
  "project",
  "release_channel",
+ "remote",
  "reqwest_client",
  "serde",
  "serde_json",

@@ -2256,8 +2256,8 @@ async fn test_remote_external_agent_server(
                     .get_external_agent(&"foo".into())
                     .unwrap()
                     .get_command(
+                        vec![],
                         HashMap::from_iter([("OTHER_VAR".into(), "other-val".into())]),
-                        None,
                         &mut cx.to_async(),
                     )
             })
@@ -2267,8 +2267,8 @@ async fn test_remote_external_agent_server(
     assert_eq!(
         command,
         AgentServerCommand {
-            path: "mock".into(),
-            args: vec!["foo-cli".into(), "--flag".into()],
+            path: "foo-cli".into(),
+            args: vec!["--flag".into()],
             env: Some(HashMap::from_iter([
                 ("NO_BROWSER".into(), "1".into()),
                 ("VAR".into(), "val".into()),
