@@ -52,18 +52,13 @@ jobs:
     - name: send_compliance_slack_notification
       if: always()
       run: |
-        REPORT_CONTENT=""
-        if [ -f "compliance-report.md" ]; then
-            REPORT_CONTENT=$(cat "compliance-report.md")
-        fi
-
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
             STATUS="✅ Scheduled compliance check passed for $COMPLIANCE_TAG"
         else
             STATUS="⚠️ Scheduled compliance check failed for $COMPLIANCE_TAG"
         fi
 
-        MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s\n\n%s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22" "$REPORT_CONTENT")
+        MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
 
         curl -X POST -H 'Content-type: application/json' \
             --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
