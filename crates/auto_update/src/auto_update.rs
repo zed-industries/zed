@@ -27,7 +27,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 use util::command::new_command;
-use workspace::Workspace;
+use workspace::{
+    Workspace,
+    notifications::{
+        NotificationId, show_app_notification, simple_message_notification::MessageNotification,
+    },
+};
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 
@@ -281,10 +286,37 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
         return;
     }
 
-    if !ReleaseChannel::try_global(cx)
+    let release_channel = ReleaseChannel::try_global(cx);
+    if !release_channel
         .map(|channel| channel.poll_for_updates())
         .unwrap_or(false)
     {
+        struct UpdateUnavailableNotification;
+
+        let message = match release_channel {
+            Some(ReleaseChannel::Dev) => {
+                "Check for Updates is unavailable in dev builds.".to_string()
+            }
+            Some(channel) => {
+                format!(
+                    "Check for Updates is unavailable for the {} channel.",
+                    channel.display_name()
+                )
+            }
+            None => "Auto-updates are unavailable in this build.".to_string(),
+        };
+
+        show_app_notification(
+            NotificationId::unique::<UpdateUnavailableNotification>(),
+            cx,
+            move |cx| {
+                cx.new(|cx| {
+                    MessageNotification::new(message.clone(), cx)
+                        .with_title("Could not check for updates")
+                        .show_suppress_button(false)
+                })
+            },
+        );
         return;
     }
 

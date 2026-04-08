@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_settings::{AgentSettings, WindowLayout};
-use auto_update::{AutoUpdater, release_notes_url};
+use auto_update::{AutoUpdateStatus, AutoUpdater, UpdateCheckType, release_notes_url};
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
 use fs::Fs;
@@ -18,8 +18,8 @@ use util::{ResultExt as _, maybe};
 use workspace::{
     ToggleWorkspaceSidebar, Workspace,
     notifications::{
-        ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, show_app_notification,
-        simple_message_notification::MessageNotification,
+        ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, dismiss_app_notification,
+        show_app_notification, simple_message_notification::MessageNotification,
     },
 };
 
@@ -33,6 +33,8 @@ actions!(
 
 pub fn init(cx: &mut App) {
     notify_if_app_was_updated(cx);
+    notify_if_app_is_up_to_date(cx);
+    notify_about_manual_update_status(cx);
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
@@ -45,6 +47,214 @@ pub fn init(cx: &mut App) {
 struct ReleaseNotesBody {
     title: String,
     release_notes: String,
+}
+
+fn notify_if_app_is_up_to_date(cx: &mut App) {
+    struct UpToDateNotification;
+
+    let Some(updater) = AutoUpdater::get(cx) else {
+        return;
+    };
+
+    let mut previous_status = updater.read(cx).status();
+    let mut previous_check_type = updater.read(cx).update_check_type();
+    cx.observe(&updater, move |updater, cx| {
+        let status = updater.read(cx).status();
+        let update_check_type = updater.read(cx).update_check_type();
+
+        if should_show_up_to_date_notification(
+            &previous_status,
+            &status,
+            previous_check_type,
+            update_check_type,
+        ) {
+            let app_name = ReleaseChannel::global(cx).display_name();
+            show_app_notification(
+                NotificationId::unique::<UpToDateNotification>(),
+                cx,
+                move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(format!("{app_name} is up to date."), cx)
+                            .with_title("Check for Updates")
+                            .show_suppress_button(false)
+                    })
+                },
+            );
+        }
+
+        previous_status = status;
+        previous_check_type = update_check_type;
+    })
+    .detach();
+}
+
+fn notify_about_manual_update_status(cx: &mut App) {
+    struct CheckingForUpdatesNotification;
+    struct UpdateReadyNotification;
+    struct UpdateErrorNotification;
+
+    let Some(updater) = AutoUpdater::get(cx) else {
+        return;
+    };
+
+    let mut previous_status = updater.read(cx).status();
+    let mut previous_check_type = updater.read(cx).update_check_type();
+    cx.observe(&updater, move |updater, cx| {
+        let status = updater.read(cx).status();
+        let update_check_type = updater.read(cx).update_check_type();
+
+        if should_show_manual_progress_notification(
+            &previous_status,
+            &status,
+            previous_check_type,
+            update_check_type,
+        ) {
+            show_app_notification(
+                NotificationId::unique::<CheckingForUpdatesNotification>(),
+                cx,
+                move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new("Checking for updates...", cx)
+                            .show_suppress_button(false)
+                    })
+                },
+            );
+        } else if should_dismiss_manual_progress_notification(
+            &previous_status,
+            &status,
+            previous_check_type,
+            update_check_type,
+        ) {
+            dismiss_app_notification(
+                &NotificationId::unique::<CheckingForUpdatesNotification>(),
+                cx,
+            );
+        }
+
+        if should_show_update_ready_notification(
+            &previous_status,
+            &status,
+            previous_check_type,
+            update_check_type,
+        ) {
+            let app_name = ReleaseChannel::global(cx).display_name();
+            show_app_notification(
+                NotificationId::unique::<UpdateReadyNotification>(),
+                cx,
+                move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(
+                            format!("Update ready. Restart {app_name} to apply it."),
+                            cx,
+                        )
+                        .primary_message("Restart")
+                        .primary_on_click(|_, cx| {
+                            workspace::reload(cx);
+                            cx.emit(DismissEvent);
+                        })
+                        .show_suppress_button(false)
+                    })
+                },
+            );
+        } else if !matches!(status, AutoUpdateStatus::Updated { .. }) {
+            dismiss_app_notification(&NotificationId::unique::<UpdateReadyNotification>(), cx);
+        }
+
+        if should_show_manual_error_notification(
+            &previous_status,
+            &status,
+            previous_check_type,
+            update_check_type,
+        ) {
+            let error_message = match &status {
+                AutoUpdateStatus::Errored { error } => error.to_string(),
+                _ => return,
+            };
+            show_app_notification(
+                NotificationId::unique::<UpdateErrorNotification>(),
+                cx,
+                move |cx| {
+                    cx.new(|cx| {
+                        MessageNotification::new(
+                            format!("Could not check for updates.\n{error_message}"),
+                            cx,
+                        )
+                        .primary_message("Open Log")
+                        .primary_on_click(|window, cx| {
+                            window.dispatch_action(Box::new(workspace::OpenLog), cx);
+                            cx.emit(DismissEvent);
+                        })
+                        .show_suppress_button(false)
+                    })
+                },
+            );
+        } else if !matches!(status, AutoUpdateStatus::Errored { .. }) {
+            dismiss_app_notification(&NotificationId::unique::<UpdateErrorNotification>(), cx);
+        }
+
+        previous_status = status;
+        previous_check_type = update_check_type;
+    })
+    .detach();
+}
+
+fn should_show_up_to_date_notification(
+    previous_status: &AutoUpdateStatus,
+    status: &AutoUpdateStatus,
+    previous_check_type: UpdateCheckType,
+    update_check_type: UpdateCheckType,
+) -> bool {
+    previous_check_type.is_manual()
+        && update_check_type.is_manual()
+        && matches!(previous_status, AutoUpdateStatus::Checking)
+        && matches!(status, AutoUpdateStatus::Idle)
+}
+
+fn should_show_manual_progress_notification(
+    previous_status: &AutoUpdateStatus,
+    status: &AutoUpdateStatus,
+    previous_check_type: UpdateCheckType,
+    update_check_type: UpdateCheckType,
+) -> bool {
+    update_check_type.is_manual()
+        && matches!(status, AutoUpdateStatus::Checking)
+        && (!matches!(previous_status, AutoUpdateStatus::Checking)
+            || !previous_check_type.is_manual())
+}
+
+fn should_dismiss_manual_progress_notification(
+    previous_status: &AutoUpdateStatus,
+    status: &AutoUpdateStatus,
+    previous_check_type: UpdateCheckType,
+    update_check_type: UpdateCheckType,
+) -> bool {
+    previous_check_type.is_manual()
+        && matches!(previous_status, AutoUpdateStatus::Checking)
+        && (!update_check_type.is_manual() || !matches!(status, AutoUpdateStatus::Checking))
+}
+
+fn should_show_update_ready_notification(
+    previous_status: &AutoUpdateStatus,
+    status: &AutoUpdateStatus,
+    previous_check_type: UpdateCheckType,
+    update_check_type: UpdateCheckType,
+) -> bool {
+    previous_check_type.is_manual()
+        && update_check_type.is_manual()
+        && matches!(status, AutoUpdateStatus::Updated { .. })
+        && previous_status != status
+}
+
+fn should_show_manual_error_notification(
+    previous_status: &AutoUpdateStatus,
+    status: &AutoUpdateStatus,
+    previous_check_type: UpdateCheckType,
+    update_check_type: UpdateCheckType,
+) -> bool {
+    previous_check_type.is_manual()
+        && update_check_type.is_manual()
+        && matches!(status, AutoUpdateStatus::Errored { .. })
+        && previous_status != status
 }
 
 fn notify_release_notes_failed_to_show(
