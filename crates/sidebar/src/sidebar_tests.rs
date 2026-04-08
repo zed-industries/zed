@@ -5280,19 +5280,6 @@ mod property_test {
         }
     }
 
-    fn save_thread_to_path(
-        state: &mut TestState,
-        project: &Entity<project::Project>,
-        cx: &mut gpui::VisualTestContext,
-    ) {
-        let session_id = state.next_thread_id();
-        let title: SharedString = format!("Thread {}", session_id).into();
-        let updated_at = chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
-            .unwrap()
-            + chrono::Duration::seconds(state.thread_counter as i64);
-        save_thread_metadata(session_id, title, updated_at, None, project, cx);
-    }
-
     fn save_thread_to_path_with_main(
         state: &mut TestState,
         path_list: PathList,
@@ -5332,17 +5319,41 @@ mod property_test {
             Operation::SaveThread {
                 project_group_index,
             } => {
-                let project = multi_workspace.read_with(cx, |mw, cx| {
+                // Find a workspace for this project group and create a real
+                // thread via its agent panel.
+                let (workspace, project) = multi_workspace.read_with(cx, |mw, cx| {
                     let key = mw.project_group_keys().nth(project_group_index).unwrap();
-                    // Find a workspace for this group, or use the active one.
-                    mw.workspaces_for_project_group(key, cx)
+                    let ws = mw
+                        .workspaces_for_project_group(key, cx)
                         .next()
                         .unwrap_or(mw.workspace())
-                        .read(cx)
-                        .project()
-                        .clone()
+                        .clone();
+                    let project = ws.read(cx).project().clone();
+                    (ws, project)
                 });
-                save_thread_to_path(state, &project, cx);
+
+                let panel =
+                    workspace.read_with(cx, |workspace, cx| workspace.panel::<AgentPanel>(cx));
+                if let Some(panel) = panel {
+                    let connection = StubAgentConnection::new();
+                    connection.set_next_prompt_updates(vec![
+                        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                            "Done".into(),
+                        )),
+                    ]);
+                    open_thread_with_connection(&panel, connection, cx);
+                    send_message(&panel, cx);
+                    let session_id = active_session_id(&panel, cx);
+                    state.saved_thread_ids.push(session_id.clone());
+
+                    let title: SharedString = format!("Thread {}", state.thread_counter).into();
+                    state.thread_counter += 1;
+                    let updated_at =
+                        chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
+                            .unwrap()
+                            + chrono::Duration::seconds(state.thread_counter as i64);
+                    save_thread_metadata(session_id, title, updated_at, None, &project, cx);
+                }
             }
             Operation::SaveWorktreeThread { worktree_index } => {
                 let worktree = &state.unopened_worktrees[worktree_index];
@@ -5439,6 +5450,7 @@ mod property_test {
                         sidebar.selection = Some(ix);
                         sidebar.confirm(&Confirm, window, cx);
                     });
+                    cx.run_until_parked();
                 }
             }
             Operation::SwitchToProjectGroup { index } => {
