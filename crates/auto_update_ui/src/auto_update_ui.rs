@@ -13,7 +13,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
-use ui::{AnnouncementToast, ListBulletItem, prelude::*};
+use ui::{AnnouncementToast, ListBulletItem, ParallelAgentsIllustration, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{
     ToggleWorkspaceSidebar, Workspace,
@@ -258,6 +258,7 @@ impl Notification for AnnouncementToastNotification {}
 impl Render for AnnouncementToastNotification {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         AnnouncementToast::new()
+            .illustration(ParallelAgentsIllustration::new())
             .heading(self.content.heading.clone())
             .description(self.content.description.clone())
             .bullet_items(
