@@ -277,6 +277,7 @@ fn save_provider_to_settings(
                         OpenAiCompatibleSettingsContent {
                             api_url,
                             available_models: models,
+                            api_key_helper: None,
                         },
                     );
             });
