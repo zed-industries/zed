@@ -1291,12 +1291,12 @@ pub fn compare_rel_paths_mixed_with_sort_order(
                             if a_leaf_file && b_leaf_file {
                                 match order {
                                     SortOrderLexicographic::Unicode => {
-                                        b_ext.unwrap_or_default().cmp(a_ext.unwrap_or_default())
+                                        a_ext.unwrap_or_default().cmp(b_ext.unwrap_or_default())
                                     }
                                     _ => {
                                         let a_ext_str = a_ext.unwrap_or_default().to_lowercase();
                                         let b_ext_str = b_ext.unwrap_or_default().to_lowercase();
-                                        b_ext_str.cmp(&a_ext_str)
+                                        a_ext_str.cmp(&b_ext_str)
                                     }
                                 }
                             } else {
@@ -1923,9 +1923,9 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("readme.txt").unwrap(), true),
-                (RelPath::unix("ReadMe.rs").unwrap(), true),
                 (RelPath::unix("README.md").unwrap(), true),
+                (RelPath::unix("ReadMe.rs").unwrap(), true),
+                (RelPath::unix("readme.txt").unwrap(), true),
             ]
         );
     }
@@ -2077,9 +2077,9 @@ mod tests {
         assert_eq!(
             paths,
             vec![
-                (RelPath::unix("file.txt").unwrap(), true),
-                (RelPath::unix("file.rs").unwrap(), true),
                 (RelPath::unix("file.md").unwrap(), true),
+                (RelPath::unix("file.rs").unwrap(), true),
+                (RelPath::unix("file.txt").unwrap(), true),
             ]
         );
     }
