@@ -43,10 +43,10 @@ use ui::{
 use util::ResultExt as _;
 use util::path_list::{PathList, SerializedPathList};
 use workspace::{
-    AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MoveWorkspaceToNewWindow,
-    MultiWorkspace, MultiWorkspaceEvent, NextProject, NextThread, Open, PreviousProject,
-    PreviousThread, ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide,
-    ToggleWorkspaceSidebar, Workspace, WorkspaceId, sidebar_side_context_menu,
+    AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
+    NextProject, NextThread, Open, PreviousProject, PreviousThread, ShowFewerThreads,
+    ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, ToggleWorkspaceSidebar, Workspace,
+    WorkspaceId, sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -1598,42 +1598,15 @@ impl Sidebar {
                         },
                     );
 
-                    let group_count = multi_workspace
-                        .upgrade()
-                        .map_or(0, |mw| mw.read(cx).project_group_keys().count());
-                    let menu = if group_count > 1 {
-                        let project_group_key = project_group_key.clone();
-                        let multi_workspace = multi_workspace.clone();
-                        menu.entry(
-                            "Move to New Window",
-                            Some(Box::new(MoveWorkspaceToNewWindow)),
-                            move |window, cx| {
-                                multi_workspace
-                                    .update(cx, |multi_workspace, cx| {
-                                        multi_workspace.move_project_group_to_new_window(
-                                            &project_group_key,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            },
-                        )
-                    } else {
-                        menu
-                    };
-
                     let project_group_key = project_group_key.clone();
                     let multi_workspace = multi_workspace.clone();
                     menu.separator()
                         .entry("Remove Project", None, move |window, cx| {
                             multi_workspace
                                 .update(cx, |multi_workspace, cx| {
-                                    multi_workspace.remove_project_group(
-                                        &project_group_key,
-                                        window,
-                                        cx,
-                                    );
+                                    multi_workspace
+                                        .remove_project_group(&project_group_key, window, cx)
+                                        .detach_and_log_err(cx);
                                 })
                                 .ok();
                         })
@@ -3274,30 +3247,6 @@ impl Sidebar {
         self.create_new_thread(&workspace, window, cx);
     }
 
-    fn on_move_workspace_to_new_window(
-        &mut self,
-        _: &MoveWorkspaceToNewWindow,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
-            return;
-        };
-
-        let group_count = multi_workspace.read(cx).project_group_keys().count();
-        if group_count <= 1 {
-            return;
-        }
-
-        let Some(active_key) = self.active_project_group_key(cx) else {
-            return;
-        };
-
-        multi_workspace.update(cx, |multi_workspace, cx| {
-            multi_workspace.move_project_group_to_new_window(&active_key, window, cx);
-        });
-    }
-
     fn render_draft_thread(
         &self,
         ix: usize,
@@ -3845,10 +3794,6 @@ impl WorkspaceSidebar for Sidebar {
         self.cycle_thread_impl(forward, window, cx);
     }
 
-    fn move_workspace_to_new_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.on_move_workspace_to_new_window(&MoveWorkspaceToNewWindow, window, cx);
-    }
-
     fn serialized_state(&self, _cx: &App) -> Option<String> {
         let serialized = SerializedSidebar {
             width: Some(f32::from(self.width)),
@@ -3951,7 +3896,6 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::on_show_more_threads))
             .on_action(cx.listener(Self::on_show_fewer_threads))
             .on_action(cx.listener(Self::on_new_thread))
-            .on_action(cx.listener(Self::on_move_workspace_to_new_window))
             .on_action(cx.listener(|this, _: &OpenRecent, window, cx| {
                 this.recent_projects_popover_handle.toggle(window, cx);
             }))

@@ -522,18 +522,6 @@ async fn test_workspace_lifecycle(cx: &mut TestAppContext) {
         visible_entries_as_strings(&sidebar, cx),
         vec!["v [project-a]", "  Thread A1",]
     );
-
-    // Remove the second workspace
-    multi_workspace.update_in(cx, |mw, window, cx| {
-        let workspace = mw.workspaces().nth(1).cloned().unwrap();
-        mw.remove(&workspace, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
-        vec!["v [project-a]", "  Thread A1"]
-    );
 }
 
 #[gpui::test]
