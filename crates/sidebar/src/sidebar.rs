@@ -695,13 +695,10 @@ impl Sidebar {
         result
     }
 
-    /// Finds an open workspace whose project group key matches the given path list.
+    /// Finds the main worktree workspace for a project group.
     fn workspace_for_group(&self, path_list: &PathList, cx: &App) -> Option<Entity<Workspace>> {
         let mw = self.multi_workspace.upgrade()?;
-        let mw = mw.read(cx);
-        mw.workspaces()
-            .find(|ws| ws.read(cx).project_group_key(cx).path_list() == path_list)
-            .cloned()
+        mw.read(cx).workspace_for_paths(path_list, cx)
     }
 
     /// Opens a new workspace for a group that has no open workspaces.
@@ -1416,7 +1413,7 @@ impl Sidebar {
             .justify_between()
             .child(
                 h_flex()
-                    .when(!is_active, |this| this.cursor_pointer())
+                    .cursor_pointer()
                     .relative()
                     .min_w_0()
                     .w_full()
@@ -1521,10 +1518,10 @@ impl Sidebar {
                         },
                     ),
             )
-            .when(!is_active, |this| {
+            .map(|this| {
                 let path_list = path_list.clone();
                 this.cursor_pointer()
-                    .hover(|s| s.bg(hover_color))
+                    .when(!is_active, |this| this.hover(|s| s.bg(hover_color)))
                     .tooltip(Tooltip::text("Open Workspace"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         if let Some(workspace) = this.workspace_for_group(&path_list, cx) {
