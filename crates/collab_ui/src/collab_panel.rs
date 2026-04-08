@@ -3728,17 +3728,6 @@ impl Panel for CollabPanel {
             .then_some(ui::IconName::UserGroup)
     }
 
-    fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
-        let user_store = self.user_store.read(cx);
-        let count = user_store.incoming_contact_requests().len()
-            + self.channel_store.read(cx).channel_invitations().len();
-        if count == 0 {
-            None
-        } else {
-            Some(count.to_string())
-        }
-    }
-
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
         Some("Collab Panel")
     }
