@@ -7,8 +7,8 @@ use anyhow::Result;
 use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
-    HighlightKey, MultiBufferOffset, SizingBehavior,
+    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, HighlightKey,
+    MultiBufferOffset, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -528,7 +528,6 @@ struct ConsoleQueryBarCompletionProvider(WeakEntity<Console>);
 impl CompletionProvider for ConsoleQueryBarCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,

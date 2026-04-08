@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use client::{Client, UserStore};
+use client::{Client, NeedsLlmTokenRefresh, UserStore, global_llm_token};
+use cloud_api_client::LlmApiToken;
 use cloud_api_types::OrganizationId;
 use cloud_llm_client::{WebSearchBody, WebSearchResponse};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Task};
 use http_client::{HttpClient, Method};
-use language_model::{LlmApiToken, NeedsLlmTokenRefresh};
 use web_search::{WebSearchProvider, WebSearchProviderId};
 
 pub struct CloudWebSearchProvider {
@@ -30,7 +30,7 @@ pub struct State {
 
 impl State {
     pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
-        let llm_api_token = LlmApiToken::global(cx);
+        let llm_api_token = global_llm_token(cx);
 
         Self {
             client,
@@ -73,8 +73,8 @@ async fn perform_web_search(
 
     let http_client = &client.http_client();
     let mut retries_remaining = MAX_RETRIES;
-    let mut token = llm_api_token
-        .acquire(&client, organization_id.clone())
+    let mut token = client
+        .acquire_llm_token(&llm_api_token, organization_id.clone())
         .await?;
 
     loop {
@@ -100,8 +100,8 @@ async fn perform_web_search(
             response.body_mut().read_to_string(&mut body).await?;
             return Ok(serde_json::from_str(&body)?);
         } else if response.needs_llm_token_refresh() {
-            token = llm_api_token
-                .refresh(&client, organization_id.clone())
+            token = client
+                .refresh_llm_token(&llm_api_token, organization_id.clone())
                 .await?;
             retries_remaining -= 1;
         } else {

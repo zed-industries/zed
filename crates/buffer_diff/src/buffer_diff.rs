@@ -171,9 +171,9 @@ impl sum_tree::Item for PendingHunk {
 impl sum_tree::Summary for DiffHunkSummary {
     type Context<'a> = &'a text::BufferSnapshot;
 
-    fn zero(_cx: Self::Context<'_>) -> Self {
+    fn zero(buffer: &text::BufferSnapshot) -> Self {
         DiffHunkSummary {
-            buffer_range: Anchor::MIN..Anchor::MIN,
+            buffer_range: Anchor::min_min_range_for_buffer(buffer.remote_id()),
             diff_base_byte_range: 0..0,
             added_rows: 0,
             removed_rows: 0,
@@ -246,6 +246,10 @@ impl BufferDiffSnapshot {
     ) -> BufferDiffSnapshot {
         let buffer_diff = cx.new(|cx| BufferDiff::new_with_base_text(&diff_base, buffer, cx));
         buffer_diff.update(cx, |buffer_diff, cx| buffer_diff.snapshot(cx))
+    }
+
+    pub fn buffer_id(&self) -> BufferId {
+        self.inner.buffer_snapshot.remote_id()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -953,7 +957,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
             .flat_map(move |hunk| {
                 [
                     (
-                        &hunk.buffer_range.start,
+                        hunk.buffer_range.start,
                         (
                             hunk.buffer_range.start,
                             hunk.diff_base_byte_range.start,
@@ -961,7 +965,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
                         ),
                     ),
                     (
-                        &hunk.buffer_range.end,
+                        hunk.buffer_range.end,
                         (hunk.buffer_range.end, hunk.diff_base_byte_range.end, hunk),
                     ),
                 ]
@@ -1653,7 +1657,7 @@ impl BufferDiff {
     ) {
         let hunks = self
             .snapshot(cx)
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer)
+            .hunks_intersecting_range(Anchor::min_max_range_for_buffer(buffer.remote_id()), buffer)
             .collect::<Vec<_>>();
         let Some(secondary) = self.secondary_diff.clone() else {
             return;

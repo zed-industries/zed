@@ -337,15 +337,20 @@ pub fn read_serialized_multi_workspaces(
 
     window_groups
         .into_iter()
-        .map(|group| {
+        .filter_map(|group| {
             let window_id = group.first().and_then(|sw| sw.window_id);
             let state = window_id
                 .map(|wid| read_multi_workspace_state(wid, cx))
                 .unwrap_or_default();
-            model::SerializedMultiWorkspace {
-                workspaces: group,
+            let active_workspace = state
+                .active_workspace_id
+                .and_then(|id| group.iter().position(|ws| ws.workspace_id == id))
+                .or(Some(0))
+                .and_then(|index| group.into_iter().nth(index))?;
+            Some(model::SerializedMultiWorkspace {
+                active_workspace,
                 state,
-            }
+            })
         })
         .collect()
 }
@@ -971,6 +976,9 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN use_podman BOOLEAN;
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN remote_env TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1500,6 +1508,7 @@ impl WorkspaceDb {
         let mut name = None;
         let mut container_id = None;
         let mut use_podman = None;
+        let mut remote_env = None;
         match options {
             RemoteConnectionOptions::Ssh(options) => {
                 kind = RemoteConnectionKind::Ssh;
@@ -1518,6 +1527,7 @@ impl WorkspaceDb {
                 name = Some(options.name);
                 use_podman = Some(options.use_podman);
                 user = Some(options.remote_user);
+                remote_env = serde_json::to_string(&options.remote_env).ok();
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => {
@@ -1536,6 +1546,7 @@ impl WorkspaceDb {
             name,
             container_id,
             use_podman,
+            remote_env,
         )
     }
 
@@ -1549,6 +1560,7 @@ impl WorkspaceDb {
         name: Option<String>,
         container_id: Option<String>,
         use_podman: Option<bool>,
+        remote_env: Option<String>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1582,8 +1594,9 @@ impl WorkspaceDb {
                     distro,
                     name,
                     container_id,
-                    use_podman
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    use_podman,
+                    remote_env
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 RETURNING id
             ))?((
                 kind.serialize(),
@@ -1594,6 +1607,7 @@ impl WorkspaceDb {
                 name,
                 container_id,
                 use_podman,
+                remote_env,
             ))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
@@ -1695,13 +1709,13 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro, container_id, name, use_podman
+                id, kind, host, port, user, distro, container_id, name, use_podman, remote_env
             FROM
                 remote_connections
         ))?()?
         .into_iter()
         .filter_map(
-            |(id, kind, host, port, user, distro, container_id, name, use_podman)| {
+            |(id, kind, host, port, user, distro, container_id, name, use_podman, remote_env)| {
                 Some((
                     RemoteConnectionId(id),
                     Self::remote_connection_from_row(
@@ -1713,6 +1727,7 @@ impl WorkspaceDb {
                         container_id,
                         name,
                         use_podman,
+                        remote_env,
                     )?,
                 ))
             },
@@ -1724,9 +1739,9 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro, container_id, name, use_podman) =
+        let (kind, host, port, user, distro, container_id, name, use_podman, remote_env) =
             self.select_row_bound(sql!(
-                SELECT kind, host, port, user, distro, container_id, name, use_podman
+                SELECT kind, host, port, user, distro, container_id, name, use_podman, remote_env
                 FROM remote_connections
                 WHERE id = ?
             ))?(id.0)?
@@ -1740,6 +1755,7 @@ impl WorkspaceDb {
             container_id,
             name,
             use_podman,
+            remote_env,
         )
         .context("invalid remote_connection row")
     }
@@ -1753,6 +1769,7 @@ impl WorkspaceDb {
         container_id: Option<String>,
         name: Option<String>,
         use_podman: Option<bool>,
+        remote_env: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -1766,12 +1783,15 @@ impl WorkspaceDb {
                 ..Default::default()
             })),
             RemoteConnectionKind::Docker => {
+                let remote_env: BTreeMap<String, String> =
+                    serde_json::from_str(&remote_env?).ok()?;
                 Some(RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     container_id: container_id?,
                     name: name?,
                     remote_user: user?,
                     upload_binary_over_docker_exec: false,
                     use_podman: use_podman?,
+                    remote_env,
                 }))
             }
         }
@@ -2473,11 +2493,20 @@ pub fn delete_unloaded_items(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistence::model::{
-        SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace, SessionWorkspace,
+    use crate::{
+        multi_workspace::MultiWorkspace,
+        persistence::{
+            model::{
+                SerializedItem, SerializedPane, SerializedPaneGroup, SerializedWorkspace,
+                SessionWorkspace,
+            },
+            read_multi_workspace_state,
+        },
     };
-    use gpui;
+    use feature_flags::FeatureFlagAppExt;
+    use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
+    use project::{Project, ProjectGroupKey};
     use remote::SshConnectionOptions;
     use serde_json::json;
     use std::{thread, time::Duration};
@@ -2492,17 +2521,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_multi_workspace_serializes_on_add_and_remove(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use crate::persistence::read_multi_workspace_state;
-        use feature_flags::FeatureFlagAppExt;
-        use gpui::AppContext as _;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
             cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
         });
 
         let fs = fs::FakeFs::new(cx.executor());
@@ -2511,6 +2533,10 @@ mod tests {
 
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
 
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
@@ -2523,7 +2549,7 @@ mod tests {
         let workspace2 = multi_workspace.update_in(cx, |mw, window, cx| {
             let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
             workspace.update(cx, |ws, _cx| ws.set_random_database_id());
-            mw.activate(workspace.clone(), cx);
+            mw.activate(workspace.clone(), window, cx);
             workspace
         });
 
@@ -2539,9 +2565,11 @@ mod tests {
              the newly activated workspace's database id"
         );
 
-        // --- Remove the second workspace (index 1) ---
+        // --- Remove the first workspace (index 0, which is not the active one) ---
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.remove_workspace(1, window, cx);
+            let ws = mw.workspaces().nth(0).unwrap().clone();
+            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+                .detach_and_log_err(cx);
         });
 
         cx.run_until_parked();
@@ -3977,7 +4005,9 @@ mod tests {
             window_10,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(2)),
+                project_group_keys: vec![],
                 sidebar_open: true,
+                sidebar_state: None,
             },
         )
         .await;
@@ -3987,7 +4017,9 @@ mod tests {
             window_20,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(3)),
+                project_group_keys: vec![],
                 sidebar_open: false,
+                sidebar_state: None,
             },
         )
         .await;
@@ -4022,40 +4054,34 @@ mod tests {
 
         let results = cx.update(|cx| read_serialized_multi_workspaces(session_workspaces, cx));
 
-        // Should produce 3 groups: window 10, window 20, and the orphan.
+        // Should produce 3 results: window 10, window 20, and the orphan.
         assert_eq!(results.len(), 3);
 
-        // Window 10 group: 2 workspaces, active_workspace_id = 2, sidebar open.
+        // Window 10: active_workspace_id = 2 picks workspace 2 (paths /b), sidebar open.
         let group_10 = &results[0];
-        assert_eq!(group_10.workspaces.len(), 2);
+        assert_eq!(group_10.active_workspace.workspace_id, WorkspaceId(2));
         assert_eq!(group_10.state.active_workspace_id, Some(WorkspaceId(2)));
         assert_eq!(group_10.state.sidebar_open, true);
 
-        // Window 20 group: 1 workspace, active_workspace_id = 3, sidebar closed.
+        // Window 20: active_workspace_id = 3 picks workspace 3 (paths /c), sidebar closed.
         let group_20 = &results[1];
-        assert_eq!(group_20.workspaces.len(), 1);
+        assert_eq!(group_20.active_workspace.workspace_id, WorkspaceId(3));
         assert_eq!(group_20.state.active_workspace_id, Some(WorkspaceId(3)));
         assert_eq!(group_20.state.sidebar_open, false);
 
-        // Orphan group: no window_id, so state is default.
+        // Orphan: no active_workspace_id, falls back to first workspace (id 4).
         let group_none = &results[2];
-        assert_eq!(group_none.workspaces.len(), 1);
+        assert_eq!(group_none.active_workspace.workspace_id, WorkspaceId(4));
         assert_eq!(group_none.state.active_workspace_id, None);
         assert_eq!(group_none.state.sidebar_open, false);
     }
 
     #[gpui::test]
     async fn test_flush_serialization_completes_before_quit(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
             cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
         });
 
         let fs = fs::FakeFs::new(cx.executor());
@@ -4096,17 +4122,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_create_workspace_serialization(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use crate::persistence::read_multi_workspace_state;
-        use feature_flags::FeatureFlagAppExt;
-
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
             cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
         });
 
         let fs = fs::FakeFs::new(cx.executor());
@@ -4159,16 +4178,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_workspace_clears_session_binding(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use gpui::AppContext as _;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
             cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
         });
 
         let fs = fs::FakeFs::new(cx.executor());
@@ -4178,6 +4191,10 @@ mod tests {
 
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
+
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
 
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
@@ -4193,7 +4210,7 @@ mod tests {
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(workspace2_db_id)
             });
-            mw.activate(workspace.clone(), cx);
+            mw.add(workspace.clone(), window, cx);
         });
 
         // Save a full workspace row to the DB directly.
@@ -4221,7 +4238,9 @@ mod tests {
 
         // Remove workspace at index 1 (the second workspace).
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.remove_workspace(1, window, cx);
+            let ws = mw.workspaces().nth(1).unwrap().clone();
+            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+                .detach_and_log_err(cx);
         });
 
         cx.run_until_parked();
@@ -4250,16 +4269,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_remove_workspace_not_restored_as_zombie(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use gpui::AppContext as _;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
             cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
         });
 
         let fs = fs::FakeFs::new(cx.executor());
@@ -4280,6 +4293,10 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
+
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.workspace().update(cx, |ws, _cx| {
                 ws.set_database_id(ws1_id);
@@ -4291,7 +4308,7 @@ mod tests {
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(ws2_id)
             });
-            mw.activate(workspace.clone(), cx);
+            mw.add(workspace.clone(), window, cx);
         });
 
         let session_id = "test-zombie-session";
@@ -4331,7 +4348,9 @@ mod tests {
 
         // Remove workspace2 (index 1).
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.remove_workspace(1, window, cx);
+            let ws = mw.workspaces().nth(1).unwrap().clone();
+            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+                .detach_and_log_err(cx);
         });
 
         cx.run_until_parked();
@@ -4356,16 +4375,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_pending_removal_tasks_drained_on_flush(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use gpui::AppContext as _;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
             cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
         });
 
         let fs = fs::FakeFs::new(cx.executor());
@@ -4381,6 +4394,10 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project1.clone(), window, cx));
 
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
+
         multi_workspace.update_in(cx, |mw, _, cx| {
             mw.set_random_database_id(cx);
         });
@@ -4390,7 +4407,7 @@ mod tests {
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(workspace2_db_id)
             });
-            mw.activate(workspace.clone(), cx);
+            mw.add(workspace.clone(), window, cx);
         });
 
         // Save a full workspace row to the DB directly and let it settle.
@@ -4414,7 +4431,9 @@ mod tests {
 
         // Remove workspace2 — this pushes a task to pending_removal_tasks.
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.remove_workspace(1, window, cx);
+            let ws = mw.workspaces().nth(1).unwrap().clone();
+            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+                .detach_and_log_err(cx);
         });
 
         // Simulate the quit handler pattern: collect flush tasks + pending
@@ -4422,7 +4441,6 @@ mod tests {
         let all_tasks = multi_workspace.update_in(cx, |mw, window, cx| {
             let mut tasks: Vec<Task<()>> = mw
                 .workspaces()
-                .iter()
                 .map(|workspace| {
                     workspace.update(cx, |workspace, cx| {
                         workspace.flush_serialization(window, cx)
@@ -4461,15 +4479,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_create_workspace_bounds_observer_uses_fresh_id(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
             cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
         });
 
         let fs = fs::FakeFs::new(cx.executor());
@@ -4522,15 +4535,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_flush_serialization_writes_bounds(cx: &mut gpui::TestAppContext) {
-        use crate::multi_workspace::MultiWorkspace;
-        use feature_flags::FeatureFlagAppExt;
-        use project::Project;
-
         crate::tests::init_test(cx);
 
         cx.update(|cx| {
             cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
         });
 
         let fs = fs::FakeFs::new(cx.executor());
@@ -4680,5 +4688,330 @@ mod tests {
         // Third entry: non-git project, unchanged.
         assert_eq!(result[2].2.paths(), &[PathBuf::from("/plain-project")]);
         assert_eq!(result[2].0, WorkspaceId(4));
+    }
+
+    #[gpui::test]
+    async fn test_restore_window_with_linked_worktree_and_multiple_project_groups(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            cx.set_staff(true);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Main git repo at /repo
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {
+                    "HEAD": "ref: refs/heads/main",
+                    "worktrees": {
+                        "feature": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        // Linked worktree checkout pointing back to /repo
+        fs.insert_tree(
+            "/worktree-feature",
+            json!({
+                ".git": "gitdir: /repo/.git/worktrees/feature",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        // --- Phase 1: Set up the original multi-workspace window ---
+
+        let project_1 = Project::test(fs.clone(), ["/repo".as_ref()], cx).await;
+        let project_1_linked_worktree =
+            Project::test(fs.clone(), ["/worktree-feature".as_ref()], cx).await;
+
+        // Wait for git discovery to finish.
+        cx.run_until_parked();
+
+        // Create a second, unrelated project so we have two distinct project groups.
+        fs.insert_tree(
+            "/other-project",
+            json!({
+                ".git": { "HEAD": "ref: refs/heads/main" },
+                "readme.md": ""
+            }),
+        )
+        .await;
+        let project_2 = Project::test(fs.clone(), ["/other-project".as_ref()], cx).await;
+        cx.run_until_parked();
+
+        // Create the MultiWorkspace with project_2, then add the main repo
+        // and its linked worktree. The linked worktree is added last and
+        // becomes the active workspace.
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project_2.clone(), window, cx));
+
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_1.clone(), window, cx);
+        });
+
+        let workspace_worktree = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_1_linked_worktree.clone(), window, cx)
+        });
+
+        // Assign database IDs and set up session bindings so serialization
+        // writes real rows.
+        multi_workspace.update_in(cx, |mw, _, cx| {
+            for workspace in mw.workspaces() {
+                workspace.update(cx, |ws, _cx| {
+                    ws.set_random_database_id();
+                });
+            }
+        });
+
+        // Flush serialization for each individual workspace (writes to SQLite)
+        // and for the MultiWorkspace (writes to KVP).
+        let tasks = multi_workspace.update_in(cx, |mw, window, cx| {
+            let session_id = mw.workspace().read(cx).session_id();
+            let window_id_u64 = window.window_handle().window_id().as_u64();
+
+            let mut tasks: Vec<Task<()>> = Vec::new();
+            for workspace in mw.workspaces() {
+                tasks.push(workspace.update(cx, |ws, cx| ws.flush_serialization(window, cx)));
+                if let Some(db_id) = workspace.read(cx).database_id() {
+                    let db = WorkspaceDb::global(cx);
+                    let session_id = session_id.clone();
+                    tasks.push(cx.background_spawn(async move {
+                        db.set_session_binding(db_id, session_id, Some(window_id_u64))
+                            .await
+                            .log_err();
+                    }));
+                }
+            }
+            mw.serialize(cx);
+            tasks
+        });
+        cx.run_until_parked();
+        for task in tasks {
+            task.await;
+        }
+        cx.run_until_parked();
+
+        let active_db_id = workspace_worktree.read_with(cx, |ws, _| ws.database_id());
+        assert!(
+            active_db_id.is_some(),
+            "Active workspace should have a database ID"
+        );
+
+        // --- Phase 2: Read back and verify the serialized state ---
+
+        let session_id = multi_workspace
+            .read_with(cx, |mw, cx| mw.workspace().read(cx).session_id())
+            .unwrap();
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let session_workspaces = db
+            .last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .expect("should load session workspaces");
+        assert!(
+            !session_workspaces.is_empty(),
+            "Should have at least one session workspace"
+        );
+
+        let multi_workspaces =
+            cx.update(|_, cx| read_serialized_multi_workspaces(session_workspaces, cx));
+        assert_eq!(
+            multi_workspaces.len(),
+            1,
+            "All workspaces share one window, so there should be exactly one multi-workspace"
+        );
+
+        let serialized = &multi_workspaces[0];
+        assert_eq!(
+            serialized.active_workspace.workspace_id,
+            active_db_id.unwrap(),
+        );
+        assert_eq!(serialized.state.project_group_keys.len(), 2,);
+
+        // Verify the serialized project group keys round-trip back to the
+        // originals.
+        let restored_keys: Vec<ProjectGroupKey> = serialized
+            .state
+            .project_group_keys
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect();
+        let expected_keys = vec![
+            ProjectGroupKey::new(None, PathList::new(&["/repo"])),
+            ProjectGroupKey::new(None, PathList::new(&["/other-project"])),
+        ];
+        assert_eq!(
+            restored_keys, expected_keys,
+            "Deserialized project group keys should match the originals"
+        );
+
+        // --- Phase 3: Restore the window and verify the result ---
+
+        let app_state =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).app_state().clone());
+
+        let serialized_mw = multi_workspaces.into_iter().next().unwrap();
+        let restored_handle: gpui::WindowHandle<MultiWorkspace> = cx
+            .update(|_, cx| {
+                cx.spawn(async move |mut cx| {
+                    crate::restore_multiworkspace(serialized_mw, app_state, &mut cx).await
+                })
+            })
+            .await
+            .expect("restore_multiworkspace should succeed");
+
+        cx.run_until_parked();
+
+        // The restored window should have the same project group keys.
+        let restored_keys: Vec<ProjectGroupKey> = restored_handle
+            .read_with(cx, |mw: &MultiWorkspace, _cx| {
+                mw.project_group_keys().cloned().collect()
+            })
+            .unwrap();
+        assert_eq!(
+            restored_keys, expected_keys,
+            "Restored window should have the same project group keys as the original"
+        );
+
+        // The active workspace in the restored window should have the linked
+        // worktree paths.
+        let active_paths: Vec<PathBuf> = restored_handle
+            .read_with(cx, |mw: &MultiWorkspace, cx| {
+                mw.workspace()
+                    .read(cx)
+                    .root_paths(cx)
+                    .into_iter()
+                    .map(|p: Arc<Path>| p.to_path_buf())
+                    .collect()
+            })
+            .unwrap();
+        assert_eq!(
+            active_paths,
+            vec![PathBuf::from("/worktree-feature")],
+            "The restored active workspace should be the linked worktree project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_project_group_falls_back_to_neighbor(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+        cx.update(|cx| {
+            cx.set_staff(true);
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let dir_a = unique_test_dir(&fs, "group-a").await;
+        let dir_b = unique_test_dir(&fs, "group-b").await;
+        let dir_c = unique_test_dir(&fs, "group-c").await;
+
+        let project_a = Project::test(fs.clone(), [dir_a.as_path()], cx).await;
+        let project_b = Project::test(fs.clone(), [dir_b.as_path()], cx).await;
+        let project_c = Project::test(fs.clone(), [dir_c.as_path()], cx).await;
+
+        // Create a multi-workspace with project A, then add B and C.
+        // project_group_keys stores newest first: [C, B, A].
+        // Sidebar displays in the same order: C (top), B (middle), A (bottom).
+        let (multi_workspace, cx) = cx
+            .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        multi_workspace.update(cx, |mw, cx| mw.open_sidebar(cx));
+
+        let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_b.clone(), window, cx)
+        });
+        let _workspace_c = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_c.clone(), window, cx)
+        });
+        cx.run_until_parked();
+
+        let key_a = project_a.read_with(cx, |p, cx| p.project_group_key(cx));
+        let key_b = project_b.read_with(cx, |p, cx| p.project_group_key(cx));
+        let key_c = project_c.read_with(cx, |p, cx| p.project_group_key(cx));
+
+        // Activate workspace B so removing its group exercises the fallback.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate(workspace_b.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // --- Remove group B (the middle one). ---
+        // In the sidebar [C, B, A], "below" B is A.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove_project_group(&key_b, window, cx)
+                .detach_and_log_err(cx);
+        });
+        cx.run_until_parked();
+
+        let active_paths =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).root_paths(cx));
+        assert_eq!(
+            active_paths
+                .iter()
+                .map(|p| p.to_path_buf())
+                .collect::<Vec<_>>(),
+            vec![dir_a.clone()],
+            "After removing the middle group, should fall back to the group below (A)"
+        );
+
+        // After removing B, keys = [A, C], sidebar = [C, A].
+        // Activate workspace A (the bottom) so removing it tests the
+        // "fall back upward" path.
+        let workspace_a =
+            multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().cloned().unwrap());
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.activate(workspace_a.clone(), window, cx);
+        });
+        cx.run_until_parked();
+
+        // --- Remove group A (the bottom one in sidebar). ---
+        // Nothing below A, so should fall back upward to C.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove_project_group(&key_a, window, cx)
+                .detach_and_log_err(cx);
+        });
+        cx.run_until_parked();
+
+        let active_paths =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).root_paths(cx));
+        assert_eq!(
+            active_paths
+                .iter()
+                .map(|p| p.to_path_buf())
+                .collect::<Vec<_>>(),
+            vec![dir_c.clone()],
+            "After removing the bottom group, should fall back to the group above (C)"
+        );
+
+        // --- Remove group C (the only one remaining). ---
+        // Should create an empty workspace.
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.remove_project_group(&key_c, window, cx)
+                .detach_and_log_err(cx);
+        });
+        cx.run_until_parked();
+
+        let active_paths =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).root_paths(cx));
+        assert!(
+            active_paths.is_empty(),
+            "After removing the only remaining group, should have an empty workspace"
+        );
     }
 }

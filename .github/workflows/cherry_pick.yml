@@ -35,6 +35,9 @@ jobs:
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        permission-contents: write
+        permission-workflows: write
+        permission-pull-requests: write
     - name: cherry_pick::run_cherry_pick::cherry_pick
       run: ./script/cherry-pick "$BRANCH" "$COMMIT" "$CHANNEL"
       env:

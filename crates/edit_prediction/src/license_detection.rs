@@ -21,14 +21,23 @@ use worktree::ChildEntriesOptions;
 static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
     regex::bytes::RegexBuilder::new(
         "^ \
-        (?: license | licence)? \
-        (?: [\\-._]? \
+        (?: \
+            (?: license | licence) \
+            (?: [\\-._]? \
+                (?: apache (?: [\\-._] (?: 2.0 | 2 ))? | \
+                    0? bsd (?: [\\-._] [0123])? (?: [\\-._] clause)? | \
+                    isc | \
+                    mit | \
+                    upl | \
+                    zlib))? \
+          | \
             (?: apache (?: [\\-._] (?: 2.0 | 2 ))? | \
                 0? bsd (?: [\\-._] [0123])? (?: [\\-._] clause)? | \
                 isc | \
                 mit | \
                 upl | \
-                zlib))? \
+                zlib) \
+        ) \
         (?: [\\-._]? (?: license | licence))? \
         (?: \\.txt | \\.md)? \
         $",
@@ -308,7 +317,10 @@ impl LicenseDetectionWatcher {
                         }
                     }
                 }
-                worktree::Event::DeletedEntry(_) | worktree::Event::UpdatedGitRepositories(_) => {}
+                worktree::Event::DeletedEntry(_)
+                | worktree::Event::UpdatedGitRepositories(_)
+                | worktree::Event::UpdatedRootRepoCommonDir
+                | worktree::Event::Deleted => {}
             });
 
         let worktree_snapshot = worktree.read(cx).snapshot();
@@ -348,6 +360,9 @@ impl LicenseDetectionWatcher {
             return None;
         };
         let metadata = fs.metadata(&abs_path).await.log_err()??;
+        if metadata.is_dir {
+            return None;
+        }
         if metadata.len > LICENSE_PATTERNS.approximate_max_length as u64 {
             log::debug!(
                 "`{abs_path:?}` license file was skipped \
@@ -695,6 +710,7 @@ mod tests {
         assert!(LICENSE_FILE_NAME_REGEX.is_match(b"licence-upl.txt"));
 
         // Test non-matching patterns
+        assert!(!LICENSE_FILE_NAME_REGEX.is_match(b""));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"COPYING"));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE.html"));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"MYLICENSE"));

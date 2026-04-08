@@ -117,7 +117,7 @@ impl ActiveToolchain {
         cx: &mut Context<Self>,
     ) {
         let editor = editor.read(cx);
-        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+        if let Some(buffer) = editor.active_buffer(cx)
             && let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx))
         {
             let subscription = cx.subscribe_in(

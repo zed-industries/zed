@@ -7,7 +7,7 @@ use gpui::{
 use indoc::indoc;
 use language::EditPredictionsMode;
 use language::{Buffer, CodeLabel};
-use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot, ToPoint};
+use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use project::{Completion, CompletionResponse, CompletionSource};
 use std::{
     ops::Range,
@@ -1081,6 +1081,44 @@ async fn test_cancel_clears_stale_edit_prediction_in_menu(cx: &mut gpui::TestApp
     });
 }
 
+#[gpui::test]
+async fn test_discard_clears_delegate_completion(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    load_default_keymap(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+    cx.set_state("let x = ˇ;");
+
+    propose_edits(&provider, vec![(8..8, "42")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, _window, _cx| {
+        assert!(editor.active_edit_prediction.is_some());
+    });
+
+    // Dismiss the prediction — this must call discard() on the delegate,
+    // which should clear self.completion.
+    cx.simulate_keystroke("escape");
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, _window, _cx| {
+        assert!(editor.active_edit_prediction.is_none());
+    });
+
+    // update_visible_edit_prediction must NOT bring the prediction back,
+    // because discard() cleared self.completion in the delegate.
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+
+    cx.update_editor(|editor, _window, _cx| {
+        assert!(
+            editor.active_edit_prediction.is_none(),
+            "prediction must not resurface after discard()"
+        );
+    });
+}
+
 fn accept_completion(cx: &mut EditorTestContext) {
     cx.update_editor(|editor, window, cx| {
         editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
@@ -1242,15 +1280,14 @@ struct FakeCompletionMenuProvider;
 impl CompletionProvider for FakeCompletionMenuProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
-        _buffer: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         _buffer_position: text::Anchor,
         _trigger: CompletionContext,
         _window: &mut Window,
-        _cx: &mut Context<crate::Editor>,
+        cx: &mut Context<crate::Editor>,
     ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
         let completion = Completion {
-            replace_range: text::Anchor::MIN..text::Anchor::MAX,
+            replace_range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
             new_text: "fake_completion".to_string(),
             label: CodeLabel::plain("fake_completion".to_string(), None),
             documentation: None,
@@ -1351,6 +1388,7 @@ impl EditPredictionDelegate for FakeEditPredictionDelegate {
         _reason: edit_prediction_types::EditPredictionDiscardReason,
         _cx: &mut gpui::Context<Self>,
     ) {
+        self.completion.take();
     }
 
     fn suggest<'a>(
@@ -1427,6 +1465,7 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
         _reason: edit_prediction_types::EditPredictionDiscardReason,
         _cx: &mut gpui::Context<Self>,
     ) {
+        self.completion.take();
     }
 
     fn suggest<'a>(

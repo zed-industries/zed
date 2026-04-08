@@ -885,12 +885,16 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None, None));
 
+        let is_head_branch = entry.as_branch().is_some_and(|branch| branch.is_head);
+
         let entry_icon = match entry {
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. } => {
                 IconName::Plus
             }
             Entry::Branch { branch, .. } => {
-                if branch.is_remote() {
+                if is_head_branch {
+                    IconName::Check
+                } else if branch.is_remote() {
                     IconName::Screen
                 } else {
                     IconName::GitBranchAlt
@@ -975,7 +979,11 @@ impl PickerDelegate for BranchListDelegate {
                         .flex_grow()
                         .child(
                             Icon::new(entry_icon)
-                                .color(Color::Muted)
+                                .color(if is_head_branch {
+                                    Color::Accent
+                                } else {
+                                    Color::Muted
+                                })
                                 .size(IconSize::Small),
                         )
                         .child(
@@ -1087,13 +1095,8 @@ impl PickerDelegate for BranchListDelegate {
                         ),
                 )
                 .when(!is_new_items && !is_head_branch, |this| {
-                    this.map(|this| {
-                        if self.selected_index() == ix {
-                            this.end_slot(deleted_branch_icon(ix))
-                        } else {
-                            this.end_hover_slot(deleted_branch_icon(ix))
-                        }
-                    })
+                    this.end_slot(deleted_branch_icon(ix))
+                        .show_end_slot_on_hover()
                 })
                 .when_some(
                     if is_new_items {
@@ -1102,13 +1105,8 @@ impl PickerDelegate for BranchListDelegate {
                         None
                     },
                     |this, create_from_default_button| {
-                        this.map(|this| {
-                            if self.selected_index() == ix {
-                                this.end_slot(create_from_default_button)
-                            } else {
-                                this.end_hover_slot(create_from_default_button)
-                            }
-                        })
+                        this.end_slot(create_from_default_button)
+                            .show_end_slot_on_hover()
                     },
                 ),
         )
@@ -1916,7 +1914,7 @@ mod tests {
         assert_eq!(
             remotes,
             vec![Remote {
-                name: SharedString::from("my_new_remote".to_string())
+                name: SharedString::from("my_new_remote")
             }]
         );
     }

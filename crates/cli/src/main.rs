@@ -118,6 +118,12 @@ struct Args {
     /// Will attempt to give the correct command to run
     #[arg(long)]
     system_specs: bool,
+    /// Open the project in a dev container.
+    ///
+    /// Automatically triggers "Reopen in Dev Container" if a `.devcontainer/`
+    /// configuration is found in the project directory.
+    #[arg(long)]
+    dev_container: bool,
     /// Pairs of file paths to diff. Can be specified multiple times.
     /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
     #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
@@ -670,6 +676,7 @@ fn main() -> Result<()> {
                     reuse: args.reuse,
                     env,
                     user_data_dir: user_data_dir_for_thread,
+                    dev_container: args.dev_container,
                 })?;
 
                 while let Ok(response) = rx.recv() {

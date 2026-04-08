@@ -9,7 +9,6 @@ use language::Buffer;
 use language::Language;
 use lsp::LanguageServerId;
 use lsp::LanguageServerName;
-use multi_buffer::Anchor;
 use project::LanguageServerToQuery;
 use project::LocationLink;
 use project::Project;
@@ -27,7 +26,12 @@ pub(crate) fn find_specific_language_server_in_selection<F>(
     cx: &mut App,
     filter_language: F,
     language_server_name: LanguageServerName,
-) -> Option<(Anchor, Arc<Language>, LanguageServerId, Entity<Buffer>)>
+) -> Option<(
+    text::Anchor,
+    Arc<Language>,
+    LanguageServerId,
+    Entity<Buffer>,
+)>
 where
     F: Fn(&Language) -> bool,
 {
@@ -40,19 +44,15 @@ where
         .iter()
         .find_map(|selection| {
             let multi_buffer = multi_buffer.read(cx);
-            let (position, buffer) = multi_buffer
-                .buffer_for_anchor(selection.head(), cx)
-                .map(|buffer| (selection.head(), buffer))
-                .or_else(|| {
-                    multi_buffer
-                        .buffer_for_anchor(selection.tail(), cx)
-                        .map(|buffer| (selection.tail(), buffer))
-                })?;
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+            let (position, buffer) = multi_buffer_snapshot
+                .anchor_to_buffer_anchor(selection.head())
+                .and_then(|(anchor, _)| Some((anchor, multi_buffer.buffer(anchor.buffer_id)?)))?;
             if !seen_buffer_ids.insert(buffer.read(cx).remote_id()) {
                 return None;
             }
 
-            let language = buffer.read(cx).language_at(position.text_anchor)?;
+            let language = buffer.read(cx).language_at(position)?;
             if filter_language(&language) {
                 let server_id = buffer.update(cx, |buffer, cx| {
                     project
@@ -108,7 +108,7 @@ pub fn lsp_tasks(
             let buffers = buffer_ids
                 .iter()
                 .filter(|&&buffer_id| match for_position {
-                    Some(for_position) => for_position.buffer_id == Some(buffer_id),
+                    Some(for_position) => for_position.buffer_id == buffer_id,
                     None => true,
                 })
                 .filter_map(|&buffer_id| project.read(cx).buffer_for_id(buffer_id, cx))
@@ -194,7 +194,7 @@ mod tests {
     use language::{FakeLspAdapter, Language};
     use languages::rust_lang;
     use lsp::{LanguageServerId, LanguageServerName};
-    use multi_buffer::{Anchor, MultiBuffer};
+    use multi_buffer::MultiBuffer;
     use project::{FakeFs, Project};
     use util::path;
 
@@ -236,7 +236,7 @@ mod tests {
         let filter = |language: &Language| language.name().as_ref() == "Rust";
 
         let assert_result = |result: Option<(
-            Anchor,
+            text::Anchor,
             Arc<Language>,
             LanguageServerId,
             Entity<language::Buffer>,

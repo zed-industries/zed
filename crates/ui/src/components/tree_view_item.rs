@@ -139,12 +139,17 @@ impl RenderOnce for TreeViewItem {
         let focused_border = cx.theme().colors().border_focused;
 
         let item_size = rems_from_px(28.);
-        let indentation_line = h_flex().size(item_size).flex_none().justify_center().child(
-            div()
-                .w_px()
-                .h_full()
-                .bg(cx.theme().colors().border.opacity(0.5)),
-        );
+        let indentation_line = h_flex()
+            .h(item_size)
+            .w(px(22.))
+            .flex_none()
+            .justify_center()
+            .child(
+                div()
+                    .w_px()
+                    .h_full()
+                    .bg(cx.theme().colors().border.opacity(0.5)),
+            );
 
         h_flex()
             .id(self.id)
@@ -156,6 +161,9 @@ impl RenderOnce for TreeViewItem {
                     .cursor_pointer()
                     .size_full()
                     .h(item_size)
+                    .pl_0p5()
+                    .pr_1()
+                    .gap_2()
                     .rounded_sm()
                     .border_1()
                     .border_color(transparent_border)
@@ -168,30 +176,24 @@ impl RenderOnce for TreeViewItem {
                         let label = self.label;
 
                         if self.root_item {
-                            this.px_1()
-                                .gap_2p5()
-                                .child(
-                                    Disclosure::new("toggle", self.expanded)
-                                        .when_some(
-                                            self.on_toggle.clone(),
-                                            |disclosure, on_toggle| {
-                                                disclosure.on_toggle_expanded(on_toggle)
-                                            },
-                                        )
-                                        .opened_icon(IconName::ChevronDown)
-                                        .closed_icon(IconName::ChevronRight),
-                                )
-                                .child(
-                                    Label::new(label)
-                                        .when(!self.selected, |this| this.color(Color::Muted)),
-                                )
+                            this.child(
+                                Disclosure::new("toggle", self.expanded)
+                                    .when_some(self.on_toggle.clone(), |disclosure, on_toggle| {
+                                        disclosure.on_toggle_expanded(on_toggle)
+                                    })
+                                    .opened_icon(IconName::ChevronDown)
+                                    .closed_icon(IconName::ChevronRight),
+                            )
+                            .child(
+                                Label::new(label)
+                                    .when(!self.selected, |this| this.color(Color::Muted)),
+                            )
                         } else {
                             this.child(indentation_line).child(
                                 h_flex()
                                     .id("nested_inner_tree_view_item")
                                     .w_full()
                                     .flex_grow()
-                                    .px_1()
                                     .child(
                                         Label::new(label)
                                             .when(!self.selected, |this| this.color(Color::Muted)),

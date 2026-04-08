@@ -1,4 +1,5 @@
 use std::cmp::min;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,13 +14,18 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use markdown::{
-    CodeBlockRenderer, Markdown, MarkdownElement, MarkdownFont, MarkdownOptions, MarkdownStyle,
+    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
+    MarkdownOptions, MarkdownStyle,
 };
+use project::search::SearchQuery;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
 use util::normalize_path;
-use workspace::item::{Item, ItemHandle};
+use workspace::item::{Item, ItemBufferKind, ItemHandle};
+use workspace::searchable::{
+    Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
+};
 use workspace::{OpenOptions, OpenVisible, Pane, Workspace};
 
 use crate::{
@@ -294,7 +300,7 @@ impl MarkdownPreviewView {
                     EditorEvent::Edited { .. }
                     | EditorEvent::BufferEdited { .. }
                     | EditorEvent::DirtyChanged
-                    | EditorEvent::ExcerptsEdited { .. } => {
+                    | EditorEvent::BuffersEdited { .. } => {
                         this.update_markdown_from_active_editor(true, false, window, cx);
                     }
                     EditorEvent::SelectionsChanged { .. } => {
@@ -381,6 +387,7 @@ impl MarkdownPreviewView {
                         markdown.reset(contents, cx);
                     });
                     view.sync_preview_to_source_index(selection_start, should_reveal_selection, cx);
+                    cx.emit(SearchEvent::MatchesInvalidated);
                 }
                 view.pending_update_task = None;
                 cx.notify();
@@ -580,20 +587,33 @@ impl MarkdownPreviewView {
             .as_ref()
             .map(|state| state.editor.clone());
 
+        let mut workspace_directory = None;
+        if let Some(workspace_entity) = self.workspace.upgrade() {
+            let project = workspace_entity.read(cx).project();
+            if let Some(tree) = project.read(cx).worktrees(cx).next() {
+                workspace_directory = Some(tree.read(cx).abs_path().to_path_buf());
+            }
+        }
+
         let mut markdown_element = MarkdownElement::new(
             self.markdown.clone(),
             MarkdownStyle::themed(MarkdownFont::Editor, window, cx),
         )
         .code_block_renderer(CodeBlockRenderer::Default {
-            copy_button: false,
-            copy_button_on_hover: true,
+            copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
             border: false,
         })
         .scroll_handle(self.scroll_handle.clone())
         .show_root_block_markers()
         .image_resolver({
             let base_directory = self.base_directory.clone();
-            move |dest_url| resolve_preview_image(dest_url, base_directory.as_deref())
+            move |dest_url| {
+                resolve_preview_image(
+                    dest_url,
+                    base_directory.as_deref(),
+                    workspace_directory.as_deref(),
+                )
+            }
         })
         .on_url_click(move |url, window, cx| {
             open_preview_url(url, base_directory.clone(), &workspace, window, cx);
@@ -687,7 +707,11 @@ fn resolve_preview_path(url: &str, base_directory: Option<&Path>) -> Option<Path
     }
 }
 
-fn resolve_preview_image(dest_url: &str, base_directory: Option<&Path>) -> Option<ImageSource> {
+fn resolve_preview_image(
+    dest_url: &str,
+    base_directory: Option<&Path>,
+    workspace_directory: Option<&Path>,
+) -> Option<ImageSource> {
     if dest_url.starts_with("data:") {
         return None;
     }
@@ -701,6 +725,19 @@ fn resolve_preview_image(dest_url: &str, base_directory: Option<&Path>) -> Optio
     let decoded = urlencoding::decode(dest_url)
         .map(|decoded| decoded.into_owned())
         .unwrap_or_else(|_| dest_url.to_string());
+
+    let decoded_path = Path::new(&decoded);
+
+    if let Ok(relative_path) = decoded_path.strip_prefix("/") {
+        if let Some(root) = workspace_directory {
+            let absolute_path = root.join(relative_path);
+            if absolute_path.exists() {
+                return Some(ImageSource::Resource(Resource::Path(Arc::from(
+                    absolute_path.as_path(),
+                ))));
+            }
+        }
+    }
 
     let path = if Path::new(&decoded).is_absolute() {
         PathBuf::from(decoded)
@@ -720,6 +757,7 @@ impl Focusable for MarkdownPreviewView {
 }
 
 impl EventEmitter<()> for MarkdownPreviewView {}
+impl EventEmitter<SearchEvent> for MarkdownPreviewView {}
 
 impl Item for MarkdownPreviewView {
     type Event = ();
@@ -744,6 +782,18 @@ impl Item for MarkdownPreviewView {
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
+
+    fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+        ItemBufferKind::Singleton
+    }
+
+    fn as_searchable(
+        &self,
+        handle: &Entity<Self>,
+        _: &App,
+    ) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(handle.clone()))
+    }
 }
 
 impl Render for MarkdownPreviewView {
@@ -776,8 +826,145 @@ impl Render for MarkdownPreviewView {
     }
 }
 
+impl SearchableItem for MarkdownPreviewView {
+    type Match = Range<usize>;
+
+    fn supported_options(&self) -> SearchOptions {
+        SearchOptions {
+            case: true,
+            word: true,
+            regex: true,
+            replacement: false,
+            selection: false,
+            select_all: false,
+            find_in_results: false,
+        }
+    }
+
+    fn get_matches(&self, _window: &mut Window, cx: &mut App) -> (Vec<Self::Match>, SearchToken) {
+        (
+            self.markdown.read(cx).search_highlights().to_vec(),
+            SearchToken::default(),
+        )
+    }
+
+    fn clear_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let had_highlights = !self.markdown.read(cx).search_highlights().is_empty();
+        self.markdown.update(cx, |markdown, cx| {
+            markdown.clear_search_highlights(cx);
+        });
+        if had_highlights {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
+    }
+
+    fn update_matches(
+        &mut self,
+        matches: &[Self::Match],
+        active_match_index: Option<usize>,
+        _token: SearchToken,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let old_highlights = self.markdown.read(cx).search_highlights();
+        let changed = old_highlights != matches;
+        self.markdown.update(cx, |markdown, cx| {
+            markdown.set_search_highlights(matches.to_vec(), active_match_index, cx);
+        });
+        if changed {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
+    }
+
+    fn query_suggestion(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> String {
+        self.markdown.read(cx).selected_text().unwrap_or_default()
+    }
+
+    fn activate_match(
+        &mut self,
+        index: usize,
+        matches: &[Self::Match],
+        _token: SearchToken,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(match_range) = matches.get(index) {
+            let start = match_range.start;
+            self.markdown.update(cx, |markdown, cx| {
+                markdown.set_active_search_highlight(Some(index), cx);
+                markdown.request_autoscroll_to_source_index(start, cx);
+            });
+            cx.emit(SearchEvent::ActiveMatchChanged);
+        }
+    }
+
+    fn select_matches(
+        &mut self,
+        _matches: &[Self::Match],
+        _token: SearchToken,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+
+    fn replace(
+        &mut self,
+        _: &Self::Match,
+        _: &SearchQuery,
+        _token: SearchToken,
+        _window: &mut Window,
+        _: &mut Context<Self>,
+    ) {
+    }
+
+    fn find_matches(
+        &mut self,
+        query: Arc<SearchQuery>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Vec<Self::Match>> {
+        let source = self.markdown.read(cx).source().to_string();
+        cx.background_spawn(async move { query.search_str(&source) })
+    }
+
+    fn active_match_index(
+        &mut self,
+        direction: Direction,
+        matches: &[Self::Match],
+        _token: SearchToken,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        if matches.is_empty() {
+            return None;
+        }
+
+        let markdown = self.markdown.read(cx);
+        let current_source_index = markdown
+            .active_search_highlight()
+            .and_then(|i| markdown.search_highlights().get(i))
+            .map(|m| m.start)
+            .or(self.active_source_index)
+            .unwrap_or(0);
+
+        match direction {
+            Direction::Next => matches
+                .iter()
+                .position(|m| m.start >= current_source_index)
+                .or(Some(0)),
+            Direction::Prev => matches
+                .iter()
+                .rposition(|m| m.start <= current_source_index)
+                .or(Some(matches.len().saturating_sub(1))),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::markdown_preview_view::ImageSource;
+    use crate::markdown_preview_view::Resource;
+    use crate::markdown_preview_view::resolve_preview_image;
     use anyhow::Result;
     use std::fs;
     use tempfile::TempDir;
@@ -815,6 +1002,54 @@ mod tests {
             resolve_preview_path("release%20notes.md", Some(base_directory)),
             Some(file)
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_workspace_absolute_preview_images() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let workspace_directory = temp_dir.path();
+
+        let base_directory = workspace_directory.join("docs");
+        fs::create_dir_all(&base_directory)?;
+
+        let image_file = workspace_directory.join("test_image.png");
+        fs::write(&image_file, "mock data")?;
+
+        let resolved_success = resolve_preview_image(
+            "/test_image.png",
+            Some(&base_directory),
+            Some(workspace_directory),
+        );
+
+        match resolved_success {
+            Some(ImageSource::Resource(Resource::Path(p))) => {
+                assert_eq!(p.as_ref(), image_file.as_path());
+            }
+            _ => panic!("Expected successful resolution to be a Resource::Path"),
+        }
+
+        let resolved_missing = resolve_preview_image(
+            "/missing_image.png",
+            Some(&base_directory),
+            Some(workspace_directory),
+        );
+
+        let expected_missing_path = if std::path::Path::new("/missing_image.png").is_absolute() {
+            std::path::PathBuf::from("/missing_image.png")
+        } else {
+            // join is to retain windows path prefix C:/
+            #[expect(clippy::join_absolute_paths)]
+            base_directory.join("/missing_image.png")
+        };
+
+        match resolved_missing {
+            Some(ImageSource::Resource(Resource::Path(p))) => {
+                assert_eq!(p.as_ref(), expected_missing_path.as_path());
+            }
+            _ => panic!("Expected missing file to fallback to a Resource::Path"),
+        }
 
         Ok(())
     }

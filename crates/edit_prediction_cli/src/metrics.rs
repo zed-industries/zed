@@ -1297,3 +1297,5 @@ index abc123..def456 100644
         );
     }
 }
+
+pub use crate::kept_rate::compute_kept_rate;

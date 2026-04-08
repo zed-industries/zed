@@ -808,6 +808,11 @@ impl WorktreeStore {
                 worktree::Event::DeletedEntry(id) => {
                     cx.emit(WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, *id))
                 }
+                worktree::Event::Deleted => {
+                    // The worktree root itself has been deleted (for single-file worktrees)
+                    // The worktree will be removed via the observe_release callback
+                }
+                worktree::Event::UpdatedRootRepoCommonDir => {}
             }
         })
         .detach();
@@ -843,6 +848,21 @@ impl WorktreeStore {
         });
         self.update_initial_scan_state(cx);
         self.send_project_updates(cx);
+    }
+
+    pub fn worktree_for_main_worktree_path(
+        &self,
+        path: &Path,
+        cx: &App,
+    ) -> Option<Entity<Worktree>> {
+        self.visible_worktrees(cx).find(|worktree| {
+            let worktree = worktree.read(cx);
+            if let Some(common_dir) = worktree.root_repo_common_dir() {
+                common_dir.parent() == Some(path)
+            } else {
+                worktree.abs_path().as_ref() == path
+            }
+        })
     }
 
     pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {

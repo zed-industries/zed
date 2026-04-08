@@ -86,6 +86,7 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
     let mut language_paths = HashSet::default();
     let mut html_blocks = BTreeMap::default();
     let mut within_link = false;
+    let mut within_code_block = false;
     let mut within_metadata = false;
     let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
         .into_offset_iter()
@@ -147,6 +148,7 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
                         continue;
                     }
                     pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Indented) => {
+                        within_code_block = true;
                         MarkdownTag::CodeBlock {
                             kind: CodeBlockKind::Indented,
                             metadata: CodeBlockMetadata {
@@ -158,6 +160,7 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
                     pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
                         ref info,
                     )) => {
+                        within_code_block = true;
                         let content_range = extract_code_block_content_range(&text[range.clone()]);
                         let content_range =
                             content_range.start + range.start..content_range.end + range.start;
@@ -255,6 +258,8 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
             pulldown_cmark::Event::End(tag) => {
                 if let pulldown_cmark::TagEnd::Link = tag {
                     within_link = false;
+                } else if let pulldown_cmark::TagEnd::CodeBlock = tag {
+                    within_code_block = false;
                 }
                 state.push_event(range, MarkdownEvent::End(tag));
             }
@@ -270,6 +275,13 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
                         (range, MarkdownEvent::SubstitutedText(str.to_owned()))
                     }
                 }
+
+                if within_code_block {
+                    let (range, event) = event_for(text, range, &parsed);
+                    state.push_event(range, event);
+                    continue;
+                }
+
                 #[derive(Debug)]
                 struct TextRange<'a> {
                     source_range: Range<usize>,
@@ -316,7 +328,7 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
 
                 let mut ranges = ranges.into_iter().peekable();
 
-                if !within_link {
+                if !within_link && !within_code_block {
                     let mut finder = LinkFinder::new();
                     finder.kinds(&[linkify::LinkKind::Url]);
 
@@ -867,6 +879,58 @@ mod tests {
                 root_block_starts: vec![4],
                 ..Default::default()
             }
+        );
+    }
+
+    fn assert_code_block_does_not_emit_links(markdown: &str) {
+        let parsed = parse_markdown_with_options(markdown, false);
+        let mut code_block_depth = 0;
+        let mut code_block_count = 0;
+        let mut saw_text_inside_code_block = false;
+
+        for (_, event) in &parsed.events {
+            match event {
+                Start(CodeBlock { .. }) => {
+                    code_block_depth += 1;
+                    code_block_count += 1;
+                }
+                End(MarkdownTagEnd::CodeBlock) => {
+                    assert!(
+                        code_block_depth > 0,
+                        "encountered a code block end without a matching start"
+                    );
+                    code_block_depth -= 1;
+                }
+                Start(Link { .. }) | End(MarkdownTagEnd::Link) => {
+                    assert_eq!(
+                        code_block_depth, 0,
+                        "code blocks should not emit link events"
+                    );
+                }
+                Text | SubstitutedText(_) if code_block_depth > 0 => {
+                    saw_text_inside_code_block = true;
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(code_block_count, 1, "expected exactly one code block");
+        assert_eq!(code_block_depth, 0, "unterminated code block");
+        assert!(
+            saw_text_inside_code_block,
+            "expected text inside the code block"
+        );
+    }
+
+    #[test]
+    fn test_code_blocks_do_not_autolink_urls() {
+        assert_code_block_does_not_emit_links("```txt\nhttps://example.com\n```");
+        assert_code_block_does_not_emit_links("    https://example.com");
+        assert_code_block_does_not_emit_links(
+            "```txt\r\nhttps:/\\/example.com\r\nhttps://example&#46;com\r\n```",
+        );
+        assert_code_block_does_not_emit_links(
+            "    https:/\\/example.com\r\n    https://example&#46;com",
         );
     }
 

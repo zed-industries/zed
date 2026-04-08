@@ -17,7 +17,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
 use multi_buffer::{MultiBufferOffset, ToOffset, ToPoint};
 use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
@@ -275,12 +275,12 @@ fn show_hover(
 
     let snapshot = editor.snapshot(window, cx);
 
-    let (buffer, buffer_position) = editor
+    let (buffer_position, _) = editor
         .buffer
         .read(cx)
-        .text_anchor_for_position(anchor, cx)?;
-
-    let (excerpt_id, _, _) = editor.buffer().read(cx).excerpt_containing(anchor, cx)?;
+        .snapshot(cx)
+        .anchor_to_buffer_anchor(anchor)?;
+    let buffer = editor.buffer.read(cx).buffer(buffer_position.buffer_id)?;
 
     let language_registry = editor
         .project()
@@ -515,7 +515,7 @@ fn show_hover(
                     .and_then(|range| {
                         let range = snapshot
                             .buffer_snapshot()
-                            .anchor_range_in_excerpt(excerpt_id, range)?;
+                            .buffer_anchor_range_to_anchor_range(range)?;
                         Some(range)
                     })
                     .or_else(|| {
@@ -1040,8 +1040,7 @@ impl InfoPopover {
                         .child(
                             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button: false,
-                                    copy_button_on_hover: false,
+                                    copy_button_visibility: CopyButtonVisibility::Hidden,
                                     border: false,
                                 })
                                 .on_url_click(open_markdown_url)
@@ -1155,8 +1154,7 @@ impl DiagnosticPopover {
                                     diagnostics_markdown_style(window, cx),
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                    copy_button: false,
-                                    copy_button_on_hover: false,
+                                    copy_button_visibility: CopyButtonVisibility::Hidden,
                                     border: false,
                                 })
                                 .on_url_click(
