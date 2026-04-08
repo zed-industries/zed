@@ -1,4 +1,5 @@
-use super::*;
+use super::table_row::TableRow;
+use crate::{RedistributableColumnsState, TableResizeBehavior};
 
 fn is_almost_eq(a: &[f32], b: &[f32]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)

@@ -52,7 +52,7 @@ use settings::{
     ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent, SettingsContent,
     SettingsStore,
 };
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
     iter,
@@ -19112,7 +19112,7 @@ async fn test_copy_highlight_json(cx: &mut TestAppContext) {
             let x = 1;ˇ
         }
     "});
-    setup_rust_syntax_highlighting(&mut cx);
+    setup_syntax_highlighting(rust_lang(), &mut cx);
 
     cx.update_editor(|editor, window, cx| {
         editor.copy_highlight_json(&CopyHighlightJson, window, cx);
@@ -19160,7 +19160,7 @@ async fn test_copy_highlight_json_selected_range(cx: &mut TestAppContext) {
             let yˇ» = 2;
         }
     "});
-    setup_rust_syntax_highlighting(&mut cx);
+    setup_syntax_highlighting(rust_lang(), &mut cx);
 
     cx.update_editor(|editor, window, cx| {
         editor.copy_highlight_json(&CopyHighlightJson, window, cx);
@@ -19203,7 +19203,7 @@ async fn test_copy_highlight_json_selected_line_range(cx: &mut TestAppContext) {
             let yˇ» = 2;
         }
     "});
-    setup_rust_syntax_highlighting(&mut cx);
+    setup_syntax_highlighting(rust_lang(), &mut cx);
 
     cx.update_editor(|editor, window, cx| {
         editor.selections.set_line_mode(true);
@@ -19253,7 +19253,7 @@ async fn test_copy_highlight_json_single_line(cx: &mut TestAppContext) {
             let y = 2;
         }
     "});
-    setup_rust_syntax_highlighting(&mut cx);
+    setup_syntax_highlighting(rust_lang(), &mut cx);
 
     cx.update_editor(|editor, window, cx| {
         editor.selections.set_line_mode(true);
@@ -19278,34 +19278,6 @@ async fn test_copy_highlight_json_single_line(cx: &mut TestAppContext) {
             ]
         ])
     );
-}
-
-fn setup_rust_syntax_highlighting(cx: &mut EditorTestContext) {
-    let syntax = SyntaxTheme::new_test(vec![
-        ("keyword", Hsla::red()),
-        ("function", Hsla::blue()),
-        ("variable", Hsla::green()),
-        ("number", Hsla::default()),
-        ("operator", Hsla::default()),
-        ("punctuation.bracket", Hsla::default()),
-        ("punctuation.delimiter", Hsla::default()),
-    ]);
-
-    let language = rust_lang();
-    language.set_theme(&syntax);
-
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-    cx.executor().run_until_parked();
-    cx.update_editor(|editor, window, cx| {
-        editor.set_style(
-            EditorStyle {
-                syntax: Arc::new(syntax),
-                ..Default::default()
-            },
-            window,
-            cx,
-        );
-    });
 }
 
 #[gpui::test]
@@ -35728,4 +35700,76 @@ async fn test_align_selections_multicolumn(cx: &mut TestAppContext) {
     cx.set_state(before);
     cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
     cx.assert_editor_state(after);
+}
+
+#[gpui::test]
+async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(indoc! {"fn main(self, variable: TType) {ˇ}"});
+
+    let variable_color = Hsla::green();
+    let function_color = Hsla::blue();
+
+    let test_cases = [
+        ("@variable", Some(variable_color)),
+        ("@type", None),
+        ("@type @variable", Some(variable_color)),
+        ("@variable @type", Some(variable_color)),
+        ("@variable @function", Some(function_color)),
+        ("@function @variable", Some(variable_color)),
+    ];
+
+    for (test_case, expected) in test_cases {
+        let custom_rust_lang = Arc::into_inner(rust_lang())
+            .unwrap()
+            .with_highlights_query(format! {r#"(type_identifier) {test_case}"#}.as_str())
+            .unwrap();
+        let theme = setup_syntax_highlighting(Arc::new(custom_rust_lang), &mut cx);
+        let expected = expected.map_or_else(Vec::new, |expected_color| {
+            vec![(24..29, HighlightStyle::color(expected_color))]
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                expected,
+                snapshot.combined_highlights(MultiBufferOffset(0)..snapshot.buffer().len(), &theme),
+                "Test case with '{test_case}' highlights query did not pass",
+            );
+        });
+    }
+}
+
+fn setup_syntax_highlighting(
+    language: Arc<Language>,
+    cx: &mut EditorTestContext,
+) -> Arc<SyntaxTheme> {
+    let syntax = Arc::new(SyntaxTheme::new_test(vec![
+        ("keyword", Hsla::red()),
+        ("function", Hsla::blue()),
+        ("variable", Hsla::green()),
+        ("number", Hsla::default()),
+        ("operator", Hsla::default()),
+        ("punctuation.bracket", Hsla::default()),
+        ("punctuation.delimiter", Hsla::default()),
+    ]));
+
+    language.set_theme(&syntax);
+
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.set_style(
+            EditorStyle {
+                syntax: syntax.clone(),
+                ..EditorStyle::default()
+            },
+            window,
+            cx,
+        );
+    });
+
+    syntax
 }

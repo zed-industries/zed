@@ -3,7 +3,6 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
-use feature_flags::{FeatureFlagAppExt as _, GitGraphFeatureFlag};
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
@@ -1045,21 +1044,19 @@ impl Render for CommitViewToolbar {
                     }),
             )
             .when(!is_stash, |this| {
-                this.when(cx.has_flag::<GitGraphFeatureFlag>(), |this| {
-                    this.child(
-                        IconButton::new("show-in-git-graph", IconName::GitGraph)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Show in Git Graph"))
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(
-                                    Box::new(crate::git_panel::OpenAtCommit {
-                                        sha: sha_for_graph.clone(),
-                                    }),
-                                    cx,
-                                );
-                            }),
-                    )
-                })
+                this.child(
+                    IconButton::new("show-in-git-graph", IconName::GitGraph)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Show in Git Graph"))
+                        .on_click(move |_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(crate::git_panel::OpenAtCommit {
+                                    sha: sha_for_graph.clone(),
+                                }),
+                                cx,
+                            );
+                        }),
+                )
                 .children(remote_info.map(|(provider_name, url)| {
                     let icon = match provider_name.as_str() {
                         "GitHub" => IconName::Github,

@@ -52,7 +52,7 @@ pub struct ListItem {
     overflow_x: bool,
     focused: Option<bool>,
     docked_right: bool,
-    height: Option<Pixels>,
+    height: Option<DefiniteLength>,
 }
 
 impl ListItem {
@@ -207,8 +207,8 @@ impl ListItem {
         self
     }
 
-    pub fn height(mut self, height: Pixels) -> Self {
-        self.height = Some(height);
+    pub fn height(mut self, height: impl Into<DefiniteLength>) -> Self {
+        self.height = Some(height.into());
         self
     }
 }

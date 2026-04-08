@@ -435,6 +435,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)
@@ -1485,6 +1486,7 @@ fn notify_rejoined_projects(
                 worktree_id: worktree.id,
                 abs_path: worktree.abs_path.clone(),
                 root_name: worktree.root_name,
+                root_repo_common_dir: worktree.root_repo_common_dir,
                 updated_entries: worktree.updated_entries,
                 removed_entries: worktree.removed_entries,
                 scan_id: worktree.scan_id,
@@ -1943,6 +1945,7 @@ async fn join_project(
             worktree_id,
             abs_path: worktree.abs_path.clone(),
             root_name: worktree.root_name,
+            root_repo_common_dir: worktree.root_repo_common_dir,
             updated_entries: worktree.entries,
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,

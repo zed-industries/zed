@@ -10,8 +10,8 @@ use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::FutureExt;
 use futures::future::Shared;
 use gpui::{
-    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, ListScrollEvent, ListState,
-    Point, Task, actions, list, prelude::*,
+    AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, KeyContext, ListScrollEvent,
+    ListState, Point, Task, actions, list, prelude::*,
 };
 use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
@@ -41,33 +41,18 @@ use picker::Picker;
 use runtimelib::{ExecuteRequest, JupyterMessage, JupyterMessageContent};
 use ui::PopoverMenuHandle;
 use zed_actions::editor::{MoveDown, MoveUp};
-use zed_actions::notebook::{NotebookMoveDown, NotebookMoveUp};
+use zed_actions::notebook::{
+    AddCodeBlock, AddMarkdownBlock, ClearOutputs, EnterCommandMode, EnterEditMode, InterruptKernel,
+    MoveCellDown, MoveCellUp, NotebookMoveDown, NotebookMoveUp, OpenNotebook, RestartKernel, Run,
+    RunAll, RunAndAdvance,
+};
 
-actions!(
-    notebook,
-    [
-        /// Opens a Jupyter notebook file.
-        OpenNotebook,
-        /// Runs all cells in the notebook.
-        RunAll,
-        /// Runs the current cell.
-        Run,
-        /// Clears all cell outputs.
-        ClearOutputs,
-        /// Moves the current cell up.
-        MoveCellUp,
-        /// Moves the current cell down.
-        MoveCellDown,
-        /// Adds a new markdown cell.
-        AddMarkdownBlock,
-        /// Adds a new code cell.
-        AddCodeBlock,
-        /// Restarts the kernel.
-        RestartKernel,
-        /// Interrupts the current execution.
-        InterruptKernel,
-    ]
-);
+/// Whether the notebook is in command mode (navigating cells) or edit mode (editing a cell).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NotebookMode {
+    Command,
+    Edit,
+}
 
 pub(crate) const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
 pub(crate) const SMALL_SPACING_SIZE: f32 = 8.0;
@@ -107,6 +92,7 @@ pub struct NotebookEditor {
     remote_id: Option<ViewId>,
     cell_list: ListState,
 
+    notebook_mode: NotebookMode,
     selected_cell_index: usize,
     cell_order: Vec<CellId>,
     original_cell_order: Vec<CellId>,
@@ -148,18 +134,9 @@ impl NotebookEditor {
             match &cell_entity {
                 Cell::Code(code_cell) => {
                     let cell_id_for_focus = cell_id.clone();
-                    cx.subscribe(code_cell, move |this, cell, event, cx| match event {
+                    cx.subscribe(code_cell, move |this, _cell, event, cx| match event {
                         CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
-                        CellEvent::FocusedIn(_) => {
-                            if let Some(index) = this
-                                .cell_order
-                                .iter()
-                                .position(|id| id == &cell_id_for_focus)
-                            {
-                                this.selected_cell_index = index;
-                                cx.notify();
-                            }
-                        }
+                        CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_focus, cx),
                     })
                     .detach();
 
@@ -167,20 +144,12 @@ impl NotebookEditor {
                     let editor = code_cell.read(cx).editor().clone();
                     cx.subscribe(&editor, move |this, _editor, event, cx| {
                         if let editor::EditorEvent::Focused = event {
-                            if let Some(index) = this
-                                .cell_order
-                                .iter()
-                                .position(|id| id == &cell_id_for_editor)
-                            {
-                                this.selected_cell_index = index;
-                                cx.notify();
-                            }
+                            this.select_cell_by_id(&cell_id_for_editor, cx);
                         }
                     })
                     .detach();
                 }
                 Cell::Markdown(markdown_cell) => {
-                    let cell_id_for_focus = cell_id.clone();
                     cx.subscribe(
                         markdown_cell,
                         move |_this, cell, event: &MarkdownCellEvent, cx| {
@@ -206,14 +175,7 @@ impl NotebookEditor {
                     let editor = markdown_cell.read(cx).editor().clone();
                     cx.subscribe(&editor, move |this, _editor, event, cx| {
                         if let editor::EditorEvent::Focused = event {
-                            if let Some(index) = this
-                                .cell_order
-                                .iter()
-                                .position(|id| id == &cell_id_for_editor)
-                            {
-                                this.selected_cell_index = index;
-                                cx.notify();
-                            }
+                            this.select_cell_by_id(&cell_id_for_editor, cx);
                         }
                     })
                     .detach();
@@ -239,6 +201,7 @@ impl NotebookEditor {
             notebook_language,
             remote_id: None,
             cell_list,
+            notebook_mode: NotebookMode::Command,
             selected_cell_index: 0,
             cell_order: cell_order.clone(),
             original_cell_order: cell_order.clone(),
@@ -385,8 +348,7 @@ impl NotebookEditor {
         let working_directory = self
             .project
             .read(cx)
-            .worktrees(cx)
-            .next()
+            .worktree_for_id(self.worktree_id, cx)
             .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
             .unwrap_or_else(std::env::temp_dir);
         let fs = self.project.read(cx).fs().clone();
@@ -590,6 +552,31 @@ impl NotebookEditor {
     }
 
     fn run_current_cell(&mut self, _: &Run, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() else {
+            return;
+        };
+        let Some(cell) = self.cell_map.get(&cell_id) else {
+            return;
+        };
+        match cell {
+            Cell::Code(_) => {
+                self.execute_cell(cell_id, cx);
+            }
+            Cell::Markdown(markdown_cell) => {
+                // for markdown, finish editing and move to next cell
+                let is_editing = markdown_cell.read(cx).is_editing();
+                if is_editing {
+                    markdown_cell.update(cx, |cell, cx| {
+                        cell.run(cx);
+                    });
+                    self.enter_command_mode(window, cx);
+                }
+            }
+            Cell::Raw(_) => {}
+        }
+    }
+
+    fn run_and_advance(&mut self, _: &RunAndAdvance, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(cell_id) = self.cell_order.get(self.selected_cell_index).cloned() {
             if let Some(cell) = self.cell_map.get(&cell_id) {
                 match cell {
@@ -597,25 +584,83 @@ impl NotebookEditor {
                         self.execute_cell(cell_id, cx);
                     }
                     Cell::Markdown(markdown_cell) => {
-                        // for markdown, finish editing and move to next cell
-                        let is_editing = markdown_cell.read(cx).is_editing();
-                        if is_editing {
+                        if markdown_cell.read(cx).is_editing() {
                             markdown_cell.update(cx, |cell, cx| {
                                 cell.run(cx);
                             });
-                            // move to the next cell
-                            // Discussion can be done on this default implementation
-                            self.move_to_next_cell(window, cx);
                         }
                     }
                     Cell::Raw(_) => {}
                 }
             }
         }
+
+        let is_last_cell = self.selected_cell_index == self.cell_count().saturating_sub(1);
+        if is_last_cell {
+            self.add_code_block(window, cx);
+            self.enter_command_mode(window, cx);
+        } else {
+            self.advance_in_command_mode(window, cx);
+        }
+    }
+
+    fn enter_edit_mode(&mut self, _: &EnterEditMode, window: &mut Window, cx: &mut Context<Self>) {
+        self.notebook_mode = NotebookMode::Edit;
+        if let Some(cell_id) = self.cell_order.get(self.selected_cell_index) {
+            if let Some(cell) = self.cell_map.get(cell_id) {
+                match cell {
+                    Cell::Code(code_cell) => {
+                        let editor = code_cell.read(cx).editor().clone();
+                        window.focus(&editor.focus_handle(cx), cx);
+                    }
+                    Cell::Markdown(markdown_cell) => {
+                        markdown_cell.update(cx, |cell, cx| {
+                            cell.set_editing(true);
+                            cx.notify();
+                        });
+                        let editor = markdown_cell.read(cx).editor().clone();
+                        window.focus(&editor.focus_handle(cx), cx);
+                    }
+                    Cell::Raw(_) => {}
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn enter_command_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.notebook_mode = NotebookMode::Command;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
+    }
+
+    fn handle_enter_command_mode(
+        &mut self,
+        _: &EnterCommandMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.enter_command_mode(window, cx);
+    }
+
+    /// Advances to the next cell while staying in command mode (used by RunAndAdvance and shift-enter).
+    fn advance_in_command_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.cell_count();
+        if count == 0 {
+            return;
+        }
+        if self.selected_cell_index < count - 1 {
+            self.selected_cell_index += 1;
+            self.cell_list
+                .scroll_to_reveal_item(self.selected_cell_index);
+        }
+        self.notebook_mode = NotebookMode::Command;
+        self.focus_handle.focus(window, cx);
+        cx.notify();
     }
 
     // Discussion can be done on this default implementation
-    /// Moves focus to the next cell, or creates a new code cell if at the end
+    /// Moves focus to the next cell editor (used when already in edit mode).
     fn move_to_next_cell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.cell_order.is_empty() && self.selected_cell_index < self.cell_order.len() - 1 {
             self.selected_cell_index += 1;
@@ -666,6 +711,19 @@ impl NotebookEditor {
         }
     }
 
+    fn insert_cell_at_current_position(&mut self, cell_id: CellId, cell: Cell) {
+        let insert_index = if self.cell_order.is_empty() {
+            0
+        } else {
+            self.selected_cell_index + 1
+        };
+        self.cell_order.insert(insert_index, cell_id.clone());
+        self.cell_map.insert(cell_id, cell);
+        self.selected_cell_index = insert_index;
+        self.cell_list.splice(insert_index..insert_index, 1);
+        self.cell_list.scroll_to_reveal_item(insert_index);
+    }
+
     fn add_markdown_block(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_cell_id: CellId = Uuid::new_v4().into();
         let languages = self.languages.clone();
@@ -683,16 +741,6 @@ impl NotebookEditor {
             )
         });
 
-        let insert_index = if self.cell_order.is_empty() {
-            0
-        } else {
-            self.selected_cell_index + 1
-        };
-        self.cell_order.insert(insert_index, new_cell_id.clone());
-        self.cell_map
-            .insert(new_cell_id.clone(), Cell::Markdown(markdown_cell.clone()));
-        self.selected_cell_index = insert_index;
-
         cx.subscribe(
             &markdown_cell,
             move |_this, cell, event: &MarkdownCellEvent, cx| match event {
@@ -709,19 +757,19 @@ impl NotebookEditor {
         let editor = markdown_cell.read(cx).editor().clone();
         cx.subscribe(&editor, move |this, _editor, event, cx| {
             if let editor::EditorEvent::Focused = event {
-                if let Some(index) = this
-                    .cell_order
-                    .iter()
-                    .position(|id| id == &cell_id_for_editor)
-                {
-                    this.selected_cell_index = index;
-                    cx.notify();
-                }
+                this.select_cell_by_id(&cell_id_for_editor, cx);
             }
         })
         .detach();
 
-        self.cell_list.reset(self.cell_order.len());
+        self.insert_cell_at_current_position(new_cell_id, Cell::Markdown(markdown_cell.clone()));
+        markdown_cell.update(cx, |cell, cx| {
+            cell.set_editing(true);
+            cx.notify();
+        });
+        let editor = markdown_cell.read(cx).editor().clone();
+        window.focus(&editor.focus_handle(cx), cx);
+        self.notebook_mode = NotebookMode::Edit;
         cx.notify();
     }
 
@@ -742,25 +790,10 @@ impl NotebookEditor {
             )
         });
 
-        let insert_index = if self.cell_order.is_empty() {
-            0
-        } else {
-            self.selected_cell_index + 1
-        };
-        self.cell_order.insert(insert_index, new_cell_id.clone());
-        self.cell_map
-            .insert(new_cell_id.clone(), Cell::Code(code_cell.clone()));
-        self.selected_cell_index = insert_index;
-
         let cell_id_for_run = new_cell_id.clone();
         cx.subscribe(&code_cell, move |this, _cell, event, cx| match event {
             CellEvent::Run(cell_id) => this.execute_cell(cell_id.clone(), cx),
-            CellEvent::FocusedIn(_) => {
-                if let Some(index) = this.cell_order.iter().position(|id| id == &cell_id_for_run) {
-                    this.selected_cell_index = index;
-                    cx.notify();
-                }
-            }
+            CellEvent::FocusedIn(_) => this.select_cell_by_id(&cell_id_for_run, cx),
         })
         .detach();
 
@@ -768,19 +801,15 @@ impl NotebookEditor {
         let editor = code_cell.read(cx).editor().clone();
         cx.subscribe(&editor, move |this, _editor, event, cx| {
             if let editor::EditorEvent::Focused = event {
-                if let Some(index) = this
-                    .cell_order
-                    .iter()
-                    .position(|id| id == &cell_id_for_editor)
-                {
-                    this.selected_cell_index = index;
-                    cx.notify();
-                }
+                this.select_cell_by_id(&cell_id_for_editor, cx);
             }
         })
         .detach();
 
-        self.cell_list.reset(self.cell_order.len());
+        self.insert_cell_at_current_position(new_cell_id, Cell::Code(code_cell.clone()));
+        let editor = code_cell.read(cx).editor().clone();
+        window.focus(&editor.focus_handle(cx), cx);
+        self.notebook_mode = NotebookMode::Edit;
         cx.notify();
     }
 
@@ -790,6 +819,14 @@ impl NotebookEditor {
 
     fn selected_index(&self) -> usize {
         self.selected_cell_index
+    }
+
+    fn select_cell_by_id(&mut self, cell_id: &CellId, cx: &mut Context<Self>) {
+        if let Some(index) = self.cell_order.iter().position(|id| id == cell_id) {
+            self.selected_cell_index = index;
+            self.notebook_mode = NotebookMode::Edit;
+            cx.notify();
+        }
     }
 
     pub fn set_selected_index(
@@ -1216,9 +1253,19 @@ impl NotebookEditor {
 
 impl Render for NotebookEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("NotebookEditor");
+        key_context.set(
+            "notebook_mode",
+            match self.notebook_mode {
+                NotebookMode::Command => "command",
+                NotebookMode::Edit => "edit",
+            },
+        );
+
         v_flex()
             .size_full()
-            .key_context("NotebookEditor")
+            .key_context(key_context)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &OpenNotebook, window, cx| {
                 this.open_notebook(&OpenNotebook, window, cx)
@@ -1228,6 +1275,9 @@ impl Render for NotebookEditor {
             )
             .on_action(
                 cx.listener(|this, _: &Run, window, cx| this.run_current_cell(&Run, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, action, window, cx| this.run_and_advance(action, window, cx)),
             )
             .on_action(cx.listener(|this, _: &RunAll, window, cx| this.run_cells(window, cx)))
             .on_action(
@@ -1242,6 +1292,20 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
+            .on_action(
+                cx.listener(|this, action, window, cx| this.enter_edit_mode(action, window, cx)),
+            )
+            .on_action(cx.listener(|this, action, window, cx| {
+                this.handle_enter_command_mode(action, window, cx)
+            }))
+            .on_action(cx.listener(|this, action, window, cx| this.select_next(action, window, cx)))
+            .on_action(
+                cx.listener(|this, action, window, cx| this.select_previous(action, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, action, window, cx| this.select_first(action, window, cx)),
+            )
+            .on_action(cx.listener(|this, action, window, cx| this.select_last(action, window, cx)))
             .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 this.select_previous(&menu::SelectPrevious, window, cx);
                 if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {

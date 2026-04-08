@@ -7126,7 +7126,7 @@ impl Render for ProjectPanel {
                                     .workspace
                                     .update(cx, |workspace, cx| {
                                         workspace.open_workspace_for_paths(
-                                            OpenMode::Replace,
+                                            OpenMode::Activate,
                                             external_paths.paths().to_owned(),
                                             window,
                                             cx,

@@ -6,11 +6,11 @@ use crate::{
     retrieve_context::run_context_retrieval,
 };
 use anyhow::{Context as _, Result, anyhow};
-use edit_prediction::udiff;
 use gpui::AsyncApp;
 use similar::DiffableStr;
 use std::ops::Range;
 use std::sync::Arc;
+use zeta_prompt::udiff;
 use zeta_prompt::{
     ZetaFormat, encode_patch_as_output_for_format, excerpt_range_for_format, format_zeta_prompt,
     multi_region, output_end_marker_for_format, resolve_cursor_region,
