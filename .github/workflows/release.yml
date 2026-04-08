@@ -309,7 +309,7 @@ jobs:
         cache: rust
         path: ~/.rustup
     - id: run-compliance-check
-      name: release::compliance_check::run_compliance_check
+      name: release::run_compliance_check
       run: |
         cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
@@ -678,8 +678,8 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - id: run-post-upload-compliance-check
-      name: release::validate_release_assets::run_post_upload_compliance_check
+    - id: run-compliance-check
+      name: release::run_compliance_check
       run: |
         cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
@@ -713,7 +713,7 @@ jobs:
             "$SLACK_WEBHOOK"
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
-        COMPLIANCE_OUTCOME: ${{ steps.run-post-upload-compliance-check.outcome }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
         COMPLIANCE_TAG: ${{ github.ref_name }}
         ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
   auto_release_preview:

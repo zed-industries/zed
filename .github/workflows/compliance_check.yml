@@ -36,8 +36,7 @@ jobs:
     - id: run-compliance-check
       name: compliance_check::scheduled_compliance_check::run_compliance_check
       run: |
-        echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-        cargo xtask compliance "$LATEST_TAG" --branch main --report-path compliance-report-${GITHUB_REF_NAME}.md
+        cargo xtask compliance "$LATEST_TAG" --branch main --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
