@@ -261,7 +261,6 @@ Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes
-- Slash commands for AI
 - Context servers
 
 Several features that require plugins in other editors are built into Zed:

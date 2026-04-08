@@ -50,11 +50,34 @@ pub const REMOTE_CANCELLED_BY_USER: &str = "Operation cancelled by user";
 /// %x00 - Null byte separator, used to split up commit data
 static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 
+/// Used to get commits that match with a search
+/// %H - Full commit hash
+static SEARCH_COMMIT_FORMAT: &str = "--format=%H";
+
 /// Number of commits to load per chunk for the git graph.
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
 
 /// Default value for the `git.worktree_directory` setting.
 pub const DEFAULT_WORKTREE_DIRECTORY: &str = "../worktrees";
+
+/// Determine the original (main) repository's working directory.
+///
+/// For linked worktrees, `common_dir` differs from `repository_dir` and
+/// points to the main repo's `.git` directory, so we can derive the main
+/// repo's working directory from it. For normal repos and submodules,
+/// `common_dir` equals `repository_dir`, and the original repo is simply
+/// `work_directory` itself.
+pub fn original_repo_path(
+    work_directory: &Path,
+    common_dir: &Path,
+    repository_dir: &Path,
+) -> PathBuf {
+    if common_dir != repository_dir {
+        original_repo_path_from_common_dir(common_dir)
+    } else {
+        work_directory.to_path_buf()
+    }
+}
 
 /// Given the git common directory (from `commondir()`), derive the original
 /// repository's working directory.
@@ -215,27 +238,66 @@ pub struct Worktree {
     pub ref_name: Option<SharedString>,
     // todo(git_worktree) This type should be a Oid
     pub sha: SharedString,
+    pub is_main: bool,
+}
+
+/// Describes how a new worktree should choose or create its checked-out HEAD.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum CreateWorktreeTarget {
+    /// Check out an existing local branch in the new worktree.
+    ExistingBranch {
+        /// The existing local branch to check out.
+        branch_name: String,
+    },
+    /// Create a new local branch for the new worktree.
+    NewBranch {
+        /// The new local branch to create and check out.
+        branch_name: String,
+        /// The commit or ref to create the branch from. Uses `HEAD` when `None`.
+        base_sha: Option<String>,
+    },
+    /// Check out a commit or ref in detached HEAD state.
+    Detached {
+        /// The commit or ref to check out. Uses `HEAD` when `None`.
+        base_sha: Option<String>,
+    },
+}
+
+impl CreateWorktreeTarget {
+    pub fn branch_name(&self) -> Option<&str> {
+        match self {
+            Self::ExistingBranch { branch_name } | Self::NewBranch { branch_name, .. } => {
+                Some(branch_name)
+            }
+            Self::Detached { .. } => None,
+        }
+    }
 }
 
 impl Worktree {
+    /// Returns the branch name if the worktree is attached to a branch.
+    pub fn branch_name(&self) -> Option<&str> {
+        self.ref_name.as_ref().map(|ref_name| {
+            ref_name
+                .strip_prefix("refs/heads/")
+                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
+                .unwrap_or(ref_name)
+        })
+    }
+
     /// Returns a display name for the worktree, suitable for use in the UI.
     ///
     /// If the worktree is attached to a branch, returns the branch name.
     /// Otherwise, returns the short SHA of the worktree's HEAD commit.
     pub fn display_name(&self) -> &str {
-        match self.ref_name {
-            Some(ref ref_name) => ref_name
-                .strip_prefix("refs/heads/")
-                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
-                .unwrap_or(ref_name),
-            // Detached HEAD — show the short SHA as a fallback.
-            None => &self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)],
-        }
+        self.branch_name()
+            .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
 }
 
 pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
     let mut worktrees = Vec::new();
+    let mut is_first = true;
     let normalized = raw_worktrees.as_ref().replace("\r\n", "\n");
     let entries = normalized.split("\n\n");
     for entry in entries {
@@ -263,7 +325,9 @@ pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree
                 path: PathBuf::from(path),
                 ref_name: ref_name.map(Into::into),
                 sha: sha.into(),
-            })
+                is_main: is_first,
+            });
+            is_first = false;
         }
     }
 
@@ -302,6 +366,7 @@ impl Upstream {
 pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
+    pub allow_empty: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -623,6 +688,11 @@ impl LogSource {
     }
 }
 
+pub struct SearchCommitArgs {
+    pub query: SharedString,
+    pub case_sensitive: bool,
+}
+
 pub trait GitRepository: Send + Sync {
     fn reload_index(&self);
 
@@ -683,9 +753,8 @@ pub trait GitRepository: Send + Sync {
 
     fn create_worktree(
         &self,
-        branch_name: String,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>>;
 
     fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>>;
@@ -875,7 +944,20 @@ pub trait GitRepository: Send + Sync {
         request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    fn search_commits(
+        &self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: Sender<Oid>,
+    ) -> BoxFuture<'_, Result<()>>;
+
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
+
+    fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>>;
+
+    fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>>;
+
+    fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>>;
 
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
@@ -1046,7 +1128,6 @@ impl GitRepository for RealGitRepository {
                 let git = git_binary?;
                 let output = git
                     .build_command(&[
-                        "--no-optional-locks",
                         "show",
                         "--no-patch",
                         "--format=%H%x00%B%x00%at%x00%ae%x00%an%x00",
@@ -1084,7 +1165,6 @@ impl GitRepository for RealGitRepository {
             let git = git_binary?;
             let show_output = git
                 .build_command(&[
-                    "--no-optional-locks",
                     "show",
                     "--format=",
                     "-z",
@@ -1105,7 +1185,7 @@ impl GitRepository for RealGitRepository {
             let parent_sha = format!("{}^", commit);
 
             let mut cat_file_process = git
-                .build_command(&["--no-optional-locks", "cat-file", "--batch=%(objectsize)"])
+                .build_command(&["cat-file", "--batch=%(objectsize)"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -1417,11 +1497,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let mut process = git
-                    .build_command(&[
-                        "--no-optional-locks",
-                        "cat-file",
-                        "--batch-check=%(objectname)",
-                    ])
+                    .build_command(&["cat-file", "--batch-check=%(objectname)"])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
@@ -1495,7 +1571,6 @@ impl GitRepository for RealGitRepository {
         };
 
         let mut args = vec![
-            OsString::from("--no-optional-locks"),
             OsString::from("diff-tree"),
             OsString::from("-r"),
             OsString::from("-z"),
@@ -1612,7 +1687,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = git
-                    .build_command(&["--no-optional-locks", "worktree", "list", "--porcelain"])
+                    .build_command(&["worktree", "list", "--porcelain"])
                     .output()
                     .await?;
                 if output.status.success() {
@@ -1628,24 +1703,36 @@ impl GitRepository for RealGitRepository {
 
     fn create_worktree(
         &self,
-        branch_name: String,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
-        let mut args = vec![
-            OsString::from("--no-optional-locks"),
-            OsString::from("worktree"),
-            OsString::from("add"),
-            OsString::from("-b"),
-            OsString::from(branch_name.as_str()),
-            OsString::from("--"),
-            OsString::from(path.as_os_str()),
-        ];
-        if let Some(from_commit) = from_commit {
-            args.push(OsString::from(from_commit));
-        } else {
-            args.push(OsString::from("HEAD"));
+        let mut args = vec![OsString::from("worktree"), OsString::from("add")];
+
+        match &target {
+            CreateWorktreeTarget::ExistingBranch { branch_name } => {
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(branch_name));
+            }
+            CreateWorktreeTarget::NewBranch {
+                branch_name,
+                base_sha: start_point,
+            } => {
+                args.push(OsString::from("-b"));
+                args.push(OsString::from(branch_name));
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
+            }
+            CreateWorktreeTarget::Detached {
+                base_sha: start_point,
+            } => {
+                args.push(OsString::from("--detach"));
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
+            }
         }
 
         self.executor
@@ -1668,11 +1755,7 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
-                let mut args: Vec<OsString> = vec![
-                    "--no-optional-locks".into(),
-                    "worktree".into(),
-                    "remove".into(),
-                ];
+                let mut args: Vec<OsString> = vec!["worktree".into(), "remove".into()];
                 if force {
                     args.push("--force".into());
                 }
@@ -1690,7 +1773,6 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let args: Vec<OsString> = vec![
-                    "--no-optional-locks".into(),
                     "worktree".into(),
                     "move".into(),
                     "--".into(),
@@ -1833,7 +1915,7 @@ impl GitRepository for RealGitRepository {
                     commit_delimiter
                 );
 
-                let mut args = vec!["--no-optional-locks", "log", "--follow", &format_string];
+                let mut args = vec!["log", "--follow", &format_string];
 
                 let skip_str;
                 let limit_str;
@@ -2139,6 +2221,10 @@ impl GitRepository for RealGitRepository {
                 cmd.arg("--signoff");
             }
 
+            if options.allow_empty {
+                cmd.arg("--allow-empty");
+            }
+
             if let Some((name, email)) = name_and_email {
                 cmd.arg("--author").arg(&format!("{name} <{email}>"));
             }
@@ -2148,6 +2234,39 @@ impl GitRepository for RealGitRepository {
             Ok(())
         }
         .boxed()
+    }
+
+    fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["update-ref".into(), ref_name.into(), commit.into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["update-ref".into(), "-d".into(), ref_name.into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["worktree".into(), "repair".into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
     }
 
     fn push(
@@ -2665,10 +2784,11 @@ impl GitRepository for RealGitRepository {
                 log_source.get_arg()?,
             ]);
             command.stdout(Stdio::piped());
-            command.stderr(Stdio::null());
+            command.stderr(Stdio::piped());
 
             let mut child = command.spawn()?;
             let stdout = child.stdout.take().context("failed to get stdout")?;
+            let stderr = child.stderr.take().context("failed to get stderr")?;
             let mut reader = BufReader::new(stdout);
 
             let mut line_buffer = String::new();
@@ -2700,6 +2820,74 @@ impl GitRepository for RealGitRepository {
                         break;
                     }
                     lines.clear();
+                }
+            }
+
+            let status = child.status().await?;
+            if !status.success() {
+                let mut stderr_output = String::new();
+                BufReader::new(stderr)
+                    .read_to_string(&mut stderr_output)
+                    .await
+                    .log_err();
+
+                if stderr_output.is_empty() {
+                    anyhow::bail!("git log command failed with {}", status);
+                } else {
+                    anyhow::bail!("git log command failed with {}: {}", status, stderr_output);
+                }
+            }
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn search_commits(
+        &self,
+        log_source: LogSource,
+        search_args: SearchCommitArgs,
+        request_tx: Sender<Oid>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+
+        async move {
+            let git = git_binary?;
+
+            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?];
+
+            args.push("--fixed-strings");
+
+            if !search_args.case_sensitive {
+                args.push("--regexp-ignore-case");
+            }
+
+            args.push("--grep");
+            args.push(search_args.query.as_str());
+
+            let mut command = git.build_command(&args);
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::null());
+
+            let mut child = command.spawn()?;
+            let stdout = child.stdout.take().context("failed to get stdout")?;
+            let mut reader = BufReader::new(stdout);
+
+            let mut line_buffer = String::new();
+
+            loop {
+                line_buffer.clear();
+                let bytes_read = reader.read_line(&mut line_buffer).await?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                let sha = line_buffer.trim_end_matches('\n');
+
+                if let Ok(oid) = Oid::from_str(sha)
+                    && request_tx.send(oid).await.is_err()
+                {
+                    break;
                 }
             }
 
@@ -2741,7 +2929,7 @@ async fn run_commit_data_reader(
     request_rx: smol::channel::Receiver<CommitDataRequest>,
 ) -> Result<()> {
     let mut process = git
-        .build_command(&["--no-optional-locks", "cat-file", "--batch"])
+        .build_command(&["cat-file", "--batch"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2855,7 +3043,6 @@ fn parse_initial_graph_output<'a>(
 
 fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
     let mut args = vec![
-        OsString::from("--no-optional-locks"),
         OsString::from("status"),
         OsString::from("--porcelain=v1"),
         OsString::from("--untracked-files=all"),
@@ -3039,6 +3226,7 @@ impl GitBinary {
         let mut command = new_command(&self.git_binary_path);
         command.current_dir(&self.working_directory);
         command.args(["-c", "core.fsmonitor=false"]);
+        command.arg("--no-optional-locks");
         command.arg("--no-pager");
 
         if !self.is_trusted {
@@ -3799,6 +3987,7 @@ mod tests {
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123def");
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert!(result[0].is_main);
 
         // Multiple worktrees
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3807,8 +3996,10 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert!(result[0].is_main);
         assert_eq!(result[1].path, PathBuf::from("/home/user/project-wt"));
         assert_eq!(result[1].ref_name, Some("refs/heads/feature".into()));
+        assert!(!result[1].is_main);
 
         // Detached HEAD entry (included with ref_name: None)
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3817,9 +4008,11 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert!(result[0].is_main);
         assert_eq!(result[1].path, PathBuf::from("/home/user/detached"));
         assert_eq!(result[1].ref_name, None);
         assert_eq!(result[1].sha.as_ref(), "def456");
+        assert!(!result[1].is_main);
 
         // Bare repo entry (included with ref_name: None)
         let input = "worktree /home/user/bare.git\nHEAD abc123\nbare\n\n\
@@ -3828,8 +4021,10 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, PathBuf::from("/home/user/bare.git"));
         assert_eq!(result[0].ref_name, None);
+        assert!(result[0].is_main);
         assert_eq!(result[1].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[1].ref_name, Some("refs/heads/main".into()));
+        assert!(!result[1].is_main);
 
         // Extra porcelain lines (locked, prunable) should be ignored
         let input = "worktree /home/user/project\nHEAD abc123\nbranch refs/heads/main\n\n\
@@ -3839,13 +4034,16 @@ mod tests {
         assert_eq!(result.len(), 3);
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert!(result[0].is_main);
         assert_eq!(result[1].path, PathBuf::from("/home/user/locked-wt"));
         assert_eq!(result[1].ref_name, Some("refs/heads/locked-branch".into()));
+        assert!(!result[1].is_main);
         assert_eq!(result[2].path, PathBuf::from("/home/user/prunable-wt"));
         assert_eq!(
             result[2].ref_name,
             Some("refs/heads/prunable-branch".into())
         );
+        assert!(!result[2].is_main);
 
         // Leading/trailing whitespace on lines should be tolerated
         let input =
@@ -3855,6 +4053,7 @@ mod tests {
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert!(result[0].is_main);
 
         // Windows-style line endings should be handled
         let input = "worktree /home/user/project\r\nHEAD abc123\r\nbranch refs/heads/main\r\n\r\n";
@@ -3863,6 +4062,7 @@ mod tests {
         assert_eq!(result[0].path, PathBuf::from("/home/user/project"));
         assert_eq!(result[0].sha.as_ref(), "abc123");
         assert_eq!(result[0].ref_name, Some("refs/heads/main".into()));
+        assert!(result[0].is_main);
     }
 
     #[gpui::test]
@@ -3916,9 +4116,11 @@ mod tests {
 
         // Create a new worktree
         repo.create_worktree(
-            "test-branch".to_string(),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "test-branch".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -3975,9 +4177,11 @@ mod tests {
         // Create a worktree
         let worktree_path = worktrees_dir.join("worktree-to-remove");
         repo.create_worktree(
-            "to-remove".to_string(),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "to-remove".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -3999,9 +4203,11 @@ mod tests {
         // Create a worktree
         let worktree_path = worktrees_dir.join("dirty-wt");
         repo.create_worktree(
-            "dirty-wt".to_string(),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "dirty-wt".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -4069,9 +4275,11 @@ mod tests {
         // Create a worktree
         let old_path = worktrees_dir.join("old-worktree-name");
         repo.create_worktree(
-            "old-name".to_string(),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "old-name".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             old_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();

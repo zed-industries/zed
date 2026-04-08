@@ -5,7 +5,7 @@ description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI
 
 # LLM Providers
 
-To use AI in Zed, you need to have at least one large language model provider set up. Once configured, providers are available in the [Agent Panel](./agent-panel.md), [Inline Assistant](./inline-assistant.md), and [Text Threads](./text-threads.md).
+To use AI in Zed, you need to have at least one large language model provider set up. Once configured, providers are available in the [Agent Panel](./agent-panel.md) and [Inline Assistant](./inline-assistant.md).
 
 You can do that by either subscribing to [one of Zed's plans](./plans-and-usage.md), or by using API keys you already have for the supported providers. For general AI setup, see [Configuration](./configuration.md).
 

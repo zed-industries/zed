@@ -26,7 +26,8 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
     ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
-    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance, WindowParams,
+    PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
+    WindowButtonLayout, WindowParams,
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use gpui::{Pixels, Point, px};
@@ -114,6 +115,7 @@ pub(crate) struct LinuxCommon {
     pub(crate) text_system: Arc<dyn PlatformTextSystem>,
     pub(crate) appearance: WindowAppearance,
     pub(crate) auto_hide_scrollbars: bool,
+    pub(crate) button_layout: WindowButtonLayout,
     pub(crate) callbacks: PlatformHandlers,
     pub(crate) signal: LoopSignal,
     pub(crate) menus: Vec<OwnedMenu>,
@@ -140,6 +142,7 @@ impl LinuxCommon {
             text_system,
             appearance: WindowAppearance::Light,
             auto_hide_scrollbars: false,
+            button_layout: WindowButtonLayout::linux_default(),
             callbacks,
             signal,
             menus: Vec::new(),
@@ -599,6 +602,10 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
 
     fn window_appearance(&self) -> WindowAppearance {
         self.inner.with_common(|common| common.appearance)
+    }
+
+    fn button_layout(&self) -> Option<WindowButtonLayout> {
+        Some(self.inner.with_common(|common| common.button_layout))
     }
 
     fn register_url_scheme(&self, _: &str) -> Task<anyhow::Result<()>> {

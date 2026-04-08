@@ -10,7 +10,7 @@ use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
 
-use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
+use crate::{BufferEditPrediction, EditPredictionStore};
 
 pub struct ZedEditPredictionDelegate {
     store: Entity<EditPredictionStore>,
@@ -103,14 +103,9 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         &self,
         _buffer: &Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        cx: &App,
+        _cx: &App,
     ) -> bool {
-        let store = self.store.read(cx);
-        if store.edit_prediction_model == EditPredictionModel::Sweep {
-            store.has_sweep_api_token(cx)
-        } else {
-            true
-        }
+        true
     }
 
     fn is_refreshing(&self, cx: &App) -> bool {
@@ -182,7 +177,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 BufferEditPrediction::Local { prediction } => prediction,
                 BufferEditPrediction::Jump { prediction } => {
                     return Some(edit_prediction_types::EditPrediction::Jump {
-                        id: Some(prediction.id.to_string().into()),
+                        id: Some(prediction.id.0.clone()),
                         snapshot: prediction.snapshot.clone(),
                         target: prediction.edits.first().unwrap().0.start,
                     });
@@ -233,7 +228,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             }
 
             Some(edit_prediction_types::EditPrediction::Local {
-                id: Some(prediction.id.to_string().into()),
+                id: Some(prediction.id.0.clone()),
                 edits: edits[edit_start_ix..edit_end_ix].to_vec(),
                 cursor_position: prediction.cursor_position,
                 edit_preview: Some(prediction.edit_preview.clone()),

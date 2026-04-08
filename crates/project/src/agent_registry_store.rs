@@ -23,6 +23,7 @@ pub struct RegistryAgentMetadata {
     pub description: SharedString,
     pub version: SharedString,
     pub repository: Option<SharedString>,
+    pub website: Option<SharedString>,
     pub icon_path: Option<SharedString>,
 }
 
@@ -73,6 +74,10 @@ impl RegistryAgent {
 
     pub fn repository(&self) -> Option<&SharedString> {
         self.metadata().repository.as_ref()
+    }
+
+    pub fn website(&self) -> Option<&SharedString> {
+        self.metadata().website.as_ref()
     }
 
     pub fn icon_path(&self) -> Option<&SharedString> {
@@ -161,6 +166,12 @@ impl AgentRegistryStore {
         });
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
         store
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_agents(&mut self, agents: Vec<RegistryAgent>, cx: &mut Context<Self>) {
+        self.agents = agents;
+        cx.notify();
     }
 
     pub fn agents(&self) -> &[RegistryAgent] {
@@ -369,6 +380,7 @@ async fn build_registry_agents(
             description: entry.description.into(),
             version: entry.version.into(),
             repository: entry.repository.map(Into::into),
+            website: entry.website.map(Into::into),
             icon_path,
         };
 
@@ -567,6 +579,8 @@ struct RegistryEntry {
     description: String,
     #[serde(default)]
     repository: Option<String>,
+    #[serde(default)]
+    website: Option<String>,
     #[serde(default)]
     icon: Option<String>,
     distribution: RegistryDistribution,

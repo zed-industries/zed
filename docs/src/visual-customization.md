@@ -105,7 +105,7 @@ To disable this behavior use:
   // "outline_panel": {"button": false },
   // "collaboration_panel": {"button": false },
   // "git_panel": {"button": false },
-  // "notification_panel": {"button": false },
+
   // "agent": {"button": false },
   // "debugger": {"button": false },
   // "diagnostics": {"button": false },
@@ -392,8 +392,7 @@ TBD: Centered layout related settings
 
 ```json [settings]
   "edit_predictions": {
-    "mode": "eager",                // Automatically show (eager) or hold-alt (subtle)
-    "enabled_in_text_threads": true // Show/hide predictions in agent text threads
+    "mode": "eager"                  // Automatically show (eager) or hold-alt (subtle)
   },
   "show_edit_predictions": true     // Show/hide predictions in editor
 ```
@@ -589,16 +588,6 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "dock": "left", // Where to dock: left, right
     "default_width": 240 // Default width of the collaboration panel.
   },
-  "show_call_status_icon": true, // Shown call status in the OS status bar.
-
-  // Notification Panel
-  "notification_panel": {
-    // Whether to show the notification panel button in the status bar.
-    "button": true,
-    // Where to dock the notification panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the notification panel.
-    "default_width": 380
-  }
+  "show_call_status_icon": true // Shown call status in the OS status bar.
 }
 ```

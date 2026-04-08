@@ -59,13 +59,13 @@ pub struct ActiveSettingsProfileName(pub String);
 impl Global for ActiveSettingsProfileName {}
 
 pub trait UserSettingsContentExt {
-    fn for_profile(&self, cx: &App) -> Option<&SettingsContent>;
+    fn for_profile(&self, cx: &App) -> Option<&SettingsProfile>;
     fn for_release_channel(&self) -> Option<&SettingsContent>;
     fn for_os(&self) -> Option<&SettingsContent>;
 }
 
 impl UserSettingsContentExt for UserSettingsContent {
-    fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
+    fn for_profile(&self, cx: &App) -> Option<&SettingsProfile> {
         let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() else {
             return None;
         };

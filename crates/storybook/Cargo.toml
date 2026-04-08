@@ -29,6 +29,7 @@ picker.workspace = true
 reqwest_client.workspace = true
 rust-embed.workspace = true
 settings.workspace = true
+theme_settings.workspace = true
 simplelog.workspace = true
 story.workspace = true
 strum = { workspace = true, features = ["derive"] }

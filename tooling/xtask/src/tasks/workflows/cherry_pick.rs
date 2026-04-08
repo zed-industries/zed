@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, named},
+    steps::{self, NamedJob, RepositoryTarget, TokenPermissions, named},
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -44,7 +44,14 @@ fn run_cherry_pick(
             .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(RepositoryTarget::current())
+        .with_permissions([
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
+            (TokenPermissions::PullRequests, Level::Write),
+        ])
+        .into();
 
     named::job(
         Job::default()
