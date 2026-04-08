@@ -1639,20 +1639,35 @@ fn build_command_posix(
     if let Some(working_dir) = working_dir {
         let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
 
-        // shlex will wrap the command in single quotes (''), disabling ~ expansion,
-        // replace with something that works
-        const TILDE_PREFIX: &'static str = "~/";
+        // For paths starting with ~/, we need $HOME to expand, but the remainder
+        // must be properly quoted to prevent command injection.
+        // Pattern: cd "$HOME"/'quoted/remainder' - $HOME expands, rest is single-quoted
+        const TILDE_PREFIX: &str = "~/";
         if working_dir.starts_with(TILDE_PREFIX) {
-            let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-            write!(
-                exec,
-                "cd \"$HOME/{working_dir}\" {} ",
-                ssh_shell_kind.sequential_and_commands_separator()
-            )?;
+            let remainder = working_dir.trim_start_matches(TILDE_PREFIX);
+            if remainder.is_empty() {
+                write!(
+                    exec,
+                    "cd \"$HOME\" {} ",
+                    ssh_shell_kind.sequential_and_commands_separator()
+                )?;
+            } else {
+                let quoted_remainder = ssh_shell_kind
+                    .try_quote(remainder)
+                    .context("shell quoting")?;
+                write!(
+                    exec,
+                    "cd \"$HOME\"/{quoted_remainder} {} ",
+                    ssh_shell_kind.sequential_and_commands_separator()
+                )?;
+            }
         } else {
+            let quoted_dir = ssh_shell_kind
+                .try_quote(&working_dir)
+                .context("shell quoting")?;
             write!(
                 exec,
-                "cd \"{working_dir}\" {} ",
+                "cd {quoted_dir} {} ",
                 ssh_shell_kind.sequential_and_commands_separator()
             )?;
         }
@@ -1881,7 +1896,7 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd \"$HOME/work\" && exec env 'INPUT_VA=val' remote_program arg1 arg2"
+                "cd \"$HOME\"/work && exec env 'INPUT_VA=val' remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);
