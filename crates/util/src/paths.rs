@@ -1566,6 +1566,19 @@ mod tests {
     use super::*;
     use util_macros::perf;
 
+    fn rel_path_entry(path: &'static str, is_file: bool) -> (&'static RelPath, bool) {
+        (RelPath::unix(path).unwrap(), is_file)
+    }
+
+    fn sorted_rel_paths(
+        mut paths: Vec<(&'static RelPath, bool)>,
+        mode: SortMode,
+        order: SortOrderLexicographic,
+    ) -> Vec<(&'static RelPath, bool)> {
+        paths.sort_by(|&a, &b| compare_rel_paths_by(a, b, mode, order));
+        paths
+    }
+
     #[perf]
     fn compare_paths_with_dots() {
         let mut paths = vec![
@@ -2024,361 +2037,344 @@ mod tests {
     }
 
     #[perf]
-    fn compare_rel_paths_upper_directories_first() {
-        let mut paths = vec![
-            (RelPath::unix("mixedCase").unwrap(), false),
-            (RelPath::unix("Zebra").unwrap(), false),
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("Apple").unwrap(), false),
-            (RelPath::unix("dog").unwrap(), false),
-            (RelPath::unix(".hidden").unwrap(), false),
-            (RelPath::unix("Carrot").unwrap(), false),
+    fn compare_rel_paths_upper() {
+        let directories_only_paths = vec![
+            rel_path_entry("mixedCase", false),
+            rel_path_entry("Zebra", false),
+            rel_path_entry("banana", false),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("Apple", false),
+            rel_path_entry("dog", false),
+            rel_path_entry(".hidden", false),
+            rel_path_entry("Carrot", false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(
-                a,
-                b,
+        assert_eq!(
+            sorted_rel_paths(
+                directories_only_paths,
                 SortMode::DirectoriesFirst,
                 SortOrderLexicographic::Upper,
-            )
-        });
-        assert_eq!(
-            paths,
+            ),
             vec![
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-                (RelPath::unix("Apple").unwrap(), false),
-                (RelPath::unix("Carrot").unwrap(), false),
-                (RelPath::unix("Zebra").unwrap(), false),
-                (RelPath::unix("banana").unwrap(), false),
-                (RelPath::unix("dog").unwrap(), false),
-                (RelPath::unix("mixedCase").unwrap(), false),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple", false),
+                rel_path_entry("Carrot", false),
+                rel_path_entry("Zebra", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog", false),
+                rel_path_entry("mixedCase", false),
+            ]
+        );
+
+        let file_and_directory_paths = vec![
+            rel_path_entry("banana", false),
+            rel_path_entry("Apple.txt", true),
+            rel_path_entry("dog.md", true),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("File2.txt", true),
+            rel_path_entry(".hidden", false),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::DirectoriesFirst,
+                SortOrderLexicographic::Upper,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::Mixed,
+                SortOrderLexicographic::Upper,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths,
+                SortMode::FilesFirst,
+                SortOrderLexicographic::Upper,
+            ),
+            vec![
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("banana", false),
+            ]
+        );
+
+        let natural_sort_paths = vec![
+            rel_path_entry("file10.txt", true),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("file20.txt", true),
+            rel_path_entry("file2.txt", true),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                natural_sort_paths,
+                SortMode::Mixed,
+                SortOrderLexicographic::Upper,
+            ),
+            vec![
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("file2.txt", true),
+                rel_path_entry("file10.txt", true),
+                rel_path_entry("file20.txt", true),
+            ]
+        );
+
+        let accented_paths = vec![
+            rel_path_entry("\u{00C9}something.txt", true),
+            rel_path_entry("zebra.txt", true),
+            rel_path_entry("Apple.txt", true),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                accented_paths,
+                SortMode::Mixed,
+                SortOrderLexicographic::Upper
+            ),
+            vec![
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("\u{00C9}something.txt", true),
+                rel_path_entry("zebra.txt", true),
             ]
         );
     }
 
     #[perf]
-    fn compare_rel_paths_upper_mixed() {
-        let mut paths = vec![
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("Apple.txt").unwrap(), true),
-            (RelPath::unix("dog.md").unwrap(), true),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("File2.txt").unwrap(), true),
-            (RelPath::unix(".hidden").unwrap(), false),
+    fn compare_rel_paths_lower() {
+        let directories_only_paths = vec![
+            rel_path_entry("mixedCase", false),
+            rel_path_entry("Zebra", false),
+            rel_path_entry("banana", false),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("Apple", false),
+            rel_path_entry("dog", false),
+            rel_path_entry(".hidden", false),
+            rel_path_entry("Carrot", false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Upper)
-        });
         assert_eq!(
-            paths,
-            vec![
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-                (RelPath::unix("Apple.txt").unwrap(), true),
-                (RelPath::unix("File2.txt").unwrap(), true),
-                (RelPath::unix("banana").unwrap(), false),
-                (RelPath::unix("dog.md").unwrap(), true),
-                (RelPath::unix("file1.txt").unwrap(), true),
-            ]
-        );
-    }
-
-    #[perf]
-    fn compare_rel_paths_upper_files_first() {
-        let mut paths = vec![
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("Apple.txt").unwrap(), true),
-            (RelPath::unix("dog.md").unwrap(), true),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("File2.txt").unwrap(), true),
-            (RelPath::unix(".hidden").unwrap(), false),
-        ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Upper)
-        });
-        assert_eq!(
-            paths,
-            vec![
-                (RelPath::unix("Apple.txt").unwrap(), true),
-                (RelPath::unix("File2.txt").unwrap(), true),
-                (RelPath::unix("dog.md").unwrap(), true),
-                (RelPath::unix("file1.txt").unwrap(), true),
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-                (RelPath::unix("banana").unwrap(), false),
-            ]
-        );
-    }
-
-    #[perf]
-    fn compare_rel_paths_upper_preserves_natural_sort() {
-        let mut paths = vec![
-            (RelPath::unix("file10.txt").unwrap(), true),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("file20.txt").unwrap(), true),
-            (RelPath::unix("file2.txt").unwrap(), true),
-        ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Upper)
-        });
-        assert_eq!(
-            paths,
-            vec![
-                (RelPath::unix("file1.txt").unwrap(), true),
-                (RelPath::unix("file2.txt").unwrap(), true),
-                (RelPath::unix("file10.txt").unwrap(), true),
-                (RelPath::unix("file20.txt").unwrap(), true),
-            ]
-        );
-    }
-
-    #[perf]
-    fn compare_rel_paths_lower_directories_first() {
-        let mut paths = vec![
-            (RelPath::unix("mixedCase").unwrap(), false),
-            (RelPath::unix("Zebra").unwrap(), false),
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("Apple").unwrap(), false),
-            (RelPath::unix("dog").unwrap(), false),
-            (RelPath::unix(".hidden").unwrap(), false),
-            (RelPath::unix("Carrot").unwrap(), false),
-        ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(
-                a,
-                b,
+            sorted_rel_paths(
+                directories_only_paths,
                 SortMode::DirectoriesFirst,
                 SortOrderLexicographic::Lower,
-            )
-        });
-        assert_eq!(
-            paths,
+            ),
             vec![
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("banana").unwrap(), false),
-                (RelPath::unix("dog").unwrap(), false),
-                (RelPath::unix("mixedCase").unwrap(), false),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-                (RelPath::unix("Apple").unwrap(), false),
-                (RelPath::unix("Carrot").unwrap(), false),
-                (RelPath::unix("Zebra").unwrap(), false),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog", false),
+                rel_path_entry("mixedCase", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple", false),
+                rel_path_entry("Carrot", false),
+                rel_path_entry("Zebra", false),
+            ]
+        );
+
+        let file_and_directory_paths = vec![
+            rel_path_entry("banana", false),
+            rel_path_entry("Apple.txt", true),
+            rel_path_entry("dog.md", true),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("File2.txt", true),
+            rel_path_entry(".hidden", false),
+        ];
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::DirectoriesFirst,
+                SortOrderLexicographic::Lower,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::Mixed,
+                SortOrderLexicographic::Lower,
+            ),
+            vec![
+                rel_path_entry(".hidden", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+            ]
+        );
+        assert_eq!(
+            sorted_rel_paths(
+                file_and_directory_paths,
+                SortMode::FilesFirst,
+                SortOrderLexicographic::Lower,
+            ),
+            vec![
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("ALLCAPS", false),
             ]
         );
     }
 
     #[perf]
-    fn compare_rel_paths_lower_mixed() {
-        let mut paths = vec![
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("Apple.txt").unwrap(), true),
-            (RelPath::unix("dog.md").unwrap(), true),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("File2.txt").unwrap(), true),
-            (RelPath::unix(".hidden").unwrap(), false),
+    fn compare_rel_paths_unicode() {
+        let directories_only_paths = vec![
+            rel_path_entry("mixedCase", false),
+            rel_path_entry("Zebra", false),
+            rel_path_entry("banana", false),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("Apple", false),
+            rel_path_entry("dog", false),
+            rel_path_entry(".hidden", false),
+            rel_path_entry("Carrot", false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Lower)
-        });
         assert_eq!(
-            paths,
-            vec![
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("banana").unwrap(), false),
-                (RelPath::unix("dog.md").unwrap(), true),
-                (RelPath::unix("file1.txt").unwrap(), true),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-                (RelPath::unix("Apple.txt").unwrap(), true),
-                (RelPath::unix("File2.txt").unwrap(), true),
-            ]
-        );
-    }
-
-    #[perf]
-    fn compare_rel_paths_lower_files_first() {
-        let mut paths = vec![
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("Apple.txt").unwrap(), true),
-            (RelPath::unix("dog.md").unwrap(), true),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("File2.txt").unwrap(), true),
-            (RelPath::unix(".hidden").unwrap(), false),
-        ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Lower)
-        });
-        assert_eq!(
-            paths,
-            vec![
-                (RelPath::unix("dog.md").unwrap(), true),
-                (RelPath::unix("file1.txt").unwrap(), true),
-                (RelPath::unix("Apple.txt").unwrap(), true),
-                (RelPath::unix("File2.txt").unwrap(), true),
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("banana").unwrap(), false),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-            ]
-        );
-    }
-
-    #[perf]
-    fn compare_rel_paths_unicode_directories_first() {
-        let mut paths = vec![
-            (RelPath::unix("mixedCase").unwrap(), false),
-            (RelPath::unix("Zebra").unwrap(), false),
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("Apple").unwrap(), false),
-            (RelPath::unix("dog").unwrap(), false),
-            (RelPath::unix(".hidden").unwrap(), false),
-            (RelPath::unix("Carrot").unwrap(), false),
-        ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(
-                a,
-                b,
+            sorted_rel_paths(
+                directories_only_paths,
                 SortMode::DirectoriesFirst,
                 SortOrderLexicographic::Unicode,
-            )
-        });
-        assert_eq!(
-            paths,
+            ),
             vec![
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-                (RelPath::unix("Apple").unwrap(), false),
-                (RelPath::unix("Carrot").unwrap(), false),
-                (RelPath::unix("Zebra").unwrap(), false),
-                (RelPath::unix("banana").unwrap(), false),
-                (RelPath::unix("dog").unwrap(), false),
-                (RelPath::unix("mixedCase").unwrap(), false),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple", false),
+                rel_path_entry("Carrot", false),
+                rel_path_entry("Zebra", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog", false),
+                rel_path_entry("mixedCase", false),
             ]
         );
-    }
 
-    #[perf]
-    fn compare_rel_paths_unicode_no_natural_numbers() {
-        let mut paths = vec![
-            (RelPath::unix("file10.txt").unwrap(), true),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("file2.txt").unwrap(), true),
-            (RelPath::unix("file20.txt").unwrap(), true),
+        let file_and_directory_paths = vec![
+            rel_path_entry("banana", false),
+            rel_path_entry("Apple.txt", true),
+            rel_path_entry("dog.md", true),
+            rel_path_entry("ALLCAPS", false),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("File2.txt", true),
+            rel_path_entry(".hidden", false),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Unicode)
-        });
-        // Unicode/lexicographic: '1' < '1'+'0' (prefix) < '2' < '2'+'0' (prefix)
         assert_eq!(
-            paths,
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::DirectoriesFirst,
+                SortOrderLexicographic::Unicode,
+            ),
             vec![
-                (RelPath::unix("file1.txt").unwrap(), true),
-                (RelPath::unix("file10.txt").unwrap(), true),
-                (RelPath::unix("file2.txt").unwrap(), true),
-                (RelPath::unix("file20.txt").unwrap(), true),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("banana", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
             ]
         );
-    }
-
-    #[perf]
-    fn compare_rel_paths_unicode_mixed() {
-        let mut paths = vec![
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("Apple.txt").unwrap(), true),
-            (RelPath::unix("dog.md").unwrap(), true),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("File2.txt").unwrap(), true),
-            (RelPath::unix(".hidden").unwrap(), false),
-        ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Unicode)
-        });
         assert_eq!(
-            paths,
+            sorted_rel_paths(
+                file_and_directory_paths.clone(),
+                SortMode::Mixed,
+                SortOrderLexicographic::Unicode,
+            ),
             vec![
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-                (RelPath::unix("Apple.txt").unwrap(), true),
-                (RelPath::unix("File2.txt").unwrap(), true),
-                (RelPath::unix("banana").unwrap(), false),
-                (RelPath::unix("dog.md").unwrap(), true),
-                (RelPath::unix("file1.txt").unwrap(), true),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("banana", false),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
             ]
         );
-    }
-
-    #[perf]
-    fn compare_rel_paths_unicode_files_first() {
-        let mut paths = vec![
-            (RelPath::unix("banana").unwrap(), false),
-            (RelPath::unix("Apple.txt").unwrap(), true),
-            (RelPath::unix("dog.md").unwrap(), true),
-            (RelPath::unix("ALLCAPS").unwrap(), false),
-            (RelPath::unix("file1.txt").unwrap(), true),
-            (RelPath::unix("File2.txt").unwrap(), true),
-            (RelPath::unix(".hidden").unwrap(), false),
-        ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Unicode)
-        });
         assert_eq!(
-            paths,
+            sorted_rel_paths(
+                file_and_directory_paths,
+                SortMode::FilesFirst,
+                SortOrderLexicographic::Unicode,
+            ),
             vec![
-                (RelPath::unix("Apple.txt").unwrap(), true),
-                (RelPath::unix("File2.txt").unwrap(), true),
-                (RelPath::unix("dog.md").unwrap(), true),
-                (RelPath::unix("file1.txt").unwrap(), true),
-                (RelPath::unix(".hidden").unwrap(), false),
-                (RelPath::unix("ALLCAPS").unwrap(), false),
-                (RelPath::unix("banana").unwrap(), false),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("File2.txt", true),
+                rel_path_entry("dog.md", true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry(".hidden", false),
+                rel_path_entry("ALLCAPS", false),
+                rel_path_entry("banana", false),
             ]
         );
-    }
 
-    #[perf]
-    fn compare_rel_paths_unicode_accented_sorts_after_ascii() {
-        let mut paths = vec![
-            (RelPath::unix("\u{00C9}something.txt").unwrap(), true),
-            (RelPath::unix("zebra.txt").unwrap(), true),
-            (RelPath::unix("Apple.txt").unwrap(), true),
+        let numeric_paths = vec![
+            rel_path_entry("file10.txt", true),
+            rel_path_entry("file1.txt", true),
+            rel_path_entry("file2.txt", true),
+            rel_path_entry("file20.txt", true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Unicode)
-        });
-        // É (U+00C9 = 201) sorts after all ASCII
         assert_eq!(
-            paths,
+            sorted_rel_paths(
+                numeric_paths,
+                SortMode::Mixed,
+                SortOrderLexicographic::Unicode,
+            ),
             vec![
-                (RelPath::unix("Apple.txt").unwrap(), true),
-                (RelPath::unix("zebra.txt").unwrap(), true),
-                (RelPath::unix("\u{00C9}something.txt").unwrap(), true),
+                rel_path_entry("file1.txt", true),
+                rel_path_entry("file10.txt", true),
+                rel_path_entry("file2.txt", true),
+                rel_path_entry("file20.txt", true),
             ]
         );
-    }
 
-    #[perf]
-    fn compare_rel_paths_upper_accented_groups_with_uppercase() {
-        let mut paths = vec![
-            (RelPath::unix("\u{00C9}something.txt").unwrap(), true),
-            (RelPath::unix("zebra.txt").unwrap(), true),
-            (RelPath::unix("Apple.txt").unwrap(), true),
+        let accented_paths = vec![
+            rel_path_entry("\u{00C9}something.txt", true),
+            rel_path_entry("zebra.txt", true),
+            rel_path_entry("Apple.txt", true),
         ];
-        paths.sort_by(|&a, &b| {
-            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Upper)
-        });
-        // É is uppercase, so it groups with uppercase names before lowercase
         assert_eq!(
-            paths,
+            sorted_rel_paths(
+                accented_paths,
+                SortMode::Mixed,
+                SortOrderLexicographic::Unicode
+            ),
             vec![
-                (RelPath::unix("Apple.txt").unwrap(), true),
-                (RelPath::unix("\u{00C9}something.txt").unwrap(), true),
-                (RelPath::unix("zebra.txt").unwrap(), true),
+                rel_path_entry("Apple.txt", true),
+                rel_path_entry("zebra.txt", true),
+                rel_path_entry("\u{00C9}something.txt", true),
             ]
         );
     }
