@@ -3339,13 +3339,6 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
     AgentSettings::get_global(cx).dock.into()
 }
 
-fn agent_panel_side_str(cx: &App) -> &'static str {
-    match agent_panel_dock_position(cx) {
-        DockPosition::Left => "left",
-        DockPosition::Right | DockPosition::Bottom => "right",
-    }
-}
-
 pub enum AgentPanelEvent {
     ActiveViewChanged,
     ThreadFocused,

@@ -32,7 +32,6 @@ use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::rc::Rc;
-use telemetry;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, HighlightedLabel, KeyBinding,
@@ -2529,7 +2528,9 @@ impl Sidebar {
                                 panel.clear_active_thread(window, cx);
                             });
                         }
-                    });
+                    }
+                }
+            }
             return;
         }
 
