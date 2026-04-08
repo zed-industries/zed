@@ -1757,7 +1757,7 @@ fn editor_page() -> SettingsPage {
                 title: "Delay",
                 description: "Time to wait in milliseconds before showing the informational hover box.",
                 field: Box::new(SettingField {
-                    json_path: Some("hover_popover_enabled"),
+                    json_path: Some("hover_popover_delay"),
                     pick: |settings_content| settings_content.editor.hover_popover_delay.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.hover_popover_delay = value;
@@ -4450,7 +4450,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 28] {
+    fn project_panel_section() -> [SettingsPageItem; 29] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4944,6 +4944,24 @@ fn panels_page() -> SettingsPage {
                             .get_or_insert_default()
                             .sort_mode = value;
                     },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sort Order",
+                description: "Whether to sort file and folder names case-sensitively in the project panel.",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        settings_content.project_panel.as_ref()?.sort_order.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .sort_order = value;
+                    },
+                    json_path: Some("project_panel.sort_order"),
                 }),
                 metadata: None,
                 files: USER,

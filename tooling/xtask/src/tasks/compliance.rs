@@ -92,7 +92,7 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     println!(
         "Applying compliance labels to {} pull requests",
-        summary.pull_requests
+        summary.prs_with_errors()
     );
 
     for report in report.errors() {
@@ -100,16 +100,14 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
             println!("Adding review label to PR {}...", pr_number);
 
             client
-                .add_label_to_pull_request(compliance::github::PR_REVIEW_LABEL, pr_number)
+                .ensure_pull_request_has_label(compliance::github::PR_REVIEW_LABEL, pr_number)
                 .await?;
         }
     }
 
-    let report_path = args.report_path.with_extension("md");
+    report.write_markdown(&args.report_path)?;
 
-    report.write_markdown(&report_path)?;
-
-    println!("Wrote compliance report to {}", report_path.display());
+    println!("Wrote compliance report to {}", args.report_path.display());
 
     match summary.review_summary() {
         ReportReviewSummary::MissingReviews => Err(anyhow::anyhow!(

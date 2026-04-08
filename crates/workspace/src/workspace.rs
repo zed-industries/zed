@@ -31,11 +31,10 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveWorkspaceToNewWindow,
-    MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProjectGroup, NextThread,
-    PreviousProjectGroup, PreviousThread, ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent,
-    SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
-    sidebar_side_context_menu,
+    CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace,
+    MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject, PreviousThread,
+    ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent, SidebarHandle, SidebarRenderState,
+    SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -3387,6 +3386,7 @@ impl Workspace {
 
                 if remaining_dirty_items.len() > 1 {
                     let answer = workspace.update_in(cx, |_, window, cx| {
+                        cx.emit(Event::Activate);
                         let detail = Pane::file_names_for_prompt(
                             &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
                             cx,
@@ -8724,34 +8724,92 @@ pub async fn restore_multiworkspace(
         ..
     } = state;
 
-    let window_handle = if active_workspace.paths.is_empty() {
+    let workspace_result = if active_workspace.paths.is_empty() {
         cx.update(|cx| {
             open_workspace_by_id(active_workspace.workspace_id, app_state.clone(), None, cx)
         })
-        .await?
+        .await
     } else {
-        let OpenResult { window, .. } = cx
-            .update(|cx| {
-                Workspace::new_local(
-                    active_workspace.paths.paths().to_vec(),
-                    app_state.clone(),
-                    None,
-                    None,
-                    None,
-                    OpenMode::Activate,
-                    cx,
-                )
-            })
-            .await?;
-        window
+        cx.update(|cx| {
+            Workspace::new_local(
+                active_workspace.paths.paths().to_vec(),
+                app_state.clone(),
+                None,
+                None,
+                None,
+                OpenMode::Activate,
+                cx,
+            )
+        })
+        .await
+        .map(|result| result.window)
+    };
+
+    let window_handle = match workspace_result {
+        Ok(handle) => handle,
+        Err(err) => {
+            log::error!("Failed to restore active workspace: {err:#}");
+
+            // Try each project group's paths as a fallback.
+            let mut fallback_handle = None;
+            for key in &project_group_keys {
+                let key: ProjectGroupKey = key.clone().into();
+                let paths = key.path_list().paths().to_vec();
+                match cx
+                    .update(|cx| {
+                        Workspace::new_local(
+                            paths,
+                            app_state.clone(),
+                            None,
+                            None,
+                            None,
+                            OpenMode::Activate,
+                            cx,
+                        )
+                    })
+                    .await
+                {
+                    Ok(OpenResult { window, .. }) => {
+                        fallback_handle = Some(window);
+                        break;
+                    }
+                    Err(fallback_err) => {
+                        log::error!("Fallback project group also failed: {fallback_err:#}");
+                    }
+                }
+            }
+
+            fallback_handle.ok_or(err)?
+        }
     };
 
     if !project_group_keys.is_empty() {
-        let restored_keys: Vec<ProjectGroupKey> =
-            project_group_keys.into_iter().map(Into::into).collect();
+        let fs = app_state.fs.clone();
+
+        // Resolve linked worktree paths to their main repo paths so
+        // stale keys from previous sessions get normalized and deduped.
+        let mut resolved_keys: Vec<ProjectGroupKey> = Vec::new();
+        for key in project_group_keys.into_iter().map(ProjectGroupKey::from) {
+            let mut resolved_paths = Vec::new();
+            for path in key.path_list().paths() {
+                if let Some(common_dir) =
+                    project::discover_root_repo_common_dir(path, fs.as_ref()).await
+                {
+                    let main_path = common_dir.parent().unwrap_or(&common_dir);
+                    resolved_paths.push(main_path.to_path_buf());
+                } else {
+                    resolved_paths.push(path.to_path_buf());
+                }
+            }
+            let resolved = ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths));
+            if !resolved_keys.contains(&resolved) {
+                resolved_keys.push(resolved);
+            }
+        }
+
         window_handle
             .update(cx, |multi_workspace, _window, _cx| {
-                multi_workspace.restore_project_group_keys(restored_keys);
+                multi_workspace.restore_project_group_keys(resolved_keys);
             })
             .ok();
     }
@@ -10890,6 +10948,113 @@ mod tests {
             multi_workspace_handle.update(cx, |_, _, _| ()).is_ok(),
             "window should still exist after cancelling one workspace's close"
         );
+    }
+
+    #[gpui::test]
+    async fn test_remove_workspace_prompts_for_unsaved_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project_a = Project::test(fs.clone(), ["root".as_ref()], cx).await;
+        let project_b = Project::test(fs.clone(), ["root".as_ref()], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        cx.run_until_parked();
+
+        multi_workspace_handle
+            .update(cx, |mw, _window, cx| mw.open_sidebar(cx))
+            .unwrap();
+
+        let workspace_a = multi_workspace_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let workspace_b = multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.test_add_workspace(project_b, window, cx)
+            })
+            .unwrap();
+
+        // Activate workspace A.
+        multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.activate(workspace_a.clone(), window, cx);
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        // Workspace B has a dirty item.
+        let item_b = cx.new(|cx| TestItem::new(cx).with_dirty(true));
+        workspace_b.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item_b.clone()), None, true, window, cx)
+        });
+
+        // Try to remove workspace B. It should prompt because of the dirty item.
+        let remove_task = multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.remove([workspace_b.clone()], |_, _, _| unreachable!(), window, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // The prompt should have activated workspace B.
+        multi_workspace_handle
+            .read_with(cx, |mw, _| {
+                assert_eq!(
+                    mw.workspace(),
+                    &workspace_b,
+                    "workspace B should be active while prompting"
+                );
+            })
+            .unwrap();
+
+        // Cancel the prompt — user stays on workspace B.
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+        let removed = remove_task.await.unwrap();
+        assert!(!removed, "removal should have been cancelled");
+
+        multi_workspace_handle
+            .read_with(cx, |mw, _| {
+                assert_eq!(
+                    mw.workspace(),
+                    &workspace_b,
+                    "user should stay on workspace B after cancelling"
+                );
+                assert_eq!(mw.workspaces().count(), 2, "both workspaces should remain");
+            })
+            .unwrap();
+
+        // Try again. This time accept the prompt.
+        let remove_task = multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                // First switch back to A.
+                mw.activate(workspace_a.clone(), window, cx);
+                mw.remove([workspace_b.clone()], |_, _, _| unreachable!(), window, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        // Accept the save prompt.
+        cx.simulate_prompt_answer("Don't Save");
+        cx.run_until_parked();
+        let removed = remove_task.await.unwrap();
+        assert!(removed, "removal should have succeeded");
+
+        // Should be back on workspace A, and B should be gone.
+        multi_workspace_handle
+            .read_with(cx, |mw, _| {
+                assert_eq!(
+                    mw.workspace(),
+                    &workspace_a,
+                    "should be back on workspace A after removing B"
+                );
+                assert_eq!(mw.workspaces().count(), 1, "only workspace A should remain");
+            })
+            .unwrap();
     }
 
     #[gpui::test]

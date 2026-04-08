@@ -6172,8 +6172,8 @@ mod tests {
                 assert_eq!(
                     mw.project_group_keys().cloned().collect::<Vec<_>>(),
                     vec![
-                        ProjectGroupKey::new(None, PathList::new(&[dir1])),
                         ProjectGroupKey::new(None, PathList::new(&[dir2])),
+                        ProjectGroupKey::new(None, PathList::new(&[dir1])),
                     ]
                 );
                 assert_eq!(mw.workspaces().count(), 1);

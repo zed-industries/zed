@@ -902,6 +902,9 @@ proc-macro2 = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
 wasmtime = { opt-level = 3 }
+cranelift-codegen = { opt-level = 3 }
+wasmtime-environ = { opt-level = 3 }
+wasmtime-internal-cranelift = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }
