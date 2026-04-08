@@ -1872,6 +1872,21 @@ impl Focusable for ExtensionsPage {
 impl Item for ExtensionsPage {
     type Event = ItemEvent;
 
+    fn tab_content(
+        &self,
+        params: workspace::item::TabContentParams,
+        _window: &Window,
+        cx: &App,
+    ) -> gpui::AnyElement {
+        h_flex()
+            .gap_2()
+            .child(
+                Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
+                    .color(params.text_color()),
+            )
+            .into_any_element()
+    }
+
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Extensions".into()
     }
