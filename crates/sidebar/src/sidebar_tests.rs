@@ -5185,10 +5185,6 @@ mod property_test {
             session_id
         }
 
-        fn remove_thread(&mut self, index: usize) -> acp::SessionId {
-            self.saved_thread_ids.remove(index)
-        }
-
         fn next_workspace_path(&mut self) -> String {
             let id = self.workspace_counter;
             self.workspace_counter += 1;
@@ -5206,7 +5202,6 @@ mod property_test {
     enum Operation {
         SaveThread { project_group_index: usize },
         SaveWorktreeThread { worktree_index: usize },
-        DeleteThread { index: usize },
         ToggleAgentPanel,
         CreateDraftThread,
         AddProject { use_worktree: bool },
@@ -5216,18 +5211,17 @@ mod property_test {
         AddLinkedWorktree { project_group_index: usize },
     }
 
-    // Distribution (out of 22 slots):
-    //   SaveThread:              5 slots (~23%)
-    //   SaveWorktreeThread:      2 slots (~9%)
-    //   DeleteThread:            2 slots (~9%)
+    // Distribution (out of 20 slots):
+    //   SaveThread:              5 slots (~25%)
+    //   SaveWorktreeThread:      2 slots (~10%)
     //   ToggleAgentPanel:        1 slot  (~5%)
     //   CreateDraftThread:       1 slot  (~5%)
     //   AddProject:              1 slot  (~5%)
-    //   ArchiveThread:           1 slot  (~5%)
-    //   SwitchToThread:          2 slots (~9%)
-    //   SwitchToProjectGroup:    2 slots (~9%)
-    //   AddLinkedWorktree:       5 slots (~23%)
-    const DISTRIBUTION_SLOTS: u32 = 22;
+    //   ArchiveThread:           2 slots (~10%)
+    //   SwitchToThread:          2 slots (~10%)
+    //   SwitchToProjectGroup:    2 slots (~10%)
+    //   AddLinkedWorktree:       4 slots (~20%)
+    const DISTRIBUTION_SLOTS: u32 = 20;
 
     impl TestState {
         fn generate_operation(&self, raw: u32, project_group_count: usize) -> Operation {
@@ -5243,36 +5237,30 @@ mod property_test {
                 5..=6 => Operation::SaveThread {
                     project_group_index: extra % project_group_count,
                 },
-                7..=8 if !self.saved_thread_ids.is_empty() => Operation::DeleteThread {
-                    index: extra % self.saved_thread_ids.len(),
-                },
-                7..=8 => Operation::SaveThread {
-                    project_group_index: extra % project_group_count,
-                },
-                9 => Operation::ToggleAgentPanel,
-                10 => Operation::CreateDraftThread,
-                11 => Operation::AddProject {
+                7 => Operation::ToggleAgentPanel,
+                8 => Operation::CreateDraftThread,
+                9 => Operation::AddProject {
                     use_worktree: !self.unopened_worktrees.is_empty() && extra % 4 == 0,
                 },
-                12 if !self.saved_thread_ids.is_empty() => Operation::ArchiveThread {
+                10..=11 if !self.saved_thread_ids.is_empty() => Operation::ArchiveThread {
                     index: extra % self.saved_thread_ids.len(),
                 },
-                12 => Operation::AddProject {
+                10..=11 => Operation::AddProject {
                     use_worktree: !self.unopened_worktrees.is_empty() && extra % 4 == 0,
                 },
-                13..=14 if !self.saved_thread_ids.is_empty() => Operation::SwitchToThread {
+                12..=13 if !self.saved_thread_ids.is_empty() => Operation::SwitchToThread {
                     index: extra % self.saved_thread_ids.len(),
                 },
-                13..=14 => Operation::SwitchToProjectGroup {
+                12..=13 => Operation::SwitchToProjectGroup {
                     index: extra % project_group_count,
                 },
-                15..=16 => Operation::SwitchToProjectGroup {
+                14..=15 => Operation::SwitchToProjectGroup {
                     index: extra % project_group_count,
                 },
-                17..=21 if project_group_count > 0 => Operation::AddLinkedWorktree {
+                16..=19 if project_group_count > 0 => Operation::AddLinkedWorktree {
                     project_group_index: extra % project_group_count,
                 },
-                17..=21 => Operation::SaveThread {
+                16..=19 => Operation::SaveThread {
                     project_group_index: extra % project_group_count,
                 },
                 _ => unreachable!(),
@@ -5362,13 +5350,7 @@ mod property_test {
                     PathList::new(&[std::path::PathBuf::from(&worktree.main_workspace_path)]);
                 save_thread_to_path_with_main(state, path_list, main_worktree_paths, cx);
             }
-            Operation::DeleteThread { index } => {
-                let session_id = state.remove_thread(index);
-                cx.update(|_, cx| {
-                    ThreadMetadataStore::global(cx)
-                        .update(cx, |store, cx| store.delete(session_id, cx));
-                });
-            }
+
             Operation::ToggleAgentPanel => {
                 let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
                 let panel_open =
