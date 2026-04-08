@@ -91,7 +91,11 @@ pub fn build_root_plan(
         })
         .collect::<Vec<_>>();
 
-    let (linked_snapshot, worktree_repo) = workspaces
+    if affected_projects.is_empty() {
+        return None;
+    }
+
+    let linked_repo = workspaces
         .iter()
         .flat_map(|workspace| {
             workspace
@@ -108,18 +112,42 @@ pub fn build_root_plan(
             (snapshot.is_linked_worktree()
                 && snapshot.work_directory_abs_path.as_ref() == path.as_path())
             .then_some((snapshot, repo))
-        })?;
+        });
 
-    let branch_name = linked_snapshot
-        .branch
-        .as_ref()
-        .map(|b| b.name().to_string());
+    let matching_worktree_snapshot = workspaces.iter().find_map(|workspace| {
+        workspace
+            .read(cx)
+            .project()
+            .read(cx)
+            .visible_worktrees(cx)
+            .find(|worktree| worktree.read(cx).abs_path().as_ref() == path.as_path())
+            .map(|worktree| worktree.read(cx).snapshot())
+    });
+
+    let (main_repo_path, worktree_repo, branch_name) =
+        if let Some((linked_snapshot, repo)) = linked_repo {
+            (
+                linked_snapshot.original_repo_abs_path.to_path_buf(),
+                Some(repo),
+                linked_snapshot
+                    .branch
+                    .as_ref()
+                    .map(|branch| branch.name().to_string()),
+            )
+        } else {
+            let main_repo_path = matching_worktree_snapshot
+                .as_ref()?
+                .root_repo_common_dir()
+                .and_then(|dir| dir.parent())?
+                .to_path_buf();
+            (main_repo_path, None, None)
+        };
 
     Some(RootPlan {
         root_path: path,
-        main_repo_path: linked_snapshot.original_repo_abs_path.to_path_buf(),
+        main_repo_path,
         affected_projects,
-        worktree_repo: Some(worktree_repo),
+        worktree_repo,
         branch_name,
     })
 }
@@ -314,10 +342,10 @@ async fn rollback_root(root: &RootPlan, cx: &mut AsyncApp) {
 /// On success, returns a [`PersistOutcome`] that can be passed to
 /// [`rollback_persist`] if a later step in the archival pipeline fails.
 pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Result<PersistOutcome> {
-    let worktree_repo = root
-        .worktree_repo
-        .clone()
-        .context("no worktree repo entity for persistence")?;
+    let (worktree_repo, _temp_worktree_project) = match &root.worktree_repo {
+        Some(worktree_repo) => (worktree_repo.clone(), None),
+        None => find_or_create_repository(&root.root_path, cx).await?,
+    };
 
     // Read original HEAD SHA before creating any WIP commits
     let original_commit_hash = worktree_repo
@@ -425,7 +453,14 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
     let store = cx.update(|cx| ThreadMetadataStore::global(cx));
     let worktree_path_str = root.root_path.to_string_lossy().to_string();
     let main_repo_path_str = root.main_repo_path.to_string_lossy().to_string();
-    let branch_name = root.branch_name.clone();
+    let branch_name = root.branch_name.clone().or_else(|| {
+        worktree_repo.read_with(cx, |repo, _cx| {
+            repo.snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| branch.name().to_string())
+        })
+    });
 
     let db_result = store
         .read_with(cx, |store, cx| {

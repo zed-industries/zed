@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 use editor::Editor;
 use gpui::{
     Action as _, AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyContext, ListState,
-    Pixels, Render, SharedString, WeakEntity, Window, WindowHandle, linear_color_stop,
+    Pixels, Render, SharedString, Task, WeakEntity, Window, WindowHandle, linear_color_stop,
     linear_gradient, list, prelude::*, px,
 };
 use menu::{
@@ -108,6 +108,11 @@ enum SidebarView {
     #[default]
     ThreadList,
     Archive(Entity<ThreadsArchiveView>),
+}
+
+enum ArchiveWorktreeOutcome {
+    Success,
+    Cancelled,
 }
 
 #[derive(Clone, Debug)]
@@ -2471,10 +2476,52 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread_folder_paths = ThreadMetadataStore::global(cx)
+        let metadata = ThreadMetadataStore::global(cx)
             .read(cx)
             .entry(session_id)
-            .map(|m| m.folder_paths.clone());
+            .cloned();
+        let thread_folder_paths = metadata.as_ref().map(|m| m.folder_paths.clone());
+
+        // Compute which linked worktree roots should be archived from disk if
+        // this thread is archived. This must happen before we remove any
+        // workspace from the MultiWorkspace, because `build_root_plan` needs
+        // the currently open workspaces in order to find the affected projects
+        // and repository handles for each linked worktree.
+        let roots_to_archive = metadata
+            .as_ref()
+            .map(|metadata| {
+                let mut workspaces = self
+                    .multi_workspace
+                    .upgrade()
+                    .map(|multi_workspace| {
+                        multi_workspace
+                            .read(cx)
+                            .workspaces()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                for workspace in thread_worktree_archive::all_open_workspaces(cx) {
+                    if !workspaces.contains(&workspace) {
+                        workspaces.push(workspace);
+                    }
+                }
+                metadata
+                    .folder_paths
+                    .ordered_paths()
+                    .filter_map(|path| {
+                        thread_worktree_archive::build_root_plan(path, &workspaces, cx)
+                    })
+                    .filter(|plan| {
+                        !thread_worktree_archive::path_is_referenced_by_other_unarchived_threads(
+                            session_id,
+                            &plan.root_path,
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
         // Find the neighbor thread in the sidebar (by display position).
         // Look below first, then above, for the nearest thread that isn't
@@ -2563,10 +2610,13 @@ impl Sidebar {
                 let removed = remove_task.await?;
                 if removed {
                     this.update_in(cx, |this, window, cx| {
+                        let in_flight =
+                            this.start_archive_worktree_task(&session_id, roots_to_archive, cx);
                         this.archive_and_activate(
                             &session_id,
                             neighbor_metadata.as_ref(),
                             thread_folder_paths.as_ref(),
+                            in_flight,
                             window,
                             cx,
                         );
@@ -2578,10 +2628,12 @@ impl Sidebar {
         } else {
             // Simple case: no workspace removal needed.
             let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
+            let in_flight = self.start_archive_worktree_task(session_id, roots_to_archive, cx);
             self.archive_and_activate(
                 session_id,
                 neighbor_metadata.as_ref(),
                 thread_folder_paths.as_ref(),
+                in_flight,
                 window,
                 cx,
             );
@@ -2598,16 +2650,23 @@ impl Sidebar {
     /// the threadless linked worktree as active and emits a spurious
     /// "+ New Thread" entry with the worktree chip — keeping the worktree
     /// alive and preventing disk cleanup.
+    ///
+    /// When `in_flight_archive` is present, it is the background task that
+    /// persists the linked worktree's git state and deletes it from disk.
+    /// We attach it to the metadata store at the same time we mark the thread
+    /// archived so failures can automatically unarchive the thread and user-
+    /// initiated unarchive can cancel the task.
     fn archive_and_activate(
         &mut self,
         session_id: &acp::SessionId,
         neighbor: Option<&ThreadMetadata>,
         thread_folder_paths: Option<&PathList>,
+        in_flight_archive: Option<(Task<()>, futures::channel::oneshot::Sender<()>)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.archive(session_id, None, cx);
+            store.archive(session_id, in_flight_archive, cx);
         });
 
         let is_active = self
@@ -2682,6 +2741,100 @@ impl Sidebar {
                 });
             }
         }
+    }
+
+    fn start_archive_worktree_task(
+        &self,
+        session_id: &acp::SessionId,
+        roots: Vec<thread_worktree_archive::RootPlan>,
+        cx: &mut Context<Self>,
+    ) -> Option<(Task<()>, futures::channel::oneshot::Sender<()>)> {
+        if roots.is_empty() {
+            return None;
+        }
+
+        let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
+        let session_id = session_id.clone();
+        let task = cx.spawn(async move |_this, cx| {
+            match Self::archive_worktree_roots(roots, cancel_rx, cx).await {
+                Ok(ArchiveWorktreeOutcome::Success) => {
+                    cx.update(|cx| {
+                        ThreadMetadataStore::global(cx).update(cx, |store, _cx| {
+                            store.cleanup_completed_archive(&session_id);
+                        });
+                    });
+                }
+                Ok(ArchiveWorktreeOutcome::Cancelled) => {}
+                Err(error) => {
+                    log::error!("Failed to archive worktree: {error:#}");
+                    cx.update(|cx| {
+                        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                            store.unarchive(&session_id, cx);
+                        });
+                    });
+                }
+            }
+        });
+
+        Some((task, cancel_tx))
+    }
+
+    async fn archive_worktree_roots(
+        roots: Vec<thread_worktree_archive::RootPlan>,
+        mut cancel_rx: futures::channel::oneshot::Receiver<()>,
+        cx: &mut gpui::AsyncApp,
+    ) -> anyhow::Result<ArchiveWorktreeOutcome> {
+        let mut completed_persists: Vec<(
+            thread_worktree_archive::PersistOutcome,
+            thread_worktree_archive::RootPlan,
+        )> = Vec::new();
+
+        for root in &roots {
+            if cancel_rx.try_recv() != Ok(None) {
+                for (outcome, completed_root) in completed_persists.iter().rev() {
+                    thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
+                }
+                return Ok(ArchiveWorktreeOutcome::Cancelled);
+            }
+
+            if root.worktree_repo.is_some() {
+                match thread_worktree_archive::persist_worktree_state(root, cx).await {
+                    Ok(outcome) => {
+                        completed_persists.push((outcome, root.clone()));
+                    }
+                    Err(error) => {
+                        for (outcome, completed_root) in completed_persists.iter().rev() {
+                            thread_worktree_archive::rollback_persist(outcome, completed_root, cx)
+                                .await;
+                        }
+                        return Err(error);
+                    }
+                }
+            }
+
+            if cancel_rx.try_recv() != Ok(None) {
+                for (outcome, completed_root) in completed_persists.iter().rev() {
+                    thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
+                }
+                return Ok(ArchiveWorktreeOutcome::Cancelled);
+            }
+
+            if let Err(error) = thread_worktree_archive::remove_root(root.clone(), cx).await {
+                if let Some((outcome, completed_root)) = completed_persists.last() {
+                    if completed_root.root_path == root.root_path {
+                        thread_worktree_archive::rollback_persist(outcome, completed_root, cx)
+                            .await;
+                        completed_persists.pop();
+                    }
+                }
+                for (outcome, completed_root) in completed_persists.iter().rev() {
+                    thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
+                }
+                return Err(error);
+            }
+        }
+
+        Ok(ArchiveWorktreeOutcome::Success)
     }
 
     fn activate_workspace(
