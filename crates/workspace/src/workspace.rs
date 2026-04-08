@@ -8778,6 +8778,9 @@ pub async fn restore_multiworkspace(
         // stale keys from previous sessions get normalized and deduped.
         let mut resolved_keys: Vec<ProjectGroupKey> = Vec::new();
         for key in project_group_keys.into_iter().map(ProjectGroupKey::from) {
+            if key.path_list().paths().is_empty() {
+                continue;
+            }
             let mut resolved_paths = Vec::new();
             for path in key.path_list().paths() {
                 if let Some(common_dir) =
