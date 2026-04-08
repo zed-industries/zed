@@ -2707,6 +2707,65 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
     });
 }
 
+#[gpui::test]
+async fn test_v3_prediction_strips_cursor_marker_from_edit_text(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.txt": "hello"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("root/foo.txt"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(0, 5));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(project.clone(), buffer.clone(), position, cx);
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    let excerpt_length = request.input.cursor_excerpt.len();
+    respond_tx
+        .send(PredictEditsV3Response {
+            request_id: Uuid::new_v4().to_string(),
+            output: "hello<|user_cursor|> world".to_string(),
+            editable_range: 0..excerpt_length,
+            model_version: None,
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        let prediction = ep_store
+            .prediction_at(&buffer, None, &project, cx)
+            .expect("should have prediction");
+        let snapshot = buffer.read(cx).snapshot();
+        let edits: Vec<_> = prediction
+            .edits
+            .iter()
+            .map(|(range, text)| (range.to_offset(&snapshot), text.clone()))
+            .collect();
+
+        assert_eq!(edits, vec![(5..5, " world".into())]);
+    });
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);

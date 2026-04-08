@@ -1043,7 +1043,7 @@ mod tests {
             })
             .unwrap();
 
-        // Now open a file inside that workspace, but tell Zed to open a new window
+        // Opening a file inside the existing worktree with -n reuses the window.
         open_workspace_file(
             path!("/root/dir1/file1.txt"),
             Some(true),
@@ -1052,18 +1052,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(cx.windows().len(), 2);
-
-        let multi_workspace_2 = cx.windows()[1].downcast::<MultiWorkspace>().unwrap();
-        multi_workspace_2
-            .update(cx, |multi_workspace, _, cx| {
-                multi_workspace.workspace().update(cx, |workspace, cx| {
-                    assert!(workspace.active_item_as::<Editor>(cx).is_some());
-                    let items = workspace.items(cx).collect::<Vec<_>>();
-                    assert_eq!(items.len(), 1, "Workspace should have two items");
-                });
-            })
-            .unwrap();
+        assert_eq!(cx.windows().len(), 1);
     }
 
     #[gpui::test]

@@ -631,13 +631,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "collections",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
+ "log",
  "schemars",
  "serde",
  "serde_json",
  "strum 0.27.2",
  "thiserror 2.0.17",
+ "tiktoken-rs",
 ]
 
 [[package]]
@@ -677,6 +681,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 dependencies = [
  "derive_arbitrary",
+]
+
+[[package]]
+name = "arc-swap"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a07d1f37ff60921c83bdfc7407723bdefe89b44b98a9b772f225c8f9d67141a6"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -1222,10 +1235,13 @@ dependencies = [
 name = "auto_update_ui"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "auto_update",
  "client",
+ "db",
  "editor",
+ "fs",
  "gpui",
  "markdown_preview",
  "release_channel",
@@ -1233,9 +1249,11 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "telemetry",
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -2533,13 +2551,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "cargo-platform"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87a0c0e6148f11f01f32650a2ea02d532b2ad4e81d8bd41e6e565b5adc5e6082"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "cargo_metadata"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd5eb614ed4c27c5d706420e4320fbe3216ab31fa1c33cd8246ac36dae4479ba"
 dependencies = [
  "camino",
- "cargo-platform",
+ "cargo-platform 0.1.9",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "cargo_metadata"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
+dependencies = [
+ "camino",
+ "cargo-platform 0.3.2",
  "semver",
  "serde",
  "serde_json",
@@ -2872,7 +2914,6 @@ dependencies = [
  "http_client",
  "http_client_tls",
  "httparse",
- "language_model",
  "log",
  "objc2-foundation",
  "parking_lot",
@@ -2928,6 +2969,7 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
+ "smol",
  "thiserror 2.0.17",
  "yawc",
 ]
@@ -3173,7 +3215,6 @@ dependencies = [
  "anyhow",
  "call",
  "channel",
- "chrono",
  "client",
  "collections",
  "db",
@@ -3182,7 +3223,6 @@ dependencies = [
  "fuzzy",
  "gpui",
  "livekit_client",
- "log",
  "menu",
  "notifications",
  "picker",
@@ -3197,7 +3237,6 @@ dependencies = [
  "theme",
  "theme_settings",
  "time",
- "time_format",
  "title_bar",
  "ui",
  "util",
@@ -3284,6 +3323,25 @@ dependencies = [
  "derive_more",
  "gpui",
  "workspace",
+]
+
+[[package]]
+name = "compliance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "derive_more",
+ "futures 0.3.32",
+ "indoc",
+ "itertools 0.14.0",
+ "jsonwebtoken",
+ "octocrab",
+ "regex",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -5112,6 +5170,7 @@ dependencies = [
  "buffer_diff",
  "client",
  "clock",
+ "cloud_api_client",
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
@@ -5591,7 +5650,7 @@ dependencies = [
 name = "env_var"
 version = "0.1.0"
 dependencies = [
- "gpui",
+ "gpui_shared_string",
 ]
 
 [[package]]
@@ -6133,6 +6192,7 @@ dependencies = [
  "file_icons",
  "futures 0.3.32",
  "fuzzy",
+ "fuzzy_nucleo",
  "gpui",
  "menu",
  "open_path_prompt",
@@ -6688,6 +6748,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
 dependencies = [
  "thread_local",
+]
+
+[[package]]
+name = "fuzzy_nucleo"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "nucleo",
+ "util",
 ]
 
 [[package]]
@@ -7408,11 +7477,13 @@ dependencies = [
  "anyhow",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
+ "log",
  "schemars",
  "serde",
  "serde_json",
- "settings",
  "strum 0.27.2",
+ "tiktoken-rs",
 ]
 
 [[package]]
@@ -7481,6 +7552,7 @@ dependencies = [
  "getrandom 0.3.4",
  "gpui_macros",
  "gpui_platform",
+ "gpui_shared_string",
  "gpui_util",
  "gpui_web",
  "http_client",
@@ -7648,6 +7720,16 @@ dependencies = [
  "gpui_macos",
  "gpui_web",
  "gpui_windows",
+]
+
+[[package]]
+name = "gpui_shared_string"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "gpui_util",
+ "schemars",
+ "serde",
 ]
 
 [[package]]
@@ -8326,11 +8408,25 @@ dependencies = [
  "http 1.3.1",
  "hyper 1.7.0",
  "hyper-util",
+ "log",
  "rustls 0.23.33",
  "rustls-native-certs 0.8.2",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.2",
+ "tower-service",
+]
+
+[[package]]
+name = "hyper-timeout"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
+dependencies = [
+ "hyper 1.7.0",
+ "hyper-util",
+ "pin-project-lite",
+ "tokio",
  "tower-service",
 ]
 
@@ -9284,7 +9380,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "gpui",
+ "gpui_shared_string",
  "log",
  "lsp",
  "parking_lot",
@@ -9323,12 +9419,8 @@ dependencies = [
 name = "language_model"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "base64 0.22.1",
- "cloud_api_client",
- "cloud_api_types",
- "cloud_llm_client",
  "collections",
  "credentials_provider",
  "env_var",
@@ -9337,16 +9429,31 @@ dependencies = [
  "http_client",
  "icons",
  "image",
+ "language_model_core",
  "log",
- "open_ai",
- "open_router",
  "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "util",
+]
+
+[[package]]
+name = "language_model_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cloud_llm_client",
+ "futures 0.3.32",
+ "gpui_shared_string",
+ "http_client",
+ "partial-json-fixer",
  "schemars",
  "serde",
  "serde_json",
  "smol",
+ "strum 0.27.2",
  "thiserror 2.0.17",
- "util",
 ]
 
 [[package]]
@@ -9362,8 +9469,8 @@ dependencies = [
  "base64 0.22.1",
  "bedrock",
  "client",
+ "cloud_api_client",
  "cloud_api_types",
- "cloud_llm_client",
  "collections",
  "component",
  "convert_case 0.8.0",
@@ -9382,6 +9489,7 @@ dependencies = [
  "http_client",
  "language",
  "language_model",
+ "language_models_cloud",
  "lmstudio",
  "log",
  "menu",
@@ -9390,23 +9498,42 @@ dependencies = [
  "open_ai",
  "open_router",
  "opencode",
- "partial-json-fixer",
  "pretty_assertions",
  "release_channel",
  "schemars",
- "semver",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "strum 0.27.2",
- "thiserror 2.0.17",
  "tiktoken-rs",
  "tokio",
  "ui",
  "ui_input",
  "util",
  "vercel",
+ "x_ai",
+]
+
+[[package]]
+name = "language_models_cloud"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "cloud_llm_client",
+ "futures 0.3.32",
+ "google_ai",
+ "gpui",
+ "http_client",
+ "language_model",
+ "open_ai",
+ "schemars",
+ "semver",
+ "serde",
+ "serde_json",
+ "smol",
+ "thiserror 2.0.17",
  "x_ai",
 ]
 
@@ -10016,7 +10143,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=a4f410987660bf560d1e617cb78117c6b6b9f599#a4f410987660bf560d1e617cb78117c6b6b9f599"
+source = "git+https://github.com/zed-industries/lsp-types?rev=c7396459fefc7886b4adfa3b596832405ae1e880#c7396459fefc7886b4adfa3b596832405ae1e880"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -10167,6 +10294,7 @@ dependencies = [
  "language",
  "log",
  "markdown",
+ "project",
  "settings",
  "tempfile",
  "theme_settings",
@@ -11005,6 +11133,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "nucleo"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5262af4c94921c2646c5ac6ff7900c2af9cbb08dc26a797e18130a7019c039d4"
+dependencies = [
+ "nucleo-matcher",
+ "parking_lot",
+ "rayon",
+]
+
+[[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "num"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11388,6 +11537,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "octocrab"
+version = "0.49.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63f6687a23731011d0117f9f4c3cdabaa7b5e42ca671f42b5cc0657c492540e3"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes 1.11.1",
+ "cargo_metadata 0.23.1",
+ "cfg-if",
+ "chrono",
+ "either",
+ "futures 0.3.32",
+ "futures-core",
+ "futures-util",
+ "getrandom 0.2.16",
+ "http 1.3.1",
+ "http-body 1.0.1",
+ "http-body-util",
+ "hyper 1.7.0",
+ "hyper-rustls 0.27.7",
+ "hyper-timeout",
+ "hyper-util",
+ "jsonwebtoken",
+ "once_cell",
+ "percent-encoding",
+ "pin-project",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
+ "snafu",
+ "tokio",
+ "tower 0.5.2",
+ "tower-http 0.6.6",
+ "url",
+ "web-time",
+]
+
+[[package]]
 name = "ollama"
 version = "0.1.0"
 dependencies = [
@@ -11406,6 +11597,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_api_types",
+ "collections",
  "component",
  "db",
  "documented",
@@ -11499,16 +11692,19 @@ name = "open_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
  "log",
+ "pretty_assertions",
  "rand 0.9.2",
  "schemars",
  "serde",
  "serde_json",
- "settings",
  "strum 0.27.2",
  "thiserror 2.0.17",
+ "tiktoken-rs",
 ]
 
 [[package]]
@@ -11540,6 +11736,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
  "schemars",
  "serde",
  "serde_json",
@@ -12708,7 +12905,6 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "platform_title_bar"
 version = "0.1.0"
 dependencies = [
- "feature_flags",
  "gpui",
  "project",
  "settings",
@@ -13102,6 +13298,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "fuzzy",
+ "fuzzy_nucleo",
  "git",
  "git2",
  "git_hosting_providers",
@@ -15389,6 +15586,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
 name = "security-framework"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15659,6 +15865,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "language_model_core",
  "log",
  "schemars",
  "serde",
@@ -15730,7 +15937,6 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -15880,7 +16086,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "editor",
- "feature_flags",
  "fs",
  "git",
  "gpui",
@@ -16091,6 +16296,27 @@ name = "smol_str"
 version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f7a918bd2a9951d18ee6e48f076843e8e73a9a5d22cf05bcd4b7a81bdd04e17"
+
+[[package]]
+name = "snafu"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e84b3f4eacbf3a1ce05eac6763b4d629d60cbc94d632e4092c54ade71f1e1a2"
+dependencies = [
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "snippet"
@@ -17517,12 +17743,15 @@ dependencies = [
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "fs",
  "fuzzy",
  "gpui",
  "log",
  "picker",
+ "project",
  "serde",
+ "serde_json",
  "settings",
  "telemetry",
  "theme",
@@ -18096,8 +18325,10 @@ dependencies = [
  "pin-project-lite",
  "sync_wrapper 1.0.2",
  "tokio",
+ "tokio-util",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -18135,6 +18366,7 @@ dependencies = [
  "tower 0.5.2",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -19981,6 +20213,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
+ "serde",
  "wasm-bindgen",
 ]
 
@@ -20013,6 +20246,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_api_client",
  "cloud_api_types",
  "cloud_llm_client",
  "futures 0.3.32",
@@ -21616,9 +21850,11 @@ name = "x_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "language_model_core",
  "schemars",
  "serde",
  "strum 0.27.2",
+ "tiktoken-rs",
 ]
 
 [[package]]
@@ -21718,9 +21954,10 @@ dependencies = [
  "annotate-snippets",
  "anyhow",
  "backtrace",
- "cargo_metadata",
+ "cargo_metadata 0.19.2",
  "cargo_toml",
  "clap",
+ "compliance",
  "gh-workflow",
  "indexmap",
  "indoc",
@@ -21730,6 +21967,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "strum 0.27.2",
+ "tokio",
  "toml 0.8.23",
  "toml_edit 0.22.27",
 ]
@@ -22418,6 +22656,7 @@ name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "imara-diff",
  "indoc",
  "serde",
  "strum 0.27.2",

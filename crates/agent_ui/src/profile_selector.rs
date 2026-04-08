@@ -1,4 +1,6 @@
-use crate::{CycleModeSelector, ManageProfiles, ToggleProfileSelector};
+use crate::{
+    CycleModeSelector, ManageProfiles, ToggleProfileSelector, ui::documentation_aside_side,
+};
 use agent_settings::{
     AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
@@ -15,8 +17,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    DocumentationAside, DocumentationSide, HighlightedLabel, KeyBinding, LabelSize, ListItem,
-    ListItemSpacing, PopoverMenuHandle, Tooltip, prelude::*,
+    DocumentationAside, HighlightedLabel, KeyBinding, LabelSize, ListItem, ListItemSpacing,
+    PopoverMenuHandle, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -629,13 +631,7 @@ impl PickerDelegate for ProfilePickerDelegate {
         let candidate = self.candidates.get(entry.candidate_index)?;
         let docs_aside = Self::documentation(candidate)?.to_string();
 
-        let settings = AgentSettings::get_global(cx);
-        let side = match settings.dock {
-            settings::DockPosition::Left => DocumentationSide::Right,
-            settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                DocumentationSide::Left
-            }
-        };
+        let side = documentation_aside_side(cx);
 
         Some(DocumentationAside {
             side,
