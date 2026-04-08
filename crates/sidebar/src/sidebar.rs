@@ -2492,7 +2492,7 @@ impl Sidebar {
                 return None;
             }
 
-            let (cancel_tx, cancel_rx) = smol::channel::bounded(1);
+            let (cancel_tx, cancel_rx) = futures::channel::oneshot::channel::<()>();
             let current_workspace = current_workspace.clone();
             let session_id = session_id.clone();
 
@@ -2647,7 +2647,7 @@ impl Sidebar {
         roots: Vec<thread_worktree_archive::RootPlan>,
         workspace: Option<Entity<Workspace>>,
         window: WindowHandle<MultiWorkspace>,
-        cancel_rx: smol::channel::Receiver<()>,
+        mut cancel_rx: futures::channel::oneshot::Receiver<()>,
         cx: &mut gpui::AsyncApp,
     ) -> anyhow::Result<ArchiveStatus> {
         // Step 1: Prompt user to save/discard dirty items
@@ -2673,9 +2673,7 @@ impl Sidebar {
 
             // Race the save prompt against cancellation
             let mut save_future = std::pin::pin!(save_task);
-            let mut cancel_future = std::pin::pin!(cancel_rx.recv());
-            let user_confirmed =
-                futures::future::select(&mut save_future, &mut cancel_future).await;
+            let user_confirmed = futures::future::select(&mut save_future, &mut cancel_rx).await;
 
             match user_confirmed {
                 futures::future::Either::Left((result, _)) => {
@@ -2710,7 +2708,7 @@ impl Sidebar {
 
         for root in &roots {
             // Check for cancellation before each root
-            if cancel_rx.is_closed() {
+            if cancel_rx.try_recv().is_err() {
                 for (outcome, completed_root) in completed_persists.iter().rev() {
                     thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
                 }
