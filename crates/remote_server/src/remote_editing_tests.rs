@@ -2267,8 +2267,8 @@ async fn test_remote_external_agent_server(
     assert_eq!(
         command,
         AgentServerCommand {
-            path: "mock".into(),
-            args: vec!["foo-cli".into(), "--flag".into()],
+            path: "foo-cli".into(),
+            args: vec!["--flag".into()],
             env: Some(HashMap::from_iter([
                 ("NO_BROWSER".into(), "1".into()),
                 ("VAR".into(), "val".into()),
