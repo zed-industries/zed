@@ -303,12 +303,12 @@ impl FromStr for VersionTagList {
     }
 }
 
-pub struct CommitsFromVersionToHead {
+pub struct CommitsFromVersionToVersion {
     version_tag: VersionTag,
     branch: String,
 }
 
-impl CommitsFromVersionToHead {
+impl CommitsFromVersionToVersion {
     pub fn new(version_tag: VersionTag, branch: String) -> Self {
         Self {
             version_tag,
@@ -317,7 +317,7 @@ impl CommitsFromVersionToHead {
     }
 }
 
-impl Subcommand for CommitsFromVersionToHead {
+impl Subcommand for CommitsFromVersionToVersion {
     type ParsedOutput = CommitList;
 
     fn args(&self) -> impl IntoIterator<Item = String> {
