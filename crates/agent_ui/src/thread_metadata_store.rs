@@ -178,6 +178,7 @@ pub struct ArchivedGitWorktree {
     /// repo) and as a fallback target if the WIP resets fail.
     pub original_commit_hash: String,
 }
+
 /// The store holds all metadata needed to show threads in the sidebar/the archive.
 ///
 /// Automatically listens to AcpThread events and updates metadata if it has changed.
@@ -1072,6 +1073,7 @@ impl Column for ArchivedGitWorktree {
         ))
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

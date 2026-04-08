@@ -6008,17 +6008,6 @@ impl Repository {
         target: CreateWorktreeTarget,
         path: PathBuf,
     ) -> oneshot::Receiver<Result<()>> {
-        if matches!(
-            &start_point,
-            CreateWorktreeStartPoint::Branched { name } if name.is_empty()
-        ) {
-            let (sender, receiver) = oneshot::channel();
-            sender
-                .send(Err(anyhow!("branch name cannot be empty")))
-                .ok();
-            return receiver;
-        }
-
         let id = self.id;
         let job_description = match target.branch_name() {
             Some(branch_name) => format!("git worktree add: {branch_name}"),
@@ -6524,38 +6513,6 @@ impl Repository {
                     Ok(GitRepositoryCheckpoint {
                         commit_sha: Oid::from_bytes(&response.commit_sha)?,
                     })
-                }
-            }
-        })
-    }
-
-    pub fn create_archive_checkpoint(&mut self) -> oneshot::Receiver<Result<(String, String)>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.create_archive_checkpoint().await
-                }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("archive checkpoints are not supported on remote repositories")
-                }
-            }
-        })
-    }
-
-    pub fn restore_archive_checkpoint(
-        &mut self,
-        staged_sha: String,
-        unstaged_sha: String,
-    ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend
-                        .restore_archive_checkpoint(staged_sha, unstaged_sha)
-                        .await
-                }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("archive checkpoints are not supported on remote repositories")
                 }
             }
         })

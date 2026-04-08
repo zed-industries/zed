@@ -673,6 +673,7 @@ impl GitRepository for FakeGitRepository {
                     }
                 })??;
             }
+
             Ok(())
         }
         .boxed()
