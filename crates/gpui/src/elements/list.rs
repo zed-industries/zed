@@ -706,7 +706,11 @@ impl ListState {
         point(Pixels::ZERO, state.max_scroll_offset())
     }
 
-    /// Returns the current scroll offset adjusted for the scrollbar
+    /// Returns the current scroll offset adjusted for the scrollbar.
+    ///
+    /// The returned offset has a negative `y` component representing
+    /// how far the content has scrolled, consistent with the GPUI
+    /// scroll convention used by [`ScrollableHandle::offset`].
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
         let state = &self.0.borrow();
 
@@ -719,11 +723,7 @@ impl ListState {
         let mut cursor = state.items.cursor::<ListItemSummary>(());
         let summary: ListItemSummary =
             cursor.summary(&Count(logical_scroll_top.item_ix), Bias::Right);
-        let content_height = state.items.summary().height;
-        let drag_offset =
-            // if dragging the scrollbar, we want to offset the point if the height changed
-            content_height - state.scrollbar_drag_start_height.unwrap_or(content_height);
-        let offset = summary.height + logical_scroll_top.offset_in_item - drag_offset;
+        let offset = summary.height + logical_scroll_top.offset_in_item;
 
         Point::new(px(0.), -offset)
     }
@@ -1202,12 +1202,17 @@ impl StateInner {
         let height = bounds.size.height;
 
         let padding = self.last_padding.unwrap_or_default();
-        let content_height = self.items.summary().height;
+        // Use the frozen content height during scrollbar drag so that the
+        // scroll range stays consistent with `max_offset_for_scrollbar()`,
+        // which also uses `max_scroll_offset()` (frozen during drag).
+        // Previously a `drag_offset` (live − frozen) was subtracted, but
+        // when content grows during a drag the correction overshoots and
+        // inverts the scroll position.
+        let content_height = self
+            .scrollbar_drag_start_height
+            .unwrap_or_else(|| self.items.summary().height);
         let scroll_max = (content_height + padding.top + padding.bottom - height).max(px(0.));
-        let drag_offset =
-            // if dragging the scrollbar, we want to offset the point if the height changed
-            content_height - self.scrollbar_drag_start_height.unwrap_or(content_height);
-        let new_scroll_top = (point.y - drag_offset).abs().max(px(0.)).min(scroll_max);
+        let new_scroll_top = (-point.y).max(px(0.)).min(scroll_max);
 
         self.follow_state.stop_following();
 
@@ -1913,8 +1918,8 @@ mod test {
         assert!(state.is_following_tail());
 
         // Simulate the scrollbar moving the viewport to the middle.
-        // `set_offset_from_scrollbar` accepts a positive distance from the start.
-        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
+        // The scrollbar passes negative offsets (GPUI scroll convention).
+        state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
 
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 3);
@@ -1929,6 +1934,51 @@ mod test {
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.into_any_element()
         });
+
+        let offset = state.logical_scroll_top();
+        assert_eq!(offset.item_ix, 3);
+        assert_eq!(offset.offset_in_item, px(0.));
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_drag_with_growing_content(cx: &mut TestAppContext) {
+        // Regression test: when content grows while the scrollbar is being
+        // dragged, the scroll position must remain correct. Previously the
+        // `drag_offset` correction and `.abs()` call could invert the
+        // position, snapping the viewport to the top instead of following
+        // the thumb.
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(10, crate::ListAlignment::Top, px(0.)).measure_all();
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        // 10 items × 50px = 500px content, 200px viewport → scroll_max = 300px.
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+
+        // Begin scrollbar drag (freezes content height at 500px).
+        state.scrollbar_drag_started();
+
+        // Simulate content growing (e.g. streaming) while dragging.
+        state.splice(10..10, 10);
+
+        // Drag thumb to 50% of the frozen range → should land at 150px.
+        // scroll_max based on frozen height = (500 + 0 − 200) = 300px.
+        // -(-150) = 150 → item_ix 3, offset 0.
+        state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
 
         let offset = state.logical_scroll_top();
         assert_eq!(offset.item_ix, 3);
@@ -2172,12 +2222,13 @@ mod test {
         assert!(state.is_following_tail());
 
         // Drag the scrollbar up to the middle — follow_tail should suspend.
-        state.set_offset_from_scrollbar(point(px(0.), px(150.)));
+        // The scrollbar passes negative offsets (GPUI scroll convention).
+        state.set_offset_from_scrollbar(point(px(0.), px(-150.)));
         assert!(!state.is_following_tail());
 
         // Drag the scrollbar back to the bottom — follow_tail should re-engage
         // on the next paint.
-        state.set_offset_from_scrollbar(point(px(0.), px(300.)));
+        state.set_offset_from_scrollbar(point(px(0.), px(-300.)));
         cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
             view.into_any_element()
         });
