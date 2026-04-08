@@ -21,26 +21,47 @@ use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadMetadataStore};
 /// A thread can have multiple folder paths open, so there may be multiple
 /// `RootPlan`s per archival operation. Each one captures everything needed to
 /// persist the worktree's git state and then remove it from disk.
+///
+/// All fields are gathered synchronously by [`build_root_plan`] while the
+/// worktree is still loaded in open projects. This is important because
+/// workspace removal tears down project and repository entities, making
+/// them unavailable for the later async persist/remove steps.
 #[derive(Clone)]
 pub struct RootPlan {
     /// Absolute path of the git worktree on disk.
     pub root_path: PathBuf,
     /// Absolute path to the main git repository this worktree is linked to.
+    /// Used both for creating a git ref to prevent GC of WIP commits during
+    /// [`persist_worktree_state`], and for `git worktree remove` during
+    /// [`remove_root`].
     pub main_repo_path: PathBuf,
     /// Every open `Project` that has this worktree loaded, so they can all
-    /// release it during removal.
+    /// call `remove_worktree` and release it during [`remove_root`].
+    /// Multiple projects can reference the same path when the user has the
+    /// worktree open in more than one workspace.
     pub affected_projects: Vec<AffectedProject>,
     /// The `Repository` entity for this worktree, used to run git commands
-    /// (commit, reset, etc.). `None` if this path isn't a git worktree.
+    /// (create WIP commits, stage files, reset) during
+    /// [`persist_worktree_state`]. `None` when the `GitStore` hasn't created
+    /// a `Repository` for this worktree yet — in that case,
+    /// `persist_worktree_state` falls back to creating a temporary headless
+    /// project to obtain one.
     pub worktree_repo: Option<Entity<Repository>>,
     /// The branch the worktree was on, so it can be restored later.
+    /// `None` if the worktree was in detached HEAD state or if no
+    /// `Repository` entity was available at planning time (in which case
+    /// `persist_worktree_state` reads it from the repo snapshot instead).
     pub branch_name: Option<String>,
 }
 
 /// A `Project` that references a worktree being archived, paired with the
-/// `WorktreeId` it uses for that worktree. The same worktree path can appear
-/// in multiple open workspaces/projects, and each one needs to remove it
-/// during archival.
+/// `WorktreeId` it uses for that worktree.
+///
+/// The same worktree path can appear in multiple open workspaces/projects
+/// (e.g. when the user has two windows open that both include the same
+/// linked worktree). Each one needs to call `remove_worktree` and wait for
+/// the release during [`remove_root`], otherwise the project would still
+/// hold a reference to the directory and `git worktree remove` would fail.
 #[derive(Clone)]
 pub struct AffectedProject {
     pub project: Entity<Project>,
@@ -64,10 +85,26 @@ pub struct PersistOutcome {
 
 /// Builds a [`RootPlan`] for archiving the git worktree at `path`.
 ///
-/// This is a synchronous planning step that inspects all open workspaces to
-/// find which projects have this worktree loaded and to locate the
-/// `Repository` entity for it. Returns `None` if the path isn't a linked
-/// git worktree in any open workspace.
+/// This is a synchronous planning step that must run *before* any workspace
+/// removal, because it needs live project and repository entities that are
+/// torn down when a workspace is removed. It does three things:
+///
+/// 1. Finds every `Project` across all open workspaces that has this
+///    worktree loaded (`affected_projects`).
+/// 2. Looks for a `Repository` entity whose snapshot identifies this path
+///    as a linked worktree (`worktree_repo`), which is needed for the git
+///    operations in [`persist_worktree_state`].
+/// 3. Determines the `main_repo_path` — the parent repo that owns this
+///    linked worktree — needed for both git ref creation and
+///    `git worktree remove`.
+///
+/// When no `Repository` entity is available (e.g. the `GitStore` hasn't
+/// finished scanning), the function falls back to deriving `main_repo_path`
+/// from the worktree snapshot's `root_repo_common_dir`. In that case
+/// `worktree_repo` is `None` and [`persist_worktree_state`] will create a
+/// temporary headless project to obtain one.
+///
+/// Returns `None` if no open project has this path as a visible worktree.
 pub fn build_root_plan(
     path: &Path,
     workspaces: &[Entity<Workspace>],
