@@ -2827,6 +2827,72 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
     );
 }
 
+#[gpui::test]
+async fn test_linked_worktree_git_dir_events_do_not_panic(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor);
+
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/linked_worktree")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    fs.write(
+        path!("/linked_worktree/file.txt").as_ref(),
+        "content".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        path!("/linked_worktree").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    // Trigger an fs event in the common git dir (main repo's .git),
+    // which is outside the linked worktree root. The watcher monitors
+    // this directory, so events from it flow through process_events.
+    // This must not panic when the .git path is outside the worktree root.
+    tree.flush_fs_events_in_root_git_repository(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.snapshot().root_repo_common_dir().is_some(),
+            "linked worktree should still have its git repository after git dir events"
+        );
+    });
+}
+
 fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 
