@@ -19,7 +19,7 @@ use ui::{
     prelude::*,
 };
 use ui_input::{ERASED_EDITOR_FACTORY, ErasedEditor};
-use workspace::{DismissDecision, ModalView};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 pub struct RemoteConnectionPrompt {
     connection_string: SharedString,

@@ -46,7 +46,8 @@ use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
     NextProject, NextThread, Open, PreviousProject, PreviousThread, SerializedProjectGroupKey,
     ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide,
-    ToggleWorkspaceSidebar, Workspace, sidebar_side_context_menu,
+    ToggleWorkspaceSidebar, Workspace, notifications::DetachAndPromptErr,
+    sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -2212,6 +2213,17 @@ impl Sidebar {
         };
 
         if let Some(connection_options) = project_group_key.host() {
+            // If there's already an open workspace for this remote host,
+            // reuse it instead of establishing a new SSH connection.
+            if let Some(workspace) = multi_workspace
+                .read(cx)
+                .workspace_for_paths(&folder_paths, cx)
+            {
+                multi_workspace.update(cx, |mw, cx| mw.activate(workspace.clone(), window, cx));
+                self.activate_thread(metadata, &workspace, false, window, cx);
+                return;
+            }
+
             let pending_session_id = metadata.session_id.clone();
             self.pending_remote_thread_activation = Some(pending_session_id.clone());
 
@@ -2228,68 +2240,50 @@ impl Sidebar {
                 .app_state()
                 .clone();
             let paths = folder_paths.paths().to_vec();
-
             let provisional_project_group_key = project_group_key.clone();
 
-            cx.spawn_in(window, async move |this, cx| {
-                let result: anyhow::Result<()> = async {
-                    let delegate: std::sync::Arc<dyn remote::RemoteClientDelegate> =
-                        std::sync::Arc::new(remote_connection::HeadlessRemoteClientDelegate);
-                    let remote_connection =
-                        remote::connect(connection_options.clone(), delegate.clone(), cx).await?;
-
-                    let (_cancel_tx, cancel_rx) = futures::channel::oneshot::channel();
-                    let session = cx
-                        .update(|_, cx| {
-                            remote::RemoteClient::new(
-                                remote::remote_client::ConnectionIdentifier::setup(),
-                                remote_connection,
-                                cancel_rx,
-                                delegate,
-                                cx,
-                            )
-                        })?
-                        .await?
-                        .ok_or_else(|| anyhow::anyhow!("Remote connection was cancelled"))?;
-
-                    let new_project = cx.update(|_, cx| {
-                        project::Project::remote(
-                            session,
-                            app_state.client.clone(),
-                            app_state.node_runtime.clone(),
-                            app_state.user_store.clone(),
-                            app_state.languages.clone(),
-                            app_state.fs.clone(),
-                            true,
-                            cx,
-                        )
-                    })?;
-
-                    workspace::open_remote_project_with_existing_connection(
-                        connection_options,
-                        new_project,
-                        paths,
-                        app_state,
-                        window_handle,
-                        Some(provisional_project_group_key),
+            let active_workspace = multi_workspace.read(cx).workspace().clone();
+            let connect_task = active_workspace.update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    remote_connection::RemoteConnectionModal::new(
+                        &connection_options,
+                        Vec::new(),
+                        window,
                         cx,
                     )
-                    .await?;
+                });
 
-                    let workspace = window_handle.update(cx, |multi_workspace, window, cx| {
-                        let workspace = multi_workspace.workspace().clone();
-                        multi_workspace.add(workspace.clone(), window, cx);
-                        workspace
-                    })?;
+                let prompt = workspace
+                    .active_modal::<remote_connection::RemoteConnectionModal>(cx)
+                    .expect("Modal just created")
+                    .read(cx)
+                    .prompt
+                    .clone();
 
-                    this.update_in(cx, |this, window, cx| {
-                        this.activate_thread(metadata, &workspace, false, window, cx);
-                    })?;
-                    anyhow::Ok(())
-                }
-                .await;
+                remote_connection::connect(
+                    remote::remote_client::ConnectionIdentifier::setup(),
+                    connection_options.clone(),
+                    prompt,
+                    window,
+                    cx,
+                )
+                .prompt_err("Failed to connect", window, cx, |_, _, _| None)
+            });
 
-                if result.is_err() {
+            cx.spawn_in(window, async move |this, cx| {
+                let session = connect_task.await;
+
+                active_workspace
+                    .update_in(cx, |workspace, _window, cx| {
+                        if let Some(modal) =
+                            workspace.active_modal::<remote_connection::RemoteConnectionModal>(cx)
+                        {
+                            modal.update(cx, |modal, cx| modal.finished(cx));
+                        }
+                    })
+                    .ok();
+
+                let Some(Some(session)) = session else {
                     this.update(cx, |this, _cx| {
                         if this.pending_remote_thread_activation.as_ref()
                             == Some(&pending_session_id)
@@ -2298,9 +2292,51 @@ impl Sidebar {
                         }
                     })
                     .ok();
-                }
+                    return anyhow::Ok(());
+                };
 
-                result
+                let new_project = cx.update(|_, cx| {
+                    project::Project::remote(
+                        session,
+                        app_state.client.clone(),
+                        app_state.node_runtime.clone(),
+                        app_state.user_store.clone(),
+                        app_state.languages.clone(),
+                        app_state.fs.clone(),
+                        true,
+                        cx,
+                    )
+                })?;
+
+                workspace::open_remote_project_with_existing_connection(
+                    connection_options,
+                    new_project,
+                    paths,
+                    app_state,
+                    window_handle,
+                    Some(provisional_project_group_key),
+                    cx,
+                )
+                .await?;
+
+                let workspace = window_handle.update(cx, |multi_workspace, window, cx| {
+                    let workspace = multi_workspace.workspace().clone();
+                    multi_workspace.add(workspace.clone(), window, cx);
+                    workspace
+                })?;
+
+                this.update_in(cx, |this, window, cx| {
+                    this.activate_thread(metadata, &workspace, false, window, cx);
+                })?;
+
+                this.update(cx, |this, _cx| {
+                    if this.pending_remote_thread_activation.as_ref() == Some(&pending_session_id) {
+                        this.pending_remote_thread_activation = None;
+                    }
+                })
+                .ok();
+
+                anyhow::Ok(())
             })
             .detach_and_log_err(cx);
         } else {
