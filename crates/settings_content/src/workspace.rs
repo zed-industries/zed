@@ -688,6 +688,13 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub folder_icons: Option<bool>,
+    /// Whether to use Zed's language detection to determine file icons
+    /// in the project panel. When enabled, the file icon is resolved
+    /// based on the language associated with the file (including user-configured
+    /// `file_types`), falling back to the default suffix-based icon lookup.
+    ///
+    /// Default: false
+    pub language_based_file_icons: Option<bool>,
     /// Whether to show the git status in the project panel.
     ///
     /// Default: true

@@ -3042,7 +3042,6 @@ Examples:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -4707,6 +4706,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
+    "language_based_file_icons": false,
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -4909,6 +4909,34 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 {
   "project_panel": {
     "bold_folder_labels": false
+  }
+}
+```
+
+### Language-Based File Icons
+
+- Description: Whether to use Zed's language detection to determine file icons in the project panel. When enabled, the file icon is resolved based on the language associated with the file, including user-configured [`file_types`](#file-types). Falls back to the default suffix-based icon lookup when no language match is found.
+- Setting: `language_based_file_icons`
+- Default: `false`
+
+**Options**
+
+1. Enable language-based file icons
+
+```json [settings]
+{
+  "project_panel": {
+    "language_based_file_icons": true
+  }
+}
+```
+
+2. Disable language-based file icons
+
+```json [settings]
+{
+  "project_panel": {
+    "language_based_file_icons": false
   }
 }
 ```

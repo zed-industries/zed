@@ -724,6 +724,10 @@
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the project panel.
     "folder_icons": true,
+    // Whether to use Zed's language detection to determine file icons in the project panel.
+    // When enabled, the file icon is resolved based on the language associated with the file
+    // (including user-configured `file_types`), falling back to the default suffix-based icon lookup.
+    "language_based_file_icons": false,
     // Whether to show the git status in the project panel.
     "git_status": true,
     // Amount of indentation for nested items.

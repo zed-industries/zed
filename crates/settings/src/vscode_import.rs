@@ -789,6 +789,7 @@ impl VsCodeSettings {
             entry_spacing: None,
             file_icons: None,
             folder_icons: None,
+            language_based_file_icons: None,
             git_status: self.read_bool("git.decorations.enabled"),
             hide_gitignore: self.read_bool("explorer.excludeGitIgnore"),
             hide_hidden: None,

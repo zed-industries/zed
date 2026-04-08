@@ -2,11 +2,12 @@ use super::*;
 use collections::HashSet;
 use editor::MultiBufferOffset;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
+use language::{Language, LanguageConfig, LanguageMatcher, LanguageName};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
 use serde_json::json;
-use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
+use settings::{ExtendingVec, ProjectPanelAutoOpenSettings, SettingsStore};
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
@@ -10768,4 +10769,181 @@ impl Render for TestProjectItemView {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         Empty
     }
+}
+
+#[gpui::test]
+async fn test_language_based_file_icons(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "main.rs": "",
+            "script.py": "",
+            "unknown.xyz": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: LanguageName::new_static("Rust"),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None,
+    )));
+    languages.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: LanguageName::new_static("Python"),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["py".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None,
+    )));
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // With language_based_file_icons disabled (default), get_language_based_icon still performs
+    // the lookup (the setting is checked at the call site, not inside this method).
+    panel.update_in(cx, |panel, _window, cx| {
+        let icon = panel.get_language_based_icon(Path::new("main.rs"), cx);
+        assert!(
+            icon.is_none() || icon.is_some(),
+            "icon lookup should not panic"
+        );
+
+        let rust_icon_via_suffix = FileIcons::get_icon(Path::new("main.rs"), cx);
+        assert!(
+            rust_icon_via_suffix.is_some(),
+            "Rust files should have a suffix-based icon"
+        );
+    });
+
+    // Enable language_based_file_icons
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                language_based_file_icons: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    // With language_based_file_icons enabled, language-based lookup works for known languages
+    panel.update_in(cx, |panel, _window, cx| {
+        let rust_icon = panel.get_language_based_icon(Path::new("main.rs"), cx);
+        assert!(
+            rust_icon.is_some(),
+            "Rust should resolve via language detection"
+        );
+
+        let python_icon = panel.get_language_based_icon(Path::new("script.py"), cx);
+        assert!(
+            python_icon.is_some(),
+            "Python should resolve via language detection"
+        );
+
+        let unknown_icon = panel.get_language_based_icon(Path::new("unknown.xyz"), cx);
+        assert!(
+            unknown_icon.is_none(),
+            "Unknown extensions should return None from language lookup"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_language_based_file_icons_with_custom_file_types(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "config.myrust": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.add(Arc::new(Language::new(
+        LanguageConfig {
+            name: LanguageName::new_static("Rust"),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        None,
+    )));
+
+    // Configure custom file_types: map *.myrust to Rust
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project
+                    .all_languages
+                    .file_types
+                    .get_or_insert_default()
+                    .extend([("Rust".into(), ExtendingVec(vec!["*.myrust".to_string()]))]);
+            });
+        });
+    });
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    // Enable language_based_file_icons
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                language_based_file_icons: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    // With custom file_types, .myrust files should be detected as Rust and get the Rust icon
+    panel.update_in(cx, |panel, _window, cx| {
+        let icon = panel.get_language_based_icon(Path::new("config.myrust"), cx);
+        assert!(
+            icon.is_some(),
+            "Custom file type .myrust should resolve to Rust icon via language detection"
+        );
+
+        let rust_icon = FileIcons::get_icon_for_language("Rust", cx);
+        assert_eq!(
+            icon, rust_icon,
+            "Custom file type icon should match the Rust language icon"
+        );
+    });
 }

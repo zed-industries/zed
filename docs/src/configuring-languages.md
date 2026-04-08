@@ -76,6 +76,8 @@ This configuration tells Zed to:
 
 You can use glob patterns for more flexible matching, allowing you to handle complex naming conventions in your projects.
 
+> **Tip:** Custom file associations also affect project panel icons when `language_based_file_icons` is enabled. For example, mapping `*.myext` to Python in `file_types` makes those files display with the Python icon. See [Language-Based File Icons](./reference/all-settings.md#language-based-file-icons) in the settings reference.
+
 ## Working with Language Servers
 
 Language servers are a crucial part of Zed's intelligent coding features, providing capabilities like auto-completion, go-to-definition, and real-time error checking.
@@ -100,7 +102,6 @@ Zed simplifies language server management for users:
 1. Automatic Download: When you open a file with a matching file type, Zed automatically downloads the appropriate language server. Zed may prompt you to install an extension for known file types.
 
 2. Storage Location:
-
    - macOS: `~/Library/Application Support/Zed/languages`
    - Linux: `$XDG_DATA_HOME/zed/languages`, `$FLATPAK_XDG_DATA_HOME/zed/languages`, or `$HOME/.local/share/zed/languages`
 

@@ -27,9 +27,6 @@ impl FileIcons {
                 .or_else(|| this.icon_theme.file_suffixes.get(suffix))
                 .and_then(|typ| this.get_icon_for_type(typ, cx))
         };
-        // TODO: Associate a type with the languages and have the file's language
-        //       override these associations
-
         if let Some(mut typ) = path.file_name().and_then(|typ| typ.to_str()) {
             // check if file name is in suffixes
             // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
@@ -79,6 +76,29 @@ impl FileIcons {
             }
         }
         this.get_icon_for_type("default", cx)
+    }
+
+    /// Resolves a file icon based on a language name.
+    ///
+    /// Maps the language name to an icon theme key (e.g., "Rust" → "rust",
+    /// "C++" → "cpp") and looks it up in the icon theme. Returns `None` if
+    /// no matching icon is found.
+    pub fn get_icon_for_language(language_name: &str, cx: &App) -> Option<SharedString> {
+        let icon_key = Self::language_name_to_icon_key(language_name);
+        let this = Self::get(cx);
+        this.get_icon_for_type(&icon_key, cx)
+    }
+
+    fn language_name_to_icon_key(language_name: &str) -> String {
+        match language_name {
+            "C++" => "cpp".to_string(),
+            "C#" => "csharp".to_string(),
+            "F#" => "fsharp".to_string(),
+            "Shell Script" => "terminal".to_string(),
+            "TSX" => "react".to_string(),
+            "JSONC" => "json".to_string(),
+            _ => language_name.to_lowercase(),
+        }
     }
 
     fn default_icon_theme(cx: &App) -> Option<Arc<IconTheme>> {
@@ -162,5 +182,146 @@ impl FileIcons {
             Self::default_icon_theme(cx)
                 .and_then(|icon_theme| get_chevron_icon(&icon_theme, expanded))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    #[gpui::test]
+    fn test_get_icon_for_known_extensions(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let rust_icon = FileIcons::get_icon(Path::new("main.rs"), cx);
+            assert!(rust_icon.is_some(), "Rust files should have an icon");
+
+            let python_icon = FileIcons::get_icon(Path::new("script.py"), cx);
+            assert!(python_icon.is_some(), "Python files should have an icon");
+
+            let js_icon = FileIcons::get_icon(Path::new("app.js"), cx);
+            assert!(js_icon.is_some(), "JavaScript files should have an icon");
+
+            let ts_icon = FileIcons::get_icon(Path::new("index.ts"), cx);
+            assert!(ts_icon.is_some(), "TypeScript files should have an icon");
+        });
+    }
+
+    #[gpui::test]
+    fn test_get_icon_for_unknown_extension_returns_default(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let icon = FileIcons::get_icon(Path::new("file.xyz_unknown_ext"), cx);
+            let default_icon = FileIcons::get(cx).get_icon_for_type("default", cx);
+            assert_eq!(icon, default_icon);
+        });
+    }
+
+    #[gpui::test]
+    fn test_get_icon_for_language_known_languages(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let rust_icon = FileIcons::get_icon_for_language("Rust", cx);
+            assert!(
+                rust_icon.is_some(),
+                "Rust language should resolve to an icon"
+            );
+
+            let python_icon = FileIcons::get_icon_for_language("Python", cx);
+            assert!(
+                python_icon.is_some(),
+                "Python language should resolve to an icon"
+            );
+
+            let go_icon = FileIcons::get_icon_for_language("Go", cx);
+            assert!(go_icon.is_some(), "Go language should resolve to an icon");
+        });
+    }
+
+    #[gpui::test]
+    fn test_get_icon_for_language_special_cases(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let cpp_icon = FileIcons::get_icon_for_language("C++", cx);
+            assert!(cpp_icon.is_some(), "C++ should map to cpp icon");
+
+            let csharp_icon = FileIcons::get_icon_for_language("C#", cx);
+            assert!(csharp_icon.is_some(), "C# should map to csharp icon");
+
+            let fsharp_icon = FileIcons::get_icon_for_language("F#", cx);
+            assert!(fsharp_icon.is_some(), "F# should map to fsharp icon");
+
+            let shell_icon = FileIcons::get_icon_for_language("Shell Script", cx);
+            assert!(
+                shell_icon.is_some(),
+                "Shell Script should map to terminal icon"
+            );
+
+            let tsx_icon = FileIcons::get_icon_for_language("TSX", cx);
+            assert!(tsx_icon.is_some(), "TSX should map to react icon");
+        });
+    }
+
+    #[gpui::test]
+    fn test_get_icon_for_language_matches_extension_icon(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let icon_by_language = FileIcons::get_icon_for_language("Rust", cx);
+            let icon_by_extension = FileIcons::get_icon(Path::new("test.rs"), cx);
+            assert_eq!(
+                icon_by_language, icon_by_extension,
+                "Language-based and extension-based icons should match for Rust"
+            );
+
+            let icon_by_language = FileIcons::get_icon_for_language("Python", cx);
+            let icon_by_extension = FileIcons::get_icon(Path::new("test.py"), cx);
+            assert_eq!(
+                icon_by_language, icon_by_extension,
+                "Language-based and extension-based icons should match for Python"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_get_icon_for_language_unknown_returns_none(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let icon = FileIcons::get_icon_for_language("NonExistentLanguage", cx);
+            assert!(icon.is_none(), "Unknown language should return None");
+        });
+    }
+
+    #[test]
+    fn test_language_name_to_icon_key() {
+        assert_eq!(FileIcons::language_name_to_icon_key("Rust"), "rust");
+        assert_eq!(FileIcons::language_name_to_icon_key("Python"), "python");
+        assert_eq!(
+            FileIcons::language_name_to_icon_key("JavaScript"),
+            "javascript"
+        );
+        assert_eq!(FileIcons::language_name_to_icon_key("C++"), "cpp");
+        assert_eq!(FileIcons::language_name_to_icon_key("C#"), "csharp");
+        assert_eq!(FileIcons::language_name_to_icon_key("F#"), "fsharp");
+        assert_eq!(
+            FileIcons::language_name_to_icon_key("Shell Script"),
+            "terminal"
+        );
+        assert_eq!(FileIcons::language_name_to_icon_key("TSX"), "react");
+        assert_eq!(FileIcons::language_name_to_icon_key("JSONC"), "json");
+        assert_eq!(FileIcons::language_name_to_icon_key("Go"), "go");
+        assert_eq!(
+            FileIcons::language_name_to_icon_key("TypeScript"),
+            "typescript"
+        );
     }
 }

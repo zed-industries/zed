@@ -661,6 +661,17 @@ impl LanguageRegistry {
         self.language_for_file_internal(path, None, None)
     }
 
+    /// Like [`language_for_file_path`](Self::language_for_file_path), but also
+    /// considers user-configured `file_types` from settings.
+    pub fn language_for_file_path_with_settings(
+        self: &Arc<Self>,
+        path: &Path,
+        cx: &App,
+    ) -> Option<AvailableLanguage> {
+        let user_file_types = all_language_settings(None, cx);
+        self.language_for_file_internal(path, None, Some(&user_file_types.file_types))
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn load_language_for_file_path<'a>(
         self: &Arc<Self>,
