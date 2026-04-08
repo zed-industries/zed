@@ -138,7 +138,7 @@ pub(crate) struct ContainerBuild {
     context: Option<String>,
     pub(crate) args: Option<HashMap<String, String>>,
     options: Option<Vec<String>>,
-    target: Option<String>,
+    pub(crate) target: Option<String>,
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
     cache_from: Option<Vec<String>>,
 }
