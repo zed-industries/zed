@@ -3040,7 +3040,7 @@ impl ProjectPanel {
 
                 new_path.push(RelPath::unix(&new_file_name).unwrap());
 
-                disambiguation_range = Some(file_name_len..(file_name_len + disambiguation_len));
+                disambiguation_range = Some(0..(file_name_len + disambiguation_len));
                 ix += 1;
             }
         }

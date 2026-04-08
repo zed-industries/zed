@@ -1254,8 +1254,8 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
             let file_name_selection = &file_name_selections[0];
             assert_eq!(
                 file_name_selection.start,
-                MultiBufferOffset("one".len()),
-                "Should select the file name disambiguation after the original file name"
+                MultiBufferOffset(0),
+                "Should select from the beginning of the filename"
             );
             assert_eq!(
                 file_name_selection.end,

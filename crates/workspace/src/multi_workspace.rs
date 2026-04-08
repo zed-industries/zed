@@ -491,7 +491,15 @@ impl MultiWorkspace {
                 workspace.set_sidebar_focus_handle(None);
             });
         }
-        self.restore_previous_focus(true, window, cx);
+        let sidebar_has_focus = self
+            .sidebar
+            .as_ref()
+            .is_some_and(|s| s.focus_handle(cx).contains_focused(window, cx));
+        if sidebar_has_focus {
+            self.restore_previous_focus(true, window, cx);
+        } else {
+            self.previous_focus_handle.take();
+        }
         self.serialize(cx);
         cx.notify();
     }
@@ -578,6 +586,9 @@ impl MultiWorkspace {
     pub fn restore_project_group_keys(&mut self, keys: Vec<ProjectGroupKey>) {
         let mut restored: Vec<ProjectGroupKey> = Vec::with_capacity(keys.len());
         for key in keys {
+            if key.path_list().paths().is_empty() {
+                continue;
+            }
             if !restored.contains(&key) {
                 restored.push(key);
             }
