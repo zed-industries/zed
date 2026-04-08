@@ -354,6 +354,20 @@ impl ConversationView {
             .pending_tool_call(id, cx)
     }
 
+    pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
+        let Some(root_thread) = self.root_thread(cx) else {
+            return false;
+        };
+        let root_id = root_thread.read(cx).id.clone();
+        self.as_connected().is_some_and(|connected| {
+            connected
+                .conversation
+                .read(cx)
+                .pending_tool_call(&root_id, cx)
+                .is_some()
+        })
+    }
+
     pub fn root_thread(&self, cx: &App) -> Option<Entity<ThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => {

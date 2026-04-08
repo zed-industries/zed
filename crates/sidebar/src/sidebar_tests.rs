@@ -1,5 +1,5 @@
 use super::*;
-use acp_thread::StubAgentConnection;
+use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
 use agent_ui::{
     test_support::{active_session_id, open_thread_with_connection, send_message},
@@ -185,6 +185,35 @@ fn save_thread_metadata(
 fn focus_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
     sidebar.update_in(cx, |_, window, cx| {
         cx.focus_self(window);
+    });
+    cx.run_until_parked();
+}
+
+fn request_test_tool_authorization(
+    thread: &Entity<AcpThread>,
+    tool_call_id: &str,
+    option_id: &str,
+    cx: &mut gpui::VisualTestContext,
+) {
+    let tool_call_id = acp::ToolCallId::new(tool_call_id);
+    let label = format!("Tool {tool_call_id}");
+    let option_id = acp::PermissionOptionId::new(option_id);
+    let _authorization_task = cx.update(|_, cx| {
+        thread.update(cx, |thread, cx| {
+            thread
+                .request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id, label)
+                        .kind(acp::ToolKind::Edit)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        option_id,
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    cx,
+                )
+                .unwrap()
+        })
     });
     cx.run_until_parked();
 }
@@ -1282,6 +1311,60 @@ async fn test_parallel_threads_shown_with_live_status(cx: &mut TestAppContext) {
         entries,
         vec!["v [my-project]", "  Hello *", "  Hello * (running)",]
     );
+}
+
+#[gpui::test]
+async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new().with_supports_load_session(true);
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let parent_session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&parent_session_id, &project, cx).await;
+
+    let subagent_session_id = acp::SessionId::new("subagent-session");
+    cx.update(|_, cx| {
+        let parent_thread = panel.read(cx).active_agent_thread(cx).unwrap();
+        parent_thread.update(cx, |thread: &mut AcpThread, cx| {
+            thread.subagent_spawned(subagent_session_id.clone(), cx);
+        });
+    });
+    cx.run_until_parked();
+
+    let subagent_thread = panel.read_with(cx, |panel, cx| {
+        panel
+            .active_conversation_view()
+            .and_then(|conversation| conversation.read(cx).thread_view(&subagent_session_id))
+            .map(|thread_view| thread_view.read(cx).thread.clone())
+            .expect("Expected subagent thread to be loaded into the conversation")
+    });
+    request_test_tool_authorization(&subagent_thread, "subagent-tool-call", "allow-subagent", cx);
+
+    let parent_status = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread) if thread.metadata.session_id == parent_session_id => {
+                    Some(thread.status)
+                }
+                _ => None,
+            })
+            .expect("Expected parent thread entry in sidebar")
+    });
+
+    assert_eq!(parent_status, AgentThreadStatus::WaitingForConfirmation);
 }
 
 #[gpui::test]
