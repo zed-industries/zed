@@ -797,6 +797,50 @@ impl MultiWorkspace {
             .cloned()
     }
 
+    /// Finds an existing workspace whose paths match, or creates a new one.
+    ///
+    /// For local projects, this delegates to
+    /// [`Self::find_or_create_local_workspace`]. For remote projects, it
+    /// tries an exact path match on the provided paths, then on the
+    /// project group key's main worktree paths, and finally falls back to
+    /// any workspace connected to the same remote host. Creating a
+    /// brand-new remote workspace requires establishing an SSH connection,
+    /// which is outside the scope of this method.
+    pub fn find_or_create_workspace(
+        &mut self,
+        folder_paths: PathList,
+        project_group_key: &ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
+        let Some(remote_options) = project_group_key.host() else {
+            return self.find_or_create_local_workspace(folder_paths, window, cx);
+        };
+
+        if let Some(workspace) = self.workspace_for_paths(&folder_paths, cx) {
+            self.activate(workspace.clone(), window, cx);
+            return Task::ready(Ok(workspace));
+        }
+
+        if let Some(workspace) = self.workspace_for_paths(project_group_key.path_list(), cx) {
+            self.activate(workspace.clone(), window, cx);
+            return Task::ready(Ok(workspace));
+        }
+
+        let host_match = self
+            .workspaces()
+            .find(|ws| ws.read(cx).project_group_key(cx).host().as_ref() == Some(&remote_options))
+            .cloned();
+        if let Some(workspace) = host_match {
+            self.activate(workspace.clone(), window, cx);
+            return Task::ready(Ok(workspace));
+        }
+
+        Task::ready(Err(anyhow::anyhow!(
+            "no open workspace found for remote host"
+        )))
+    }
+
     /// Finds an existing workspace in this multi-workspace whose paths match,
     /// or creates a new one (deserializing its saved state from the database).
     /// Never searches other windows or matches workspaces with a superset of

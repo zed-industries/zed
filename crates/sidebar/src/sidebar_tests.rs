@@ -231,7 +231,7 @@ fn visible_entries_as_strings(
                         highlight_positions: _,
                         ..
                     } => {
-                        let icon = if sidebar.collapsed_groups.contains(key.path_list()) {
+                        let icon = if sidebar.collapsed_groups.contains(key) {
                             ">"
                         } else {
                             "v"
@@ -290,15 +290,14 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
 
     save_n_test_threads(3, &project, cx).await;
 
-    let path_list = project.read_with(cx, |project, cx| {
-        project.project_group_key(cx).path_list().clone()
-    });
+    let project_group_key =
+        project.read_with(cx, |project, cx| project.project_group_key(cx).clone());
 
     // Set a custom width, collapse the group, and expand "View More".
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
-        sidebar.toggle_collapse(&path_list, window, cx);
-        sidebar.expanded_groups.insert(path_list.clone(), 2);
+        sidebar.toggle_collapse(&project_group_key, window, cx);
+        sidebar.expanded_groups.insert(project_group_key.clone(), 2);
     });
     cx.run_until_parked();
 
@@ -336,8 +335,8 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     assert_eq!(collapsed1, collapsed2);
     assert_eq!(expanded1, expanded2);
     assert_eq!(width1, px(420.0));
-    assert!(collapsed1.contains(&path_list));
-    assert_eq!(expanded1.get(&path_list), Some(&2));
+    assert!(collapsed1.contains(&project_group_key));
+    assert_eq!(expanded1.get(&project_group_key), Some(&2));
 }
 
 #[gpui::test]
@@ -560,9 +559,8 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
     // Create 17 threads: initially shows 5, then 10, then 15, then all 17 with Collapse
     save_n_test_threads(17, &project, cx).await;
 
-    let path_list = project.read_with(cx, |project, cx| {
-        project.project_group_key(cx).path_list().clone()
-    });
+    let project_group_key =
+        project.read_with(cx, |project, cx| project.project_group_key(cx).clone());
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
@@ -587,8 +585,13 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Expand again by one batch
     sidebar.update_in(cx, |s, _window, cx| {
-        let current = s.expanded_groups.get(&path_list).copied().unwrap_or(0);
-        s.expanded_groups.insert(path_list.clone(), current + 1);
+        let current = s
+            .expanded_groups
+            .get(&project_group_key)
+            .copied()
+            .unwrap_or(0);
+        s.expanded_groups
+            .insert(project_group_key.clone(), current + 1);
         s.update_entries(cx);
     });
     cx.run_until_parked();
@@ -600,8 +603,13 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Expand one more time - should show all 17 threads with Collapse button
     sidebar.update_in(cx, |s, _window, cx| {
-        let current = s.expanded_groups.get(&path_list).copied().unwrap_or(0);
-        s.expanded_groups.insert(path_list.clone(), current + 1);
+        let current = s
+            .expanded_groups
+            .get(&project_group_key)
+            .copied()
+            .unwrap_or(0);
+        s.expanded_groups
+            .insert(project_group_key.clone(), current + 1);
         s.update_entries(cx);
     });
     cx.run_until_parked();
@@ -614,7 +622,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Click collapse - should go back to showing 5 threads
     sidebar.update_in(cx, |s, _window, cx| {
-        s.expanded_groups.remove(&path_list);
+        s.expanded_groups.remove(&project_group_key);
         s.update_entries(cx);
     });
     cx.run_until_parked();
@@ -634,9 +642,8 @@ async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
 
     save_n_test_threads(1, &project, cx).await;
 
-    let path_list = project.read_with(cx, |project, cx| {
-        project.project_group_key(cx).path_list().clone()
-    });
+    let project_group_key =
+        project.read_with(cx, |project, cx| project.project_group_key(cx).clone());
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
@@ -648,7 +655,7 @@ async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
 
     // Collapse
     sidebar.update_in(cx, |s, window, cx| {
-        s.toggle_collapse(&path_list, window, cx);
+        s.toggle_collapse(&project_group_key, window, cx);
     });
     cx.run_until_parked();
 
@@ -659,7 +666,7 @@ async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
 
     // Expand
     sidebar.update_in(cx, |s, window, cx| {
-        s.toggle_collapse(&path_list, window, cx);
+        s.toggle_collapse(&project_group_key, window, cx);
     });
     cx.run_until_parked();
 
@@ -681,7 +688,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     let collapsed_path = PathList::new(&[std::path::PathBuf::from("/collapsed")]);
 
     sidebar.update_in(cx, |s, _window, _cx| {
-        s.collapsed_groups.insert(collapsed_path.clone());
+        s.collapsed_groups
+            .insert(project::ProjectGroupKey::new(None, collapsed_path.clone()));
         s.contents
             .notified_threads
             .insert(acp::SessionId::new(Arc::from("t-5")));
@@ -1927,7 +1935,8 @@ async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppCo
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.selection = None;
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        sidebar.toggle_collapse(&path_list, window, cx);
+        let project_group_key = project::ProjectGroupKey::new(None, path_list);
+        sidebar.toggle_collapse(&project_group_key, window, cx);
     });
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
 
@@ -5827,17 +5836,17 @@ mod property_test {
     fn update_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
         sidebar.update_in(cx, |sidebar, _window, cx| {
             sidebar.collapsed_groups.clear();
-            let path_lists: Vec<PathList> = sidebar
+            let group_keys: Vec<project::ProjectGroupKey> = sidebar
                 .contents
                 .entries
                 .iter()
                 .filter_map(|entry| match entry {
-                    ListEntry::ProjectHeader { key, .. } => Some(key.path_list().clone()),
+                    ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
                     _ => None,
                 })
                 .collect();
-            for path_list in path_lists {
-                sidebar.expanded_groups.insert(path_list, 10_000);
+            for group_key in group_keys {
+                sidebar.expanded_groups.insert(group_key, 10_000);
             }
             sidebar.update_entries(cx);
         });

@@ -86,7 +86,7 @@ pub use persistence::{
     WorkspaceDb, delete_unloaded_items,
     model::{
         DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
-        SerializedWorkspaceLocation, SessionWorkspace,
+        SerializedProjectGroupKey, SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces, resolve_worktree_workspaces,
 };
