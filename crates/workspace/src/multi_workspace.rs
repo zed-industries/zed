@@ -268,13 +268,6 @@ enum ActiveWorkspace {
 }
 
 impl ActiveWorkspace {
-    fn persistent_index(&self) -> Option<usize> {
-        match self {
-            Self::Persistent(index) => Some(*index),
-            Self::Transient(_) => None,
-        }
-    }
-
     fn transient_workspace(&self) -> Option<&Entity<Workspace>> {
         match self {
             Self::Transient(workspace) => Some(workspace),
