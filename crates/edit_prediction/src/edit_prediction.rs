@@ -3,7 +3,8 @@ use client::{Client, EditPredictionUsage, NeedsLlmTokenRefresh, UserStore, globa
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
-    PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
+    PredictEditsMode, PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest,
+    RawCompletionResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection,
@@ -29,9 +30,10 @@ use gpui::{
     prelude::*,
 };
 use heapless::Vec as ArrayVec;
-use language::language_settings::all_language_settings;
-use language::{Anchor, Buffer, EditPreview, File, Point, TextBufferSnapshot, ToOffset, ToPoint};
-use language::{BufferSnapshot, OffsetRangeExt};
+use language::{
+    Anchor, Buffer, BufferSnapshot, EditPredictionsMode, EditPreview, File, OffsetRangeExt, Point,
+    TextBufferSnapshot, ToOffset, ToPoint, language_settings::all_language_settings,
+};
 use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
@@ -176,6 +178,7 @@ pub struct EditPredictionModelInput {
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
     related_files: Vec<RelatedFile>,
+    mode: PredictEditsMode,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
@@ -2366,6 +2369,10 @@ impl EditPredictionStore {
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
 
         let related_files = self.context_for_project(&project, cx);
+        let mode = match all_language_settings(snapshot.file(), cx).edit_predictions_mode() {
+            EditPredictionsMode::Eager => PredictEditsMode::Eager,
+            EditPredictionsMode::Subtle => PredictEditsMode::Subtle,
+        };
 
         let is_open_source = snapshot
             .file()
@@ -2377,7 +2384,6 @@ impl EditPredictionStore {
             && is_open_source
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
-
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
@@ -2385,8 +2391,9 @@ impl EditPredictionStore {
             position,
             events,
             related_files,
+            mode,
             trigger,
-            diagnostic_search_range: diagnostic_search_range,
+            diagnostic_search_range,
             debug_tx,
             can_collect_data,
             is_open_source,
@@ -2584,12 +2591,17 @@ impl EditPredictionStore {
         organization_id: Option<OrganizationId>,
         app_version: Version,
         trigger: PredictEditsRequestTrigger,
+        mode: PredictEditsMode,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
         let url = client
             .http_client()
             .build_zed_llm_url("/predict_edits/v3", &[])?;
 
-        let request = PredictEditsV3Request { input, trigger };
+        let request = PredictEditsV3Request {
+            input,
+            trigger,
+            mode,
+        };
 
         let json_bytes = serde_json::to_vec(&request)?;
         let compressed = zstd::encode_all(&json_bytes[..], 3)?;

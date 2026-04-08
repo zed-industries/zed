@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::ops::Range;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PredictEditsMode {
+    Eager,
+    Subtle,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RawCompletionRequest {
     pub model: String,
@@ -22,6 +29,7 @@ pub struct PredictEditsV3Request {
     pub input: zeta_prompt::ZetaPromptInput,
     #[serde(default)]
     pub trigger: PredictEditsRequestTrigger,
+    pub mode: PredictEditsMode,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
