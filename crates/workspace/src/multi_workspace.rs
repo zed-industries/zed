@@ -1253,16 +1253,31 @@ impl MultiWorkspace {
             return Task::ready(Ok(false));
         }
 
-        let fallback_task = workspaces
-            .iter()
-            .any(|ws| ws == self.workspace())
-            .then(|| fallback_workspace(self, window, cx));
+        let removing_active = workspaces.iter().any(|ws| ws == self.workspace());
+        let original_active = self.workspace().clone();
+
+        let fallback_task = removing_active.then(|| fallback_workspace(self, window, cx));
 
         cx.spawn_in(window, async move |this, cx| {
-            // TODO — prompt each workspace for unsaved changes.
+            // Prompt each workspace for unsaved changes. If any workspace
+            // has dirty buffers, save_all_internal will emit Activate to
+            // bring it into view before showing the save dialog.
+            for workspace in &workspaces {
+                let should_continue = workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.save_all_internal(crate::SaveIntent::Close, window, cx)
+                    })?
+                    .await?;
+
+                if !should_continue {
+                    return Ok(false);
+                }
+            }
 
             // If we're removing the active workspace, await the
             // fallback and switch to it before tearing anything down.
+            // Otherwise restore the original active workspace in case
+            // prompting switched away from it.
             if let Some(fallback_task) = fallback_task {
                 let new_active = fallback_task.await?;
 
@@ -1273,10 +1288,16 @@ impl MultiWorkspace {
                     );
                     this.activate(new_active, window, cx);
                 })?;
+            } else {
+                this.update_in(cx, |this, window, cx| {
+                    if *this.workspace() != original_active {
+                        this.activate(original_active, window, cx);
+                    }
+                })?;
             }
 
             // Actually remove the workspaces.
-            this.update_in(cx, |this, window, cx| {
+            this.update_in(cx, |this, _, cx| {
                 // Save a handle to the active workspace so we can restore
                 // its index after the removals shift the vec around.
                 let active_workspace = this.workspace().clone();
@@ -1292,9 +1313,9 @@ impl MultiWorkspace {
                     }
                 });
 
-                for ws in &removed_workspaces {
-                    this.detach_workspace(ws, cx);
-                    cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(ws.entity_id()));
+                for workspace in &removed_workspaces {
+                    this.detach_workspace(workspace, cx);
+                    cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
                 }
 
                 let removed_any = !removed_workspaces.is_empty();
