@@ -302,6 +302,9 @@ impl PickerDelegate for LanguageSelectorDelegate {
 
                 this.delegate.matches = matches;
                 this.set_selected_index(selected_index, None, false, window, cx);
+                if query_is_empty {
+                    this.center_selected_item_on_next_matches_update();
+                }
                 cx.notify();
             })
             .log_err();
@@ -351,20 +354,32 @@ mod tests {
     }
 
     fn register_test_languages(project: &Entity<Project>, cx: &mut VisualTestContext) {
+        register_languages(
+            project,
+            [
+                ("C".to_string(), "c".to_string()),
+                ("Go".to_string(), "go".to_string()),
+                ("Ruby".to_string(), "rb".to_string()),
+                ("Rust".to_string(), "rs".to_string()),
+                ("TypeScript".to_string(), "ts".to_string()),
+            ],
+            cx,
+        );
+    }
+
+    fn register_languages(
+        project: &Entity<Project>,
+        languages: impl IntoIterator<Item = (String, String)>,
+        cx: &mut VisualTestContext,
+    ) {
         project.read_with(cx, |project, _| {
             let language_registry = project.languages();
-            for (language_name, path_suffix) in [
-                ("C", "c"),
-                ("Go", "go"),
-                ("Ruby", "rb"),
-                ("Rust", "rs"),
-                ("TypeScript", "ts"),
-            ] {
+            for (language_name, path_suffix) in languages {
                 language_registry.add(Arc::new(Language::new(
                     LanguageConfig {
-                        name: language_name.into(),
+                        name: LanguageName::new(language_name.as_str()),
                         matcher: LanguageMatcher {
-                            path_suffixes: vec![path_suffix.to_string()],
+                            path_suffixes: vec![path_suffix],
                             ..Default::default()
                         },
                         ..Default::default()
@@ -667,6 +682,74 @@ mod tests {
                 .expect("selected index should point to a match");
 
             assert_eq!(selected_match.candidate_id, first_match.candidate_id);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_language_selector_scrolls_current_language_into_view_when_opened(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/test"), json!({}))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/test").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+
+        let generated_languages = (0..40)
+            .map(|index| {
+                (
+                    format!("Language {index:02}"),
+                    format!("language_{index:02}"),
+                )
+            })
+            .collect::<Vec<_>>();
+        register_languages(&project, generated_languages.clone(), cx);
+
+        let editor = open_new_buffer_editor(&workspace, &project, cx).await;
+        let current_language_name = generated_languages[20].0.clone();
+        set_editor_language(&project, &editor, &current_language_name, cx).await;
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let was_activated = workspace.activate_item(&editor, true, true, window, cx);
+            assert!(
+                was_activated,
+                "editor should be activated before opening the modal"
+            );
+        });
+        cx.run_until_parked();
+
+        let picker = open_selector(&workspace, cx);
+        cx.run_until_parked();
+
+        picker.read_with(cx, |picker, _| {
+            let rendered_item_indices = picker.rendered_item_indices();
+            assert!(
+                !rendered_item_indices.is_empty(),
+                "language selector should render visible items"
+            );
+
+            let selected_index = picker.delegate.selected_index;
+            let scroll_top_index = rendered_item_indices[0];
+            let scroll_bottom_index = *rendered_item_indices
+                .last()
+                .expect("rendered item indices should not be empty");
+
+            assert!(
+                scroll_top_index > 0,
+                "language selector should scroll to the selection"
+            );
+            assert!(
+                (scroll_top_index..=scroll_bottom_index).contains(&selected_index),
+                "selected item should remain visible after scrolling"
+            );
         });
     }
 }

@@ -57,11 +57,18 @@ struct PendingUpdateMatches {
     _task: Task<Result<()>>,
 }
 
+#[derive(Clone, Copy)]
+struct DeferredSelectionScroll {
+    strategy: ScrollStrategy,
+    strict: bool,
+}
+
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     element_container: ElementContainer,
     head: Head,
     pending_update_matches: Option<PendingUpdateMatches>,
+    deferred_selection_scroll: Option<DeferredSelectionScroll>,
     confirm_on_update: Option<bool>,
     width: Option<Length>,
     widest_item: Option<usize>,
@@ -337,6 +344,7 @@ impl<D: PickerDelegate> Picker<D> {
             head,
             element_container,
             pending_update_matches: None,
+            deferred_selection_scroll: None,
             confirm_on_update: None,
             width: None,
             widest_item: None,
@@ -686,6 +694,13 @@ impl<D: PickerDelegate> Picker<D> {
         self.update_matches(query, window, cx);
     }
 
+    pub fn center_selected_item_on_next_matches_update(&mut self) {
+        self.deferred_selection_scroll = Some(DeferredSelectionScroll {
+            strategy: ScrollStrategy::Center,
+            strict: true,
+        });
+    }
+
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
@@ -721,7 +736,11 @@ impl<D: PickerDelegate> Picker<D> {
         }
 
         let index = self.delegate.selected_index();
-        self.scroll_to_item_index(index);
+        if let Some(scroll) = self.deferred_selection_scroll.take() {
+            self.scroll_to_item_index_with_strategy(index, scroll.strategy, scroll.strict);
+        } else {
+            self.scroll_to_item_index(index);
+        }
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
             self.do_confirm(secondary, window, cx);
@@ -744,10 +763,23 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn scroll_to_item_index(&mut self, ix: usize) {
+        self.scroll_to_item_index_with_strategy(ix, ScrollStrategy::Nearest, false);
+    }
+
+    fn scroll_to_item_index_with_strategy(
+        &mut self,
+        ix: usize,
+        strategy: ScrollStrategy,
+        strict: bool,
+    ) {
         match &mut self.element_container {
             ElementContainer::List(state) => state.scroll_to_reveal_item(ix),
             ElementContainer::UniformList(scroll_handle) => {
-                scroll_handle.scroll_to_item(ix, ScrollStrategy::Nearest)
+                if strict {
+                    scroll_handle.scroll_to_item_strict(ix, strategy);
+                } else {
+                    scroll_handle.scroll_to_item(ix, strategy);
+                }
             }
         }
     }
@@ -862,6 +894,18 @@ impl<D: PickerDelegate> Picker<D> {
                 scroll_handle.logical_scroll_top_index()
             }
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn rendered_item_indices(&self) -> Vec<usize> {
+        let mut indices = self
+            .item_bounds
+            .borrow()
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        indices.sort_unstable();
+        indices
     }
 }
 
@@ -1030,6 +1074,36 @@ mod tests {
                 0,
                 "select_previous should skip non-selectable item at index 1"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_center_selected_item_on_next_matches_update_uses_strict_center_scroll(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true; 50]), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.delegate.selected_index = 20;
+            picker.center_selected_item_on_next_matches_update();
+            picker.matches_updated(window, cx);
+
+            let ElementContainer::UniformList(scroll_handle) = &picker.element_container else {
+                panic!("picker should use a uniform list");
+            };
+            let deferred_scroll = scroll_handle
+                .0
+                .borrow()
+                .deferred_scroll_to_item
+                .expect("picker should issue a deferred scroll request");
+
+            assert_eq!(deferred_scroll.item_index, 20);
+            assert_eq!(deferred_scroll.strategy, ScrollStrategy::Center);
+            assert!(deferred_scroll.scroll_strict);
         });
     }
 }
