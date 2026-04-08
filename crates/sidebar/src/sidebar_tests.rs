@@ -4307,26 +4307,13 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         sidebar.archive_thread(&wt_thread_id, window, cx);
     });
 
-    // archive_thread spawns a chain of tasks:
-    //   1. cx.spawn_in for workspace removal (awaits mw.remove())
-    //   2. start_archive_worktree_task spawns cx.spawn for git persist + disk removal
-    //   3. persist/remove do background_spawn work internally
-    // Each layer needs run_until_parked to drive to completion.
+    // archive_thread spawns a multi-layered chain of tasks (workspace
+    // removal → git persist → disk removal), each of which may spawn
+    // further background work. Each run_until_parked() call drives one
+    // layer of pending work.
     cx.run_until_parked();
     cx.run_until_parked();
     cx.run_until_parked();
-
-    // The workspace removal is immediate, but the on-disk cleanup runs in a
-    // background archive task. Give the task time to finish.
-    for _ in 0..10 {
-        if !fs.is_dir(Path::new("/wt-feature-a")).await {
-            break;
-        }
-        cx.run_until_parked();
-        cx.background_executor
-            .timer(std::time::Duration::from_millis(10))
-            .await;
-    }
 
     // The linked worktree workspace should have been removed.
     assert_eq!(

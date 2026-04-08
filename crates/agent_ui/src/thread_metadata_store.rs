@@ -462,8 +462,10 @@ impl ThreadMetadataStore {
         if let Some(thread) = self.threads.get(session_id).cloned() {
             let mut paths: Vec<PathBuf> = thread.folder_paths.paths().to_vec();
             for (old_path, new_path) in path_replacements {
-                if let Some(pos) = paths.iter().position(|p| p == old_path) {
-                    paths[pos] = new_path.clone();
+                for path in &mut paths {
+                    if path == old_path {
+                        *path = new_path.clone();
+                    }
                 }
             }
             let new_folder_paths = PathList::new(&paths);

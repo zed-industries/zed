@@ -973,8 +973,6 @@ pub trait GitRepository: Send + Sync {
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>>;
 
-    fn stage_all_including_untracked(&self) -> BoxFuture<'_, Result<()>>;
-
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
 }
@@ -2285,18 +2283,6 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stage_all_including_untracked(&self) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> =
-                    vec!["--no-optional-locks".into(), "add".into(), "-A".into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
-    }
-
     fn push(
         &self,
         branch_name: String,
@@ -2699,15 +2685,20 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
 
-                // Restore the index to the staged tree
+                // First, set the index AND working tree to match the unstaged
+                // tree. --reset -u computes a tree-level diff between the
+                // current index and unstaged_sha's tree and applies additions,
+                // modifications, and deletions to the working directory.
+                git.run(&["read-tree", "--reset", "-u", &unstaged_sha])
+                    .await
+                    .context("failed to restore working directory from unstaged commit")?;
+
+                // Then replace just the index with the staged tree. Without -u
+                // this doesn't touch the working directory, so the result is:
+                // working tree = unstaged state, index = staged state.
                 git.run(&["read-tree", &staged_sha])
                     .await
                     .context("failed to restore index from staged commit")?;
-
-                // Restore the working directory to the full (unstaged) state
-                git.run(&["restore", "--source", &unstaged_sha, "--worktree", "."])
-                    .await
-                    .context("failed to restore working directory from unstaged commit")?;
 
                 Ok(())
             })

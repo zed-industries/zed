@@ -1198,13 +1198,18 @@ impl GitRepository for FakeGitRepository {
 
     fn restore_archive_checkpoint(
         &self,
+        // The fake filesystem doesn't model a separate index, so only the
+        // unstaged (full working directory) snapshot is restored.
         _staged_sha: String,
         unstaged_sha: String,
     ) -> BoxFuture<'_, Result<()>> {
-        let checkpoint = GitRepositoryCheckpoint {
-            commit_sha: unstaged_sha.parse().unwrap(),
-        };
-        self.restore_checkpoint(checkpoint)
+        match unstaged_sha.parse() {
+            Ok(commit_sha) => self.restore_checkpoint(GitRepositoryCheckpoint { commit_sha }),
+            Err(error) => async move {
+                Err(anyhow::anyhow!(error).context("failed to parse unstaged SHA as Oid"))
+            }
+            .boxed(),
+        }
     }
 
     fn compare_checkpoints(
@@ -1406,39 +1411,6 @@ impl GitRepository for FakeGitRepository {
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {
         async { Ok(()) }.boxed()
-    }
-
-    fn stage_all_including_untracked(&self) -> BoxFuture<'_, Result<()>> {
-        let workdir_path = self.dot_git_path.parent().unwrap();
-        let git_files: Vec<(RepoPath, String)> = self
-            .fs
-            .files()
-            .iter()
-            .filter_map(|path| {
-                let repo_path = path.strip_prefix(workdir_path).ok()?;
-                if repo_path.starts_with(".git") {
-                    return None;
-                }
-                let content = self
-                    .fs
-                    .read_file_sync(path)
-                    .ok()
-                    .and_then(|bytes| String::from_utf8(bytes).ok())?;
-                let rel_path = RelPath::new(repo_path, PathStyle::local()).ok()?;
-                Some((RepoPath::from_rel_path(&rel_path), content))
-            })
-            .collect();
-
-        self.with_state_async(true, move |state| {
-            let fs_paths: HashSet<RepoPath> = git_files.iter().map(|(p, _)| p.clone()).collect();
-            for (path, content) in git_files {
-                state.index_contents.insert(path, content);
-            }
-            state
-                .index_contents
-                .retain(|path, _| fs_paths.contains(path));
-            Ok(())
-        })
     }
 
     fn set_trusted(&self, trusted: bool) {

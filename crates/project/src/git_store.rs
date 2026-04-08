@@ -6160,20 +6160,6 @@ impl Repository {
         })
     }
 
-    pub fn commit_exists(&mut self, sha: String) -> oneshot::Receiver<Result<bool>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let results = backend.revparse_batch(vec![sha]).await?;
-                    Ok(results.into_iter().next().flatten().is_some())
-                }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("commit_exists is not supported for remote repositories")
-                }
-            }
-        })
-    }
-
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         self.send_job(
