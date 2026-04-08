@@ -787,11 +787,13 @@ impl DefaultState {
         let smart_case = query.chars().any(|c| c.is_uppercase());
         let cancel = AtomicBool::new(false);
 
-        self.filtered_servers = self
+        let mut scored: Vec<(RemoteEntry, f64)> = self
             .servers
             .iter()
             .filter_map(|entry| filter_entry(entry, query, smart_case, &cancel, executor))
             .collect();
+        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
+        self.filtered_servers = scored.into_iter().map(|(entry, _)| entry).collect();
     }
 }
 
@@ -801,7 +803,7 @@ fn match_positions(
     smart_case: bool,
     cancel: &AtomicBool,
     executor: &BackgroundExecutor,
-) -> Option<Vec<usize>> {
+) -> Option<(Vec<usize>, f64)> {
     let candidates = [StringMatchCandidate::new(0, candidate)];
     let matches = smol::block_on(fuzzy_nucleo::match_strings(
         &candidates, query, smart_case, false, 1, cancel, executor.clone(),
@@ -810,7 +812,14 @@ fn match_positions(
     if m.positions.is_empty() {
         return None;
     }
-    Some(m.positions)
+    Some((m.positions, m.score))
+}
+
+struct ProjectMatch {
+    index: usize,
+    path_positions: Vec<usize>,
+    host_positions: Vec<usize>,
+    score: f64,
 }
 
 fn filter_entry(
@@ -819,7 +828,7 @@ fn filter_entry(
     smart_case: bool,
     cancel: &AtomicBool,
     executor: &BackgroundExecutor,
-) -> Option<RemoteEntry> {
+) -> Option<(RemoteEntry, f64)> {
     let host = entry.host_name();
 
     let projects = match entry {
@@ -828,32 +837,41 @@ fn filter_entry(
     };
 
     if projects.is_empty() {
-        return match_positions(host, query, smart_case, cancel, executor).map(|positions| {
-            let mut result = entry.clone();
-            match &mut result {
-                RemoteEntry::SshConfig { host_positions, .. } => *host_positions = positions,
-                RemoteEntry::Project { host_positions, .. } => *host_positions = positions,
-            }
-            result
-        });
+        return match_positions(host, query, smart_case, cancel, executor).map(
+            |(positions, score)| {
+                let mut result = entry.clone();
+                match &mut result {
+                    RemoteEntry::SshConfig { host_positions, .. } => *host_positions = positions,
+                    RemoteEntry::Project { host_positions, .. } => *host_positions = positions,
+                }
+                (result, score)
+            },
+        );
     }
 
     let host_len = host.len();
     let host_prefix_len = host_len + 1; // "host " separator offset
-    let matched: Vec<(usize, Vec<usize>, Vec<usize>)> = projects
+    let matched: Vec<ProjectMatch> = projects
         .iter()
         .enumerate()
         .filter_map(|(index, entry)| {
             let combined = format!("{host} {}", entry.project.paths.join(", "));
-            match_positions(&combined, query, smart_case, cancel, executor).map(|positions| {
-                let host_pos: Vec<usize> =
-                    positions.iter().copied().filter(|&p| p < host_len).collect();
-                let path_positions = positions
-                    .into_iter()
-                    .filter_map(|p| p.checked_sub(host_prefix_len))
-                    .collect();
-                (index, path_positions, host_pos)
-            })
+            match_positions(&combined, query, smart_case, cancel, executor).map(
+                |(positions, score)| {
+                    let host_positions =
+                        positions.iter().copied().filter(|&p| p < host_len).collect();
+                    let path_positions = positions
+                        .into_iter()
+                        .filter_map(|p| p.checked_sub(host_prefix_len))
+                        .collect();
+                    ProjectMatch {
+                        index,
+                        path_positions,
+                        host_positions,
+                        score,
+                    }
+                },
+            )
         })
         .collect();
 
@@ -861,16 +879,21 @@ fn filter_entry(
         return None;
     }
 
+    let best_score = matched
+        .iter()
+        .map(|m| m.score)
+        .fold(f64::NEG_INFINITY, f64::max);
+
     let mut all_host_positions: Vec<usize> = matched
         .iter()
-        .flat_map(|(_, _, hp)| hp.iter().copied())
+        .flat_map(|m| m.host_positions.iter().copied())
         .collect();
     all_host_positions.sort();
     all_host_positions.dedup();
 
     let match_map: HashMap<usize, Vec<usize>> = matched
         .into_iter()
-        .map(|(idx, path_pos, _)| (idx, path_pos))
+        .map(|m| (m.index, m.path_positions))
         .collect();
 
     let mut filtered = entry.clone();
@@ -892,7 +915,7 @@ fn filter_entry(
             })
             .collect();
     }
-    Some(filtered)
+    Some((filtered, best_score))
 }
 
 #[derive(Clone)]
@@ -1502,6 +1525,7 @@ impl RemoteServerProjects {
         &mut self,
         ix: usize,
         remote_server: RemoteEntry,
+        show_top_separator: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1529,7 +1553,7 @@ impl RemoteServerProjects {
         };
         v_flex()
             .w_full()
-            .child(ListSeparator)
+            .when(show_top_separator, |this| this.child(ListSeparator))
             .child(
                 h_flex()
                     .group("ssh-server")
@@ -2950,8 +2974,15 @@ impl RemoteServerProjects {
                                 .into_any_element(),
                         )
                         .children(filtered_servers.iter().enumerate().map(|(ix, connection)| {
-                            self.render_remote_connection(ix, connection.clone(), window, cx)
-                                .into_any_element()
+                            let show_top_separator = ix > 0 || query.is_empty();
+                            self.render_remote_connection(
+                                ix,
+                                connection.clone(),
+                                show_top_separator,
+                                window,
+                                cx,
+                            )
+                            .into_any_element()
                         })),
                 )
                 .into_any_element(),
