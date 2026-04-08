@@ -612,6 +612,7 @@ fn build_visual_tests_binary() -> NamedJob {
             .runs_on(runners::MAC_DEFAULT)
             .add_step(steps::checkout_repo())
             .add_step(steps::setup_cargo_config(Platform::Mac))
+            .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(cargo_build_visual_tests())
             .add_step(steps::cleanup_cargo_config(Platform::Mac)),
     )

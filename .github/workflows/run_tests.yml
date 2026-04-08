@@ -549,6 +549,11 @@ jobs:
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: run_tests::build_visual_tests_binary::cargo_build_visual_tests
       run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
     - name: steps::cleanup_cargo_config
