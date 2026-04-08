@@ -22,7 +22,7 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, AgentV2FeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -54,8 +54,8 @@ use theme_settings::AgentFontSize;
 use ui::{
     Callout, CircularProgress, CommonAnimationExt, ContextMenu, ContextMenuEntry, CopyButton,
     DecoratedIcon, DiffStat, Disclosure, Divider, DividerColor, IconDecoration, IconDecorationKind,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar,
-    prelude::*, right_click_menu,
+    KeyBinding, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, WithScrollbar, prelude::*,
+    right_click_menu,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use util::{debug_panic, defer};
@@ -84,12 +84,11 @@ use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
     AuthorizeToolCall, ClearMessageQueue, CycleFavoriteModels, CycleModeSelector,
     CycleThinkingEffort, EditFirstQueuedMessage, ExpandMessageEditor, Follow, KeepAll, NewThread,
-    OpenAddContextMenu, OpenAgentDiff, OpenHistory, RejectAll, RejectOnce,
-    RemoveFirstQueuedMessage, ScrollOutputLineDown, ScrollOutputLineUp, ScrollOutputPageDown,
-    ScrollOutputPageUp, ScrollOutputToBottom, ScrollOutputToNextMessage,
-    ScrollOutputToPreviousMessage, ScrollOutputToTop, SendImmediately, SendNextQueuedMessage,
-    ToggleFastMode, ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode,
-    UndoLastReject,
+    OpenAddContextMenu, OpenAgentDiff, RejectAll, RejectOnce, RemoveFirstQueuedMessage,
+    ScrollOutputLineDown, ScrollOutputLineUp, ScrollOutputPageDown, ScrollOutputPageUp,
+    ScrollOutputToBottom, ScrollOutputToNextMessage, ScrollOutputToPreviousMessage,
+    ScrollOutputToTop, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
+    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -812,7 +811,7 @@ impl ConversationView {
         let agent_id = self.agent.agent_id();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
             thread.read(cx).prompt_capabilities(),
-            vec![],
+            thread.read(cx).available_commands().to_vec(),
         )));
 
         let action_log = thread.read(cx).action_log().clone();
@@ -1448,40 +1447,24 @@ impl ConversationView {
                 self.emit_token_limit_telemetry_if_needed(thread, cx);
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
-                let mut available_commands = available_commands.clone();
+                if let Some(thread_view) = self.thread_view(&thread_id) {
+                    let has_commands = !available_commands.is_empty();
 
-                if thread
-                    .read(cx)
-                    .connection()
-                    .auth_methods()
-                    .iter()
-                    .any(|method| method.id().0.as_ref() == "claude-login")
-                {
-                    available_commands.push(acp::AvailableCommand::new("login", "Authenticate"));
-                    available_commands.push(acp::AvailableCommand::new("logout", "Authenticate"));
-                }
+                    let agent_display_name = self
+                        .agent_server_store
+                        .read(cx)
+                        .agent_display_name(&self.agent.agent_id())
+                        .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
 
-                let has_commands = !available_commands.is_empty();
-                if let Some(active) = self.active_thread() {
-                    active.update(cx, |active, _cx| {
-                        active
-                            .session_capabilities
-                            .write()
-                            .set_available_commands(available_commands);
-                    });
-                }
-
-                let agent_display_name = self
-                    .agent_server_store
-                    .read(cx)
-                    .agent_display_name(&self.agent.agent_id())
-                    .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
-
-                if let Some(active) = self.active_thread() {
                     let new_placeholder =
                         placeholder_text(agent_display_name.as_ref(), has_commands);
-                    active.update(cx, |active, cx| {
-                        active.message_editor.update(cx, |editor, cx| {
+
+                    thread_view.update(cx, |thread_view, cx| {
+                        thread_view
+                            .session_capabilities
+                            .write()
+                            .set_available_commands(available_commands.clone());
+                        thread_view.message_editor.update(cx, |editor, cx| {
                             editor.set_placeholder_text(&new_placeholder, window, cx);
                         });
                     });
@@ -2348,9 +2331,9 @@ impl ConversationView {
         }
     }
 
+    #[cfg(feature = "audio")]
     fn play_notification_sound(&self, window: &Window, cx: &mut App) {
-        let settings = AgentSettings::get_global(cx);
-        let _visible = window.is_window_active()
+        let visible = window.is_window_active()
             && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
                 self.agent_panel_visible(&mw, cx)
             } else {
@@ -2358,8 +2341,8 @@ impl ConversationView {
                     .upgrade()
                     .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
             };
-        #[cfg(feature = "audio")]
-        if settings.play_sound_when_agent_done.should_play(_visible) {
+        let settings = AgentSettings::get_global(cx);
+        if settings.play_sound_when_agent_done.should_play(visible) {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
@@ -2661,7 +2644,6 @@ impl ConversationView {
 impl Render for ConversationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_queued_message_editors(window, cx);
-        let v2_flag = cx.has_flag::<AgentV2FeatureFlag>();
 
         v_flex()
             .track_focus(&self.focus_handle)
@@ -2670,17 +2652,18 @@ impl Render for ConversationView {
             .child(match &self.server_state {
                 ServerState::Loading { .. } => v_flex()
                     .flex_1()
-                    .when(v2_flag, |this| {
-                        this.size_full().items_center().justify_center().child(
-                            Label::new("Loading…").color(Color::Muted).with_animation(
-                                "loading-agent-label",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.3, 0.7)),
-                                |label, delta| label.alpha(delta),
-                            ),
-                        )
-                    })
+                    .size_full()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        Label::new("Loading…").color(Color::Muted).with_animation(
+                            "loading-agent-label",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.3, 0.7)),
+                            |label, delta| label.alpha(delta),
+                        ),
+                    )
                     .into_any(),
                 ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()
@@ -2989,6 +2972,166 @@ pub(crate) mod tests {
         });
     }
 
+    #[derive(Clone)]
+    struct RestoredAvailableCommandsConnection;
+
+    impl AgentConnection for RestoredAvailableCommandsConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("restored-available-commands")
+        }
+
+        fn telemetry_id(&self) -> SharedString {
+            "restored-available-commands".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _work_dirs: PathList,
+            cx: &mut App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let thread = build_test_thread(
+                self,
+                project,
+                "RestoredAvailableCommandsConnection",
+                SessionId::new("new-session"),
+                cx,
+            );
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_load_session(&self) -> bool {
+            true
+        }
+
+        fn load_session(
+            self: Rc<Self>,
+            session_id: acp::SessionId,
+            project: Entity<Project>,
+            _work_dirs: PathList,
+            _title: Option<SharedString>,
+            cx: &mut App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let thread = build_test_thread(
+                self,
+                project,
+                "RestoredAvailableCommandsConnection",
+                session_id,
+                cx,
+            );
+
+            thread
+                .update(cx, |thread, cx| {
+                    thread.handle_session_update(
+                        acp::SessionUpdate::AvailableCommandsUpdate(
+                            acp::AvailableCommandsUpdate::new(vec![acp::AvailableCommand::new(
+                                "help", "Get help",
+                            )]),
+                        ),
+                        cx,
+                    )
+                })
+                .expect("available commands update should succeed");
+
+            Task::ready(Ok(thread))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: Option<acp_thread::UserMessageId>,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
+    #[gpui::test]
+    async fn test_restored_threads_keep_available_commands(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::new(RestoredAvailableCommandsConnection)),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    Some(SessionId::new("restored-session")),
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project,
+                    Some(thread_store),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        let editor =
+            message_editor.update(cx, |message_editor, _cx| message_editor.editor().clone());
+        let placeholder = editor.update(cx, |editor, cx| editor.placeholder_text(cx));
+
+        active_thread(&conversation_view, cx).read_with(cx, |view, _cx| {
+            let available_commands = view
+                .session_capabilities
+                .read()
+                .available_commands()
+                .to_vec();
+            assert_eq!(available_commands.len(), 1);
+            assert_eq!(available_commands[0].name.as_str(), "help");
+            assert_eq!(available_commands[0].description.as_str(), "Get help");
+        });
+
+        assert_eq!(
+            placeholder,
+            Some("Message Test — @ to include context, / for commands".to_string())
+        );
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("/help", window, cx);
+        });
+
+        let contents_result = message_editor
+            .update(cx, |editor, cx| editor.contents(false, cx))
+            .await;
+
+        assert!(contents_result.is_ok());
+    }
+
     #[gpui::test]
     async fn test_resume_thread_uses_session_cwd_when_inside_project(cx: &mut TestAppContext) {
         init_test(cx);
@@ -3293,7 +3436,6 @@ pub(crate) mod tests {
         let fs = FakeFs::new(cx.executor());
 
         cx.update(|cx| {
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
             <dyn Fs>::set_global(fs.clone(), cx);
@@ -3375,7 +3517,6 @@ pub(crate) mod tests {
         // Verify workspace1 is no longer the active workspace
         multi_workspace_handle
             .read_with(cx, |mw, _cx| {
-                assert_eq!(mw.active_workspace_index(), 1);
                 assert_ne!(mw.workspace(), &workspace1);
             })
             .unwrap();

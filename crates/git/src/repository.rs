@@ -241,20 +241,57 @@ pub struct Worktree {
     pub is_main: bool,
 }
 
+/// Describes how a new worktree should choose or create its checked-out HEAD.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum CreateWorktreeTarget {
+    /// Check out an existing local branch in the new worktree.
+    ExistingBranch {
+        /// The existing local branch to check out.
+        branch_name: String,
+    },
+    /// Create a new local branch for the new worktree.
+    NewBranch {
+        /// The new local branch to create and check out.
+        branch_name: String,
+        /// The commit or ref to create the branch from. Uses `HEAD` when `None`.
+        base_sha: Option<String>,
+    },
+    /// Check out a commit or ref in detached HEAD state.
+    Detached {
+        /// The commit or ref to check out. Uses `HEAD` when `None`.
+        base_sha: Option<String>,
+    },
+}
+
+impl CreateWorktreeTarget {
+    pub fn branch_name(&self) -> Option<&str> {
+        match self {
+            Self::ExistingBranch { branch_name } | Self::NewBranch { branch_name, .. } => {
+                Some(branch_name)
+            }
+            Self::Detached { .. } => None,
+        }
+    }
+}
+
 impl Worktree {
+    /// Returns the branch name if the worktree is attached to a branch.
+    pub fn branch_name(&self) -> Option<&str> {
+        self.ref_name.as_ref().map(|ref_name| {
+            ref_name
+                .strip_prefix("refs/heads/")
+                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
+                .unwrap_or(ref_name)
+        })
+    }
+
     /// Returns a display name for the worktree, suitable for use in the UI.
     ///
     /// If the worktree is attached to a branch, returns the branch name.
     /// Otherwise, returns the short SHA of the worktree's HEAD commit.
     pub fn display_name(&self) -> &str {
-        match self.ref_name {
-            Some(ref ref_name) => ref_name
-                .strip_prefix("refs/heads/")
-                .or_else(|| ref_name.strip_prefix("refs/remotes/"))
-                .unwrap_or(ref_name),
-            // Detached HEAD — show the short SHA as a fallback.
-            None => &self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)],
-        }
+        self.branch_name()
+            .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
 }
 
@@ -329,6 +366,7 @@ impl Upstream {
 pub struct CommitOptions {
     pub amend: bool,
     pub signoff: bool,
+    pub allow_empty: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -715,9 +753,8 @@ pub trait GitRepository: Send + Sync {
 
     fn create_worktree(
         &self,
-        branch_name: String,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>>;
 
     fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>>;
@@ -915,6 +952,12 @@ pub trait GitRepository: Send + Sync {
     ) -> BoxFuture<'_, Result<()>>;
 
     fn commit_data_reader(&self) -> Result<CommitDataReader>;
+
+    fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>>;
+
+    fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>>;
+
+    fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>>;
 
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
@@ -1660,23 +1703,36 @@ impl GitRepository for RealGitRepository {
 
     fn create_worktree(
         &self,
-        branch_name: String,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        from_commit: Option<String>,
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary();
-        let mut args = vec![
-            OsString::from("worktree"),
-            OsString::from("add"),
-            OsString::from("-b"),
-            OsString::from(branch_name.as_str()),
-            OsString::from("--"),
-            OsString::from(path.as_os_str()),
-        ];
-        if let Some(from_commit) = from_commit {
-            args.push(OsString::from(from_commit));
-        } else {
-            args.push(OsString::from("HEAD"));
+        let mut args = vec![OsString::from("worktree"), OsString::from("add")];
+
+        match &target {
+            CreateWorktreeTarget::ExistingBranch { branch_name } => {
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(branch_name));
+            }
+            CreateWorktreeTarget::NewBranch {
+                branch_name,
+                base_sha: start_point,
+            } => {
+                args.push(OsString::from("-b"));
+                args.push(OsString::from(branch_name));
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
+            }
+            CreateWorktreeTarget::Detached {
+                base_sha: start_point,
+            } => {
+                args.push(OsString::from("--detach"));
+                args.push(OsString::from("--"));
+                args.push(OsString::from(path.as_os_str()));
+                args.push(OsString::from(start_point.as_deref().unwrap_or("HEAD")));
+            }
         }
 
         self.executor
@@ -2165,6 +2221,10 @@ impl GitRepository for RealGitRepository {
                 cmd.arg("--signoff");
             }
 
+            if options.allow_empty {
+                cmd.arg("--allow-empty");
+            }
+
             if let Some((name, email)) = name_and_email {
                 cmd.arg("--author").arg(&format!("{name} <{email}>"));
             }
@@ -2174,6 +2234,39 @@ impl GitRepository for RealGitRepository {
             Ok(())
         }
         .boxed()
+    }
+
+    fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["update-ref".into(), ref_name.into(), commit.into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["update-ref".into(), "-d".into(), ref_name.into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args: Vec<OsString> = vec!["worktree".into(), "repair".into()];
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
     }
 
     fn push(
@@ -2691,10 +2784,11 @@ impl GitRepository for RealGitRepository {
                 log_source.get_arg()?,
             ]);
             command.stdout(Stdio::piped());
-            command.stderr(Stdio::null());
+            command.stderr(Stdio::piped());
 
             let mut child = command.spawn()?;
             let stdout = child.stdout.take().context("failed to get stdout")?;
+            let stderr = child.stderr.take().context("failed to get stderr")?;
             let mut reader = BufReader::new(stdout);
 
             let mut line_buffer = String::new();
@@ -2729,7 +2823,20 @@ impl GitRepository for RealGitRepository {
                 }
             }
 
-            child.status().await?;
+            let status = child.status().await?;
+            if !status.success() {
+                let mut stderr_output = String::new();
+                BufReader::new(stderr)
+                    .read_to_string(&mut stderr_output)
+                    .await
+                    .log_err();
+
+                if stderr_output.is_empty() {
+                    anyhow::bail!("git log command failed with {}", status);
+                } else {
+                    anyhow::bail!("git log command failed with {}: {}", status, stderr_output);
+                }
+            }
             Ok(())
         }
         .boxed()
@@ -4009,9 +4116,11 @@ mod tests {
 
         // Create a new worktree
         repo.create_worktree(
-            "test-branch".to_string(),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "test-branch".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -4068,9 +4177,11 @@ mod tests {
         // Create a worktree
         let worktree_path = worktrees_dir.join("worktree-to-remove");
         repo.create_worktree(
-            "to-remove".to_string(),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "to-remove".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -4092,9 +4203,11 @@ mod tests {
         // Create a worktree
         let worktree_path = worktrees_dir.join("dirty-wt");
         repo.create_worktree(
-            "dirty-wt".to_string(),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "dirty-wt".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             worktree_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();
@@ -4162,9 +4275,11 @@ mod tests {
         // Create a worktree
         let old_path = worktrees_dir.join("old-worktree-name");
         repo.create_worktree(
-            "old-name".to_string(),
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "old-name".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
             old_path.clone(),
-            Some("HEAD".to_string()),
         )
         .await
         .unwrap();

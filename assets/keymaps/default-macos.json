@@ -668,6 +668,7 @@
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
       "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
       "cmd-ctrl-b": "branches::OpenRecent",
@@ -1269,6 +1270,7 @@
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
+      "ctrl-r": ["terminal::SendKeystroke", "ctrl-r"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "shift-pageup": "terminal::ScrollPageUp",
       "cmd-up": "terminal::ScrollPageUp",
@@ -1376,6 +1378,7 @@
       "alt-down": "markdown::ScrollDownByItem",
       "cmd-up": "markdown::ScrollToTop",
       "cmd-down": "markdown::ScrollToBottom",
+      "cmd-f": "buffer_search::Deploy",
     },
   },
   {
@@ -1570,7 +1573,7 @@
   {
     "context": "NotebookEditor",
     "bindings": {
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "cmd-enter": "notebook::Run",
       "cmd-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1582,10 +1585,18 @@
     },
   },
   {
+    "context": "NotebookEditor && notebook_mode == command",
+    "bindings": {
+      "enter": "notebook::EnterEditMode",
+      "down": "menu::SelectNext",
+      "up": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "NotebookEditor > Editor",
     "bindings": {
       "enter": "editor::Newline",
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "cmd-enter": "notebook::Run",
       "cmd-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1594,6 +1605,7 @@
       "cmd-shift-m": "notebook::AddMarkdownBlock",
       "cmd-shift-r": "notebook::RestartKernel",
       "cmd-c": "notebook::InterruptKernel",
+      "escape": "notebook::EnterCommandMode",
     },
   },
 ]

@@ -1,4 +1,7 @@
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use acp_thread::AcpThreadEvent;
 use agent::{ThreadStore, ZED_AGENT_ID};
@@ -13,7 +16,6 @@ use db::{
     },
     sqlez_macros::sql,
 };
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
@@ -25,16 +27,7 @@ use crate::DEFAULT_THREAD_TITLE;
 
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
-
-    if cx.has_flag::<AgentV2FeatureFlag>() {
-        migrate_thread_metadata(cx);
-    }
-    cx.observe_flag::<AgentV2FeatureFlag, _>(|has_flag, cx| {
-        if has_flag {
-            migrate_thread_metadata(cx);
-        }
-    })
-    .detach();
+    migrate_thread_metadata(cx);
 }
 
 /// Migrate existing thread metadata from native agent thread store to the new metadata storage.
@@ -142,6 +135,48 @@ impl From<&ThreadMetadata> for acp_thread::AgentSessionInfo {
             meta: None,
         }
     }
+}
+
+/// Record of a git worktree that was archived (deleted from disk) when its
+/// last thread was archived.
+pub struct ArchivedGitWorktree {
+    /// Auto-incrementing primary key.
+    pub id: i64,
+    /// Absolute path to the directory of the worktree before it was deleted.
+    /// Used when restoring, to put the recreated worktree back where it was.
+    /// If the path already exists on disk, the worktree is assumed to be
+    /// already restored and is used as-is.
+    pub worktree_path: PathBuf,
+    /// Absolute path of the main repository ("main worktree") that owned this worktree.
+    /// Used when restoring, to reattach the recreated worktree to the correct main repo.
+    /// If the main repo isn't found on disk, unarchiving fails because we only store
+    /// commit hashes, and without the actual git repo being available, we can't restore
+    /// the files.
+    pub main_repo_path: PathBuf,
+    /// Branch that was checked out in the worktree at archive time. `None` if
+    /// the worktree was in detached HEAD state, which isn't supported in Zed, but
+    /// could happen if the user made a detached one outside of Zed.
+    /// On restore, we try to switch to this branch. If that fails (e.g. it's
+    /// checked out elsewhere), we auto-generate a new one.
+    pub branch_name: Option<String>,
+    /// SHA of the WIP commit that captures files that were staged (but not yet
+    /// committed) at the time of archiving. This commit can be empty if the
+    /// user had no staged files at the time. It sits directly on top of whatever
+    /// the user's last actual commit was.
+    pub staged_commit_hash: String,
+    /// SHA of the WIP commit that captures files that were unstaged (including
+    /// untracked) at the time of archiving. This commit can be empty if the user
+    /// had no unstaged files at the time. It sits on top of `staged_commit_hash`.
+    /// After doing `git reset` past both of these commits, we're back in the state
+    /// we had before archiving, including what was staged, what was unstaged, and
+    /// what was committed.
+    pub unstaged_commit_hash: String,
+    /// SHA of the commit that HEAD pointed at before we created the two WIP
+    /// commits during archival. After resetting past the WIP commits during
+    /// restore, HEAD should land back on this commit. It also serves as a
+    /// pre-restore sanity check (abort if this commit no longer exists in the
+    /// repo) and as a fallback target if the WIP resets fail.
+    pub original_commit_hash: String,
 }
 
 /// The store holds all metadata needed to show threads in the sidebar/the archive.
@@ -298,10 +333,6 @@ impl ThreadMetadataStore {
     }
 
     pub fn save_all(&mut self, metadata: Vec<ThreadMetadata>, cx: &mut Context<Self>) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         for metadata in metadata {
             self.save_internal(metadata);
         }
@@ -314,10 +345,6 @@ impl ThreadMetadataStore {
     }
 
     fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         self.save_internal(metadata);
         cx.notify();
     }
@@ -367,10 +394,6 @@ impl ThreadMetadataStore {
         work_dirs: PathList,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         if let Some(thread) = self.threads.get(session_id) {
             self.save_internal(ThreadMetadata {
                 folder_paths: work_dirs,
@@ -388,16 +411,63 @@ impl ThreadMetadataStore {
         self.update_archived(session_id, false, cx);
     }
 
+    pub fn create_archived_worktree(
+        &self,
+        worktree_path: String,
+        main_repo_path: String,
+        branch_name: Option<String>,
+        staged_commit_hash: String,
+        unstaged_commit_hash: String,
+        original_commit_hash: String,
+        cx: &App,
+    ) -> Task<anyhow::Result<i64>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            db.create_archived_worktree(
+                worktree_path,
+                main_repo_path,
+                branch_name,
+                staged_commit_hash,
+                unstaged_commit_hash,
+                original_commit_hash,
+            )
+            .await
+        })
+    }
+
+    pub fn link_thread_to_archived_worktree(
+        &self,
+        session_id: String,
+        archived_worktree_id: i64,
+        cx: &App,
+    ) -> Task<anyhow::Result<()>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move {
+            db.link_thread_to_archived_worktree(session_id, archived_worktree_id)
+                .await
+        })
+    }
+
+    pub fn get_archived_worktrees_for_thread(
+        &self,
+        session_id: String,
+        cx: &App,
+    ) -> Task<anyhow::Result<Vec<ArchivedGitWorktree>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move { db.get_archived_worktrees_for_thread(session_id).await })
+    }
+
+    pub fn delete_archived_worktree(&self, id: i64, cx: &App) -> Task<anyhow::Result<()>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move { db.delete_archived_worktree(id).await })
+    }
+
     fn update_archived(
         &mut self,
         session_id: &acp::SessionId,
         archived: bool,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         if let Some(thread) = self.threads.get(session_id) {
             self.save_internal(ThreadMetadata {
                 archived,
@@ -408,10 +478,6 @@ impl ThreadMetadataStore {
     }
 
     pub fn delete(&mut self, session_id: acp::SessionId, cx: &mut Context<Self>) {
-        if !cx.has_flag::<AgentV2FeatureFlag>() {
-            return;
-        }
-
         if let Some(thread) = self.threads.get(&session_id) {
             if let Some(session_ids) = self.threads_by_paths.get_mut(&thread.folder_paths) {
                 session_ids.remove(&session_id);
@@ -567,19 +633,12 @@ impl ThreadMetadataStore {
                     PathList::new(&paths)
                 };
 
-                let main_worktree_paths = {
-                    let project = thread_ref.project().read(cx);
-                    let mut main_paths: Vec<Arc<Path>> = Vec::new();
-                    for repo in project.repositories(cx).values() {
-                        let snapshot = repo.read(cx).snapshot();
-                        if snapshot.is_linked_worktree() {
-                            main_paths.push(snapshot.original_repo_abs_path.clone());
-                        }
-                    }
-                    main_paths.sort();
-                    main_paths.dedup();
-                    PathList::new(&main_paths)
-                };
+                let main_worktree_paths = thread_ref
+                    .project()
+                    .read(cx)
+                    .project_group_key(cx)
+                    .path_list()
+                    .clone();
 
                 // Threads without a folder path (e.g. started in an empty
                 // window) are archived by default so they don't get lost,
@@ -634,6 +693,23 @@ impl Domain for ThreadMetadataDb {
         sql!(ALTER TABLE sidebar_threads ADD COLUMN archived INTEGER DEFAULT 0),
         sql!(ALTER TABLE sidebar_threads ADD COLUMN main_worktree_paths TEXT),
         sql!(ALTER TABLE sidebar_threads ADD COLUMN main_worktree_paths_order TEXT),
+        sql!(
+            CREATE TABLE IF NOT EXISTS archived_git_worktrees(
+                id INTEGER PRIMARY KEY,
+                worktree_path TEXT NOT NULL,
+                main_repo_path TEXT NOT NULL,
+                branch_name TEXT,
+                staged_commit_hash TEXT,
+                unstaged_commit_hash TEXT,
+                original_commit_hash TEXT
+            ) STRICT;
+
+            CREATE TABLE IF NOT EXISTS thread_archived_worktrees(
+                session_id TEXT NOT NULL,
+                archived_worktree_id INTEGER NOT NULL REFERENCES archived_git_worktrees(id),
+                PRIMARY KEY (session_id, archived_worktree_id)
+            ) STRICT;
+        ),
     ];
 }
 
@@ -722,6 +798,80 @@ impl ThreadMetadataDb {
         })
         .await
     }
+
+    pub async fn create_archived_worktree(
+        &self,
+        worktree_path: String,
+        main_repo_path: String,
+        branch_name: Option<String>,
+        staged_commit_hash: String,
+        unstaged_commit_hash: String,
+        original_commit_hash: String,
+    ) -> anyhow::Result<i64> {
+        self.write(move |conn| {
+            let mut stmt = Statement::prepare(
+                conn,
+                "INSERT INTO archived_git_worktrees(worktree_path, main_repo_path, branch_name, staged_commit_hash, unstaged_commit_hash, original_commit_hash) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 RETURNING id",
+            )?;
+            let mut i = stmt.bind(&worktree_path, 1)?;
+            i = stmt.bind(&main_repo_path, i)?;
+            i = stmt.bind(&branch_name, i)?;
+            i = stmt.bind(&staged_commit_hash, i)?;
+            i = stmt.bind(&unstaged_commit_hash, i)?;
+            stmt.bind(&original_commit_hash, i)?;
+            stmt.maybe_row::<i64>()?.context("expected RETURNING id")
+        })
+        .await
+    }
+
+    pub async fn link_thread_to_archived_worktree(
+        &self,
+        session_id: String,
+        archived_worktree_id: i64,
+    ) -> anyhow::Result<()> {
+        self.write(move |conn| {
+            let mut stmt = Statement::prepare(
+                conn,
+                "INSERT INTO thread_archived_worktrees(session_id, archived_worktree_id) \
+                 VALUES (?1, ?2)",
+            )?;
+            let i = stmt.bind(&session_id, 1)?;
+            stmt.bind(&archived_worktree_id, i)?;
+            stmt.exec()
+        })
+        .await
+    }
+
+    pub async fn get_archived_worktrees_for_thread(
+        &self,
+        session_id: String,
+    ) -> anyhow::Result<Vec<ArchivedGitWorktree>> {
+        self.select_bound::<String, ArchivedGitWorktree>(
+            "SELECT a.id, a.worktree_path, a.main_repo_path, a.branch_name, a.staged_commit_hash, a.unstaged_commit_hash, a.original_commit_hash \
+             FROM archived_git_worktrees a \
+             JOIN thread_archived_worktrees t ON a.id = t.archived_worktree_id \
+             WHERE t.session_id = ?1",
+        )?(session_id)
+    }
+
+    pub async fn delete_archived_worktree(&self, id: i64) -> anyhow::Result<()> {
+        self.write(move |conn| {
+            let mut stmt = Statement::prepare(
+                conn,
+                "DELETE FROM thread_archived_worktrees WHERE archived_worktree_id = ?",
+            )?;
+            stmt.bind(&id, 1)?;
+            stmt.exec()?;
+
+            let mut stmt =
+                Statement::prepare(conn, "DELETE FROM archived_git_worktrees WHERE id = ?")?;
+            stmt.bind(&id, 1)?;
+            stmt.exec()
+        })
+        .await
+    }
 }
 
 impl Column for ThreadMetadata {
@@ -785,6 +935,31 @@ impl Column for ThreadMetadata {
     }
 }
 
+impl Column for ArchivedGitWorktree {
+    fn column(statement: &mut Statement, start_index: i32) -> anyhow::Result<(Self, i32)> {
+        let (id, next): (i64, i32) = Column::column(statement, start_index)?;
+        let (worktree_path_str, next): (String, i32) = Column::column(statement, next)?;
+        let (main_repo_path_str, next): (String, i32) = Column::column(statement, next)?;
+        let (branch_name, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (staged_commit_hash, next): (String, i32) = Column::column(statement, next)?;
+        let (unstaged_commit_hash, next): (String, i32) = Column::column(statement, next)?;
+        let (original_commit_hash, next): (String, i32) = Column::column(statement, next)?;
+
+        Ok((
+            ArchivedGitWorktree {
+                id,
+                worktree_path: PathBuf::from(worktree_path_str),
+                main_repo_path: PathBuf::from(main_repo_path_str),
+                branch_name,
+                staged_commit_hash,
+                unstaged_commit_hash,
+                original_commit_hash,
+            },
+            next,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,7 +967,7 @@ mod tests {
     use action_log::ActionLog;
     use agent::DbThread;
     use agent_client_protocol as acp;
-    use feature_flags::FeatureFlagAppExt;
+
     use gpui::TestAppContext;
     use project::FakeFs;
     use project::Project;
@@ -842,7 +1017,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
             ThreadMetadataStore::init_global(cx);
             ThreadStore::init_global(cx);
         });
@@ -883,7 +1057,6 @@ mod tests {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
             ThreadMetadataStore::init_global(cx);
         });
 
@@ -1912,5 +2085,210 @@ mod tests {
                 }]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_create_and_retrieve_archived_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let id = store
+            .read_with(cx, |store, cx| {
+                store.create_archived_worktree(
+                    "/tmp/worktree".to_string(),
+                    "/home/user/repo".to_string(),
+                    Some("feature-branch".to_string()),
+                    "staged_aaa".to_string(),
+                    "unstaged_bbb".to_string(),
+                    "original_000".to_string(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        store
+            .read_with(cx, |store, cx| {
+                store.link_thread_to_archived_worktree("session-1".to_string(), id, cx)
+            })
+            .await
+            .unwrap();
+
+        let worktrees = store
+            .read_with(cx, |store, cx| {
+                store.get_archived_worktrees_for_thread("session-1".to_string(), cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(worktrees.len(), 1);
+        let wt = &worktrees[0];
+        assert_eq!(wt.id, id);
+        assert_eq!(wt.worktree_path, PathBuf::from("/tmp/worktree"));
+        assert_eq!(wt.main_repo_path, PathBuf::from("/home/user/repo"));
+        assert_eq!(wt.branch_name.as_deref(), Some("feature-branch"));
+        assert_eq!(wt.staged_commit_hash, "staged_aaa");
+        assert_eq!(wt.unstaged_commit_hash, "unstaged_bbb");
+        assert_eq!(wt.original_commit_hash, "original_000");
+    }
+
+    #[gpui::test]
+    async fn test_delete_archived_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let id = store
+            .read_with(cx, |store, cx| {
+                store.create_archived_worktree(
+                    "/tmp/worktree".to_string(),
+                    "/home/user/repo".to_string(),
+                    Some("main".to_string()),
+                    "deadbeef".to_string(),
+                    "deadbeef".to_string(),
+                    "original_000".to_string(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        store
+            .read_with(cx, |store, cx| {
+                store.link_thread_to_archived_worktree("session-1".to_string(), id, cx)
+            })
+            .await
+            .unwrap();
+
+        store
+            .read_with(cx, |store, cx| store.delete_archived_worktree(id, cx))
+            .await
+            .unwrap();
+
+        let worktrees = store
+            .read_with(cx, |store, cx| {
+                store.get_archived_worktrees_for_thread("session-1".to_string(), cx)
+            })
+            .await
+            .unwrap();
+        assert!(worktrees.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_link_multiple_threads_to_archived_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let id = store
+            .read_with(cx, |store, cx| {
+                store.create_archived_worktree(
+                    "/tmp/worktree".to_string(),
+                    "/home/user/repo".to_string(),
+                    None,
+                    "abc123".to_string(),
+                    "abc123".to_string(),
+                    "original_000".to_string(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        store
+            .read_with(cx, |store, cx| {
+                store.link_thread_to_archived_worktree("session-1".to_string(), id, cx)
+            })
+            .await
+            .unwrap();
+
+        store
+            .read_with(cx, |store, cx| {
+                store.link_thread_to_archived_worktree("session-2".to_string(), id, cx)
+            })
+            .await
+            .unwrap();
+
+        let wt1 = store
+            .read_with(cx, |store, cx| {
+                store.get_archived_worktrees_for_thread("session-1".to_string(), cx)
+            })
+            .await
+            .unwrap();
+
+        let wt2 = store
+            .read_with(cx, |store, cx| {
+                store.get_archived_worktrees_for_thread("session-2".to_string(), cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(wt1.len(), 1);
+        assert_eq!(wt2.len(), 1);
+        assert_eq!(wt1[0].id, wt2[0].id);
+    }
+
+    #[gpui::test]
+    async fn test_multiple_archived_worktrees_per_thread(cx: &mut TestAppContext) {
+        init_test(cx);
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let id1 = store
+            .read_with(cx, |store, cx| {
+                store.create_archived_worktree(
+                    "/projects/worktree-a".to_string(),
+                    "/home/user/repo".to_string(),
+                    Some("branch-a".to_string()),
+                    "staged_a".to_string(),
+                    "unstaged_a".to_string(),
+                    "original_000".to_string(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let id2 = store
+            .read_with(cx, |store, cx| {
+                store.create_archived_worktree(
+                    "/projects/worktree-b".to_string(),
+                    "/home/user/repo".to_string(),
+                    Some("branch-b".to_string()),
+                    "staged_b".to_string(),
+                    "unstaged_b".to_string(),
+                    "original_000".to_string(),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        store
+            .read_with(cx, |store, cx| {
+                store.link_thread_to_archived_worktree("session-1".to_string(), id1, cx)
+            })
+            .await
+            .unwrap();
+
+        store
+            .read_with(cx, |store, cx| {
+                store.link_thread_to_archived_worktree("session-1".to_string(), id2, cx)
+            })
+            .await
+            .unwrap();
+
+        let worktrees = store
+            .read_with(cx, |store, cx| {
+                store.get_archived_worktrees_for_thread("session-1".to_string(), cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(worktrees.len(), 2);
+
+        let paths: Vec<&Path> = worktrees
+            .iter()
+            .map(|w| w.worktree_path.as_path())
+            .collect();
+        assert!(paths.contains(&Path::new("/projects/worktree-a")));
+        assert!(paths.contains(&Path::new("/projects/worktree-b")));
     }
 }

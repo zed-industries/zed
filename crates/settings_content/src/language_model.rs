@@ -1,8 +1,8 @@
+use crate::merge_from::MergeFrom;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
-use strum::EnumString;
 
 use std::sync::Arc;
 
@@ -237,15 +237,12 @@ pub struct OpenAiAvailableModel {
     pub capabilities: OpenAiModelCapabilities,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, EnumString, JsonSchema, MergeFrom)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-pub enum OpenAiReasoningEffort {
-    Minimal,
-    Low,
-    Medium,
-    High,
-    XHigh,
+pub use language_model_core::ReasoningEffort as OpenAiReasoningEffort;
+
+impl MergeFrom for OpenAiReasoningEffort {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
 }
 
 #[with_fallible_options]
@@ -479,15 +476,10 @@ pub struct LanguageModelCacheConfiguration {
     pub min_total_token: u64,
 }
 
-#[derive(
-    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
-)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
-        budget_tokens: Option<u32>,
-    },
+pub use language_model_core::ModelMode;
+
+impl MergeFrom for ModelMode {
+    fn merge_from(&mut self, other: &Self) {
+        *self = *other;
+    }
 }

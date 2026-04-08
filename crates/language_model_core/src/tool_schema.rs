@@ -77,8 +77,6 @@ pub fn adapt_schema_to_format(
 }
 
 fn preprocess_json_schema(json: &mut Value) -> Result<()> {
-    // `additionalProperties` defaults to `false` unless explicitly specified.
-    // This prevents models from hallucinating tool parameters.
     if let Value::Object(obj) = json
         && matches!(obj.get("type"), Some(Value::String(s)) if s == "object")
     {
@@ -86,7 +84,6 @@ fn preprocess_json_schema(json: &mut Value) -> Result<()> {
             obj.insert("additionalProperties".to_string(), Value::Bool(false));
         }
 
-        // OpenAI API requires non-missing `properties`
         if !obj.contains_key("properties") {
             obj.insert("properties".to_string(), Value::Object(Default::default()));
         }
@@ -94,7 +91,6 @@ fn preprocess_json_schema(json: &mut Value) -> Result<()> {
     Ok(())
 }
 
-/// Tries to adapt the json schema so that it is compatible with https://ai.google.dev/api/caching#Schema
 fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
     if let Value::Object(obj) = json {
         const UNSUPPORTED_KEYS: [&str; 4] = ["if", "then", "else", "$ref"];
@@ -108,9 +104,7 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
 
         const KEYS_TO_REMOVE: [(&str, fn(&Value) -> bool); 6] = [
             ("format", |value| value.is_string()),
-            // Gemini doesn't support `additionalProperties` in any form (boolean or schema object)
             ("additionalProperties", |_| true),
-            // Gemini doesn't support `propertyNames`
             ("propertyNames", |_| true),
             ("exclusiveMinimum", |value| value.is_number()),
             ("exclusiveMaximum", |value| value.is_number()),
@@ -124,7 +118,6 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             }
         }
 
-        // If a type is not specified for an input parameter, add a default type
         if matches!(obj.get("description"), Some(Value::String(_)))
             && !obj.contains_key("type")
             && !(obj.contains_key("anyOf")
@@ -134,7 +127,6 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             obj.insert("type".to_string(), Value::String("string".to_string()));
         }
 
-        // Handle oneOf -> anyOf conversion
         if let Some(subschemas) = obj.get_mut("oneOf")
             && subschemas.is_array()
         {
@@ -143,7 +135,6 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             obj.insert("anyOf".to_string(), subschemas_clone);
         }
 
-        // Recursively process all nested objects and arrays
         for (_, value) in obj.iter_mut() {
             if let Value::Object(_) | Value::Array(_) = value {
                 adapt_to_json_schema_subset(value)?;
@@ -178,7 +169,6 @@ mod tests {
             })
         );
 
-        // Ensure that we do not add a type if it is an object
         let mut json = json!({
             "description": {
                 "value": "abc",
@@ -221,7 +211,6 @@ mod tests {
             })
         );
 
-        // Ensure that we do not remove keys that are actually supported (e.g. "format" can just be used as another property)
         let mut json = json!({
             "description": "A test field",
             "type": "integer",
@@ -239,7 +228,6 @@ mod tests {
             })
         );
 
-        // additionalProperties as an object schema is also unsupported by Gemini
         let mut json = json!({
             "type": "object",
             "properties": {

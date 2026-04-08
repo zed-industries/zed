@@ -38,13 +38,22 @@ fn strip_trailing_incomplete_escape(json: &str) -> &str {
     }
 }
 
+/// Parses a "prompt is too long: N tokens ..." message and extracts the token count.
+pub fn parse_prompt_too_long(message: &str) -> Option<u64> {
+    message
+        .strip_prefix("prompt is too long: ")?
+        .split_once(" tokens")?
+        .0
+        .parse()
+        .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_fix_streamed_json_strips_incomplete_escape() {
-        // Trailing `\` inside a string — incomplete escape sequence
         let fixed = fix_streamed_json(r#"{"text": "hello\"#);
         let parsed: serde_json::Value = serde_json::from_str(&fixed).expect("valid json");
         assert_eq!(parsed["text"], "hello");
@@ -52,7 +61,6 @@ mod tests {
 
     #[test]
     fn test_fix_streamed_json_preserves_complete_escape() {
-        // `\\` is a complete escape (literal backslash)
         let fixed = fix_streamed_json(r#"{"text": "hello\\"#);
         let parsed: serde_json::Value = serde_json::from_str(&fixed).expect("valid json");
         assert_eq!(parsed["text"], "hello\\");
@@ -60,7 +68,6 @@ mod tests {
 
     #[test]
     fn test_fix_streamed_json_strips_escape_after_complete_escape() {
-        // `\\\` = complete `\\` (literal backslash) + incomplete `\`
         let fixed = fix_streamed_json(r#"{"text": "hello\\\"#);
         let parsed: serde_json::Value = serde_json::from_str(&fixed).expect("valid json");
         assert_eq!(parsed["text"], "hello\\");
@@ -75,12 +82,10 @@ mod tests {
 
     #[test]
     fn test_fix_streamed_json_newline_escape_boundary() {
-        // Simulates a stream boundary landing between `\` and `n`
         let fixed = fix_streamed_json(r#"{"text": "line1\"#);
         let parsed: serde_json::Value = serde_json::from_str(&fixed).expect("valid json");
         assert_eq!(parsed["text"], "line1");
 
-        // Next chunk completes the escape
         let fixed = fix_streamed_json(r#"{"text": "line1\nline2"#);
         let parsed: serde_json::Value = serde_json::from_str(&fixed).expect("valid json");
         assert_eq!(parsed["text"], "line1\nline2");
@@ -88,8 +93,6 @@ mod tests {
 
     #[test]
     fn test_fix_streamed_json_incremental_delta_correctness() {
-        // This is the actual scenario that causes the bug:
-        // chunk 1 ends mid-escape, chunk 2 completes it.
         let chunk1 = r#"{"replacement_text": "fn foo() {\"#;
         let fixed1 = fix_streamed_json(chunk1);
         let parsed1: serde_json::Value = serde_json::from_str(&fixed1).expect("valid json");
@@ -102,7 +105,6 @@ mod tests {
         let text2 = parsed2["replacement_text"].as_str().expect("string");
         assert_eq!(text2, "fn foo() {\n    return bar;\n}");
 
-        // The delta should be the newline + rest, with no spurious backslash
         let delta = &text2[text1.len()..];
         assert_eq!(delta, "\n    return bar;\n}");
     }

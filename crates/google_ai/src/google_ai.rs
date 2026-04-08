@@ -3,8 +3,9 @@ use std::mem;
 use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+pub use language_model_core::ModelMode as GoogleModelMode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-pub use settings::ModelMode as GoogleModelMode;
+pub mod completion;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
