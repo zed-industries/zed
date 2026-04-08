@@ -154,7 +154,7 @@ impl BookmarkStore {
         }
     }
 
-    /// Opens buffers for all unloaded bookmark entries and resolves them to anchors.
+    /// Opens buffers for all unloaded bookmark entries and resolves them to anchors. This is used to show all bookmarks in a large multi-buffer.
     pub fn resolve_all(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let unloaded_paths: Vec<Arc<Path>> = self
             .bookmarks
