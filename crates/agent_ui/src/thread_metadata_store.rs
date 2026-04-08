@@ -190,8 +190,8 @@ pub struct ThreadMetadataStore {
     reload_task: Option<Shared<Task<()>>>,
     session_subscriptions: HashMap<acp::SessionId, Subscription>,
     pending_thread_ops_tx: smol::channel::Sender<DbOperation>,
-    _db_operations_task: Task<()>,
     in_flight_archives: HashMap<acp::SessionId, (Task<()>, smol::channel::Sender<()>)>,
+    _db_operations_task: Task<()>,
 }
 
 #[derive(Debug, PartialEq)]
