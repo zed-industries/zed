@@ -27,7 +27,6 @@ impl ExternalAgentServer for NoopExternalAgent {
         &self,
         _extra_args: Vec<String>,
         _extra_env: HashMap<String, String>,
-        _for_terminal: bool,
         _cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         Task::ready(Ok(AgentServerCommand {

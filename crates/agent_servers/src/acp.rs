@@ -245,7 +245,6 @@ impl AcpConnection {
         }) {
             child.current_dir(cwd);
         }
-
         let mut child = Child::spawn(child, Stdio::piped(), Stdio::piped(), Stdio::piped())?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
@@ -931,7 +930,6 @@ impl AgentConnection for AcpConnection {
                             anyhow::Ok(agent.get_command(
                                 terminal.args.clone(),
                                 HashMap::from_iter(terminal.env.clone()),
-                                true,
                                 &mut cx.to_async(),
                             ))
                         })?

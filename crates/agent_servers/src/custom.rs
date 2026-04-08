@@ -363,7 +363,7 @@ impl AgentServer for CustomAgentServer {
                     if let Some(new_version_available_tx) = delegate.new_version_available {
                         agent.set_new_version_available_tx(new_version_available_tx);
                     }
-                    anyhow::Ok(agent.get_command(vec![], extra_env, false, &mut cx.to_async()))
+                    anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
                 })??
                 .await?;
             let connection = crate::acp::connect(

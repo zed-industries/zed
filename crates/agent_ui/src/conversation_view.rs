@@ -1520,7 +1520,7 @@ impl ConversationView {
                 async move |this, cx| {
                     let result = async {
                         let login = login_task.await?;
-                        let authenticate = this.update_in(cx, |_this, window, cx| {
+                        this.update_in(cx, |_this, window, cx| {
                             Self::spawn_external_agent_login(
                                 login,
                                 workspace,
@@ -1530,8 +1530,8 @@ impl ConversationView {
                                 window,
                                 cx,
                             )
-                        })?;
-                        authenticate.await
+                        })?
+                        .await
                     }
                     .await;
 
