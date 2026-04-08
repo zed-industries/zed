@@ -626,8 +626,12 @@ fn paint_line_background(
                             },
                             *background_color,
                         ));
-                        background_origin.x = origin.x;
-                        background_origin.y += line_height;
+                        if glyph.index < run_end {
+                            background_origin.x = origin.x;
+                            background_origin.y += line_height;
+                        } else {
+                            current_background = None;
+                        }
                     }
 
                     glyph_origin.x = aligned_origin_x(
