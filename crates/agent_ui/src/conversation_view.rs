@@ -1510,24 +1510,30 @@ impl ConversationView {
 
         let agent_telemetry_id = connection.telemetry_id();
 
-        if let Some(login) = connection.terminal_auth_task(&method, cx) {
+        if let Some(login_task) = connection.terminal_auth_task(&method, cx) {
             configuration_view.take();
             pending_auth_method.replace(method.clone());
 
             let project = self.project.clone();
-            let authenticate = Self::spawn_external_agent_login(
-                login,
-                workspace,
-                project,
-                method.clone(),
-                false,
-                window,
-                cx,
-            );
             cx.notify();
             self.auth_task = Some(cx.spawn_in(window, {
                 async move |this, cx| {
-                    let result = authenticate.await;
+                    let result = async {
+                        let login = login_task.await?;
+                        this.update_in(cx, |_this, window, cx| {
+                            Self::spawn_external_agent_login(
+                                login,
+                                workspace,
+                                project,
+                                method.clone(),
+                                false,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await
+                    }
+                    .await;
 
                     match &result {
                         Ok(_) => telemetry::event!(
