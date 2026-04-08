@@ -475,7 +475,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     // "upper":   Uppercase names grouped before lowercase, natural sort within.
     // "lower":   Lowercase names grouped before uppercase, natural sort within.
     // "unicode":  Pure Unicode codepoint comparison, no case folding.
-    "sort_order_lexicographic": "default"
+    "sort_order_lexicographic": "default",
     // Whether to hide the root entry when only one folder is open in the window;
     // this also affects how file paths appear in the file finder history.
     "hide_root": false,
