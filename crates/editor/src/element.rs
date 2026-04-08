@@ -7672,8 +7672,7 @@ impl EditorElement {
                 .max(0.01);
 
             move |event: &ScrollWheelEvent, phase, window, cx| {
-                // Ctrl+scroll (Cmd+scroll on macOS) zooms the buffer font size.
-                if event.modifiers.control || event.modifiers.platform {
+                if event.modifiers.secondary() {
                     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                         let delta_y = match event.delta {
                             ScrollDelta::Pixels(pixels) => pixels.y.into(),
