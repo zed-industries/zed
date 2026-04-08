@@ -126,6 +126,23 @@ impl ThemeRegistry {
         }
     }
 
+    /// Registers theme families for use in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn register_test_themes(&self, families: impl IntoIterator<Item = ThemeFamily>) {
+        self.insert_theme_families(families);
+    }
+
+    /// Registers icon themes for use in tests.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn register_test_icon_themes(&self, icon_themes: impl IntoIterator<Item = IconTheme>) {
+        let mut state = self.state.write();
+        for icon_theme in icon_themes {
+            state
+                .icon_themes
+                .insert(icon_theme.name.clone(), Arc::new(icon_theme));
+        }
+    }
+
     /// Inserts the given themes into the registry.
     pub fn insert_themes(&self, themes: impl IntoIterator<Item = Theme>) {
         let mut state = self.state.write();

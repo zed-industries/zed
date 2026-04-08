@@ -728,14 +728,6 @@ mod tests {
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
 
-    fn set_agent_v2_defaults(cx: &mut gpui::App) {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_default_settings(cx, |defaults| {
-                PanelLayout::AGENT.write_to(defaults);
-            });
-        });
-    }
-
     #[test]
     fn test_compiled_regex_case_insensitive() {
         let regex = CompiledRegex::new("rm\\s+-rf", false).unwrap();
@@ -1216,9 +1208,6 @@ mod tests {
         project::DisableAiSettings::register(cx);
         AgentSettings::register(cx);
 
-        // Test defaults are editor layout; switch to agent V2.
-        set_agent_v2_defaults(cx);
-
         // Should be Agent with an empty user layout (user hasn't customized).
         let layout = AgentSettings::get_layout(cx);
         let WindowLayout::Agent(Some(user_layout)) = layout else {
@@ -1351,9 +1340,6 @@ mod tests {
             project::DisableAiSettings::register(cx);
             AgentSettings::register(cx);
 
-            // Apply the agent V2 defaults.
-            set_agent_v2_defaults(cx);
-
             // User has agent=left (matches preset) and project_panel=left (does not)
             SettingsStore::update_global(cx, |store, cx| {
                 store
@@ -1442,7 +1428,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Read back the file and apply it, then switch to agent V2 defaults.
+        // Read back the file and apply it.
         let written = fs.load(paths::settings_file().as_path()).await.unwrap();
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -1466,9 +1452,6 @@ mod tests {
                 Some(DockPosition::Left)
             );
             assert_eq!(user_layout.git_panel_dock, Some(DockPosition::Left));
-
-            // Now switch defaults to agent V2.
-            set_agent_v2_defaults(cx);
 
             // Even though defaults are now agent, the backfilled user settings
             // keep everything in the editor layout. The user's experience
