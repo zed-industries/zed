@@ -4674,6 +4674,185 @@ async fn test_archived_threads_excluded_from_sidebar_entries(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_archive_last_thread_on_linked_worktree_creates_new_thread_on_same_worktree(
+    cx: &mut TestAppContext,
+) {
+    // Regression test: when a linked worktree has a single thread and that
+    // thread is archived, the sidebar should NOT create a new thread on the
+    // same worktree (which would prevent the worktree from being cleaned up
+    // on disk). Instead, it should select a thread from another group or
+    // clear the selection entirely.
+    //
+    // Current (buggy) behavior: a "+ New Thread" entry appears with the
+    // linked worktree chip, keeping the worktree alive.
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: std::path::PathBuf::from("/wt-ochre-drift"),
+            ref_name: Some("refs/heads/ochre-drift".into()),
+            sha: "aaa".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project =
+        project::Project::test(fs.clone(), ["/wt-ochre-drift".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    // Set up both workspaces with agent panels.
+    let main_workspace =
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
+    let _main_panel = add_agent_panel(&main_workspace, cx);
+    let worktree_panel = add_agent_panel(&worktree_workspace, cx);
+
+    // Activate the linked worktree workspace so the sidebar tracks it.
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(worktree_workspace.clone(), window, cx);
+    });
+
+    // Open a thread in the linked worktree panel and send a message
+    // so it becomes the active thread.
+    let connection = StubAgentConnection::new();
+    open_thread_with_connection(&worktree_panel, connection.clone(), cx);
+    send_message(&worktree_panel, cx);
+
+    let worktree_thread_id = active_session_id(&worktree_panel, cx);
+
+    // Give the thread a response chunk so it has content.
+    cx.update(|_, cx| {
+        connection.send_update(
+            worktree_thread_id.clone(),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("done".into())),
+            cx,
+        );
+    });
+
+    // Save the worktree thread's metadata.
+    save_thread_metadata(
+        worktree_thread_id.clone(),
+        "Ochre Drift Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
+        &worktree_project,
+        cx,
+    );
+
+    // Also save a thread on the main project so there's another group with
+    // content that could be selected after archiving.
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("main-project-thread")),
+        "Main Project Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &main_project,
+        cx,
+    );
+
+    cx.run_until_parked();
+
+    // Verify the linked worktree thread appears with its chip.
+    // The live thread title comes from the message text ("Hello"), not
+    // the metadata title we saved.
+    let entries_before = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries_before
+            .iter()
+            .any(|s| s.contains("{wt-ochre-drift}")),
+        "expected worktree thread with chip before archiving, got: {entries_before:?}"
+    );
+    assert!(
+        entries_before
+            .iter()
+            .any(|s| s.contains("Main Project Thread")),
+        "expected main project thread before archiving, got: {entries_before:?}"
+    );
+
+    // Confirm the worktree thread is the active entry.
+    sidebar.read_with(cx, |s, _| {
+        assert_active_thread(
+            s,
+            &worktree_thread_id,
+            "worktree thread should be active before archiving",
+        );
+    });
+
+    // Archive the worktree thread — it's the only thread using ochre-drift.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&worktree_thread_id, window, cx);
+    });
+
+    cx.run_until_parked();
+
+    // The archived thread should no longer appear in the sidebar.
+    let entries_after = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        !entries_after
+            .iter()
+            .any(|s| s.contains("Ochre Drift Thread")),
+        "archived thread should be hidden, got: {entries_after:?}"
+    );
+
+    // BUG: Currently, a "+ New Thread" entry appears with the ochre-drift
+    // worktree chip, keeping the worktree alive and preventing cleanup.
+    // This assertion documents the current (buggy) behavior.
+    let has_new_thread_on_worktree = entries_after
+        .iter()
+        .any(|s| s.contains("New Thread") && s.contains("{wt-ochre-drift}"));
+    assert!(
+        has_new_thread_on_worktree,
+        "BUG: expected a New Thread entry on the linked worktree (current behavior), \
+         got: {entries_after:?}"
+    );
+
+    // The main project thread should still be visible.
+    assert!(
+        entries_after
+            .iter()
+            .any(|s| s.contains("Main Project Thread")),
+        "main project thread should still be visible, got: {entries_after:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_linked_worktree_workspace_shows_main_worktree_threads(cx: &mut TestAppContext) {
     // When only a linked worktree workspace is open (not the main repo),
     // threads saved against the main repo should still appear in the sidebar.
