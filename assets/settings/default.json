@@ -717,7 +717,7 @@
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Spacing between worktree entries in the project panel. Can be 'comfortable' or 'standard'.
     "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
@@ -819,7 +819,7 @@
     // Default width of the outline panel.
     "default_width": 300,
     // Where to dock the outline panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Whether to show file icons in the outline panel.
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the outline panel.
@@ -871,7 +871,7 @@
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
     // Where to dock the collaboration panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Default width of the collaboration panel.
     "default_width": 240,
   },
@@ -879,7 +879,7 @@
     // Whether to show the git panel button in the status bar.
     "button": true,
     // Where to dock the git panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Default width of the git panel.
     "default_width": 360,
     // Style of the git status indicator in the panel.
@@ -944,7 +944,7 @@
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
-    "dock": "right",
+    "dock": "left",
     // Whether the agent panel should use flexible (proportional) sizing.
     //
     // Default: true

@@ -6,7 +6,6 @@ use agent_ui::{
     thread_metadata_store::ThreadMetadata,
 };
 use chrono::DateTime;
-use feature_flags::FeatureFlagAppExt as _;
 use fs::FakeFs;
 use gpui::TestAppContext;
 use pretty_assertions::assert_eq;
@@ -24,7 +23,6 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(settings_store);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
-        cx.update_flags(false, vec!["agent-v2".into()]);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -1220,7 +1218,6 @@ async fn init_test_project_with_agent_panel(
 ) -> Entity<project::Project> {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.update_flags(false, vec!["agent-v2".into()]);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -2078,7 +2075,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
             workspace.panel::<AgentPanel>(cx).is_some(),
             "Agent panel should exist"
         );
-        let dock = workspace.right_dock().read(cx);
+        let dock = workspace.left_dock().read(cx);
         assert!(
             dock.is_open(),
             "Clicking a thread should open the agent panel dock"
@@ -2425,7 +2422,6 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
     // header and highlight it as active.
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.update_flags(false, vec!["agent-v2".into()]);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -2974,7 +2970,6 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
     // live status (spinner + "(running)") in the sidebar.
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.update_flags(false, vec!["agent-v2".into()]);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -3077,7 +3072,6 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
 async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAppContext) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.update_flags(false, vec!["agent-v2".into()]);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -3990,7 +3984,6 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
     // falling back to group_workspace only for Closed workspaces.
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.update_flags(false, vec!["agent-v2".into()]);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -4772,7 +4765,6 @@ async fn init_multi_project_test(
 ) -> (Arc<FakeFs>, Entity<project::Project>) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
-        cx.update_flags(false, vec!["agent-v2".into()]);
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -5652,7 +5644,6 @@ mod property_test {
     ) {
         agent_ui::test_support::init_test(cx);
         cx.update(|cx| {
-            cx.update_flags(false, vec!["agent-v2".into()]);
             ThreadStore::init_global(cx);
             ThreadMetadataStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);

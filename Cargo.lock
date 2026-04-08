@@ -12897,7 +12897,6 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "platform_title_bar"
 version = "0.1.0"
 dependencies = [
- "feature_flags",
  "gpui",
  "project",
  "settings",
@@ -15930,7 +15929,6 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -16080,7 +16078,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "editor",
- "feature_flags",
  "fs",
  "git",
  "gpui",
@@ -17738,12 +17735,15 @@ dependencies = [
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "fs",
  "fuzzy",
  "gpui",
  "log",
  "picker",
+ "project",
  "serde",
+ "serde_json",
  "settings",
  "telemetry",
  "theme",
