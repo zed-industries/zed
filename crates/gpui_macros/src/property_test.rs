@@ -14,6 +14,7 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
 
     let test_name = func.sig.ident.clone();
     let inner_fn_name = format_ident!("__{test_name}");
+    let outer_fn_attributes = &func.attrs;
 
     let parsed_args = parse_args(func.sig.inputs, &test_name);
 
@@ -54,6 +55,7 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
         #arg_errors
 
         #[::gpui::proptest::property_test(proptest_path = "::gpui::proptest", #args)]
+        #(#outer_fn_attributes)*
         fn #test_name(#proptest_args) {
             #inner_fn
 
