@@ -650,12 +650,24 @@ impl Asset for ImageAssetLoader {
                         let mut frames = SmallVec::new();
 
                         for frame in decoder.into_frames() {
-                            let mut frame = frame?;
-                            // Convert from RGBA to BGRA.
-                            for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                pixel.swap(0, 2);
+                            match frame {
+                                Ok(mut frame) => {
+                                    // Convert from RGBA to BGRA.
+                                    for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                        pixel.swap(0, 2);
+                                    }
+                                    frames.push(frame);
+                                }
+                                Err(err) => {
+                                    log::debug!("Skipping GIF frame in {source:?} due to decode error: {err}");
+                                }
                             }
-                            frames.push(frame);
+                        }
+
+                        if frames.is_empty() {
+                            return Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                "GIF could not be decoded: all frames failed ({source:?})"
+                            ))));
                         }
 
                         frames
@@ -668,12 +680,26 @@ impl Asset for ImageAssetLoader {
                             let mut frames = SmallVec::new();
 
                             for frame in decoder.into_frames() {
-                                let mut frame = frame?;
-                                // Convert from RGBA to BGRA.
-                                for pixel in frame.buffer_mut().chunks_exact_mut(4) {
-                                    pixel.swap(0, 2);
+                                match frame {
+                                    Ok(mut frame) => {
+                                        // Convert from RGBA to BGRA.
+                                        for pixel in frame.buffer_mut().chunks_exact_mut(4) {
+                                            pixel.swap(0, 2);
+                                        }
+                                        frames.push(frame);
+                                    }
+                                    Err(err) => {
+                                        log::debug!(
+                                            "Skipping WebP frame in {source:?} due to decode error: {err}"
+                                        );
+                                    }
                                 }
-                                frames.push(frame);
+                            }
+
+                            if frames.is_empty() {
+                                return Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                    "WebP could not be decoded: all frames failed ({source:?})"
+                                ))));
                             }
 
                             frames
