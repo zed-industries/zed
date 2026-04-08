@@ -253,8 +253,12 @@ async fn remove_root_after_worktree_removal(
     }
 
     let (repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx).await?;
+    // force=true is required because the working directory is still dirty
+    // — persist_worktree_state captures state into detached commits without
+    // modifying the real index or working tree, so git refuses to delete
+    // the worktree without --force.
     let receiver = repo.update(cx, |repo: &mut Repository, _cx| {
-        repo.remove_worktree(root.root_path.clone(), false)
+        repo.remove_worktree(root.root_path.clone(), true)
     });
     let result = receiver
         .await
