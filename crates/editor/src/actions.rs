@@ -711,6 +711,9 @@ actions!(
         PageUp,
         /// Pastes from clipboard.
         Paste,
+        /// Pastes from the primary selection (Linux only).
+        /// On non-Linux platforms, falls back to clipboard paste.
+        PastePrimarySelection,
         /// Navigates to the previous edit prediction.
         PreviousEditPrediction,
         /// Goes to the previous snippet tabstop if one exists.
