@@ -855,13 +855,16 @@ mod tests {
         });
 
         let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+        let markdown_inline =
+            languages::language("markdown-inline", tree_sitter_md::INLINE_LANGUAGE.into());
         let typescript = languages::language(
             "typescript",
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         );
         let python = languages::language("python", tree_sitter_python::LANGUAGE.into());
-        let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+        let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         language_registry.add(markdown.clone());
+        language_registry.add(markdown_inline);
         language_registry.add(typescript);
         language_registry.add(python);
 
