@@ -455,7 +455,7 @@ impl Render for AgentLayoutOnboarding {
     fn render(&mut self, _window: &mut ui::Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let description = "The new threads sidebar, positioned in the far left of your workspace, allows you to manage agents across many projects. Your agent thread lives alongside it, and all other panels live on the right.";
 
-        let dismiss_button = div().absolute().top_1().right_1().child(
+        let dismiss_button = div().absolute().top_0().right_0().child(
             IconButton::new("dismiss", IconName::Close)
                 .icon_size(IconSize::Small)
                 .on_click({
@@ -516,6 +516,14 @@ impl Render for AgentLayoutOnboarding {
                     .gap_1()
                     .flex_wrap()
                     .justify_end()
+                    .child(
+                        Button::new("learn", "Learn More")
+                            .label_size(LabelSize::Small)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .on_click(move |_, _, cx| {
+                                cx.open_url(&zed_urls::parallel_agents_blog(cx))
+                            }),
+                    )
                     .child(primary_button),
             )
             .child(dismiss_button);
