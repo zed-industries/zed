@@ -24,7 +24,6 @@ agent_ui = { workspace = true, features = ["audio"] }
 anyhow.workspace = true
 chrono.workspace = true
 editor.workspace = true
-feature_flags.workspace = true
 fs.workspace = true
 git.workspace = true
 gpui.workspace = true
@@ -54,7 +53,6 @@ pretty_assertions.workspace = true
 prompt_store.workspace = true
 recent_projects = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
-feature_flags.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 git.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

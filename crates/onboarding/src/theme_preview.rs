@@ -129,7 +129,7 @@ impl ThemePreviewTile {
             syntax_colors[idx].unwrap_or(colors.text)
         };
 
-        let line_count = 13;
+        let line_count = 10;
 
         let lines = (0..line_count)
             .map(|line_idx| {
@@ -147,7 +147,7 @@ impl ThemePreviewTile {
                     })
                     .collect::<Vec<_>>();
 
-                h_flex().gap(px(2.)).ml(relative(indent)).children(blocks)
+                h_flex().gap_0p5().ml(relative(indent)).children(blocks)
             })
             .collect::<Vec<_>>();
 
@@ -160,14 +160,16 @@ impl ThemePreviewTile {
         width: impl Into<Length> + Clone,
         skeleton_height: impl Into<Length>,
     ) -> impl IntoElement {
-        div()
+        v_flex()
             .h_full()
             .w(width)
-            .border_r(px(1.))
-            .border_color(colors.border_transparent)
+            .p_2()
+            .gap_1()
             .bg(colors.panel_background)
-            .child(v_flex().p_2().size_full().gap_1().children(
-                Self::render_sidebar_skeleton_items(seed, colors, skeleton_height.into()),
+            .children(Self::render_sidebar_skeleton_items(
+                seed,
+                colors,
+                skeleton_height.into(),
             ))
     }
 
@@ -176,18 +178,16 @@ impl ThemePreviewTile {
         theme: Arc<Theme>,
         skeleton_height: impl Into<Length>,
     ) -> impl IntoElement {
-        v_flex().h_full().flex_grow().child(
-            div()
-                .size_full()
-                .overflow_hidden()
-                .bg(theme.colors().editor_background)
-                .p_2()
-                .child(Self::render_pseudo_code_skeleton(
-                    seed,
-                    theme,
-                    skeleton_height.into(),
-                )),
-        )
+        div()
+            .p_2()
+            .size_full()
+            .overflow_hidden()
+            .bg(theme.colors().editor_background)
+            .child(Self::render_pseudo_code_skeleton(
+                seed,
+                theme,
+                skeleton_height.into(),
+            ))
     }
 
     pub fn render_editor(
@@ -197,8 +197,8 @@ impl ThemePreviewTile {
         skeleton_height: impl Into<Length> + Clone,
     ) -> impl IntoElement {
         div()
-            .size_full()
             .flex()
+            .size_full()
             .bg(theme.colors().background.alpha(1.00))
             .child(Self::render_sidebar(
                 seed,

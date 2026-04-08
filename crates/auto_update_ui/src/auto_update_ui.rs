@@ -1,5 +1,10 @@
+use std::sync::Arc;
+
+use agent_settings::{AgentSettings, WindowLayout};
 use auto_update::{AutoUpdater, release_notes_url};
+use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
+use fs::Fs;
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window, actions, prelude::*,
 };
@@ -8,10 +13,10 @@ use release_channel::{AppVersion, ReleaseChannel};
 use semver::Version;
 use serde::Deserialize;
 use smol::io::AsyncReadExt;
-use ui::{AnnouncementToast, ListBulletItem, prelude::*};
+use ui::{AnnouncementToast, ListBulletItem, ParallelAgentsIllustration, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{
-    Workspace,
+    ToggleWorkspaceSidebar, Workspace,
     notifications::{
         ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, show_app_notification,
         simple_message_notification::MessageNotification,
@@ -169,23 +174,52 @@ struct AnnouncementContent {
     bullet_items: Vec<SharedString>,
     primary_action_label: SharedString,
     primary_action_url: Option<SharedString>,
+    primary_action_callback: Option<Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>>,
+    secondary_action_url: Option<SharedString>,
+    on_dismiss: Option<Arc<dyn Fn(&mut App) + Send + Sync>>,
 }
 
-fn announcement_for_version(version: &Version) -> Option<AnnouncementContent> {
-    #[allow(clippy::match_single_binding)]
+struct ParallelAgentAnnouncement;
+
+impl Dismissable for ParallelAgentAnnouncement {
+    const KEY: &'static str = "parallel-agent-announcement";
+}
+
+fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementContent> {
     match (version.major, version.minor, version.patch) {
-        // TODO: Add real version when we have it
-        // (0, 225, 0) => Some(AnnouncementContent {
-        //     heading: "What's new in Zed 0.225".into(),
-        //     description: "This release includes some exciting improvements.".into(),
-        //     bullet_items: vec![
-        //         "Improved agent performance".into(),
-        //         "New agentic features".into(),
-        //         "Better agent capabilities".into(),
-        //     ],
-        //     primary_action_label: "Learn More".into(),
-        //     primary_action_url: Some("https://zed.dev/".into()),
-        // }),
+        (0, 232, _) => {
+            if ParallelAgentAnnouncement::dismissed(cx) {
+                None
+            } else {
+                let fs = <dyn Fs>::global(cx);
+                let already_agent_layout =
+                    matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
+
+                Some(AnnouncementContent {
+                    heading: "Introducing Parallel Agents".into(),
+                    description: "Run multiple agent threads simultaneously across projects."
+                        .into(),
+                    bullet_items: vec![
+                        "Mix and match Zed's agent with any ACP-compatible agent".into(),
+                        "Optional worktree isolation keeps agents from conflicting".into(),
+                        "Updated workspace layout designed for agentic workflows".into(),
+                    ],
+                    primary_action_label: "Try Now".into(),
+                    primary_action_url: None,
+                    primary_action_callback: Some(Arc::new(move |window, cx| {
+                        if !already_agent_layout {
+                            AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
+                        }
+                        window.dispatch_action(Box::new(ToggleWorkspaceSidebar), cx);
+                        window.dispatch_action(Box::new(zed_actions::assistant::ToggleFocus), cx);
+                    })),
+                    on_dismiss: Some(Arc::new(|cx| {
+                        ParallelAgentAnnouncement::set_dismissed(true, cx)
+                    })),
+                    secondary_action_url: Some("https://zed.dev/blog/".into()),
+                })
+            }
+        }
         _ => None,
     }
 }
@@ -200,6 +234,13 @@ impl AnnouncementToastNotification {
         Self {
             focus_handle: cx.focus_handle(),
             content,
+        }
+    }
+
+    fn dismiss(&mut self, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+        if let Some(on_dismiss) = &self.content.on_dismiss {
+            on_dismiss(cx);
         }
     }
 }
@@ -217,6 +258,7 @@ impl Notification for AnnouncementToastNotification {}
 impl Render for AnnouncementToastNotification {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         AnnouncementToast::new()
+            .illustration(ParallelAgentsIllustration::new())
             .heading(self.content.heading.clone())
             .description(self.content.description.clone())
             .bullet_items(
@@ -228,24 +270,31 @@ impl Render for AnnouncementToastNotification {
             .primary_action_label(self.content.primary_action_label.clone())
             .primary_on_click(cx.listener({
                 let url = self.content.primary_action_url.clone();
-                move |_, _, _window, cx| {
+                let callback = self.content.primary_action_callback.clone();
+                move |this, _, window, cx| {
+                    telemetry::event!("Parallel Agent Announcement Main Click");
+                    if let Some(callback) = &callback {
+                        callback(window, cx);
+                    }
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }
-                    cx.emit(DismissEvent);
+                    this.dismiss(cx);
                 }
             }))
             .secondary_on_click(cx.listener({
-                let url = self.content.primary_action_url.clone();
-                move |_, _, _window, cx| {
+                let url = self.content.secondary_action_url.clone();
+                move |this, _, _window, cx| {
+                    telemetry::event!("Parallel Agent Announcement Secondary Click");
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }
-                    cx.emit(DismissEvent);
+                    this.dismiss(cx);
                 }
             }))
-            .dismiss_on_click(cx.listener(|_, _, _window, cx| {
-                cx.emit(DismissEvent);
+            .dismiss_on_click(cx.listener(|this, _, _window, cx| {
+                telemetry::event!("Parallel Agent Announcement Dismiss");
+                this.dismiss(cx);
             }))
     }
 }
@@ -274,7 +323,7 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
                 version.build = semver::BuildMetadata::EMPTY;
                 let app_name = ReleaseChannel::global(cx).display_name();
 
-                if let Some(content) = announcement_for_version(&version) {
+                if let Some(content) = announcement_for_version(&version, cx) {
                     show_app_notification(
                         NotificationId::unique::<UpdateNotification>(),
                         cx,

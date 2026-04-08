@@ -1,5 +1,4 @@
 use super::*;
-use feature_flags::FeatureFlagAppExt;
 use fs::FakeFs;
 use gpui::TestAppContext;
 use project::{DisableAiSettings, ProjectGroupKey};
@@ -12,7 +11,6 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(settings_store);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         DisableAiSettings::register(cx);
-        cx.update_flags(false, vec!["agent-v2".into()]);
     });
 }
 
