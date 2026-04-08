@@ -536,6 +536,77 @@ impl RemoteClientDelegate {
     }
 }
 
+/// A delegate for headless (non-interactive) remote client connections.
+/// Logs warnings instead of showing UI when user interaction would be needed,
+/// but fully supports server binary downloads via AutoUpdater.
+pub struct HeadlessRemoteClientDelegate;
+
+impl remote::RemoteClientDelegate for HeadlessRemoteClientDelegate {
+    fn ask_password(
+        &self,
+        prompt: String,
+        _tx: oneshot::Sender<EncryptedPassword>,
+        _cx: &mut AsyncApp,
+    ) {
+        log::warn!(
+            "Remote connection requires a password but no UI is available \
+             to prompt the user (prompt: {prompt})"
+        );
+    }
+
+    fn set_status(&self, _status: Option<&str>, _cx: &mut AsyncApp) {}
+
+    fn download_server_binary_locally(
+        &self,
+        platform: RemotePlatform,
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        cx: &mut AsyncApp,
+    ) -> Task<anyhow::Result<PathBuf>> {
+        cx.spawn(async move |cx| {
+            AutoUpdater::download_remote_server_release(
+                release_channel,
+                version.clone(),
+                platform.os.as_str(),
+                platform.arch.as_str(),
+                |_status, _cx| {},
+                cx,
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "Downloading remote server binary (version: {}, os: {}, arch: {})",
+                    version
+                        .as_ref()
+                        .map(|v| format!("{}", v))
+                        .unwrap_or("unknown".to_string()),
+                    platform.os,
+                    platform.arch,
+                )
+            })
+        })
+    }
+
+    fn get_download_url(
+        &self,
+        platform: RemotePlatform,
+        release_channel: ReleaseChannel,
+        version: Option<Version>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Option<String>>> {
+        cx.spawn(async move |cx| {
+            AutoUpdater::get_remote_server_release_url(
+                release_channel,
+                version,
+                platform.os.as_str(),
+                platform.arch.as_str(),
+                cx,
+            )
+            .await
+        })
+    }
+}
+
 pub fn connect(
     unique_identifier: ConnectionIdentifier,
     connection_options: RemoteConnectionOptions,

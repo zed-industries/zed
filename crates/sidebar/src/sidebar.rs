@@ -163,6 +163,19 @@ enum ThreadEntryWorkspace {
     },
 }
 
+impl ThreadEntryWorkspace {
+    fn is_remote(&self, cx: &App) -> bool {
+        match self {
+            ThreadEntryWorkspace::Open(workspace) => {
+                !workspace.read(cx).project().read(cx).is_local()
+            }
+            ThreadEntryWorkspace::Closed {
+                project_group_key, ..
+            } => project_group_key.host().is_some(),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct WorktreeInfo {
     name: SharedString,
@@ -420,6 +433,7 @@ pub struct Sidebar {
     thread_last_message_sent_or_queued: HashMap<acp::SessionId, DateTime<Utc>>,
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
+    pending_remote_thread_activation: Option<acp::SessionId>,
     view: SidebarView,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_ix: Option<usize>,
@@ -506,6 +520,7 @@ impl Sidebar {
             thread_last_message_sent_or_queued: HashMap::new(),
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
+            pending_remote_thread_activation: None,
             view: SidebarView::default(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_ix: None,
@@ -781,15 +796,25 @@ impl Sidebar {
         // also appears as a "draft" (no messages yet).
         if let Some(active_ws) = &active_workspace {
             if let Some(panel) = active_ws.read(cx).panel::<AgentPanel>(cx) {
-                if panel.read(cx).active_thread_is_draft(cx)
-                    || panel.read(cx).active_conversation_view().is_none()
-                {
-                    let conversation_parent_id = panel
-                        .read(cx)
-                        .active_conversation_view()
-                        .and_then(|cv| cv.read(cx).parent_id(cx));
-                    let preserving_thread =
-                        if let Some(ActiveEntry::Thread { session_id, .. }) = &self.active_entry {
+                let active_thread_is_draft = panel.read(cx).active_thread_is_draft(cx);
+                let active_conversation_view = panel.read(cx).active_conversation_view();
+
+                if active_thread_is_draft || active_conversation_view.is_none() {
+                    if active_conversation_view.is_none()
+                        && let Some(session_id) = self.pending_remote_thread_activation.clone()
+                    {
+                        self.active_entry = Some(ActiveEntry::Thread {
+                            session_id,
+                            workspace: active_ws.clone(),
+                        });
+                    } else {
+                        let conversation_parent_id =
+                            active_conversation_view.and_then(|cv| cv.read(cx).parent_id(cx));
+                        let preserving_thread = if let Some(ActiveEntry::Thread {
+                            session_id,
+                            ..
+                        }) = &self.active_entry
+                        {
                             self.active_entry_workspace() == Some(active_ws)
                                 && conversation_parent_id
                                     .as_ref()
@@ -797,14 +822,16 @@ impl Sidebar {
                         } else {
                             false
                         };
-                    if !preserving_thread {
-                        self.active_entry = Some(ActiveEntry::Draft(active_ws.clone()));
+                        if !preserving_thread {
+                            self.active_entry = Some(ActiveEntry::Draft(active_ws.clone()));
+                        }
                     }
-                } else if let Some(session_id) = panel
-                    .read(cx)
-                    .active_conversation_view()
-                    .and_then(|cv| cv.read(cx).parent_id(cx))
+                } else if let Some(session_id) =
+                    active_conversation_view.and_then(|cv| cv.read(cx).parent_id(cx))
                 {
+                    if self.pending_remote_thread_activation.as_ref() == Some(&session_id) {
+                        self.pending_remote_thread_activation = None;
+                    }
                     self.active_entry = Some(ActiveEntry::Thread {
                         session_id,
                         workspace: active_ws.clone(),
@@ -2184,18 +2211,112 @@ impl Sidebar {
             return;
         };
 
-        let open_task = multi_workspace.update(cx, |this, cx| {
-            this.find_or_create_workspace(folder_paths, project_group_key, window, cx)
-        });
+        if let Some(connection_options) = project_group_key.host() {
+            let pending_session_id = metadata.session_id.clone();
+            self.pending_remote_thread_activation = Some(pending_session_id.clone());
 
-        cx.spawn_in(window, async move |this, cx| {
-            let workspace = open_task.await?;
-            this.update_in(cx, |this, window, cx| {
-                this.activate_thread(metadata, &workspace, false, window, cx);
-            })?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+            let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+            let Some(window_handle) = window_handle else {
+                self.pending_remote_thread_activation = None;
+                return;
+            };
+
+            let app_state = multi_workspace
+                .read(cx)
+                .workspace()
+                .read(cx)
+                .app_state()
+                .clone();
+            let paths = folder_paths.paths().to_vec();
+
+            let provisional_project_group_key = project_group_key.clone();
+
+            cx.spawn_in(window, async move |this, cx| {
+                let result: anyhow::Result<()> = async {
+                    let delegate: std::sync::Arc<dyn remote::RemoteClientDelegate> =
+                        std::sync::Arc::new(remote_connection::HeadlessRemoteClientDelegate);
+                    let remote_connection =
+                        remote::connect(connection_options.clone(), delegate.clone(), cx).await?;
+
+                    let (_cancel_tx, cancel_rx) = futures::channel::oneshot::channel();
+                    let session = cx
+                        .update(|_, cx| {
+                            remote::RemoteClient::new(
+                                remote::remote_client::ConnectionIdentifier::setup(),
+                                remote_connection,
+                                cancel_rx,
+                                delegate,
+                                cx,
+                            )
+                        })?
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("Remote connection was cancelled"))?;
+
+                    let new_project = cx.update(|_, cx| {
+                        project::Project::remote(
+                            session,
+                            app_state.client.clone(),
+                            app_state.node_runtime.clone(),
+                            app_state.user_store.clone(),
+                            app_state.languages.clone(),
+                            app_state.fs.clone(),
+                            true,
+                            cx,
+                        )
+                    })?;
+
+                    workspace::open_remote_project_with_existing_connection(
+                        connection_options,
+                        new_project,
+                        paths,
+                        app_state,
+                        window_handle,
+                        Some(provisional_project_group_key),
+                        cx,
+                    )
+                    .await?;
+
+                    let workspace = window_handle.update(cx, |multi_workspace, window, cx| {
+                        let workspace = multi_workspace.workspace().clone();
+                        multi_workspace.add(workspace.clone(), window, cx);
+                        workspace
+                    })?;
+
+                    this.update_in(cx, |this, window, cx| {
+                        this.activate_thread(metadata, &workspace, false, window, cx);
+                    })?;
+                    anyhow::Ok(())
+                }
+                .await;
+
+                if result.is_err() {
+                    this.update(cx, |this, _cx| {
+                        if this.pending_remote_thread_activation.as_ref()
+                            == Some(&pending_session_id)
+                        {
+                            this.pending_remote_thread_activation = None;
+                        }
+                    })
+                    .ok();
+                }
+
+                result
+            })
+            .detach_and_log_err(cx);
+        } else {
+            let open_task = multi_workspace.update(cx, |this, cx| {
+                this.find_or_create_workspace(folder_paths, project_group_key, window, cx)
+            });
+
+            cx.spawn_in(window, async move |this, cx| {
+                let workspace = open_task.await?;
+                this.update_in(cx, |this, window, cx| {
+                    this.activate_thread(metadata, &workspace, false, window, cx);
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     fn find_current_workspace_for_path_list(
@@ -2948,10 +3069,13 @@ impl Sidebar {
                 .unwrap_or(thread.metadata.updated_at),
         );
 
+        let is_remote = thread.workspace.is_remote(cx);
+
         ThreadItem::new(id, title)
             .base_bg(sidebar_bg)
             .icon(thread.icon)
             .status(thread.status)
+            .is_remote(is_remote)
             .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
@@ -3211,8 +3335,8 @@ impl Sidebar {
 
     fn active_project_group_key(&self, cx: &App) -> Option<ProjectGroupKey> {
         let multi_workspace = self.multi_workspace.upgrade()?;
-        let mw = multi_workspace.read(cx);
-        Some(mw.workspace().read(cx).project_group_key(cx))
+        let multi_workspace = multi_workspace.read(cx);
+        Some(multi_workspace.project_group_key_for_workspace(multi_workspace.workspace(), cx))
     }
 
     fn active_project_header_position(&self, cx: &App) -> Option<usize> {

@@ -9756,6 +9756,7 @@ pub fn open_remote_project_with_new_connection(
             serialized_workspace,
             app_state,
             window,
+            None,
             cx,
         )
         .await
@@ -9768,6 +9769,7 @@ pub fn open_remote_project_with_existing_connection(
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     window: WindowHandle<MultiWorkspace>,
+    provisional_project_group_key: Option<ProjectGroupKey>,
     cx: &mut AsyncApp,
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
@@ -9781,6 +9783,7 @@ pub fn open_remote_project_with_existing_connection(
             serialized_workspace,
             app_state,
             window,
+            provisional_project_group_key,
             cx,
         )
         .await
@@ -9794,6 +9797,7 @@ async fn open_remote_project_inner(
     serialized_workspace: Option<SerializedWorkspace>,
     app_state: Arc<AppState>,
     window: WindowHandle<MultiWorkspace>,
+    provisional_project_group_key: Option<ProjectGroupKey>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let db = cx.update(|cx| WorkspaceDb::global(cx));
@@ -9854,6 +9858,9 @@ async fn open_remote_project_inner(
             workspace
         });
 
+        if let Some(project_group_key) = provisional_project_group_key.clone() {
+            multi_workspace.set_provisional_project_group_key(&new_workspace, project_group_key);
+        }
         multi_workspace.activate(new_workspace.clone(), window, cx);
         new_workspace
     })?;

@@ -8,6 +8,7 @@ use gpui::{
 use project::{DirectoryLister, DisableAiSettings, Project, ProjectGroupKey};
 use settings::Settings;
 pub use settings::SidebarSide;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
@@ -299,6 +300,7 @@ pub struct MultiWorkspace {
     workspaces: Vec<Entity<Workspace>>,
     active_workspace: ActiveWorkspace,
     project_group_keys: Vec<ProjectGroupKey>,
+    provisional_project_group_keys: HashMap<EntityId, ProjectGroupKey>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
@@ -351,6 +353,7 @@ impl MultiWorkspace {
         Self {
             window_id: window.window_handle().window_id(),
             project_group_keys: Vec::new(),
+            provisional_project_group_keys: HashMap::default(),
             workspaces: Vec::new(),
             active_workspace: ActiveWorkspace::Transient(workspace),
             sidebar: None,
@@ -559,6 +562,16 @@ impl MultiWorkspace {
                         this.add_project_group_key(workspace.read(cx).project_group_key(cx));
                     }
                 }
+                project::Event::WorktreeUpdatedRootRepoCommonDir(_) => {
+                    if let Some(workspace) = workspace.upgrade() {
+                        this.maybe_clear_provisional_project_group_key(&workspace, cx);
+                        this.add_project_group_key(
+                            this.project_group_key_for_workspace(&workspace, cx),
+                        );
+                        this.remove_stale_project_group_keys(cx);
+                        cx.notify();
+                    }
+                }
                 _ => {}
             }
         })
@@ -581,6 +594,53 @@ impl MultiWorkspace {
         }
         // Store newest first so the vec is in "most recently added"
         self.project_group_keys.insert(0, project_group_key);
+    }
+
+    pub fn set_provisional_project_group_key(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        project_group_key: ProjectGroupKey,
+    ) {
+        self.provisional_project_group_keys
+            .insert(workspace.entity_id(), project_group_key.clone());
+        self.add_project_group_key(project_group_key);
+    }
+
+    pub fn project_group_key_for_workspace(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &App,
+    ) -> ProjectGroupKey {
+        self.provisional_project_group_keys
+            .get(&workspace.entity_id())
+            .cloned()
+            .unwrap_or_else(|| workspace.read(cx).project_group_key(cx))
+    }
+
+    fn maybe_clear_provisional_project_group_key(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        cx: &App,
+    ) {
+        let live_key = workspace.read(cx).project_group_key(cx);
+        if self
+            .provisional_project_group_keys
+            .get(&workspace.entity_id())
+            .is_some_and(|key| *key == live_key)
+        {
+            self.provisional_project_group_keys
+                .remove(&workspace.entity_id());
+        }
+    }
+
+    fn remove_stale_project_group_keys(&mut self, cx: &App) {
+        let workspace_keys: HashSet<ProjectGroupKey> = self
+            .workspaces
+            .iter()
+            .map(|workspace| self.project_group_key_for_workspace(workspace, cx))
+            .collect();
+        self.project_group_keys
+            .retain(|key| workspace_keys.contains(key));
     }
 
     pub fn restore_project_group_keys(&mut self, keys: Vec<ProjectGroupKey>) {
@@ -613,7 +673,7 @@ impl MultiWorkspace {
             .map(|key| (key.clone(), Vec::new()))
             .collect::<Vec<_>>();
         for workspace in &self.workspaces {
-            let key = workspace.read(cx).project_group_key(cx);
+            let key = self.project_group_key_for_workspace(workspace, cx);
             if let Some((_, workspaces)) = groups.iter_mut().find(|(k, _)| k == &key) {
                 workspaces.push(workspace.clone());
             }
@@ -626,9 +686,9 @@ impl MultiWorkspace {
         project_group_key: &ProjectGroupKey,
         cx: &App,
     ) -> impl Iterator<Item = &Entity<Workspace>> {
-        self.workspaces
-            .iter()
-            .filter(move |ws| ws.read(cx).project_group_key(cx) == *project_group_key)
+        self.workspaces.iter().filter(move |workspace| {
+            self.project_group_key_for_workspace(workspace, cx) == *project_group_key
+        })
     }
 
     pub fn remove_folder_from_project_group(
@@ -971,7 +1031,7 @@ impl MultiWorkspace {
     /// Promotes a former transient workspace into the persistent list.
     /// Returns the index of the newly inserted workspace.
     fn promote_transient(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
-        let project_group_key = workspace.read(cx).project().read(cx).project_group_key(cx);
+        let project_group_key = self.project_group_key_for_workspace(&workspace, cx);
         self.add_project_group_key(project_group_key);
         self.workspaces.push(workspace.clone());
         cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
@@ -1008,7 +1068,7 @@ impl MultiWorkspace {
         if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
             index
         } else {
-            let project_group_key = workspace.read(cx).project().read(cx).project_group_key(cx);
+            let project_group_key = self.project_group_key_for_workspace(&workspace, cx);
 
             Self::subscribe_to_workspace(&workspace, window, cx);
             self.sync_sidebar_to_workspace(&workspace, cx);
