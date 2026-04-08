@@ -39,10 +39,10 @@ actions!(
         CloseWorkspaceSidebar,
         /// Moves focus to or from the workspace sidebar without closing it.
         FocusWorkspaceSidebar,
-        /// Activates the next project group in the sidebar.
-        NextProjectGroup,
-        /// Activates the previous project group in the sidebar.
-        PreviousProjectGroup,
+        /// Activates the next project in the sidebar.
+        NextProject,
+        /// Activates the previous project in the sidebar.
+        PreviousProject,
         /// Activates the next thread in sidebar order.
         NextThread,
         /// Activates the previous thread in sidebar order.
@@ -128,8 +128,8 @@ pub trait Sidebar: Focusable + Render + EventEmitter<SidebarEvent> + Sized {
     ) {
     }
 
-    /// Activates the next or previous project group.
-    fn cycle_project_group(
+    /// Activates the next or previous project.
+    fn cycle_project(
         &mut self,
         _forward: bool,
         _window: &mut Window,
@@ -168,7 +168,7 @@ pub trait SidebarHandle: 'static + Send + Sync {
     fn to_any(&self) -> AnyView;
     fn entity_id(&self) -> EntityId;
     fn toggle_thread_switcher(&self, select_last: bool, window: &mut Window, cx: &mut App);
-    fn cycle_project_group(&self, forward: bool, window: &mut Window, cx: &mut App);
+    fn cycle_project(&self, forward: bool, window: &mut Window, cx: &mut App);
     fn cycle_thread(&self, forward: bool, window: &mut Window, cx: &mut App);
     fn move_workspace_to_new_window(&self, window: &mut Window, cx: &mut App);
 
@@ -231,11 +231,11 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
         });
     }
 
-    fn cycle_project_group(&self, forward: bool, window: &mut Window, cx: &mut App) {
+    fn cycle_project(&self, forward: bool, window: &mut Window, cx: &mut App) {
         let entity = self.clone();
         window.defer(cx, move |window, cx| {
             entity.update(cx, |this, cx| {
-                this.cycle_project_group(forward, window, cx);
+                this.cycle_project(forward, window, cx);
             });
         });
     }
@@ -1513,16 +1513,16 @@ impl Render for MultiWorkspace {
                         },
                     ))
                     .on_action(
-                        cx.listener(|this: &mut Self, _: &NextProjectGroup, window, cx| {
+                        cx.listener(|this: &mut Self, _: &NextProject, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
-                                sidebar.cycle_project_group(true, window, cx);
+                                sidebar.cycle_project(true, window, cx);
                             }
                         }),
                     )
                     .on_action(cx.listener(
-                        |this: &mut Self, _: &PreviousProjectGroup, window, cx| {
+                        |this: &mut Self, _: &PreviousProject, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
-                                sidebar.cycle_project_group(false, window, cx);
+                                sidebar.cycle_project(false, window, cx);
                             }
                         },
                     ))

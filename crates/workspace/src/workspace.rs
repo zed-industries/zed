@@ -32,8 +32,8 @@ pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveWorkspaceToNewWindow,
-    MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProjectGroup, NextThread,
-    PreviousProjectGroup, PreviousThread, ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent,
+    MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProject, NextThread,
+    PreviousProject, PreviousThread, ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent,
     SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
     sidebar_side_context_menu,
 };
