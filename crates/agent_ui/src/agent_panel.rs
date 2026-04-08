@@ -2247,16 +2247,6 @@ impl AgentPanel {
             }
         };
         self.start_thread_in = new_target;
-        let target = match &self.start_thread_in {
-            StartThreadIn::LocalProject => "current_worktree",
-            StartThreadIn::NewWorktree { .. } => "new_worktree",
-            StartThreadIn::LinkedWorktree { .. } => "linked_worktree",
-        };
-        telemetry::event!(
-            "Start Thread In Changed",
-            target = target,
-            side = agent_panel_side_str(cx)
-        );
         if let Some(thread) = self.active_thread_view(cx) {
             thread.update(cx, |thread, cx| thread.focus_handle(cx).focus(window, cx));
         }

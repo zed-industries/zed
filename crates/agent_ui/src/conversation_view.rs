@@ -659,6 +659,10 @@ impl ConversationView {
             settings::DockPosition::Left => "left",
             settings::DockPosition::Right | settings::DockPosition::Bottom => "right",
         };
+        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
+            settings::NewThreadLocation::LocalProject => "current_worktree",
+            settings::NewThreadLocation::NewWorktree => "new_worktree",
+        };
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let (connection, history) = match connect_result.await {
                 Ok(AgentConnectedState {
@@ -678,7 +682,8 @@ impl ConversationView {
             telemetry::event!(
                 "Agent Thread Started",
                 agent = connection.telemetry_id(),
-                side = side
+                side = side,
+                thread_location = thread_location
             );
 
             let mut resumed_without_history = false;
