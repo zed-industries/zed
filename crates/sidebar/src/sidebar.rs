@@ -2303,7 +2303,7 @@ impl Sidebar {
                 // the worktree was restored to a new location).
                 cx.update(|_window, cx| {
                     store.update(cx, |store, cx| {
-                        store.complete_worktree_restore(&session_id, &path_replacements, cx);
+                        store.update_restored_worktree_paths(&session_id, &path_replacements, cx);
                     });
                 })?;
 

@@ -427,7 +427,11 @@ impl ThreadMetadataStore {
         self.in_flight_archives.remove(session_id);
     }
 
-    pub fn complete_worktree_restore(
+    /// Updates a thread's `folder_paths` after an archived worktree has been
+    /// restored to disk. The restored worktree may land at a different path
+    /// than it had before archival, so each `(old_path, new_path)` pair in
+    /// `path_replacements` is applied to the thread's stored folder paths.
+    pub fn update_restored_worktree_paths(
         &mut self,
         session_id: &acp::SessionId,
         path_replacements: &[(PathBuf, PathBuf)],
@@ -626,8 +630,8 @@ impl ThreadMetadataStore {
             reload_task: None,
             session_subscriptions: HashMap::default(),
             pending_thread_ops_tx: tx,
-            _db_operations_task,
             in_flight_archives: HashMap::default(),
+            _db_operations_task,
         };
         let _ = this.reload(cx);
         this
@@ -2316,7 +2320,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_complete_worktree_restore_multiple_paths(cx: &mut TestAppContext) {
+    async fn test_update_restored_worktree_paths_multiple(cx: &mut TestAppContext) {
         init_test(cx);
         let store = cx.update(|cx| ThreadMetadataStore::global(cx));
 
@@ -2343,7 +2347,7 @@ mod tests {
         ];
 
         store.update(cx, |store, cx| {
-            store.complete_worktree_restore(
+            store.update_restored_worktree_paths(
                 &acp::SessionId::new("session-multi"),
                 &replacements,
                 cx,
@@ -2362,7 +2366,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_complete_worktree_restore_preserves_unmatched_paths(cx: &mut TestAppContext) {
+    async fn test_update_restored_worktree_paths_preserves_unmatched(cx: &mut TestAppContext) {
         init_test(cx);
         let store = cx.update(|cx| ThreadMetadataStore::global(cx));
 
@@ -2386,7 +2390,7 @@ mod tests {
         ];
 
         store.update(cx, |store, cx| {
-            store.complete_worktree_restore(
+            store.update_restored_worktree_paths(
                 &acp::SessionId::new("session-partial"),
                 &replacements,
                 cx,
