@@ -1570,7 +1570,7 @@ impl Sidebar {
                 let multi_workspace = multi_workspace.clone();
                 let project_group_key = project_group_key.clone();
 
-                let menu = ContextMenu::build_persistent(window, cx, move |menu, _window, cx| {
+                let menu = ContextMenu::build_persistent(window, cx, move |menu, _window, _cx| {
                     let mut menu = menu
                         .header("Project Folders")
                         .end_slot_action(Box::new(menu::EndSlot));
