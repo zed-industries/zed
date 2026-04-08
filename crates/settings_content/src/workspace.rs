@@ -841,6 +841,16 @@ pub enum ProjectPanelSortOrderLexicographic {
     Unicode,
 }
 
+impl From<ProjectPanelSortMode> for util::paths::SortMode {
+    fn from(mode: ProjectPanelSortMode) -> Self {
+        match mode {
+            ProjectPanelSortMode::DirectoriesFirst => Self::DirectoriesFirst,
+            ProjectPanelSortMode::Mixed => Self::Mixed,
+            ProjectPanelSortMode::FilesFirst => Self::FilesFirst,
+        }
+    }
+}
+
 impl From<ProjectPanelSortOrderLexicographic> for util::paths::SortOrderLexicographic {
     fn from(order: ProjectPanelSortOrderLexicographic) -> Self {
         match order {

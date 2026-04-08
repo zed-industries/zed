@@ -7284,18 +7284,7 @@ fn cmp_worktree_entries(
 ) -> cmp::Ordering {
     let a = (&*a.path, a.is_file());
     let b = (&*b.path, b.is_file());
-    let order = order.clone().into();
-    match mode {
-        settings::ProjectPanelSortMode::DirectoriesFirst => {
-            util::paths::compare_rel_paths_with_sort_order(a, b, order)
-        }
-        settings::ProjectPanelSortMode::Mixed => {
-            util::paths::compare_rel_paths_mixed_with_sort_order(a, b, order)
-        }
-        settings::ProjectPanelSortMode::FilesFirst => {
-            util::paths::compare_rel_paths_files_first_with_sort_order(a, b, order)
-        }
-    }
+    util::paths::compare_rel_paths_by(a, b, (*mode).into(), (*order).into())
 }
 
 pub fn sort_worktree_entries(

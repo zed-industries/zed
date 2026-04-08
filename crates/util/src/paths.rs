@@ -1127,6 +1127,18 @@ pub enum SortOrderLexicographic {
     Unicode,
 }
 
+/// Controls how files and directories are ordered relative to each other.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SortMode {
+    /// Directories are listed before files at each level.
+    #[default]
+    DirectoriesFirst,
+    /// Files and directories are interleaved alphabetically.
+    Mixed,
+    /// Files are listed before directories at each level.
+    FilesFirst,
+}
+
 fn case_group_key(name: &str, order: SortOrderLexicographic) -> u8 {
     let first = match name.chars().next() {
         Some(c) => c,
@@ -1169,89 +1181,23 @@ pub fn compare_rel_paths(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
 ) -> Ordering {
-    compare_rel_paths_with_sort_order(
+    compare_rel_paths_by(
         (path_a, a_is_file),
         (path_b, b_is_file),
+        SortMode::DirectoriesFirst,
         SortOrderLexicographic::Default,
     )
 }
 
-pub fn compare_rel_paths_with_sort_order(
+pub fn compare_rel_paths_by(
     (path_a, a_is_file): (&RelPath, bool),
     (path_b, b_is_file): (&RelPath, bool),
+    mode: SortMode,
     order: SortOrderLexicographic,
 ) -> Ordering {
-    let mut components_a = path_a.components();
-    let mut components_b = path_b.components();
-    loop {
-        match (components_a.next(), components_b.next()) {
-            (Some(component_a), Some(component_b)) => {
-                let a_is_file = a_is_file && components_a.rest().is_empty();
-                let b_is_file = b_is_file && components_b.rest().is_empty();
+    let needs_final_tiebreak =
+        mode != SortMode::DirectoriesFirst && !(std::ptr::eq(path_a, path_b) || path_a == path_b);
 
-                let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
-                    let (a_stem, a_extension) = a_is_file
-                        .then(|| stem_and_extension(component_a))
-                        .unwrap_or_default();
-                    let path_string_a = if a_is_file { a_stem } else { Some(component_a) };
-
-                    let (b_stem, b_extension) = b_is_file
-                        .then(|| stem_and_extension(component_b))
-                        .unwrap_or_default();
-                    let path_string_b = if b_is_file { b_stem } else { Some(component_b) };
-
-                    let compare_components = match (path_string_a, path_string_b) {
-                        (Some(a), Some(b)) => case_group_key(a, order)
-                            .cmp(&case_group_key(b, order))
-                            .then_with(|| compare_strings(a, b, order)),
-                        (Some(_), None) => Ordering::Greater,
-                        (None, Some(_)) => Ordering::Less,
-                        (None, None) => Ordering::Equal,
-                    };
-
-                    compare_components.then_with(|| {
-                        if a_is_file && b_is_file {
-                            let ext_a = a_extension.unwrap_or_default();
-                            let ext_b = b_extension.unwrap_or_default();
-                            ext_a.cmp(ext_b)
-                        } else {
-                            Ordering::Equal
-                        }
-                    })
-                });
-
-                if !ordering.is_eq() {
-                    return ordering;
-                }
-            }
-            (Some(_), None) => break Ordering::Greater,
-            (None, Some(_)) => break Ordering::Less,
-            (None, None) => break Ordering::Equal,
-        }
-    }
-}
-
-/// Compare two relative paths with mixed files and directories using
-/// case-insensitive natural sorting. For example, "Apple", "aardvark.txt",
-/// and "Zebra" would be sorted as: aardvark.txt, Apple, Zebra
-/// (case-insensitive alphabetical).
-pub fn compare_rel_paths_mixed(
-    (path_a, a_is_file): (&RelPath, bool),
-    (path_b, b_is_file): (&RelPath, bool),
-) -> Ordering {
-    compare_rel_paths_mixed_with_sort_order(
-        (path_a, a_is_file),
-        (path_b, b_is_file),
-        SortOrderLexicographic::Default,
-    )
-}
-
-pub fn compare_rel_paths_mixed_with_sort_order(
-    (path_a, a_is_file): (&RelPath, bool),
-    (path_b, b_is_file): (&RelPath, bool),
-    order: SortOrderLexicographic,
-) -> Ordering {
-    let original_paths_equal = std::ptr::eq(path_a, path_b) || path_a == path_b;
     let mut components_a = path_a.components();
     let mut components_b = path_b.components();
 
@@ -1261,98 +1207,15 @@ pub fn compare_rel_paths_mixed_with_sort_order(
                 let a_leaf_file = a_is_file && components_a.rest().is_empty();
                 let b_leaf_file = b_is_file && components_b.rest().is_empty();
 
-                let (a_stem, a_ext) = a_leaf_file
-                    .then(|| stem_and_extension(component_a))
-                    .unwrap_or_default();
-                let (b_stem, b_ext) = b_leaf_file
-                    .then(|| stem_and_extension(component_b))
-                    .unwrap_or_default();
-                let a_key = if a_leaf_file {
-                    a_stem
-                } else {
-                    Some(component_a)
-                };
-                let b_key = if b_leaf_file {
-                    b_stem
-                } else {
-                    Some(component_b)
+                let file_dir_ordering = match mode {
+                    SortMode::DirectoriesFirst => a_leaf_file.cmp(&b_leaf_file),
+                    SortMode::FilesFirst => b_leaf_file.cmp(&a_leaf_file),
+                    SortMode::Mixed => Ordering::Equal,
                 };
 
-                let ordering = match (a_key, b_key) {
-                    (Some(a), Some(b)) => case_group_key(a, order)
-                        .cmp(&case_group_key(b, order))
-                        .then_with(|| compare_strings_no_tiebreak(a, b, order))
-                        .then_with(|| match (a_leaf_file, b_leaf_file) {
-                            (true, false) if a.eq_ignore_ascii_case(b) => Ordering::Greater,
-                            (false, true) if a.eq_ignore_ascii_case(b) => Ordering::Less,
-                            _ => Ordering::Equal,
-                        })
-                        .then_with(|| {
-                            if a_leaf_file && b_leaf_file {
-                                match order {
-                                    SortOrderLexicographic::Unicode => {
-                                        a_ext.unwrap_or_default().cmp(b_ext.unwrap_or_default())
-                                    }
-                                    _ => {
-                                        let a_ext_str = a_ext.unwrap_or_default().to_lowercase();
-                                        let b_ext_str = b_ext.unwrap_or_default().to_lowercase();
-                                        a_ext_str.cmp(&b_ext_str)
-                                    }
-                                }
-                            } else {
-                                Ordering::Equal
-                            }
-                        }),
-                    (Some(_), None) => Ordering::Greater,
-                    (None, Some(_)) => Ordering::Less,
-                    (None, None) => Ordering::Equal,
-                };
-
-                if !ordering.is_eq() {
-                    return ordering;
+                if !file_dir_ordering.is_eq() {
+                    return file_dir_ordering;
                 }
-            }
-            (Some(_), None) => return Ordering::Greater,
-            (None, Some(_)) => return Ordering::Less,
-            (None, None) => {
-                if !original_paths_equal {
-                    return compare_strings(path_a.as_unix_str(), path_b.as_unix_str(), order);
-                }
-                return Ordering::Equal;
-            }
-        }
-    }
-}
-
-/// Compare two relative paths with files before directories using
-/// case-insensitive natural sorting. At each directory level, all files
-/// are sorted before all directories, with case-insensitive alphabetical
-/// ordering within each group.
-pub fn compare_rel_paths_files_first(
-    (path_a, a_is_file): (&RelPath, bool),
-    (path_b, b_is_file): (&RelPath, bool),
-) -> Ordering {
-    compare_rel_paths_files_first_with_sort_order(
-        (path_a, a_is_file),
-        (path_b, b_is_file),
-        SortOrderLexicographic::Default,
-    )
-}
-
-pub fn compare_rel_paths_files_first_with_sort_order(
-    (path_a, a_is_file): (&RelPath, bool),
-    (path_b, b_is_file): (&RelPath, bool),
-    order: SortOrderLexicographic,
-) -> Ordering {
-    let original_paths_equal = std::ptr::eq(path_a, path_b) || path_a == path_b;
-    let mut components_a = path_a.components();
-    let mut components_b = path_b.components();
-
-    loop {
-        match (components_a.next(), components_b.next()) {
-            (Some(component_a), Some(component_b)) => {
-                let a_leaf_file = a_is_file && components_a.rest().is_empty();
-                let b_leaf_file = b_is_file && components_b.rest().is_empty();
 
                 let (a_stem, a_ext) = a_leaf_file
                     .then(|| stem_and_extension(component_a))
@@ -1373,33 +1236,39 @@ pub fn compare_rel_paths_files_first_with_sort_order(
 
                 let ordering = match (a_key, b_key) {
                     (Some(a), Some(b)) => {
-                        if a_leaf_file && !b_leaf_file {
-                            Ordering::Less
-                        } else if !a_leaf_file && b_leaf_file {
-                            Ordering::Greater
+                        let name_cmp = case_group_key(a, order)
+                            .cmp(&case_group_key(b, order))
+                            .then_with(|| match mode {
+                                SortMode::DirectoriesFirst => compare_strings(a, b, order),
+                                _ => compare_strings_no_tiebreak(a, b, order),
+                            });
+
+                        let name_cmp = if mode == SortMode::Mixed {
+                            name_cmp.then_with(|| match (a_leaf_file, b_leaf_file) {
+                                (true, false) if a.eq_ignore_ascii_case(b) => Ordering::Greater,
+                                (false, true) if a.eq_ignore_ascii_case(b) => Ordering::Less,
+                                _ => Ordering::Equal,
+                            })
                         } else {
-                            case_group_key(a, order)
-                                .cmp(&case_group_key(b, order))
-                                .then_with(|| compare_strings_no_tiebreak(a, b, order))
-                                .then_with(|| {
-                                    if a_leaf_file && b_leaf_file {
-                                        match order {
-                                            SortOrderLexicographic::Unicode => a_ext
-                                                .unwrap_or_default()
-                                                .cmp(b_ext.unwrap_or_default()),
-                                            _ => {
-                                                let a_ext_str =
-                                                    a_ext.unwrap_or_default().to_lowercase();
-                                                let b_ext_str =
-                                                    b_ext.unwrap_or_default().to_lowercase();
-                                                a_ext_str.cmp(&b_ext_str)
-                                            }
-                                        }
-                                    } else {
-                                        Ordering::Equal
+                            name_cmp
+                        };
+
+                        name_cmp.then_with(|| {
+                            if a_leaf_file && b_leaf_file {
+                                match order {
+                                    SortOrderLexicographic::Unicode => {
+                                        a_ext.unwrap_or_default().cmp(b_ext.unwrap_or_default())
                                     }
-                                })
-                        }
+                                    _ => {
+                                        let a_ext_str = a_ext.unwrap_or_default().to_lowercase();
+                                        let b_ext_str = b_ext.unwrap_or_default().to_lowercase();
+                                        a_ext_str.cmp(&b_ext_str)
+                                    }
+                                }
+                            } else {
+                                Ordering::Equal
+                            }
+                        })
                     }
                     (Some(_), None) => Ordering::Greater,
                     (None, Some(_)) => Ordering::Less,
@@ -1413,7 +1282,7 @@ pub fn compare_rel_paths_files_first_with_sort_order(
             (Some(_), None) => return Ordering::Greater,
             (None, Some(_)) => return Ordering::Less,
             (None, None) => {
-                if !original_paths_equal {
+                if needs_final_tiebreak {
                     return compare_strings(path_a.as_unix_str(), path_b.as_unix_str(), order);
                 }
                 return Ordering::Equal;
@@ -1826,7 +1695,9 @@ mod tests {
             (RelPath::unix("Carrot").unwrap(), false),
             (RelPath::unix("aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         // Case-insensitive: aardvark < Apple < banana < Carrot < zebra
         assert_eq!(
             paths,
@@ -1850,7 +1721,9 @@ mod tests {
             (RelPath::unix("Carrot").unwrap(), false),
             (RelPath::unix("aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
+        });
         // Files first (case-insensitive), then directories (case-insensitive)
         assert_eq!(
             paths,
@@ -1874,7 +1747,9 @@ mod tests {
             (RelPath::unix("carrot").unwrap(), false),
             (RelPath::unix("Aardvark.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -1897,7 +1772,9 @@ mod tests {
             (RelPath::unix("dir10").unwrap(), false),
             (RelPath::unix("file1.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -1918,7 +1795,9 @@ mod tests {
             (RelPath::unix("readme.txt").unwrap(), true),
             (RelPath::unix("ReadMe.rs").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         // All "readme" variants should group together, sorted by extension
         assert_eq!(
             paths,
@@ -1939,7 +1818,9 @@ mod tests {
             (RelPath::unix("file1.txt").unwrap(), true),
             (RelPath::unix("dir2").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         // Case-insensitive: dir1, dir2, file1, file2 (all mixed)
         assert_eq!(
             paths,
@@ -1958,7 +1839,9 @@ mod tests {
             (RelPath::unix("Hello.txt").unwrap(), true),
             (RelPath::unix("hello").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -1971,7 +1854,9 @@ mod tests {
             (RelPath::unix("hello").unwrap(), false),
             (RelPath::unix("Hello.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -1990,7 +1875,9 @@ mod tests {
             (RelPath::unix("src").unwrap(), false),
             (RelPath::unix("target").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -2011,7 +1898,9 @@ mod tests {
             (RelPath::unix("src").unwrap(), false),
             (RelPath::unix("tests").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -2032,7 +1921,9 @@ mod tests {
             (RelPath::unix(".github").unwrap(), false),
             (RelPath::unix("src").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -2053,7 +1944,9 @@ mod tests {
             (RelPath::unix(".github").unwrap(), false),
             (RelPath::unix("src").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -2073,7 +1966,9 @@ mod tests {
             (RelPath::unix("file.md").unwrap(), true),
             (RelPath::unix("file.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -2092,7 +1987,9 @@ mod tests {
             (RelPath::unix("main.c").unwrap(), true),
             (RelPath::unix("main").unwrap(), false),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_files_first(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -2112,7 +2009,9 @@ mod tests {
             (RelPath::unix("a.txt").unwrap(), true),
             (RelPath::unix("A.txt").unwrap(), true),
         ];
-        paths.sort_by(|&a, &b| compare_rel_paths_mixed(a, b));
+        paths.sort_by(|&a, &b| {
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Default)
+        });
         assert_eq!(
             paths,
             vec![
@@ -2137,7 +2036,12 @@ mod tests {
             (RelPath::unix("Carrot").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_with_sort_order(a, b, SortOrderLexicographic::Upper)
+            compare_rel_paths_by(
+                a,
+                b,
+                SortMode::DirectoriesFirst,
+                SortOrderLexicographic::Upper,
+            )
         });
         assert_eq!(
             paths,
@@ -2166,7 +2070,7 @@ mod tests {
             (RelPath::unix(".hidden").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_mixed_with_sort_order(a, b, SortOrderLexicographic::Upper)
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Upper)
         });
         assert_eq!(
             paths,
@@ -2194,7 +2098,7 @@ mod tests {
             (RelPath::unix(".hidden").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_files_first_with_sort_order(a, b, SortOrderLexicographic::Upper)
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Upper)
         });
         assert_eq!(
             paths,
@@ -2219,7 +2123,7 @@ mod tests {
             (RelPath::unix("file2.txt").unwrap(), true),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_mixed_with_sort_order(a, b, SortOrderLexicographic::Upper)
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Upper)
         });
         assert_eq!(
             paths,
@@ -2245,7 +2149,12 @@ mod tests {
             (RelPath::unix("Carrot").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_with_sort_order(a, b, SortOrderLexicographic::Lower)
+            compare_rel_paths_by(
+                a,
+                b,
+                SortMode::DirectoriesFirst,
+                SortOrderLexicographic::Lower,
+            )
         });
         assert_eq!(
             paths,
@@ -2274,7 +2183,7 @@ mod tests {
             (RelPath::unix(".hidden").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_mixed_with_sort_order(a, b, SortOrderLexicographic::Lower)
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Lower)
         });
         assert_eq!(
             paths,
@@ -2302,7 +2211,7 @@ mod tests {
             (RelPath::unix(".hidden").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_files_first_with_sort_order(a, b, SortOrderLexicographic::Lower)
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Lower)
         });
         assert_eq!(
             paths,
@@ -2331,7 +2240,12 @@ mod tests {
             (RelPath::unix("Carrot").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_with_sort_order(a, b, SortOrderLexicographic::Unicode)
+            compare_rel_paths_by(
+                a,
+                b,
+                SortMode::DirectoriesFirst,
+                SortOrderLexicographic::Unicode,
+            )
         });
         assert_eq!(
             paths,
@@ -2357,7 +2271,7 @@ mod tests {
             (RelPath::unix("file20.txt").unwrap(), true),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_mixed_with_sort_order(a, b, SortOrderLexicographic::Unicode)
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Unicode)
         });
         // Unicode/lexicographic: '1' < '1'+'0' (prefix) < '2' < '2'+'0' (prefix)
         assert_eq!(
@@ -2383,7 +2297,7 @@ mod tests {
             (RelPath::unix(".hidden").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_mixed_with_sort_order(a, b, SortOrderLexicographic::Unicode)
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Unicode)
         });
         assert_eq!(
             paths,
@@ -2411,7 +2325,7 @@ mod tests {
             (RelPath::unix(".hidden").unwrap(), false),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_files_first_with_sort_order(a, b, SortOrderLexicographic::Unicode)
+            compare_rel_paths_by(a, b, SortMode::FilesFirst, SortOrderLexicographic::Unicode)
         });
         assert_eq!(
             paths,
@@ -2435,7 +2349,7 @@ mod tests {
             (RelPath::unix("Apple.txt").unwrap(), true),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_mixed_with_sort_order(a, b, SortOrderLexicographic::Unicode)
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Unicode)
         });
         // É (U+00C9 = 201) sorts after all ASCII
         assert_eq!(
@@ -2456,7 +2370,7 @@ mod tests {
             (RelPath::unix("Apple.txt").unwrap(), true),
         ];
         paths.sort_by(|&a, &b| {
-            compare_rel_paths_mixed_with_sort_order(a, b, SortOrderLexicographic::Upper)
+            compare_rel_paths_by(a, b, SortMode::Mixed, SortOrderLexicographic::Upper)
         });
         // É is uppercase, so it groups with uppercase names before lowercase
         assert_eq!(
