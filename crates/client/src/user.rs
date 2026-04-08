@@ -9,6 +9,7 @@ use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
+use db::kvp::KeyValueStore;
 use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
@@ -24,6 +25,8 @@ use std::{
 };
 use text::ReplicaId;
 use util::{ResultExt, TryFutureExt as _};
+
+const CURRENT_ORGANIZATION_ID_KEY: &str = "current_organization_id";
 
 pub type UserId = u64;
 
@@ -706,9 +709,16 @@ impl UserStore {
             .is_some_and(|current| current.id == organization.id);
 
         if !is_same_organization {
+            let organization_id = organization.id.0.to_string();
             self.current_organization.replace(organization);
             cx.emit(Event::OrganizationChanged);
             cx.notify();
+
+            let kvp = KeyValueStore::global(cx);
+            db::write_and_log(cx, move || async move {
+                kvp.write_kvp(CURRENT_ORGANIZATION_ID_KEY.into(), organization_id)
+                    .await
+            });
         }
     }
 
@@ -816,13 +826,28 @@ impl UserStore {
         }
 
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
-        self.current_organization = response
-            .default_organization_id
-            .and_then(|default_organization_id| {
+        let persisted_org_id = KeyValueStore::global(cx)
+            .read_kvp(CURRENT_ORGANIZATION_ID_KEY)
+            .log_err()
+            .flatten()
+            .map(|id| OrganizationId(Arc::from(id)));
+
+        self.current_organization = persisted_org_id
+            .and_then(|persisted_id| {
                 self.organizations
                     .iter()
-                    .find(|organization| organization.id == default_organization_id)
+                    .find(|org| org.id == persisted_id)
                     .cloned()
+            })
+            .or_else(|| {
+                response
+                    .default_organization_id
+                    .and_then(|default_organization_id| {
+                        self.organizations
+                            .iter()
+                            .find(|organization| organization.id == default_organization_id)
+                            .cloned()
+                    })
             })
             .or_else(|| self.organizations.first().cloned());
         self.plans_by_organization = response

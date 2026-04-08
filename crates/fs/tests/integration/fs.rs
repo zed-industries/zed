@@ -642,7 +642,7 @@ async fn test_fake_fs_trash_file(executor: BackgroundExecutor) {
     let root_path = PathBuf::from(path!("/root"));
     let path = path!("/root/file_a.txt").as_ref();
     let trashed_entry = fs
-        .trash_file(path, Default::default())
+        .trash_file(path)
         .await
         .expect("should be able to trash {path:?}");
 
@@ -674,13 +674,7 @@ async fn test_fake_fs_trash_dir(executor: BackgroundExecutor) {
     let root_path = PathBuf::from(path!("/root"));
     let path = path!("/root/src").as_ref();
     let trashed_entry = fs
-        .trash_dir(
-            path,
-            RemoveOptions {
-                recursive: true,
-                ..Default::default()
-            },
-        )
+        .trash_dir(path)
         .await
         .expect("should be able to trash {path:?}");
 

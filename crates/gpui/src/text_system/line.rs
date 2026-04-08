@@ -882,7 +882,7 @@ mod tests {
                 ],
                 len: 6,
             }),
-            text: SharedString::new("abcdef".to_string()),
+            text: "abcdef".into(),
             decoration_runs: SmallVec::new(),
         };
 

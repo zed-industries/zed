@@ -1,4 +1,4 @@
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Duration};
 
 use crate::DockPosition;
 use collections::HashMap;
@@ -35,6 +35,13 @@ pub struct WorkspaceSettings {
     pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
+    pub focus_follows_mouse: FocusFollowsMouse,
+}
+
+#[derive(Copy, Clone, Deserialize)]
+pub struct FocusFollowsMouse {
+    pub enabled: bool,
+    pub debounce: Duration,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
@@ -113,6 +120,20 @@ impl Settings for WorkspaceSettings {
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
+            focus_follows_mouse: FocusFollowsMouse {
+                enabled: workspace
+                    .focus_follows_mouse
+                    .unwrap()
+                    .enabled
+                    .unwrap_or(false),
+                debounce: Duration::from_millis(
+                    workspace
+                        .focus_follows_mouse
+                        .unwrap()
+                        .debounce_ms
+                        .unwrap_or(250),
+                ),
+            },
         }
     }
 }
@@ -132,6 +153,7 @@ impl Settings for TabBarSettings {
 #[derive(Deserialize, RegisterSetting)]
 pub struct StatusBarSettings {
     pub show: bool,
+    pub show_active_file: bool,
     pub active_language_button: bool,
     pub cursor_position_button: bool,
     pub line_endings_button: bool,
@@ -143,6 +165,7 @@ impl Settings for StatusBarSettings {
         let status_bar = content.status_bar.clone().unwrap();
         StatusBarSettings {
             show: status_bar.show.unwrap(),
+            show_active_file: status_bar.show_active_file.unwrap(),
             active_language_button: status_bar.active_language_button.unwrap(),
             cursor_position_button: status_bar.cursor_position_button.unwrap(),
             line_endings_button: status_bar.line_endings_button.unwrap(),

@@ -563,7 +563,7 @@ mod tests {
     use crate::tools::{DeletePathTool, EditFileTool, FetchTool, TerminalTool};
     use agent_settings::{AgentProfileId, CompiledRegex, InvalidRegexPattern, ToolRules};
     use gpui::px;
-    use settings::{DefaultAgentView, DockPosition, NotifyWhenAgentWaiting};
+    use settings::{DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone};
     use std::sync::Arc;
 
     fn test_agent_settings(tool_permissions: ToolPermissions) -> AgentSettings {
@@ -571,8 +571,10 @@ mod tests {
             enabled: true,
             button: true,
             dock: DockPosition::Right,
+            flexible: true,
             default_width: px(300.),
             default_height: px(600.),
+            max_content_width: px(850.),
             default_model: None,
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
@@ -581,10 +583,9 @@ mod tests {
             inline_alternatives: vec![],
             favorite_models: vec![],
             default_profile: AgentProfileId::default(),
-            default_view: DefaultAgentView::Thread,
             profiles: Default::default(),
             notify_when_agent_waiting: NotifyWhenAgentWaiting::default(),
-            play_sound_when_agent_done: false,
+            play_sound_when_agent_done: PlaySoundWhenAgentDone::default(),
             single_file_review: false,
             model_parameters: vec![],
             enable_feedback: false,
@@ -595,7 +596,10 @@ mod tests {
             message_editor_min_lines: 1,
             tool_permissions,
             show_turn_stats: false,
+            show_merge_conflict_indicator: true,
             new_thread_location: Default::default(),
+            sidebar_side: Default::default(),
+            thinking_display: Default::default(),
         }
     }
 

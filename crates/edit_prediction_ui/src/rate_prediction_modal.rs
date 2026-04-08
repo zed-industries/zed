@@ -14,7 +14,7 @@ use project::{
 use settings::Settings as _;
 use std::rc::Rc;
 use std::{fmt::Write, sync::Arc};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DropdownMenu, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenuHandle,
     Tooltip, prelude::*,
@@ -357,35 +357,26 @@ impl RatePredictionsModal {
                 });
 
                 editor.disable_header_for_buffer(new_buffer_id, cx);
-                let excerpt_id = editor.buffer().update(cx, |multibuffer, cx| {
+                editor.buffer().update(cx, |multibuffer, cx| {
                     multibuffer.clear(cx);
-                    multibuffer.set_excerpts_for_buffer(new_buffer, [start..end], 0, cx);
+                    multibuffer.set_excerpts_for_buffer(new_buffer.clone(), [start..end], 0, cx);
                     multibuffer.add_diff(diff, cx);
-                    multibuffer.excerpt_ids().into_iter().next()
                 });
 
-                if let Some((excerpt_id, cursor_position)) =
-                    excerpt_id.zip(prediction.cursor_position.as_ref())
-                {
+                if let Some(cursor_position) = prediction.cursor_position.as_ref() {
                     let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
-                    if let Some(buffer_snapshot) =
-                        multibuffer_snapshot.buffer_for_excerpt(excerpt_id)
-                    {
-                        let cursor_offset = prediction
-                            .edit_preview
-                            .anchor_to_offset_in_result(cursor_position.anchor)
-                            + cursor_position.offset;
-                        let cursor_anchor = buffer_snapshot.anchor_after(cursor_offset);
+                    let cursor_offset = prediction
+                        .edit_preview
+                        .anchor_to_offset_in_result(cursor_position.anchor)
+                        + cursor_position.offset;
+                    let cursor_anchor = new_buffer.read(cx).snapshot().anchor_after(cursor_offset);
 
-                        if let Some(anchor) =
-                            multibuffer_snapshot.anchor_in_excerpt(excerpt_id, cursor_anchor)
-                        {
-                            editor.splice_inlays(
-                                &[InlayId::EditPrediction(0)],
-                                vec![Inlay::edit_prediction(0, anchor, "▏")],
-                                cx,
-                            );
-                        }
+                    if let Some(anchor) = multibuffer_snapshot.anchor_in_excerpt(cursor_anchor) {
+                        editor.splice_inlays(
+                            &[InlayId::EditPrediction(0)],
+                            vec![Inlay::edit_prediction(0, anchor, "▏")],
+                            cx,
+                        );
                     }
                 }
             });
@@ -991,7 +982,6 @@ impl FeedbackCompletionProvider {
 impl editor::CompletionProvider for FeedbackCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: editor::ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,

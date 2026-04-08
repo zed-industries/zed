@@ -143,6 +143,10 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_08::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_12_08,
         ),
+        MigrationType::TreeSitter(
+            migrations::m_2026_03_23::KEYMAP_PATTERNS,
+            &KEYMAP_QUERY_2026_03_23,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -239,6 +243,12 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         MigrationType::Json(migrations::m_2026_02_03::migrate_experimental_sweep_mercury),
         MigrationType::Json(migrations::m_2026_02_04::migrate_tool_permission_defaults),
         MigrationType::Json(migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry),
+        MigrationType::TreeSitter(
+            migrations::m_2026_03_16::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2026_03_16,
+        ),
+        MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
+        MigrationType::Json(migrations::m_2026_04_01::restructure_profiles_with_settings_key),
     ];
     run_migrations(text, migrations)
 }
@@ -373,6 +383,14 @@ define_query!(
     SETTINGS_QUERY_2025_12_15,
     migrations::m_2025_12_15::SETTINGS_PATTERNS
 );
+define_query!(
+    SETTINGS_QUERY_2026_03_16,
+    migrations::m_2026_03_16::SETTINGS_PATTERNS
+);
+define_query!(
+    KEYMAP_QUERY_2026_03_23,
+    migrations::m_2026_03_23::KEYMAP_PATTERNS
+);
 
 // custom query
 static EDIT_PREDICTION_SETTINGS_MIGRATION_QUERY: LazyLock<Query> = LazyLock::new(|| {
@@ -400,6 +418,7 @@ mod tests {
         }
     }
 
+    #[track_caller]
     fn assert_migrate_keymap(input: &str, output: Option<&str>) {
         let migrated = migrate_keymap(input).unwrap();
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
@@ -418,7 +437,7 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_migrate_settings_with_migrations(
+    fn assert_migrate_with_migrations(
         migrations: &[MigrationType],
         input: &str,
         output: Option<&str>,
@@ -966,7 +985,7 @@ mod tests {
 
     #[test]
     fn test_mcp_settings_migration() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::TreeSitter(
                 migrations::m_2025_06_16::SETTINGS_PATTERNS,
                 &SETTINGS_QUERY_2025_06_16,
@@ -1155,7 +1174,7 @@ mod tests {
         }
     }
 }"#;
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::TreeSitter(
                 migrations::m_2025_06_16::SETTINGS_PATTERNS,
                 &SETTINGS_QUERY_2025_06_16,
@@ -1167,7 +1186,7 @@ mod tests {
 
     #[test]
     fn test_custom_agent_server_settings_migration() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::TreeSitter(
                 migrations::m_2025_11_20::SETTINGS_PATTERNS,
                 &SETTINGS_QUERY_2025_11_20,
@@ -1383,7 +1402,7 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_basic_array() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_01::flatten_code_actions_formatters,
             )],
@@ -1417,7 +1436,7 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_basic_object() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_01::flatten_code_actions_formatters,
             )],
@@ -1574,7 +1593,7 @@ mod tests {
     #[test]
     fn test_flatten_code_action_formatters_array_with_multiple_action_blocks_in_defaults_and_multiple_languages()
      {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_01::flatten_code_actions_formatters,
             )],
@@ -1700,7 +1719,7 @@ mod tests {
 
     #[test]
     fn test_flatten_code_action_formatters_array_with_format_on_save_and_multiple_languages() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_01::flatten_code_actions_formatters,
             )],
@@ -1887,7 +1906,7 @@ mod tests {
 
     #[test]
     fn test_format_on_save_formatter_migration_basic() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_02::remove_formatters_on_save,
             )],
@@ -1907,7 +1926,7 @@ mod tests {
 
     #[test]
     fn test_format_on_save_formatter_migration_array() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_02::remove_formatters_on_save,
             )],
@@ -1932,7 +1951,7 @@ mod tests {
 
     #[test]
     fn test_format_on_save_on_off_unchanged() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_02::remove_formatters_on_save,
             )],
@@ -1943,7 +1962,7 @@ mod tests {
             None,
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_02::remove_formatters_on_save,
             )],
@@ -1957,7 +1976,7 @@ mod tests {
 
     #[test]
     fn test_format_on_save_formatter_migration_in_languages() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_02::remove_formatters_on_save,
             )],
@@ -1995,7 +2014,7 @@ mod tests {
 
     #[test]
     fn test_format_on_save_formatter_migration_mixed_global_and_languages() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_02::remove_formatters_on_save,
             )],
@@ -2032,7 +2051,7 @@ mod tests {
 
     #[test]
     fn test_format_on_save_no_migration_when_no_format_on_save() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_02::remove_formatters_on_save,
             )],
@@ -2046,7 +2065,7 @@ mod tests {
 
     #[test]
     fn test_restore_code_actions_on_format() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
@@ -2067,7 +2086,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
@@ -2081,7 +2100,7 @@ mod tests {
             None,
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
@@ -2108,7 +2127,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
@@ -2137,7 +2156,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_16::restore_code_actions_on_format,
             )],
@@ -2155,7 +2174,7 @@ mod tests {
 
     #[test]
     fn test_make_file_finder_include_ignored_an_enum() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
@@ -2163,7 +2182,7 @@ mod tests {
             None,
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
@@ -2183,7 +2202,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
@@ -2203,7 +2222,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
@@ -2224,7 +2243,7 @@ mod tests {
         );
 
         // Platform key: settings nested inside "linux" should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
@@ -2253,7 +2272,7 @@ mod tests {
         );
 
         // Profile: settings nested inside profiles should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_17::make_file_finder_include_ignored_an_enum,
             )],
@@ -2288,7 +2307,7 @@ mod tests {
 
     #[test]
     fn test_make_relative_line_numbers_an_enum() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
             )],
@@ -2296,7 +2315,7 @@ mod tests {
             None,
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
             )],
@@ -2312,7 +2331,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
             )],
@@ -2329,7 +2348,7 @@ mod tests {
         );
 
         // Platform key: settings nested inside "macos" should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
             )],
@@ -2354,7 +2373,7 @@ mod tests {
         );
 
         // Profile: settings nested inside profiles should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_10_21::make_relative_line_numbers_an_enum,
             )],
@@ -2374,6 +2393,132 @@ mod tests {
                     "profiles": {
                         "dev": {
                             "relative_line_numbers": "disabled"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_make_play_sound_when_agent_done_an_enum() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": true
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "agent": {
+                        "play_sound_when_agent_done": "always"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "agent": {
+                        "play_sound_when_agent_done": "never"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": "when_hidden"
+                }
+            }"#
+            .unindent(),
+            None,
+        );
+
+        // Platform key: settings nested inside "macos" should be migrated
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "agent": {
+                        "play_sound_when_agent_done": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "agent": {
+                            "play_sound_when_agent_done": "always"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "agent": {
+                            "play_sound_when_agent_done": false
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "agent": {
+                                "play_sound_when_agent_done": "never"
+                            }
                         }
                     }
                 }
@@ -2431,7 +2576,7 @@ mod tests {
         );
 
         // Platform key: settings nested inside "linux" should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_11_25::remove_context_server_source,
             )],
@@ -2469,7 +2614,7 @@ mod tests {
         );
 
         // Profile: settings nested inside profiles should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_11_25::remove_context_server_source,
             )],
@@ -2610,7 +2755,7 @@ mod tests {
     #[test]
     fn test_make_auto_indent_an_enum() {
         // Empty settings should not change
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_01_27::make_auto_indent_an_enum,
             )],
@@ -2619,7 +2764,7 @@ mod tests {
         );
 
         // true should become "syntax_aware"
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_01_27::make_auto_indent_an_enum,
             )],
@@ -2636,7 +2781,7 @@ mod tests {
         );
 
         // false should become "none"
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_01_27::make_auto_indent_an_enum,
             )],
@@ -2653,7 +2798,7 @@ mod tests {
         );
 
         // Already valid enum values should not change
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_01_27::make_auto_indent_an_enum,
             )],
@@ -2665,7 +2810,7 @@ mod tests {
         );
 
         // Should also work inside languages
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2025_01_27::make_auto_indent_an_enum,
             )],
@@ -2694,7 +2839,7 @@ mod tests {
 
     #[test]
     fn test_move_edit_prediction_provider_to_edit_predictions() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2702,7 +2847,7 @@ mod tests {
             None,
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2726,7 +2871,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2754,7 +2899,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2781,7 +2926,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2798,7 +2943,7 @@ mod tests {
 
         // Non-object edit_predictions (e.g. true) should gracefully skip
         // instead of bail!-ing and aborting the entire migration chain.
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2822,7 +2967,7 @@ mod tests {
         );
 
         // Platform key: settings nested inside "macos" should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2851,7 +2996,7 @@ mod tests {
         );
 
         // Profile: settings nested inside profiles should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2884,7 +3029,7 @@ mod tests {
         );
 
         // Combined: root + platform + profile should all be migrated simultaneously
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_02::move_edit_prediction_provider_to_edit_predictions,
             )],
@@ -2935,7 +3080,7 @@ mod tests {
 
     #[test]
     fn test_migrate_experimental_sweep_mercury() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -2943,7 +3088,7 @@ mod tests {
             None,
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -2969,7 +3114,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -2995,7 +3140,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -3021,7 +3166,7 @@ mod tests {
             ),
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -3036,7 +3181,7 @@ mod tests {
             None,
         );
 
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -3054,7 +3199,7 @@ mod tests {
         );
 
         // Platform key: settings nested inside "linux" should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -3085,7 +3230,7 @@ mod tests {
         );
 
         // Profile: settings nested inside profiles should be migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -3120,7 +3265,7 @@ mod tests {
         );
 
         // Combined: root + platform + profile should all be migrated simultaneously
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_03::migrate_experimental_sweep_mercury,
             )],
@@ -3178,7 +3323,7 @@ mod tests {
     #[test]
     fn test_migrate_always_allow_tool_actions_to_default() {
         // No agent settings - no change
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3187,7 +3332,7 @@ mod tests {
         );
 
         // always_allow_tool_actions: true -> tool_permissions.default: "allow"
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3214,7 +3359,7 @@ mod tests {
         );
 
         // always_allow_tool_actions: false -> just remove it
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3233,7 +3378,7 @@ mod tests {
         );
 
         // Preserve existing tool_permissions.tools when migrating
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3272,7 +3417,7 @@ mod tests {
         );
 
         // Don't override existing default (and migrate default_mode to default)
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3302,7 +3447,7 @@ mod tests {
         );
 
         // Migrate existing default_mode to default (no always_allow_tool_actions)
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3331,7 +3476,7 @@ mod tests {
         );
 
         // No migration needed if already using new format with "default"
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3349,7 +3494,7 @@ mod tests {
         );
 
         // Migrate default_mode to default in tool-specific rules
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3388,7 +3533,7 @@ mod tests {
         );
 
         // When tool_permissions is null, replace it so always_allow is preserved
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3416,7 +3561,7 @@ mod tests {
         );
 
         // Platform-specific agent migration
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3447,7 +3592,7 @@ mod tests {
         );
 
         // Channel-specific agent migration
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3488,7 +3633,7 @@ mod tests {
         );
 
         // Profile-level migration
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3526,7 +3671,7 @@ mod tests {
         );
 
         // Platform-specific agent with profiles
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3571,7 +3716,7 @@ mod tests {
         );
 
         // Root-level profile with always_allow_tool_actions
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3606,7 +3751,7 @@ mod tests {
         );
 
         // Root-level profile with default_mode
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3643,7 +3788,7 @@ mod tests {
         );
 
         // Root-level profile + root-level agent both migrated
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3689,7 +3834,7 @@ mod tests {
 
         // Non-boolean always_allow_tool_actions (string "true") is left in place
         // so the schema validator can report it, rather than silently dropping user data.
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3705,7 +3850,7 @@ mod tests {
         );
 
         // null always_allow_tool_actions is removed (treated as false)
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3722,7 +3867,7 @@ mod tests {
 
         // Project-local settings (.zed/settings.json) with always_allow_tool_actions
         // These files have no platform/channel overrides or root-level profiles.
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3763,7 +3908,7 @@ mod tests {
         );
 
         // Project-local settings with only default_mode (no always_allow_tool_actions)
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3792,7 +3937,7 @@ mod tests {
         );
 
         // Project-local settings with no agent section at all - no change
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3807,7 +3952,7 @@ mod tests {
         );
 
         // Existing agent_servers are left untouched
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3850,7 +3995,7 @@ mod tests {
         );
 
         // Existing agent_servers are left untouched even with partial entries
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3887,7 +4032,7 @@ mod tests {
         );
 
         // always_allow_tool_actions: false leaves agent_servers untouched
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_04::migrate_tool_permission_defaults,
             )],
@@ -3910,7 +4055,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_to_registry_simple() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -3950,7 +4095,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_empty_entries() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -3981,7 +4126,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_with_command() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4019,7 +4164,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_gemini_with_command() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4047,7 +4192,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_gemini_ignore_system_version_false() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4075,7 +4220,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_gemini_ignore_system_version_true() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4102,7 +4247,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_already_typed_unchanged() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4124,7 +4269,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_preserves_custom_entries() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4158,7 +4303,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_target_already_exists() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4188,7 +4333,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_no_agent_servers_key() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4203,7 +4348,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_all_fields() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4251,7 +4396,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_codex_with_command() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4283,7 +4428,7 @@ mod tests {
 
     #[test]
     fn test_migrate_builtin_agent_servers_mixed_migrated_and_not() {
-        assert_migrate_settings_with_migrations(
+        assert_migrate_with_migrations(
             &[MigrationType::Json(
                 migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
             )],
@@ -4316,6 +4461,225 @@ mod tests {
     }
 }"#,
             ),
+        );
+    }
+
+    #[test]
+    fn test_migrate_edit_prediction_conflict_context() {
+        assert_migrate_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2026_03_23::KEYMAP_PATTERNS,
+                &KEYMAP_QUERY_2026_03_23,
+            )],
+            &r#"
+            [
+                {
+                    "context": "Editor && edit_prediction_conflict",
+                    "bindings": {
+                        "ctrl-enter": "editor::AcceptEditPrediction" // Example of a modified keybinding
+                    }
+                }
+            ]
+            "#.unindent(),
+            Some(
+                &r#"
+                [
+                    {
+                        "context": "Editor && (edit_prediction && (showing_completions || in_leading_whitespace))",
+                        "bindings": {
+                            "ctrl-enter": "editor::AcceptEditPrediction" // Example of a modified keybinding
+                        }
+                    }
+                ]
+                "#.unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2026_03_23::KEYMAP_PATTERNS,
+                &KEYMAP_QUERY_2026_03_23,
+            )],
+            &r#"
+            [
+                {
+                    "context": "Editor && edit_prediction_conflict && !showing_completions",
+                    "bindings": {
+                        // Here we don't require a modifier unless there's a language server completion
+                        "tab": "editor::AcceptEditPrediction"
+                    }
+                }
+            ]
+            "#.unindent(),
+            Some(
+                &r#"
+                [
+                    {
+                        "context": "Editor && (edit_prediction && in_leading_whitespace)",
+                        "bindings": {
+                            // Here we don't require a modifier unless there's a language server completion
+                            "tab": "editor::AcceptEditPrediction"
+                        }
+                    }
+                ]
+                "#.unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2026_03_23::KEYMAP_PATTERNS,
+                &KEYMAP_QUERY_2026_03_23,
+            )],
+            &r#"
+            [
+                {
+                    "context": "Editor && edit_prediction_conflict && showing_completions",
+                    "bindings": {
+                        "tab": "editor::AcceptEditPrediction"
+                    }
+                }
+            ]
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                [
+                    {
+                        "context": "Editor && (edit_prediction && showing_completions)",
+                        "bindings": {
+                            "tab": "editor::AcceptEditPrediction"
+                        }
+                    }
+                ]
+                "#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2026_03_23::KEYMAP_PATTERNS,
+                &KEYMAP_QUERY_2026_03_23,
+            )],
+            &r#"
+            [
+                {
+                    "context": "Editor && edit_prediction",
+                    "bindings": {
+                        "tab": "editor::AcceptEditPrediction",
+                        // Optional: This makes the default `alt-l` binding do nothing.
+                        "alt-l": null
+                    }
+                },
+                {
+                    "context": "Editor && edit_prediction_conflict",
+                    "bindings": {
+                        "alt-tab": "editor::AcceptEditPrediction",
+                        // Optional: This makes the default `alt-l` binding do nothing.
+                        "alt-l": null
+                    }
+                },
+            ]
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                    [
+                        {
+                            "context": "Editor && edit_prediction",
+                            "bindings": {
+                                "tab": "editor::AcceptEditPrediction",
+                                // Optional: This makes the default `alt-l` binding do nothing.
+                                "alt-l": null
+                            }
+                        },
+                        {
+                            "context": "Editor && (edit_prediction && (showing_completions || in_leading_whitespace))",
+                            "bindings": {
+                                "alt-tab": "editor::AcceptEditPrediction",
+                                // Optional: This makes the default `alt-l` binding do nothing.
+                                "alt-l": null
+                            }
+                        },
+                    ]
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_restructure_profiles_with_settings_key() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "buffer_font_size": 14,
+                    "profiles": {
+                        "Presenting": {
+                            "buffer_font_size": 20,
+                            "theme": "One Light"
+                        },
+                        "Minimal": {
+                            "vim_mode": true
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "buffer_font_size": 14,
+                    "profiles": {
+                        "Presenting": {
+                            "settings": {
+                                "buffer_font_size": 20,
+                                "theme": "One Light"
+                            }
+                        },
+                        "Minimal": {
+                            "settings": {
+                                "vim_mode": true
+                            }
+                        }
+                    }
+                }
+            "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_restructure_profiles_with_settings_key_already_migrated() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "profiles": {
+                        "Presenting": {
+                            "settings": {
+                                "buffer_font_size": 20
+                            }
+                        }
+                    }
+                }
+            "#
+            .unindent(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_restructure_profiles_with_settings_key_no_profiles() {
+        assert_migrate_settings(
+            &r#"
+                {
+                    "buffer_font_size": 14
+                }
+            "#
+            .unindent(),
+            None,
         );
     }
 }
