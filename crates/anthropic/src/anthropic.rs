@@ -12,10 +12,9 @@ use strum::{EnumIter, EnumString};
 use thiserror::Error;
 
 pub mod batches;
+pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
-
-pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -85,13 +84,6 @@ pub enum Model {
         alias = "claude-sonnet-4-5-thinking-latest"
     )]
     ClaudeSonnet4_5,
-    #[serde(
-        rename = "claude-sonnet-4-5-1m-context",
-        alias = "claude-sonnet-4-5-1m-context-latest",
-        alias = "claude-sonnet-4-5-1m-context-thinking",
-        alias = "claude-sonnet-4-5-1m-context-thinking-latest"
-    )]
-    ClaudeSonnet4_5_1mContext,
     #[default]
     #[serde(
         rename = "claude-sonnet-4-6",
@@ -158,10 +150,6 @@ impl Model {
             return Ok(Self::ClaudeSonnet4_6);
         }
 
-        if id.starts_with("claude-sonnet-4-5-1m-context") {
-            return Ok(Self::ClaudeSonnet4_5_1mContext);
-        }
-
         if id.starts_with("claude-sonnet-4-5") {
             return Ok(Self::ClaudeSonnet4_5);
         }
@@ -189,7 +177,6 @@ impl Model {
             Self::ClaudeOpus4_6 => "claude-opus-4-6-latest",
             Self::ClaudeSonnet4 => "claude-sonnet-4-latest",
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-latest",
-            Self::ClaudeSonnet4_5_1mContext => "claude-sonnet-4-5-1m-context-latest",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6-latest",
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5-latest",
             Self::Claude3Haiku => "claude-3-haiku-20240307",
@@ -205,7 +192,7 @@ impl Model {
             Self::ClaudeOpus4_5 => "claude-opus-4-5-20251101",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
             Self::ClaudeSonnet4 => "claude-sonnet-4-20250514",
-            Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_5_1mContext => "claude-sonnet-4-5-20250929",
+            Self::ClaudeSonnet4_5 => "claude-sonnet-4-5-20250929",
             Self::ClaudeSonnet4_6 => "claude-sonnet-4-6",
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5-20251001",
             Self::Claude3Haiku => "claude-3-haiku-20240307",
@@ -221,7 +208,6 @@ impl Model {
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
-            Self::ClaudeSonnet4_5_1mContext => "Claude Sonnet 4.5 (1M context)",
             Self::ClaudeSonnet4_6 => "Claude Sonnet 4.6",
             Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
             Self::Claude3Haiku => "Claude 3 Haiku",
@@ -239,7 +225,6 @@ impl Model {
             | Self::ClaudeOpus4_6
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5_1mContext
             | Self::ClaudeSonnet4_6
             | Self::ClaudeHaiku4_5
             | Self::Claude3Haiku => Some(AnthropicModelCacheConfiguration {
@@ -263,9 +248,7 @@ impl Model {
             | Self::ClaudeSonnet4_5
             | Self::ClaudeHaiku4_5
             | Self::Claude3Haiku => 200_000,
-            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_5_1mContext | Self::ClaudeSonnet4_6 => {
-                1_000_000
-            }
+            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -276,7 +259,6 @@ impl Model {
             Self::ClaudeOpus4_5
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5_1mContext
             | Self::ClaudeSonnet4_6
             | Self::ClaudeHaiku4_5 => 64_000,
             Self::ClaudeOpus4_6 => 128_000,
@@ -295,7 +277,6 @@ impl Model {
             | Self::ClaudeOpus4_6
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4_5_1mContext
             | Self::ClaudeSonnet4_6
             | Self::ClaudeHaiku4_5
             | Self::Claude3Haiku => 1.0,
@@ -327,7 +308,6 @@ impl Model {
                 | Self::ClaudeOpus4_6
                 | Self::ClaudeSonnet4
                 | Self::ClaudeSonnet4_5
-                | Self::ClaudeSonnet4_5_1mContext
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeHaiku4_5
         )
@@ -341,9 +321,6 @@ impl Model {
         let mut headers = vec![];
 
         match self {
-            Self::ClaudeSonnet4_5_1mContext => {
-                headers.push(CONTEXT_1M_BETA_HEADER.to_string());
-            }
             Self::Custom {
                 extra_beta_headers, ..
             } => {
@@ -1047,6 +1024,89 @@ pub async fn count_tokens(
         serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)
     } else {
         Err(handle_error_response(response, rate_limits).await)
+    }
+}
+
+// -- Conversions from/to `language_model_core` types --
+
+impl From<language_model_core::Speed> for Speed {
+    fn from(speed: language_model_core::Speed) -> Self {
+        match speed {
+            language_model_core::Speed::Standard => Speed::Standard,
+            language_model_core::Speed::Fast => Speed::Fast,
+        }
+    }
+}
+
+impl From<AnthropicError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: AnthropicError) -> Self {
+        let provider = language_model_core::ANTHROPIC_PROVIDER_NAME;
+        match error {
+            AnthropicError::SerializeRequest(error) => Self::SerializeRequest { provider, error },
+            AnthropicError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
+            AnthropicError::HttpSend(error) => Self::HttpSend { provider, error },
+            AnthropicError::DeserializeResponse(error) => {
+                Self::DeserializeResponse { provider, error }
+            }
+            AnthropicError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
+            AnthropicError::HttpResponseError {
+                status_code,
+                message,
+            } => Self::HttpResponseError {
+                provider,
+                status_code,
+                message,
+            },
+            AnthropicError::RateLimit { retry_after } => Self::RateLimitExceeded {
+                provider,
+                retry_after: Some(retry_after),
+            },
+            AnthropicError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
+                provider,
+                retry_after,
+            },
+            AnthropicError::ApiError(api_error) => api_error.into(),
+        }
+    }
+}
+
+impl From<ApiError> for language_model_core::LanguageModelCompletionError {
+    fn from(error: ApiError) -> Self {
+        use ApiErrorCode::*;
+        let provider = language_model_core::ANTHROPIC_PROVIDER_NAME;
+        match error.code() {
+            Some(code) => match code {
+                InvalidRequestError => Self::BadRequestFormat {
+                    provider,
+                    message: error.message,
+                },
+                AuthenticationError => Self::AuthenticationError {
+                    provider,
+                    message: error.message,
+                },
+                PermissionError => Self::PermissionError {
+                    provider,
+                    message: error.message,
+                },
+                NotFoundError => Self::ApiEndpointNotFound { provider },
+                RequestTooLarge => Self::PromptTooLarge {
+                    tokens: language_model_core::parse_prompt_too_long(&error.message),
+                },
+                RateLimitError => Self::RateLimitExceeded {
+                    provider,
+                    retry_after: None,
+                },
+                ApiError => Self::ApiInternalServerError {
+                    provider,
+                    message: error.message,
+                },
+                OverloadedError => Self::ServerOverloaded {
+                    provider,
+                    retry_after: None,
+                },
+            },
+            None => Self::Other(error.into()),
+        }
     }
 }
 

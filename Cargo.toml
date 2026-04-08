@@ -13,9 +13,6 @@ members = [
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
-    "crates/assistant_slash_command",
-    "crates/assistant_slash_commands",
-    "crates/assistant_text_thread",
     "crates/audio",
     "crates/auto_update",
     "crates/auto_update_helper",
@@ -64,8 +61,8 @@ members = [
     "crates/edit_prediction_ui",
     "crates/editor",
     "crates/encoding_selector",
+    "crates/env_var",
     "crates/etw_tracing",
-    "crates/eval",
     "crates/eval_cli",
     "crates/eval_utils",
     "crates/explorer_command_injector",
@@ -81,13 +78,16 @@ members = [
     "crates/fs",
     "crates/fs_benchmarks",
     "crates/fuzzy",
+    "crates/fuzzy_nucleo",
     "crates/git",
     "crates/git_graph",
     "crates/git_hosting_providers",
     "crates/git_ui",
     "crates/go_to_line",
     "crates/google_ai",
+    "crates/grammars",
     "crates/gpui",
+    "crates/gpui_shared_string",
     "crates/gpui_linux",
     "crates/gpui_macos",
     "crates/gpui_macros",
@@ -108,9 +108,12 @@ members = [
     "crates/json_schema_store",
     "crates/keymap_editor",
     "crates/language",
+    "crates/language_core",
     "crates/language_extension",
     "crates/language_model",
+    "crates/language_model_core",
     "crates/language_models",
+    "crates/language_models_cloud",
     "crates/language_onboarding",
     "crates/language_selector",
     "crates/language_tools",
@@ -134,6 +137,7 @@ members = [
     "crates/notifications",
     "crates/ollama",
     "crates/onboarding",
+    "crates/opencode",
     "crates/open_ai",
     "crates/open_path_prompt",
     "crates/open_router",
@@ -185,6 +189,7 @@ members = [
     "crates/sum_tree",
     "crates/svg_preview",
     "crates/system_specs",
+    "crates/syntax_theme",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -195,6 +200,7 @@ members = [
     "crates/text",
     "crates/theme",
     "crates/theme_extension",
+    "crates/theme_settings",
     "crates/theme_importer",
     "crates/theme_selector",
     "crates/time_format",
@@ -219,6 +225,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zed_credentials_provider",
     "crates/zed_env_vars",
     "crates/zeta_prompt",
     "crates/zlog",
@@ -233,13 +240,13 @@ members = [
     "extensions/glsl",
     "extensions/html",
     "extensions/proto",
-    "extensions/slash-commands-example",
     "extensions/test-extension",
 
     #
     # Tooling
     #
 
+    "tooling/compliance",
     "tooling/perf",
     "tooling/xtask",
 ]
@@ -267,9 +274,6 @@ ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
 assets = { path = "crates/assets" }
-assistant_text_thread = { path = "crates/assistant_text_thread" }
-assistant_slash_command = { path = "crates/assistant_slash_command" }
-assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 audio = { path = "crates/audio" }
 auto_update = { path = "crates/auto_update" }
 auto_update_ui = { path = "crates/auto_update_ui" }
@@ -290,6 +294,7 @@ collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections", version = "0.1.0" }
 command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
+compliance = { path = "tooling/compliance" }
 component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }
 context_server = { path = "crates/context_server" }
@@ -312,6 +317,7 @@ dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 encoding_selector = { path = "crates/encoding_selector" }
+env_var = { path = "crates/env_var" }
 etw_tracing = { path = "crates/etw_tracing" }
 eval_utils = { path = "crates/eval_utils" }
 extension = { path = "crates/extension" }
@@ -323,13 +329,16 @@ file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
 fs = { path = "crates/fs" }
 fuzzy = { path = "crates/fuzzy" }
+fuzzy_nucleo = { path = "crates/fuzzy_nucleo" }
 git = { path = "crates/git" }
 git_graph = { path = "crates/git_graph" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
+grammars = { path = "crates/grammars" }
 gpui = { path = "crates/gpui", default-features = false }
+gpui_shared_string = { path = "crates/gpui_shared_string" }
 gpui_linux = { path = "crates/gpui_linux", default-features = false }
 gpui_macos = { path = "crates/gpui_macos", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
@@ -353,9 +362,12 @@ journal = { path = "crates/journal" }
 json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
+language_core = { path = "crates/language_core" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
+language_model_core = { path = "crates/language_model_core" }
 language_models = { path = "crates/language_models" }
+language_models_cloud = { path = "crates/language_models_cloud" }
 language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
@@ -381,6 +393,7 @@ node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
+opencode = { path = "crates/opencode" }
 open_ai = { path = "crates/open_ai" }
 open_path_prompt = { path = "crates/open_path_prompt" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
@@ -429,6 +442,7 @@ streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 codestral = { path = "crates/codestral" }
 system_specs = { path = "crates/system_specs" }
+syntax_theme = { path = "crates/syntax_theme" }
 tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
@@ -439,6 +453,7 @@ terminal_view = { path = "crates/terminal_view" }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_extension = { path = "crates/theme_extension" }
+theme_settings = { path = "crates/theme_settings" }
 theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 platform_title_bar = { path = "crates/platform_title_bar" }
@@ -463,6 +478,7 @@ worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 edit_prediction = { path = "crates/edit_prediction" }
 zeta_prompt = { path = "crates/zeta_prompt" }
@@ -490,7 +506,7 @@ ashpd = { version = "0.13", default-features = false, features = [
 ] }
 async-channel = "2.5.0"
 async-compat = "0.2.1"
-async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
+async-compression = { version = "0.4", features = ["bzip2", "gzip", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "2.1"
 async-lock = "2.1"
@@ -541,6 +557,7 @@ derive_more = { version = "2.1.1", features = [
     "add_assign",
     "deref",
     "deref_mut",
+    "display",
     "from_str",
     "mul",
     "mul_assign",
@@ -590,7 +607,7 @@ linkify = "0.10.0"
 libwebrtc = "0.3.26"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "a4f410987660bf560d1e617cb78117c6b6b9f599" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c7396459fefc7886b4adfa3b596832405ae1e880" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.3.0"
 metal = "0.33"
@@ -600,8 +617,10 @@ naga = { version = "29.0", features = ["wgsl-in"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
 nix = "0.29"
+nucleo = "0.5"
 num-format = "0.4.4"
 objc = "0.2"
+objc2-app-kit = { version = "0.3", default-features = false, features = [ "NSGraphics" ] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
     "NSArray",
     "NSAttributedString",
@@ -674,7 +693,7 @@ rsa = "0.9.6"
 runtimelib = { version = "1.4.0", default-features = false, features = [
     "async-dispatcher-runtime", "aws-lc-rs"
 ] }
-rust-embed = { version = "8.4", features = ["include-exclude"] }
+rust-embed = { version = "8.11", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
@@ -730,7 +749,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
     "serde",
 ] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.26", features = ["wasm"] }
+tree-sitter = { version = "0.26.8", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -750,7 +769,7 @@ tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-ma
 tree-sitter-python = "0.25"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
-tree-sitter-rust = "0.24"
+tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-typescript", rev = "e2c53597d6a5d9cf7bbe8dccde576fe1e46c5899" } # https://github.com/tree-sitter/tree-sitter-typescript/pull/347
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 tracing = "0.1.40"
@@ -765,7 +784,7 @@ uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 walkdir = "2.5"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
-wasmtime = { version = "33", default-features = false, features = [
+wasmtime = { version = "36", default-features = false, features = [
     "async",
     "demangle",
     "runtime",
@@ -774,7 +793,7 @@ wasmtime = { version = "33", default-features = false, features = [
     "incremental-cache",
     "parallel-compilation",
 ] }
-wasmtime-wasi = "33"
+wasmtime-wasi = "36"
 wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.113"
@@ -804,6 +823,7 @@ features = [
     "Win32_Graphics_Direct3D_Fxc",
     "Win32_Graphics_DirectComposition",
     "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_DirectManipulation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
@@ -818,6 +838,7 @@ features = [
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Console",
+    "Win32_System_Diagnostics_Debug",
     "Win32_System_DataExchange",
     "Win32_System_IO",
     "Win32_System_LibraryLoader",
@@ -835,6 +856,7 @@ features = [
     "Win32_UI_HiDpi",
     "Win32_UI_Input_Ime",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Pointer",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
     "Win32_UI_Shell_PropertiesSystem",
@@ -848,9 +870,9 @@ notify = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24c
 notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "ce58c24cad542c28e04ced02e20325a4ec28a31d" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
-webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "c1209aa155cbf4543383774f884a46ae7e53ee2e" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
+webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
@@ -877,9 +899,13 @@ syn = { opt-level = 3 }
 proc-macro2 = { opt-level = 3 }
 # proc-macros end
 
+tree-sitter = { opt-level = 3 }
 taffy = { opt-level = 3 }
 resvg = { opt-level = 3 }
 wasmtime = { opt-level = 3 }
+cranelift-codegen = { opt-level = 3 }
+wasmtime-environ = { opt-level = 3 }
+wasmtime-internal-cranelift = { opt-level = 3 }
 # Build single-source-file crates with cg=1 as it helps make `cargo build` of a whole workspace a bit faster
 activity_indicator = { codegen-units = 1 }
 assets = { codegen-units = 1 }

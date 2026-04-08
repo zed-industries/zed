@@ -1,0 +1,73 @@
+# Generated from xtask::workflows::compliance_check
+# Rebuild with `cargo xtask workflows`.
+name: compliance_check
+env:
+  CARGO_TERM_COLOR: always
+on:
+  schedule:
+  - cron: 30 17 * * 2
+  workflow_dispatch: {}
+jobs:
+  scheduled_compliance_check:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        fetch-depth: 0
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - id: determine-version
+      name: compliance_check::scheduled_compliance_check
+      run: |
+        VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/zed/Cargo.toml | tr -d '[:space:]')
+        if [ -z "$VERSION" ]; then
+            echo "Could not determine version from crates/zed/Cargo.toml"
+            exit 1
+        fi
+        TAG="v${VERSION}-pre"
+        echo "Checking compliance for $TAG"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+    - id: run-compliance-check
+      name: compliance_check::scheduled_compliance_check::run_compliance_check
+      run: |
+        echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+        cargo xtask compliance "$LATEST_TAG" --branch main --report-path compliance-report
+      env:
+        LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
+        GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: '@actions/upload-artifact compliance-report.md'
+      if: always()
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: compliance-report.md
+        path: target/compliance-report.md
+        if-no-files-found: error
+    - name: send_compliance_slack_notification
+      if: always()
+      run: |
+        if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+            STATUS="✅ Scheduled compliance check passed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
+        else
+            STATUS="⚠️ Scheduled compliance check failed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
+        fi
+
+        curl -X POST -H 'Content-type: application/json' \
+            --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
+            "$SLACK_WEBHOOK"
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
+        COMPLIANCE_TAG: ${{ steps.determine-version.outputs.tag }}
+        ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

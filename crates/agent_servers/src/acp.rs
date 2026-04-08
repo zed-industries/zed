@@ -10,20 +10,20 @@ use collections::HashMap;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::AsyncBufReadExt as _;
 use futures::io::BufReader;
-use project::agent_server_store::AgentServerCommand;
+use project::agent_server_store::{AgentServerCommand, AgentServerStore};
 use project::{AgentId, Project};
+use remote::remote_client::Interactive;
 use serde::Deserialize;
 use settings::Settings as _;
-use task::{ShellBuilder, SpawnInTerminal};
-use util::ResultExt as _;
-use util::path_list::PathList;
-use util::process::Child;
-
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::rc::Rc;
 use std::{any::Any, cell::RefCell};
+use task::{ShellBuilder, SpawnInTerminal};
 use thiserror::Error;
+use util::ResultExt as _;
+use util::path_list::PathList;
+use util::process::Child;
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
@@ -42,12 +42,11 @@ pub struct UnsupportedVersion;
 
 pub struct AcpConnection {
     id: AgentId,
-    display_name: SharedString,
     telemetry_id: SharedString,
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
-    command: AgentServerCommand,
+    agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
@@ -167,8 +166,8 @@ impl AgentSessionList for AcpSessionList {
 pub async fn connect(
     agent_id: AgentId,
     project: Entity<Project>,
-    display_name: SharedString,
     command: AgentServerCommand,
+    agent_server_store: WeakEntity<AgentServerStore>,
     default_mode: Option<acp::SessionModeId>,
     default_model: Option<acp::ModelId>,
     default_config_options: HashMap<String, String>,
@@ -177,8 +176,8 @@ pub async fn connect(
     let conn = AcpConnection::stdio(
         agent_id,
         project,
-        display_name,
         command.clone(),
+        agent_server_store,
         default_mode,
         default_model,
         default_config_options,
@@ -194,24 +193,56 @@ impl AcpConnection {
     pub async fn stdio(
         agent_id: AgentId,
         project: Entity<Project>,
-        display_name: SharedString,
         command: AgentServerCommand,
+        agent_server_store: WeakEntity<AgentServerStore>,
         default_mode: Option<acp::SessionModeId>,
         default_model: Option<acp::ModelId>,
         default_config_options: HashMap<String, String>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
-        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
-        let mut child =
-            builder.build_std_command(Some(command.path.display().to_string()), &command.args);
-        child.envs(command.env.iter().flatten());
-        if let Some(cwd) = project.update(cx, |project, cx| {
+        let root_dir = project.read_with(cx, |project, cx| {
             project
                 .default_path_list(cx)
                 .ordered_paths()
                 .next()
                 .cloned()
+        });
+        let original_command = command.clone();
+        let (path, args, env) = project
+            .read_with(cx, |project, cx| {
+                project.remote_client().and_then(|client| {
+                    let template = client
+                        .read(cx)
+                        .build_command_with_options(
+                            Some(command.path.display().to_string()),
+                            &command.args,
+                            &command.env.clone().into_iter().flatten().collect(),
+                            root_dir.as_ref().map(|path| path.display().to_string()),
+                            None,
+                            Interactive::No,
+                        )
+                        .log_err()?;
+                    Some((template.program, template.args, template.env))
+                })
+            })
+            .unwrap_or_else(|| {
+                (
+                    command.path.display().to_string(),
+                    command.args,
+                    command.env.unwrap_or_default(),
+                )
+            });
+
+        let shell = cx.update(|cx| TerminalSettings::get(None, cx).shell.clone());
+        let builder = ShellBuilder::new(&shell, cfg!(windows)).non_interactive();
+        let mut child = builder.build_std_command(Some(path.clone()), &args);
+        child.envs(env.clone());
+        if let Some(cwd) = project.read_with(cx, |project, _cx| {
+            if project.is_local() {
+                root_dir.as_ref()
+            } else {
+                None
+            }
         }) {
             child.current_dir(cwd);
         }
@@ -220,11 +251,7 @@ impl AcpConnection {
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
         let stderr = child.stderr.take().context("Failed to take stderr")?;
-        log::debug!(
-            "Spawning external agent server: {:?}, {:?}",
-            command.path,
-            command.args
-        );
+        log::debug!("Spawning external agent server: {:?}, {:?}", path, args);
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
@@ -325,7 +352,7 @@ impl AcpConnection {
             // Use the one the agent provides if we have one
             .map(|info| info.name.into())
             // Otherwise, just use the name
-            .unwrap_or_else(|| agent_id.0.to_string().into());
+            .unwrap_or_else(|| agent_id.0.clone());
 
         let session_list = if response
             .agent_capabilities
@@ -342,13 +369,13 @@ impl AcpConnection {
 
         // TODO: Remove this override once Google team releases their official auth methods
         let auth_methods = if agent_id.0.as_ref() == GEMINI_ID {
-            let mut args = command.args.clone();
-            args.retain(|a| a != "--experimental-acp" && a != "--acp");
+            let mut gemini_args = original_command.args.clone();
+            gemini_args.retain(|a| a != "--experimental-acp" && a != "--acp");
             let value = serde_json::json!({
                 "label": "gemini /auth",
-                "command": command.path.to_string_lossy().into_owned(),
-                "args": args,
-                "env": command.env.clone().unwrap_or_default(),
+                "command": original_command.path.to_string_lossy(),
+                "args": gemini_args,
+                "env": original_command.env.unwrap_or_default(),
             });
             let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
             vec![acp::AuthMethod::Agent(
@@ -362,9 +389,8 @@ impl AcpConnection {
         Ok(Self {
             id: agent_id,
             auth_methods,
-            command,
+            agent_server_store,
             connection,
-            display_name,
             telemetry_id,
             sessions,
             agent_capabilities: response.agent_capabilities,
@@ -495,18 +521,12 @@ fn terminal_auth_task(
     agent_id: &AgentId,
     method: &acp::AuthMethodTerminal,
 ) -> SpawnInTerminal {
-    let mut args = command.args.clone();
-    args.extend(method.args.clone());
-
-    let mut env = command.env.clone().unwrap_or_default();
-    env.extend(method.env.clone());
-
     acp_thread::build_terminal_auth_task(
         terminal_auth_task_id(agent_id, &method.id),
         method.name.clone(),
         command.path.to_string_lossy().into_owned(),
-        args,
-        env,
+        command.args.clone(),
+        command.env.clone().unwrap_or_default(),
     )
 }
 
@@ -660,7 +680,7 @@ impl AgentConnection for AcpConnection {
             let thread: Entity<AcpThread> = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    self.display_name.clone(),
+                    None,
                     Some(work_dirs),
                     self.clone(),
                     project,
@@ -718,7 +738,6 @@ impl AgentConnection for AcpConnection {
 
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let title = title.unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
@@ -801,7 +820,6 @@ impl AgentConnection for AcpConnection {
 
         let mcp_servers = mcp_servers_for_project(&project, cx);
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
-        let title = title.unwrap_or_else(|| self.display_name.clone());
         let thread: Entity<AcpThread> = cx.new(|cx| {
             AcpThread::new(
                 None,
@@ -893,7 +911,7 @@ impl AgentConnection for AcpConnection {
         &self,
         method_id: &acp::AuthMethodId,
         cx: &App,
-    ) -> Option<SpawnInTerminal> {
+    ) -> Option<Task<Result<SpawnInTerminal>>> {
         let method = self
             .auth_methods
             .iter()
@@ -901,9 +919,28 @@ impl AgentConnection for AcpConnection {
 
         match method {
             acp::AuthMethod::Terminal(terminal) if cx.has_flag::<AcpBetaFeatureFlag>() => {
-                Some(terminal_auth_task(&self.command, &self.id, terminal))
+                let agent_id = self.id.clone();
+                let terminal = terminal.clone();
+                let store = self.agent_server_store.clone();
+                Some(cx.spawn(async move |cx| {
+                    let command = store
+                        .update(cx, |store, cx| {
+                            let agent = store
+                                .get_external_agent(&agent_id)
+                                .context("Agent server not found")?;
+                            anyhow::Ok(agent.get_command(
+                                terminal.args.clone(),
+                                HashMap::from_iter(terminal.env.clone()),
+                                &mut cx.to_async(),
+                            ))
+                        })?
+                        .context("Failed to get agent command")?
+                        .await?;
+                    Ok(terminal_auth_task(&command, &agent_id, &terminal))
+                }))
             }
-            _ => meta_terminal_auth_task(&self.id, method_id, method),
+            _ => meta_terminal_auth_task(&self.id, method_id, method)
+                .map(|task| Task::ready(Ok(task))),
         }
     }
 
@@ -1078,39 +1115,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terminal_auth_task_reuses_command_and_merges_args_and_env() {
+    fn terminal_auth_task_builds_spawn_from_prebuilt_command() {
         let command = AgentServerCommand {
             path: "/path/to/agent".into(),
-            args: vec!["--acp".into(), "--verbose".into()],
+            args: vec!["--acp".into(), "--verbose".into(), "/auth".into()],
             env: Some(HashMap::from_iter([
                 ("BASE".into(), "1".into()),
-                ("SHARED".into(), "base".into()),
+                ("SHARED".into(), "override".into()),
+                ("EXTRA".into(), "2".into()),
             ])),
         };
-        let method = acp::AuthMethodTerminal::new("login", "Login")
-            .args(vec!["/auth".into()])
-            .env(std::collections::HashMap::from_iter([
-                ("EXTRA".into(), "2".into()),
-                ("SHARED".into(), "override".into()),
-            ]));
+        let method = acp::AuthMethodTerminal::new("login", "Login");
 
-        let terminal_auth_task = terminal_auth_task(&command, &AgentId::new("test-agent"), &method);
+        let task = terminal_auth_task(&command, &AgentId::new("test-agent"), &method);
 
+        assert_eq!(task.command.as_deref(), Some("/path/to/agent"));
+        assert_eq!(task.args, vec!["--acp", "--verbose", "/auth"]);
         assert_eq!(
-            terminal_auth_task.command.as_deref(),
-            Some("/path/to/agent")
-        );
-        assert_eq!(terminal_auth_task.args, vec!["--acp", "--verbose", "/auth"]);
-        assert_eq!(
-            terminal_auth_task.env,
+            task.env,
             HashMap::from_iter([
                 ("BASE".into(), "1".into()),
                 ("SHARED".into(), "override".into()),
                 ("EXTRA".into(), "2".into()),
             ])
         );
-        assert_eq!(terminal_auth_task.label, "Login");
-        assert_eq!(terminal_auth_task.command_label, "Login");
+        assert_eq!(task.label, "Login");
+        assert_eq!(task.command_label, "Login");
     }
 
     #[test]
@@ -1130,21 +1160,17 @@ mod tests {
             )])),
         );
 
-        let terminal_auth_task =
-            meta_terminal_auth_task(&AgentId::new("test-agent"), &method_id, &method)
-                .expect("expected legacy terminal auth task");
+        let task = meta_terminal_auth_task(&AgentId::new("test-agent"), &method_id, &method)
+            .expect("expected legacy terminal auth task");
 
+        assert_eq!(task.id.0, "external-agent-test-agent-legacy-login-login");
+        assert_eq!(task.command.as_deref(), Some("legacy-agent"));
+        assert_eq!(task.args, vec!["auth", "--interactive"]);
         assert_eq!(
-            terminal_auth_task.id.0,
-            "external-agent-test-agent-legacy-login-login"
-        );
-        assert_eq!(terminal_auth_task.command.as_deref(), Some("legacy-agent"));
-        assert_eq!(terminal_auth_task.args, vec!["auth", "--interactive"]);
-        assert_eq!(
-            terminal_auth_task.env,
+            task.env,
             HashMap::from_iter([("AUTH_MODE".into(), "interactive".into())])
         );
-        assert_eq!(terminal_auth_task.label, "legacy /auth");
+        assert_eq!(task.label, "legacy /auth");
     }
 
     #[test]
@@ -1189,30 +1215,30 @@ mod tests {
 
         let command = AgentServerCommand {
             path: "/path/to/agent".into(),
-            args: vec!["--acp".into()],
-            env: Some(HashMap::from_iter([("BASE".into(), "1".into())])),
+            args: vec!["--acp".into(), "/auth".into()],
+            env: Some(HashMap::from_iter([
+                ("BASE".into(), "1".into()),
+                ("AUTH_MODE".into(), "first-class".into()),
+            ])),
         };
 
-        let terminal_auth_task = match &method {
+        let task = match &method {
             acp::AuthMethod::Terminal(terminal) => {
                 terminal_auth_task(&command, &AgentId::new("test-agent"), terminal)
             }
             _ => unreachable!(),
         };
 
+        assert_eq!(task.command.as_deref(), Some("/path/to/agent"));
+        assert_eq!(task.args, vec!["--acp", "/auth"]);
         assert_eq!(
-            terminal_auth_task.command.as_deref(),
-            Some("/path/to/agent")
-        );
-        assert_eq!(terminal_auth_task.args, vec!["--acp", "/auth"]);
-        assert_eq!(
-            terminal_auth_task.env,
+            task.env,
             HashMap::from_iter([
                 ("BASE".into(), "1".into()),
                 ("AUTH_MODE".into(), "first-class".into()),
             ])
         );
-        assert_eq!(terminal_auth_task.label, "Login");
+        assert_eq!(task.label, "Login");
     }
 }
 

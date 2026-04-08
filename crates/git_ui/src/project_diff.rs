@@ -501,9 +501,11 @@ impl ProjectDiff {
 
     pub fn active_path(&self, cx: &App) -> Option<ProjectPath> {
         let editor = self.editor.read(cx).focused_editor().read(cx);
+        let multibuffer = editor.buffer().read(cx);
         let position = editor.selections.newest_anchor().head();
-        let multi_buffer = editor.buffer().read(cx);
-        let (_, buffer, _) = multi_buffer.excerpt_containing(position, cx)?;
+        let snapshot = multibuffer.snapshot(cx);
+        let (text_anchor, _) = snapshot.anchor_to_buffer_anchor(position)?;
+        let buffer = multibuffer.buffer(text_anchor.buffer_id)?;
 
         let file = buffer.read(cx).file()?;
         Some(ProjectPath {
@@ -516,9 +518,7 @@ impl ProjectDiff {
         self.editor.update(cx, |editor, cx| {
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(vec![
-                        multi_buffer::Anchor::min()..multi_buffer::Anchor::min(),
-                    ]);
+                    s.select_ranges(vec![multi_buffer::Anchor::Min..multi_buffer::Anchor::Min]);
                 });
             });
         });
@@ -544,38 +544,7 @@ impl ProjectDiff {
     }
 
     pub fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
-        let snapshot = self.multibuffer.read(cx).snapshot(cx);
-        let mut total_additions = 0u32;
-        let mut total_deletions = 0u32;
-
-        let mut seen_buffers = HashSet::default();
-        for (_, buffer, _) in snapshot.excerpts() {
-            let buffer_id = buffer.remote_id();
-            if !seen_buffers.insert(buffer_id) {
-                continue;
-            }
-
-            let Some(diff) = snapshot.diff_for_buffer_id(buffer_id) else {
-                continue;
-            };
-
-            let base_text = diff.base_text();
-
-            for hunk in diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer) {
-                let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
-                total_additions += added_rows;
-
-                let base_start = base_text
-                    .offset_to_point(hunk.diff_base_byte_range.start)
-                    .row;
-                let base_end = base_text.offset_to_point(hunk.diff_base_byte_range.end).row;
-                let deleted_rows = base_end.saturating_sub(base_start);
-
-                total_deletions += deleted_rows;
-            }
-        }
-
-        (total_additions, total_deletions)
+        self.multibuffer.read(cx).snapshot(cx).total_changed_lines()
     }
 
     /// Returns the total count of review comments across all hunks/files.
@@ -600,17 +569,17 @@ impl ProjectDiff {
             .collect::<Vec<_>>();
         if !ranges.iter().any(|range| range.start != range.end) {
             selection = false;
-            if let Some((excerpt_id, _, range)) = self
-                .editor
-                .read(cx)
-                .rhs_editor()
-                .read(cx)
-                .active_excerpt(cx)
+            let anchor = editor.selections.newest_anchor().head();
+            if let Some((_, excerpt_range)) = snapshot.excerpt_containing(anchor..anchor)
+                && let Some(range) = snapshot
+                    .anchor_in_buffer(excerpt_range.context.start)
+                    .zip(snapshot.anchor_in_buffer(excerpt_range.context.end))
+                    .map(|(start, end)| start..end)
             {
-                ranges = vec![multi_buffer::Anchor::range_in_buffer(excerpt_id, range)];
+                ranges = vec![range];
             } else {
                 ranges = Vec::default();
-            }
+            };
         }
         let mut has_staged_hunks = false;
         let mut has_unstaged_hunks = false;
@@ -746,7 +715,7 @@ impl ProjectDiff {
 
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
-            let (_, is_newly_added) = editor.set_excerpts_for_path(
+            let is_newly_added = editor.update_excerpts_for_path(
                 path_key.clone(),
                 buffer,
                 excerpt_ranges,
@@ -766,7 +735,7 @@ impl ProjectDiff {
                         cx,
                         |selections| {
                             selections.select_ranges([
-                                multi_buffer::Anchor::min()..multi_buffer::Anchor::min()
+                                multi_buffer::Anchor::Min..multi_buffer::Anchor::Min
                             ])
                         },
                     );
@@ -816,8 +785,9 @@ impl ProjectDiff {
             let mut previous_paths = this
                 .multibuffer
                 .read(cx)
-                .paths()
-                .cloned()
+                .snapshot(cx)
+                .buffers_with_paths()
+                .map(|(_, path_key)| path_key.clone())
                 .collect::<HashSet<_>>();
 
             if let Some(repo) = repo {
@@ -908,10 +878,23 @@ impl ProjectDiff {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
-        self.multibuffer
+        let snapshot = self
+            .editor()
             .read(cx)
-            .paths()
-            .map(|key| key.path.clone())
+            .rhs_editor()
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx);
+        snapshot
+            .excerpts()
+            .map(|excerpt| {
+                snapshot
+                    .path_for_buffer(excerpt.context.start.buffer_id)
+                    .unwrap()
+                    .path
+                    .clone()
+            })
             .collect()
     }
 }
@@ -1777,7 +1760,7 @@ mod tests {
                     settings.editor.diff_view_style = Some(DiffViewStyle::Unified);
                 });
             });
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);
         });
@@ -1968,7 +1951,7 @@ mod tests {
                 let snapshot = buffer_editor.snapshot(window, cx);
                 let snapshot = &snapshot.buffer_snapshot();
                 let prev_buffer_hunks = buffer_editor
-                    .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], snapshot)
                     .collect::<Vec<_>>();
                 buffer_editor.git_restore(&Default::default(), window, cx);
                 prev_buffer_hunks
@@ -1981,7 +1964,7 @@ mod tests {
                 let snapshot = buffer_editor.snapshot(window, cx);
                 let snapshot = &snapshot.buffer_snapshot();
                 buffer_editor
-                    .diff_hunks_in_ranges(&[editor::Anchor::min()..editor::Anchor::max()], snapshot)
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], snapshot)
                     .collect::<Vec<_>>()
             });
         assert_eq!(new_buffer_hunks.as_slice(), &[]);
@@ -2240,9 +2223,14 @@ mod tests {
 
         cx.update(|window, cx| {
             let editor = diff.read(cx).editor.read(cx).rhs_editor().clone();
-            let excerpt_ids = editor.read(cx).buffer().read(cx).excerpt_ids();
-            assert_eq!(excerpt_ids.len(), 1);
-            let excerpt_id = excerpt_ids[0];
+            let excerpts = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .collect::<Vec<_>>();
+            assert_eq!(excerpts.len(), 1);
             let buffer = editor
                 .read(cx)
                 .buffer()
@@ -2270,7 +2258,6 @@ mod tests {
 
             resolve_conflict(
                 editor.downgrade(),
-                excerpt_id,
                 snapshot.conflicts[0].clone(),
                 vec![ours_range],
                 window,

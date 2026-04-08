@@ -57,7 +57,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(feature = "test-support")]
 use git::{
-    repository::{InitialGraphCommitData, RepoPath, repo_path},
+    repository::{InitialGraphCommitData, RepoPath, Worktree, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(feature = "test-support")]
@@ -1892,11 +1892,15 @@ impl FakeFs {
                 anyhow::bail!("gitfile points to a non-directory")
             };
             let common_dir = if let Some(child) = entries.get("commondir") {
-                Path::new(
-                    std::str::from_utf8(child.file_content("commondir".as_ref())?)
-                        .context("commondir content")?,
-                )
-                .to_owned()
+                let raw = std::str::from_utf8(child.file_content("commondir".as_ref())?)
+                    .context("commondir content")?
+                    .trim();
+                let raw_path = Path::new(raw);
+                if raw_path.is_relative() {
+                    normalize_path(&canonical_path.join(raw_path))
+                } else {
+                    raw_path.to_owned()
+                }
             } else {
                 canonical_path.clone()
             };
@@ -1958,6 +1962,116 @@ impl FakeFs {
                 .extend(branches.iter().map(ToString::to_string));
         })
         .unwrap();
+    }
+
+    pub async fn add_linked_worktree_for_repo(
+        &self,
+        dot_git: &Path,
+        emit_git_event: bool,
+        worktree: Worktree,
+    ) {
+        let ref_name = worktree
+            .ref_name
+            .as_ref()
+            .expect("linked worktree must have a ref_name");
+        let branch_name = ref_name
+            .strip_prefix("refs/heads/")
+            .unwrap_or(ref_name.as_ref());
+
+        // Create ref in git state.
+        self.with_git_state(dot_git, false, |state| {
+            state
+                .refs
+                .insert(ref_name.to_string(), worktree.sha.to_string());
+        })
+        .unwrap();
+
+        // Create .git/worktrees/<name>/ directory with HEAD, commondir, and gitdir.
+        let worktrees_entry_dir = dot_git.join("worktrees").join(branch_name);
+        self.create_dir(&worktrees_entry_dir).await.unwrap();
+
+        self.write_file_internal(
+            worktrees_entry_dir.join("HEAD"),
+            format!("ref: {ref_name}").into_bytes(),
+            false,
+        )
+        .unwrap();
+
+        self.write_file_internal(
+            worktrees_entry_dir.join("commondir"),
+            dot_git.to_string_lossy().into_owned().into_bytes(),
+            false,
+        )
+        .unwrap();
+
+        let worktree_dot_git = worktree.path.join(".git");
+        self.write_file_internal(
+            worktrees_entry_dir.join("gitdir"),
+            worktree_dot_git.to_string_lossy().into_owned().into_bytes(),
+            false,
+        )
+        .unwrap();
+
+        // Create the worktree checkout directory with a .git file pointing back.
+        self.create_dir(&worktree.path).await.unwrap();
+
+        self.write_file_internal(
+            &worktree_dot_git,
+            format!("gitdir: {}", worktrees_entry_dir.display()).into_bytes(),
+            false,
+        )
+        .unwrap();
+
+        if emit_git_event {
+            self.with_git_state(dot_git, true, |_| {}).unwrap();
+        }
+    }
+
+    pub async fn remove_worktree_for_repo(
+        &self,
+        dot_git: &Path,
+        emit_git_event: bool,
+        ref_name: &str,
+    ) {
+        let branch_name = ref_name.strip_prefix("refs/heads/").unwrap_or(ref_name);
+        let worktrees_entry_dir = dot_git.join("worktrees").join(branch_name);
+
+        // Read gitdir to find the worktree checkout path.
+        let gitdir_content = self
+            .load_internal(worktrees_entry_dir.join("gitdir"))
+            .await
+            .unwrap();
+        let gitdir_str = String::from_utf8(gitdir_content).unwrap();
+        let worktree_path = PathBuf::from(gitdir_str.trim())
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_default();
+
+        // Remove the worktree checkout directory.
+        self.remove_dir(
+            &worktree_path,
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        // Remove the .git/worktrees/<name>/ directory.
+        self.remove_dir(
+            &worktrees_entry_dir,
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        if emit_git_event {
+            self.with_git_state(dot_git, true, |_| {}).unwrap();
+        }
     }
 
     pub fn set_unmerged_paths_for_repo(
@@ -2050,6 +2164,13 @@ impl FakeFs {
     pub fn set_graph_commits(&self, dot_git: &Path, commits: Vec<Arc<InitialGraphCommitData>>) {
         self.with_git_state(dot_git, true, |state| {
             state.graph_commits = commits;
+        })
+        .unwrap();
+    }
+
+    pub fn set_graph_error(&self, dot_git: &Path, error: Option<String>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.simulated_graph_error = error;
         })
         .unwrap();
     }

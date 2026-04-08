@@ -5,6 +5,7 @@ mod filter_languages;
 mod format_prompt;
 mod git;
 mod headless;
+mod kept_rate;
 mod load_project;
 mod metrics;
 mod openai_client;
@@ -26,6 +27,7 @@ mod split_dataset;
 mod synthesize;
 mod truncate_expected_patch;
 mod word_diff;
+use anyhow::Context as _;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use collections::{HashMap, HashSet};
 use edit_prediction::EditPredictionStore;
@@ -294,6 +296,9 @@ struct PredictArgs {
     /// Only use cached responses, don't queue new requests for batching
     #[clap(long)]
     cache_only: bool,
+    /// Wait for all batches to complete before exiting (only applies to batched providers like teacher)
+    #[clap(long)]
+    wait: bool,
 }
 
 #[derive(Debug, Args, Clone)]
@@ -354,7 +359,6 @@ impl TeacherBackend {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PredictionProvider {
-    Sweep,
     Mercury,
     Zeta1,
     Zeta2(ZetaFormat),
@@ -375,7 +379,6 @@ impl Default for PredictionProvider {
 impl std::fmt::Display for PredictionProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PredictionProvider::Sweep => write!(f, "sweep"),
             PredictionProvider::Mercury => write!(f, "mercury"),
             PredictionProvider::Zeta1 => write!(f, "zeta1"),
             PredictionProvider::Zeta2(format) => write!(f, "zeta2:{format}"),
@@ -403,7 +406,6 @@ impl std::str::FromStr for PredictionProvider {
 
         let provider_lower = provider.to_lowercase();
         match provider_lower.as_str() {
-            "sweep" => Ok(PredictionProvider::Sweep),
             "mercury" => Ok(PredictionProvider::Mercury),
             "zeta1" => Ok(PredictionProvider::Zeta1),
             "zeta2" => {
@@ -448,7 +450,7 @@ impl std::str::FromStr for PredictionProvider {
             }
             _ => {
                 anyhow::bail!(
-                    "unknown provider `{provider}`. Valid options: sweep, mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-multi-region, teacher-multi-region:<backend>, teacher-non-batching, teacher-multi-region-non-batching, repair\n\
+                    "unknown provider `{provider}`. Valid options: mercury, zeta1, zeta2, zeta2:<version>, teacher, teacher:<backend>, teacher-multi-region, teacher-multi-region:<backend>, teacher-non-batching, teacher-multi-region-non-batching, repair\n\
                  For zeta2, you can optionally specify a version like `zeta2:ordered` or `zeta2:V0113_Ordered`.\n\
                  For teacher providers, you can specify a backend like `teacher:sonnet46`, `teacher-multi-region:sonnet46`, `teacher-multi-region-non-batching:sonnet46`, or `teacher:gpt52`.\n\
                  Available zeta versions:\n{}",
@@ -762,7 +764,7 @@ async fn load_examples(
             "skipping Snowflake inputs because --limit is already satisfied by example files"
         );
     } else {
-        let max_rows_per_timestamp = remaining_limit_for_snowflake.unwrap_or(5000);
+        let max_rows_per_timestamp = remaining_limit_for_snowflake;
 
         if !rejected_after_timestamps.is_empty() {
             rejected_after_timestamps.sort();
@@ -1339,18 +1341,45 @@ fn main() {
 
                 Progress::global().finalize();
 
+                let is_markdown = args.markdown;
+                let write_path = in_place_temp_path.as_ref().or(output.as_ref());
                 match &command {
                     Command::Predict(args) | Command::Score(args) => {
                         predict::sync_batches(args.provider.as_ref()).await?;
+                        if args.wait {
+                            predict::wait_for_batches(args.provider.as_ref()).await?;
+                            let mut examples =
+                                std::mem::take(&mut *finished_examples.lock().unwrap());
+                            predict::reprocess_after_batch_wait(&mut examples, args).await?;
+                            rewrite_output(&examples, write_path, is_markdown)?;
+                            *finished_examples.lock().unwrap() = examples;
+                        }
                     }
                     Command::Eval(args) => {
                         predict::sync_batches(args.predict.provider.as_ref()).await?;
+                        if args.predict.wait {
+                            predict::wait_for_batches(args.predict.provider.as_ref()).await?;
+                            let mut examples =
+                                std::mem::take(&mut *finished_examples.lock().unwrap());
+                            predict::reprocess_after_batch_wait(&mut examples, &args.predict)
+                                .await?;
+                            rewrite_output(&examples, write_path, is_markdown)?;
+                            *finished_examples.lock().unwrap() = examples;
+                        }
                     }
                     Command::Qa(args) => {
                         qa::sync_batches(args).await?;
                     }
                     Command::Repair(args) => {
                         repair::sync_batches(args).await?;
+                        if args.wait {
+                            repair::wait_for_batches(args).await?;
+                            let mut examples =
+                                std::mem::take(&mut *finished_examples.lock().unwrap());
+                            repair::reprocess_after_batch_wait(&mut examples, args).await?;
+                            rewrite_output(&examples, write_path, is_markdown)?;
+                            *finished_examples.lock().unwrap() = examples;
+                        }
                     }
                     _ => (),
                 }
@@ -1389,6 +1418,41 @@ fn main() {
         })
         .detach();
     });
+}
+
+fn rewrite_output(
+    examples: &[Example],
+    output_path: Option<&PathBuf>,
+    markdown: bool,
+) -> anyhow::Result<()> {
+    if markdown {
+        let dir = output_path.context("--markdown requires -o")?;
+        for example in examples {
+            let filename = format!("{}.md", example.spec.filename());
+            let path = dir.join(&filename);
+            let markdown = example.spec.to_markdown();
+            std::fs::write(&path, &markdown).context("Failed to write markdown file")?;
+        }
+    } else if let Some(path) = output_path {
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(path)
+            .context("Failed to open output file for rewriting")?;
+        let mut writer = BufWriter::new(file);
+        for example in examples {
+            let line = serde_json::to_string(example)?;
+            writeln!(writer, "{}", line)?;
+        }
+        writer.flush()?;
+    } else {
+        for example in examples {
+            let line = serde_json::to_string(example)?;
+            println!("{}", line);
+        }
+    }
+    Ok(())
 }
 
 async fn handle_error(

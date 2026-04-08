@@ -2,8 +2,8 @@ use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language::{
-    Capability, Diff, DiffOptions, File, Language, LanguageName, LanguageRegistry,
-    language_settings::language_settings, word_diff_ranges,
+    Capability, Diff, DiffOptions, Language, LanguageName, LanguageRegistry,
+    language_settings::LanguageSettings, word_diff_ranges,
 };
 use rope::Rope;
 use std::{
@@ -115,6 +115,7 @@ pub struct DiffHunk {
 struct InternalDiffHunk {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
+    diff_base_point_range: Range<Point>,
     base_word_diffs: Vec<Range<usize>>,
     buffer_word_diffs: Vec<Range<Anchor>>,
 }
@@ -131,15 +132,25 @@ struct PendingHunk {
 pub struct DiffHunkSummary {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
+    added_rows: u32,
+    removed_rows: u32,
 }
 
 impl sum_tree::Item for InternalDiffHunk {
     type Summary = DiffHunkSummary;
 
-    fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
+    fn summary(&self, buffer: &text::BufferSnapshot) -> Self::Summary {
+        let buffer_start = self.buffer_range.start.to_point(buffer);
+        let buffer_end = self.buffer_range.end.to_point(buffer);
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
             diff_base_byte_range: self.diff_base_byte_range.clone(),
+            added_rows: buffer_end.row.saturating_sub(buffer_start.row),
+            removed_rows: self
+                .diff_base_point_range
+                .end
+                .row
+                .saturating_sub(self.diff_base_point_range.start.row),
         }
     }
 }
@@ -151,6 +162,8 @@ impl sum_tree::Item for PendingHunk {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
             diff_base_byte_range: self.diff_base_byte_range.clone(),
+            added_rows: 0,
+            removed_rows: 0,
         }
     }
 }
@@ -158,10 +171,12 @@ impl sum_tree::Item for PendingHunk {
 impl sum_tree::Summary for DiffHunkSummary {
     type Context<'a> = &'a text::BufferSnapshot;
 
-    fn zero(_cx: Self::Context<'_>) -> Self {
+    fn zero(buffer: &text::BufferSnapshot) -> Self {
         DiffHunkSummary {
-            buffer_range: Anchor::MIN..Anchor::MIN,
+            buffer_range: Anchor::min_min_range_for_buffer(buffer.remote_id()),
             diff_base_byte_range: 0..0,
+            added_rows: 0,
+            removed_rows: 0,
         }
     }
 
@@ -180,6 +195,9 @@ impl sum_tree::Summary for DiffHunkSummary {
             .diff_base_byte_range
             .end
             .max(other.diff_base_byte_range.end);
+
+        self.added_rows += other.added_rows;
+        self.removed_rows += other.removed_rows;
     }
 }
 
@@ -230,8 +248,17 @@ impl BufferDiffSnapshot {
         buffer_diff.update(cx, |buffer_diff, cx| buffer_diff.snapshot(cx))
     }
 
+    pub fn buffer_id(&self) -> BufferId {
+        self.inner.buffer_snapshot.remote_id()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.inner.hunks.is_empty()
+    }
+
+    pub fn changed_row_counts(&self) -> (u32, u32) {
+        let summary = self.inner.hunks.summary();
+        (summary.added_rows, summary.removed_rows)
     }
 
     pub fn base_text_string(&self) -> Option<String> {
@@ -930,7 +957,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
             .flat_map(move |hunk| {
                 [
                     (
-                        &hunk.buffer_range.start,
+                        hunk.buffer_range.start,
                         (
                             hunk.buffer_range.start,
                             hunk.diff_base_byte_range.start,
@@ -938,7 +965,7 @@ impl BufferDiffInner<language::BufferSnapshot> {
                         ),
                     ),
                     (
-                        &hunk.buffer_range.end,
+                        hunk.buffer_range.end,
                         (hunk.buffer_range.end, hunk.diff_base_byte_range.end, hunk),
                     ),
                 ]
@@ -1067,7 +1094,6 @@ impl BufferDiffInner<language::BufferSnapshot> {
 }
 
 fn build_diff_options(
-    file: Option<&Arc<dyn File>>,
     language: Option<LanguageName>,
     language_scope: Option<language::LanguageScope>,
     cx: &App,
@@ -1083,7 +1109,7 @@ fn build_diff_options(
         }
     }
 
-    language_settings(language, file, cx)
+    LanguageSettings::resolve(None, language.as_ref(), cx)
         .word_diff_enabled
         .then_some(DiffOptions {
             language_scope,
@@ -1121,6 +1147,8 @@ fn compute_hunks(
                 InternalDiffHunk {
                     buffer_range: buffer.anchor_before(0)..buffer.anchor_before(0),
                     diff_base_byte_range: 0..diff_base.len() - 1,
+                    diff_base_point_range: Point::new(0, 0)
+                        ..diff_base_rope.offset_to_point(diff_base.len() - 1),
                     base_word_diffs: Vec::default(),
                     buffer_word_diffs: Vec::default(),
                 },
@@ -1148,6 +1176,7 @@ fn compute_hunks(
             InternalDiffHunk {
                 buffer_range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
                 diff_base_byte_range: 0..0,
+                diff_base_point_range: Point::new(0, 0)..Point::new(0, 0),
                 base_word_diffs: Vec::default(),
                 buffer_word_diffs: Vec::default(),
             },
@@ -1461,7 +1490,9 @@ fn process_patch_hunk(
 
     InternalDiffHunk {
         buffer_range,
-        diff_base_byte_range,
+        diff_base_byte_range: diff_base_byte_range.clone(),
+        diff_base_point_range: diff_base.offset_to_point(diff_base_byte_range.start)
+            ..diff_base.offset_to_point(diff_base_byte_range.end),
         base_word_diffs,
         buffer_word_diffs,
     }
@@ -1566,6 +1597,8 @@ impl BufferDiff {
             self.inner.pending_hunks = SumTree::from_summary(DiffHunkSummary {
                 buffer_range: Anchor::min_min_range_for_buffer(self.buffer_id),
                 diff_base_byte_range: 0..0,
+                added_rows: 0,
+                removed_rows: 0,
             });
             let changed_range = Some(Anchor::min_max_range_for_buffer(self.buffer_id));
             let base_text_range = Some(0..self.base_text(cx).len());
@@ -1624,7 +1657,7 @@ impl BufferDiff {
     ) {
         let hunks = self
             .snapshot(cx)
-            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, buffer)
+            .hunks_intersecting_range(Anchor::min_max_range_for_buffer(buffer.remote_id()), buffer)
             .collect::<Vec<_>>();
         let Some(secondary) = self.secondary_diff.clone() else {
             return;
@@ -1652,11 +1685,11 @@ impl BufferDiff {
         language: Option<Arc<Language>>,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
+        let base_text = base_text.map(|t| text::LineEnding::normalize_arc(t));
         let prev_base_text = self.base_text(cx).as_rope().clone();
         let base_text_changed = base_text_change.is_some();
         let compute_base_text_edits = base_text_change == Some(true);
         let diff_options = build_diff_options(
-            None,
             language.as_ref().map(|l| l.name()),
             language.as_ref().map(|l| l.default_scope()),
             cx,
@@ -3948,5 +3981,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_set_base_text_with_crlf(cx: &mut gpui::TestAppContext) {
+        let base_text_crlf = "one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n";
+        let base_text_lf = "one\ntwo\nthree\nfour\nfive\n";
+        assert_ne!(base_text_crlf.len(), base_text_lf.len());
+
+        let buffer_text = "one\nTWO\nthree\nfour\nfive\n";
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            buffer_text.to_string(),
+        );
+        let buffer_snapshot = buffer.snapshot();
+
+        let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
+        diff.update(cx, |diff, cx| {
+            diff.set_base_text(
+                Some(Arc::from(base_text_crlf)),
+                None,
+                buffer_snapshot.clone(),
+                cx,
+            )
+        })
+        .await
+        .ok();
+        cx.run_until_parked();
+
+        let snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+        snapshot.buffer_point_to_base_text_range(Point::new(0, 0), &buffer_snapshot);
+        snapshot.buffer_point_to_base_text_range(Point::new(1, 0), &buffer_snapshot);
     }
 }

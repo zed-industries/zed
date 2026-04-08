@@ -14,7 +14,7 @@ jobs:
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -22,7 +22,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -31,7 +31,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 300
     - name: steps::setup_sccache
@@ -43,6 +43,8 @@ jobs:
         SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
+    - name: steps::cargo_build_visual_tests
+      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -58,7 +60,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -66,7 +68,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -79,7 +81,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than 250
     - name: steps::setup_sccache
@@ -111,7 +113,7 @@ jobs:
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -151,7 +153,7 @@ jobs:
     runs-on: namespace-profile-mac-large
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -159,7 +161,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -183,7 +185,7 @@ jobs:
       CXX: clang++
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -191,7 +193,7 @@ jobs:
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -216,7 +218,7 @@ jobs:
     runs-on: self-32vcpu-windows-2022
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_cargo_config
@@ -244,7 +246,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: run_tests::check_scripts::run_shellcheck
@@ -257,7 +259,7 @@ jobs:
       env:
         ACTIONLINT_BIN: ${{ steps.get_actionlint.outputs.executable }}
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -275,7 +277,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 25
@@ -291,6 +293,56 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 60
+  compliance_check:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    runs-on: namespace-profile-2x4-ubuntu-2404
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        fetch-depth: 0
+        ref: ${{ github.ref }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - id: run-compliance-check
+      name: release::compliance_check::run_compliance_check
+      run: |
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report
+      env:
+        GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+      continue-on-error: true
+    - name: '@actions/upload-artifact compliance-report.md'
+      if: always()
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: compliance-report.md
+        path: target/compliance-report.md
+        if-no-files-found: error
+    - name: send_compliance_slack_notification
+      if: always()
+      run: |
+        if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+            STATUS="✅ Compliance check passed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
+        else
+            STATUS="❌ Compliance check failed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
+        fi
+
+        curl -X POST -H 'Content-type: application/json' \
+            --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
+            "$SLACK_WEBHOOK"
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
+        COMPLIANCE_TAG: ${{ github.ref_name }}
+        ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
+    timeout-minutes: 60
   bundle_linux_aarch64:
     needs:
     - run_tests_linux
@@ -305,7 +357,7 @@ jobs:
       CXX: clang++-18
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -345,7 +397,7 @@ jobs:
       CXX: clang++-18
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -388,7 +440,7 @@ jobs:
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_node
@@ -433,7 +485,7 @@ jobs:
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_node
@@ -482,7 +534,7 @@ jobs:
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -527,7 +579,7 @@ jobs:
       TIMESTAMP_SERVER: http://timestamp.acs.microsoft.com
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::setup_sentry
@@ -611,22 +663,67 @@ jobs:
         echo "All expected assets are present in the release."
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        fetch-depth: 0
+        ref: ${{ github.ref }}
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - id: run-post-upload-compliance-check
+      name: release::validate_release_assets::run_post_upload_compliance_check
+      run: |
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report
+      env:
+        GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: '@actions/upload-artifact compliance-report.md'
+      if: always()
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: compliance-report.md
+        path: target/compliance-report.md
+        if-no-files-found: error
+        overwrite: true
+    - name: send_compliance_slack_notification
+      if: always()
+      run: |
+        if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+            STATUS="✅ Compliance check passed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
+        else
+            STATUS="❌ Compliance check failed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
+        fi
+
+        curl -X POST -H 'Content-type: application/json' \
+            --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
+            "$SLACK_WEBHOOK"
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-post-upload-compliance-check.outcome }}
+        COMPLIANCE_TAG: ${{ github.ref_name }}
+        ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
   auto_release_preview:
     needs:
     - validate_release_assets
     if: startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - id: get-app-token
+    - id: generate-token
       name: steps::authenticate_as_zippy
-      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
     - name: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
       run: gh release edit "$GITHUB_REF_NAME" --repo=zed-industries/zed --draft=false
       env:
-        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
   push_release_update_notification:
     needs:
     - create_draft_release

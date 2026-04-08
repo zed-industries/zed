@@ -20,27 +20,26 @@ use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
-use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
-use futures::stream;
 use futures::{
     FutureExt,
     channel::{mpsc, oneshot},
     future::Shared,
     stream::FuturesUnordered,
 };
+use futures::{StreamExt, stream};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
 };
 use heck::ToSnakeCase as _;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, Role, SelectedModel, Speed, StopReason, TokenUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, SelectedModel, Speed, StopReason,
+    TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -48,7 +47,6 @@ use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings, ToolPermissionMode, update_settings_file};
-use smol::stream::StreamExt;
 use std::{
     collections::BTreeMap,
     marker::PhantomData,
@@ -254,7 +252,7 @@ impl UserMessage {
                             )
                             .ok();
                         }
-                        MentionUri::PastedImage => {
+                        MentionUri::PastedImage { .. } => {
                             debug_panic!("pasted image URI should not be used in mention content")
                         }
                         MentionUri::Directory { .. } => {
@@ -294,9 +292,6 @@ impl UserMessage {
                             .ok();
                         }
                         MentionUri::Thread { .. } => {
-                            write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
-                        MentionUri::TextThread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }
                         MentionUri::Rule { .. } => {
@@ -1004,6 +999,7 @@ impl Thread {
             parent_thread_id: parent_thread.read(cx).id().clone(),
             depth: parent_thread.read(cx).depth() + 1,
         });
+        thread.inherit_parent_settings(parent_thread, cx);
         thread
     }
 
@@ -1045,6 +1041,10 @@ impl Thread {
             .default_model
             .as_ref()
             .and_then(|model| model.effort.clone());
+        let speed = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
@@ -1076,7 +1076,7 @@ impl Thread {
             model,
             summarization_model: None,
             thinking_enabled: enable_thinking,
-            speed: None,
+            speed,
             thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
@@ -1088,6 +1088,19 @@ impl Thread {
             ui_scroll_position: None,
             running_subagents: Vec::new(),
         }
+    }
+
+    /// Copies runtime-mutable settings from the parent thread so that
+    /// subagents start with the same configuration the user selected.
+    /// Every property that `set_*` propagates to `running_subagents`
+    /// should be inherited here as well.
+    fn inherit_parent_settings(&mut self, parent_thread: &Entity<Thread>, cx: &mut Context<Self>) {
+        let parent = parent_thread.read(cx);
+        self.speed = parent.speed;
+        self.thinking_enabled = parent.thinking_enabled;
+        self.thinking_effort = parent.thinking_effort.clone();
+        self.summarization_model = parent.summarization_model.clone();
+        self.profile_id = parent.profile_id.clone();
     }
 
     pub fn id(&self) -> &acp::SessionId {
@@ -1312,7 +1325,7 @@ impl Thread {
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         let mut thread = DbThread {
-            title: self.title(),
+            title: self.title().unwrap_or_default(),
             messages: self.messages.clone(),
             updated_at: self.updated_at,
             detailed_summary: self.summary.clone(),
@@ -1805,14 +1818,6 @@ impl Thread {
         cx.notify();
     }
 
-    #[cfg(feature = "eval")]
-    pub fn proceed(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.run_turn(cx)
-    }
-
     fn run_turn(
         &mut self,
         cx: &mut Context<Self>,
@@ -2107,7 +2112,7 @@ impl Thread {
         this.update(cx, |this, _cx| {
             this.pending_message()
                 .tool_results
-                .insert(tool_result.tool_use_id.clone(), tool_result);
+                .insert(tool_result.tool_use_id.clone(), tool_result)
         })?;
         Ok(())
     }
@@ -2207,15 +2212,15 @@ impl Thread {
                 raw_input,
                 json_parse_error,
             } => {
-                return Ok(Some(Task::ready(
-                    self.handle_tool_use_json_parse_error_event(
-                        id,
-                        tool_name,
-                        raw_input,
-                        json_parse_error,
-                        event_stream,
-                    ),
-                )));
+                return Ok(self.handle_tool_use_json_parse_error_event(
+                    id,
+                    tool_name,
+                    raw_input,
+                    json_parse_error,
+                    event_stream,
+                    cancellation_rx,
+                    cx,
+                ));
             }
             UsageUpdate(usage) => {
                 telemetry::event!(
@@ -2316,12 +2321,12 @@ impl Thread {
         if !tool_use.is_input_complete {
             if tool.supports_input_streaming() {
                 let running_turn = self.running_turn.as_mut()?;
-                if let Some(sender) = running_turn.streaming_tool_inputs.get(&tool_use.id) {
+                if let Some(sender) = running_turn.streaming_tool_inputs.get_mut(&tool_use.id) {
                     sender.send_partial(tool_use.input);
                     return None;
                 }
 
-                let (sender, tool_input) = ToolInputSender::channel();
+                let (mut sender, tool_input) = ToolInputSender::channel();
                 sender.send_partial(tool_use.input);
                 running_turn
                     .streaming_tool_inputs
@@ -2343,13 +2348,13 @@ impl Thread {
             }
         }
 
-        if let Some(sender) = self
+        if let Some(mut sender) = self
             .running_turn
             .as_mut()?
             .streaming_tool_inputs
             .remove(&tool_use.id)
         {
-            sender.send_final(tool_use.input);
+            sender.send_full(tool_use.input);
             return None;
         }
 
@@ -2422,10 +2427,12 @@ impl Thread {
         raw_input: Arc<str>,
         json_parse_error: String,
         event_stream: &ThreadEventStream,
-    ) -> LanguageModelToolResult {
+        cancellation_rx: watch::Receiver<bool>,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<LanguageModelToolResult>> {
         let tool_use = LanguageModelToolUse {
-            id: tool_use_id.clone(),
-            name: tool_name.clone(),
+            id: tool_use_id,
+            name: tool_name,
             raw_input: raw_input.to_string(),
             input: serde_json::json!({}),
             is_input_complete: true,
@@ -2438,14 +2445,43 @@ impl Thread {
             event_stream,
         );
 
-        let tool_output = format!("Error parsing input JSON: {json_parse_error}");
-        LanguageModelToolResult {
-            tool_use_id,
-            tool_name,
-            is_error: true,
-            content: LanguageModelToolResultContent::Text(tool_output.into()),
-            output: Some(serde_json::Value::String(raw_input.to_string())),
+        let tool = self.tool(tool_use.name.as_ref());
+
+        let Some(tool) = tool else {
+            let content = format!("No tool named {} exists", tool_use.name);
+            return Some(Task::ready(LanguageModelToolResult {
+                content: LanguageModelToolResultContent::Text(Arc::from(content)),
+                tool_use_id: tool_use.id,
+                tool_name: tool_use.name,
+                is_error: true,
+                output: None,
+            }));
+        };
+
+        let error_message = format!("Error parsing input JSON: {json_parse_error}");
+
+        if tool.supports_input_streaming()
+            && let Some(mut sender) = self
+                .running_turn
+                .as_mut()?
+                .streaming_tool_inputs
+                .remove(&tool_use.id)
+        {
+            sender.send_invalid_json(error_message);
+            return None;
         }
+
+        log::debug!("Running tool {}. Received invalid JSON", tool_use.name);
+        let tool_input = ToolInput::invalid_json(error_message);
+        Some(self.run_tool(
+            tool,
+            tool_input,
+            tool_use.id,
+            tool_use.name,
+            event_stream,
+            cancellation_rx,
+            cx,
+        ))
     }
 
     fn send_or_update_tool_use(
@@ -2491,8 +2527,8 @@ impl Thread {
         }
     }
 
-    pub fn title(&self) -> SharedString {
-        self.title.clone().unwrap_or("New Thread".into())
+    pub fn title(&self) -> Option<SharedString> {
+        self.title.clone()
     }
 
     pub fn is_generating_summary(&self) -> bool {
@@ -2699,6 +2735,13 @@ impl Thread {
         completion_intent: CompletionIntent,
         cx: &App,
     ) -> Result<LanguageModelRequest> {
+        let completion_intent =
+            if self.is_subagent() && completion_intent == CompletionIntent::UserPrompt {
+                CompletionIntent::Subagent
+            } else {
+                completion_intent
+            };
+
         let model = self.model().context("No language model configured")?;
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
@@ -3119,8 +3162,7 @@ impl EventEmitter<TitleUpdated> for Thread {}
 /// For streaming tools, partial JSON snapshots arrive via `.recv_partial()` as the LLM streams
 /// them, followed by the final complete input available through `.recv()`.
 pub struct ToolInput<T> {
-    partial_rx: mpsc::UnboundedReceiver<serde_json::Value>,
-    final_rx: oneshot::Receiver<serde_json::Value>,
+    rx: mpsc::UnboundedReceiver<ToolInputPayload<serde_json::Value>>,
     _phantom: PhantomData<T>,
 }
 
@@ -3132,13 +3174,20 @@ impl<T: DeserializeOwned> ToolInput<T> {
     }
 
     pub fn ready(value: serde_json::Value) -> Self {
-        let (partial_tx, partial_rx) = mpsc::unbounded();
-        drop(partial_tx);
-        let (final_tx, final_rx) = oneshot::channel();
-        final_tx.send(value).ok();
+        let (tx, rx) = mpsc::unbounded();
+        tx.unbounded_send(ToolInputPayload::Full(value)).ok();
         Self {
-            partial_rx,
-            final_rx,
+            rx,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub fn invalid_json(error_message: String) -> Self {
+        let (tx, rx) = mpsc::unbounded();
+        tx.unbounded_send(ToolInputPayload::InvalidJson { error_message })
+            .ok();
+        Self {
+            rx,
             _phantom: PhantomData,
         }
     }
@@ -3152,65 +3201,89 @@ impl<T: DeserializeOwned> ToolInput<T> {
     /// Wait for the final deserialized input, ignoring all partial updates.
     /// Non-streaming tools can use this to wait until the whole input is available.
     pub async fn recv(mut self) -> Result<T> {
-        // Drain any remaining partials
-        while self.partial_rx.next().await.is_some() {}
-        let value = self
-            .final_rx
-            .await
-            .map_err(|_| anyhow!("tool input was not fully received"))?;
-        serde_json::from_value(value).map_err(Into::into)
+        while let Ok(value) = self.next().await {
+            match value {
+                ToolInputPayload::Full(value) => return Ok(value),
+                ToolInputPayload::Partial(_) => {}
+                ToolInputPayload::InvalidJson { error_message } => {
+                    return Err(anyhow!(error_message));
+                }
+            }
+        }
+        Err(anyhow!("tool input was not fully received"))
     }
 
-    /// Returns the next partial JSON snapshot, or `None` when input is complete.
-    /// Once this returns `None`, call `recv()` to get the final input.
-    pub async fn recv_partial(&mut self) -> Option<serde_json::Value> {
-        self.partial_rx.next().await
+    pub async fn next(&mut self) -> Result<ToolInputPayload<T>> {
+        let value = self
+            .rx
+            .next()
+            .await
+            .ok_or_else(|| anyhow!("tool input was not fully received"))?;
+
+        Ok(match value {
+            ToolInputPayload::Partial(payload) => ToolInputPayload::Partial(payload),
+            ToolInputPayload::Full(payload) => {
+                ToolInputPayload::Full(serde_json::from_value(payload)?)
+            }
+            ToolInputPayload::InvalidJson { error_message } => {
+                ToolInputPayload::InvalidJson { error_message }
+            }
+        })
     }
 
     fn cast<U: DeserializeOwned>(self) -> ToolInput<U> {
         ToolInput {
-            partial_rx: self.partial_rx,
-            final_rx: self.final_rx,
+            rx: self.rx,
             _phantom: PhantomData,
         }
     }
 }
 
+pub enum ToolInputPayload<T> {
+    Partial(serde_json::Value),
+    Full(T),
+    InvalidJson { error_message: String },
+}
+
 pub struct ToolInputSender {
-    partial_tx: mpsc::UnboundedSender<serde_json::Value>,
-    final_tx: Option<oneshot::Sender<serde_json::Value>>,
+    has_received_final: bool,
+    tx: mpsc::UnboundedSender<ToolInputPayload<serde_json::Value>>,
 }
 
 impl ToolInputSender {
     pub(crate) fn channel() -> (Self, ToolInput<serde_json::Value>) {
-        let (partial_tx, partial_rx) = mpsc::unbounded();
-        let (final_tx, final_rx) = oneshot::channel();
+        let (tx, rx) = mpsc::unbounded();
         let sender = Self {
-            partial_tx,
-            final_tx: Some(final_tx),
+            tx,
+            has_received_final: false,
         };
         let input = ToolInput {
-            partial_rx,
-            final_rx,
+            rx,
             _phantom: PhantomData,
         };
         (sender, input)
     }
 
     pub(crate) fn has_received_final(&self) -> bool {
-        self.final_tx.is_none()
+        self.has_received_final
     }
 
-    pub(crate) fn send_partial(&self, value: serde_json::Value) {
-        self.partial_tx.unbounded_send(value).ok();
+    pub fn send_partial(&mut self, payload: serde_json::Value) {
+        self.tx
+            .unbounded_send(ToolInputPayload::Partial(payload))
+            .ok();
     }
 
-    pub(crate) fn send_final(mut self, value: serde_json::Value) {
-        // Close the partial channel so recv_partial() returns None
-        self.partial_tx.close_channel();
-        if let Some(final_tx) = self.final_tx.take() {
-            final_tx.send(value).ok();
-        }
+    pub fn send_full(&mut self, payload: serde_json::Value) {
+        self.has_received_final = true;
+        self.tx.unbounded_send(ToolInputPayload::Full(payload)).ok();
+    }
+
+    pub fn send_invalid_json(&mut self, error_message: String) {
+        self.has_received_final = true;
+        self.tx
+            .unbounded_send(ToolInputPayload::InvalidJson { error_message })
+            .ok();
     }
 }
 
@@ -4213,6 +4286,30 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_subagent_inherits_settings_at_creation(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_speed(Speed::Fast, cx);
+                thread.set_thinking_enabled(true, cx);
+                thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_profile(AgentProfileId("custom-profile".into()), cx);
+            });
+        });
+
+        let subagents = setup_parent_with_subagents(cx, &parent, 1);
+
+        cx.update(|cx| {
+            let sub = subagents[0].read(cx);
+            assert_eq!(sub.speed(), Some(Speed::Fast));
+            assert!(sub.thinking_enabled());
+            assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
+            assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
+        });
+    }
+
+    #[gpui::test]
     async fn test_set_speed_propagates_to_subagents(cx: &mut TestAppContext) {
         let (parent, _event_stream) = setup_thread_for_test(cx).await;
         let subagents = setup_parent_with_subagents(cx, &parent, 2);
@@ -4256,68 +4353,78 @@ mod tests {
     ) {
         let (thread, event_stream) = setup_thread_for_test(cx).await;
 
-        cx.update(|cx| {
-            thread.update(cx, |thread, _cx| {
-                let tool_use_id = LanguageModelToolUseId::from("test_tool_id");
-                let tool_name: Arc<str> = Arc::from("test_tool");
-                let raw_input: Arc<str> = Arc::from("{invalid json");
-                let json_parse_error = "expected value at line 1 column 1".to_string();
+        let tool_use_id = LanguageModelToolUseId::from("test_tool_id");
+        let tool_name: Arc<str> = Arc::from("test_tool");
+        let raw_input: Arc<str> = Arc::from("{invalid json");
+        let json_parse_error = "expected value at line 1 column 1".to_string();
 
-                // Call the function under test
-                let result = thread.handle_tool_use_json_parse_error_event(
-                    tool_use_id.clone(),
-                    tool_name.clone(),
-                    raw_input.clone(),
-                    json_parse_error,
-                    &event_stream,
-                );
+        let (_cancellation_tx, cancellation_rx) = watch::channel(false);
 
-                // Verify the result is an error
-                assert!(result.is_error);
-                assert_eq!(result.tool_use_id, tool_use_id);
-                assert_eq!(result.tool_name, tool_name);
-                assert!(matches!(
-                    result.content,
-                    LanguageModelToolResultContent::Text(_)
-                ));
+        let result = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    // Call the function under test
+                    thread
+                        .handle_tool_use_json_parse_error_event(
+                            tool_use_id.clone(),
+                            tool_name.clone(),
+                            raw_input.clone(),
+                            json_parse_error,
+                            &event_stream,
+                            cancellation_rx,
+                            cx,
+                        )
+                        .unwrap()
+                })
+            })
+            .await;
 
-                // Verify the tool use was added to the message content
-                {
-                    let last_message = thread.pending_message();
-                    assert_eq!(
-                        last_message.content.len(),
-                        1,
-                        "Should have one tool_use in content"
-                    );
+        // Verify the result is an error
+        assert!(result.is_error);
+        assert_eq!(result.tool_use_id, tool_use_id);
+        assert_eq!(result.tool_name, tool_name);
+        assert!(matches!(
+            result.content,
+            LanguageModelToolResultContent::Text(_)
+        ));
 
-                    match &last_message.content[0] {
-                        AgentMessageContent::ToolUse(tool_use) => {
-                            assert_eq!(tool_use.id, tool_use_id);
-                            assert_eq!(tool_use.name, tool_name);
-                            assert_eq!(tool_use.raw_input, raw_input.to_string());
-                            assert!(tool_use.is_input_complete);
-                            // Should fall back to empty object for invalid JSON
-                            assert_eq!(tool_use.input, json!({}));
-                        }
-                        _ => panic!("Expected ToolUse content"),
-                    }
-                }
-
-                // Insert the tool result (simulating what the caller does)
-                thread
-                    .pending_message()
-                    .tool_results
-                    .insert(result.tool_use_id.clone(), result);
-
-                // Verify the tool result was added
+        thread.update(cx, |thread, _cx| {
+            // Verify the tool use was added to the message content
+            {
                 let last_message = thread.pending_message();
                 assert_eq!(
-                    last_message.tool_results.len(),
+                    last_message.content.len(),
                     1,
-                    "Should have one tool_result"
+                    "Should have one tool_use in content"
                 );
-                assert!(last_message.tool_results.contains_key(&tool_use_id));
-            });
-        });
+
+                match &last_message.content[0] {
+                    AgentMessageContent::ToolUse(tool_use) => {
+                        assert_eq!(tool_use.id, tool_use_id);
+                        assert_eq!(tool_use.name, tool_name);
+                        assert_eq!(tool_use.raw_input, raw_input.to_string());
+                        assert!(tool_use.is_input_complete);
+                        // Should fall back to empty object for invalid JSON
+                        assert_eq!(tool_use.input, json!({}));
+                    }
+                    _ => panic!("Expected ToolUse content"),
+                }
+            }
+
+            // Insert the tool result (simulating what the caller does)
+            thread
+                .pending_message()
+                .tool_results
+                .insert(result.tool_use_id.clone(), result);
+
+            // Verify the tool result was added
+            let last_message = thread.pending_message();
+            assert_eq!(
+                last_message.tool_results.len(),
+                1,
+                "Should have one tool_result"
+            );
+            assert!(last_message.tool_results.contains_key(&tool_use_id));
+        })
     }
 }

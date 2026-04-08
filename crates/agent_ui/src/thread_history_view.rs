@@ -1,29 +1,27 @@
 use crate::thread_history::ThreadHistory;
-use crate::{AgentPanel, ConversationView, RemoveHistory, RemoveSelectedThread};
+use crate::{DEFAULT_THREAD_TITLE, RemoveHistory, RemoveSelectedThread};
 use acp_thread::AgentSessionInfo;
 use chrono::{Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
-    UniformListScrollHandle, WeakEntity, Window, uniform_list,
+    UniformListScrollHandle, Window, uniform_list,
 };
 use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    ElementId, HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip,
-    WithScrollbar, prelude::*,
+    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tab, Tooltip, WithScrollbar,
+    prelude::*,
 };
 
-const DEFAULT_TITLE: &SharedString = &SharedString::new_static("New Thread");
-
-pub(crate) fn thread_title(entry: &AgentSessionInfo) -> &SharedString {
+pub(crate) fn thread_title(entry: &AgentSessionInfo) -> SharedString {
     entry
         .title
-        .as_ref()
+        .clone()
         .filter(|title| !title.is_empty())
-        .unwrap_or(DEFAULT_TITLE)
+        .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into())
 }
 
 pub struct ThreadHistoryView {
@@ -203,7 +201,7 @@ impl ThreadHistoryView {
                 let mut candidates = Vec::with_capacity(entries.len());
 
                 for (idx, entry) in entries.iter().enumerate() {
-                    candidates.push(StringMatchCandidate::new(idx, thread_title(entry)));
+                    candidates.push(StringMatchCandidate::new(idx, &thread_title(entry)));
                 }
 
                 const MAX_MATCHES: usize = 100;
@@ -429,7 +427,7 @@ impl ThreadHistoryView {
             (_, None) => "—".to_string(),
         };
 
-        let title = thread_title(entry).clone();
+        let title = thread_title(entry);
         let full_date = entry_time
             .map(|time| {
                 EntryTimeFormat::DateAndTime.format_timestamp(time.timestamp(), self.local_timezone)
@@ -633,139 +631,6 @@ impl Render for ThreadHistoryView {
                                 )
                         }),
                 )
-            })
-    }
-}
-
-#[derive(IntoElement)]
-pub struct HistoryEntryElement {
-    entry: AgentSessionInfo,
-    conversation_view: WeakEntity<ConversationView>,
-    selected: bool,
-    hovered: bool,
-    supports_delete: bool,
-    on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
-}
-
-impl HistoryEntryElement {
-    pub fn new(entry: AgentSessionInfo, conversation_view: WeakEntity<ConversationView>) -> Self {
-        Self {
-            entry,
-            conversation_view,
-            selected: false,
-            hovered: false,
-            supports_delete: false,
-            on_hover: Box::new(|_, _, _| {}),
-        }
-    }
-
-    pub fn supports_delete(mut self, supports_delete: bool) -> Self {
-        self.supports_delete = supports_delete;
-        self
-    }
-
-    pub fn hovered(mut self, hovered: bool) -> Self {
-        self.hovered = hovered;
-        self
-    }
-
-    pub fn on_hover(mut self, on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
-        self.on_hover = Box::new(on_hover);
-        self
-    }
-}
-
-impl RenderOnce for HistoryEntryElement {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let id = ElementId::Name(self.entry.session_id.0.clone().into());
-        let title = thread_title(&self.entry).clone();
-        let formatted_time = self
-            .entry
-            .updated_at
-            .map(|timestamp| {
-                let now = chrono::Utc::now();
-                let duration = now.signed_duration_since(timestamp);
-
-                if duration.num_days() > 0 {
-                    format!("{}d", duration.num_days())
-                } else if duration.num_hours() > 0 {
-                    format!("{}h ago", duration.num_hours())
-                } else if duration.num_minutes() > 0 {
-                    format!("{}m ago", duration.num_minutes())
-                } else {
-                    "Just now".to_string()
-                }
-            })
-            .unwrap_or_else(|| "Unknown".to_string());
-
-        ListItem::new(id)
-            .rounded()
-            .toggle_state(self.selected)
-            .spacing(ListItemSpacing::Sparse)
-            .start_slot(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .justify_between()
-                    .child(Label::new(title).size(LabelSize::Small).truncate())
-                    .child(
-                        Label::new(formatted_time)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    ),
-            )
-            .on_hover(self.on_hover)
-            .end_slot::<IconButton>(if (self.hovered || self.selected) && self.supports_delete {
-                Some(
-                    IconButton::new("delete", IconName::Trash)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .tooltip(move |_window, cx| {
-                            Tooltip::for_action("Delete", &RemoveSelectedThread, cx)
-                        })
-                        .on_click({
-                            let conversation_view = self.conversation_view.clone();
-                            let session_id = self.entry.session_id.clone();
-
-                            move |_event, _window, cx| {
-                                if let Some(conversation_view) = conversation_view.upgrade() {
-                                    conversation_view.update(cx, |conversation_view, cx| {
-                                        conversation_view.delete_history_entry(&session_id, cx);
-                                    });
-                                }
-                            }
-                        }),
-                )
-            } else {
-                None
-            })
-            .on_click({
-                let conversation_view = self.conversation_view.clone();
-                let entry = self.entry;
-
-                move |_event, window, cx| {
-                    if let Some(workspace) = conversation_view
-                        .upgrade()
-                        .and_then(|view| view.read(cx).workspace().upgrade())
-                    {
-                        if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                            panel.update(cx, |panel, cx| {
-                                if let Some(agent) = panel.selected_agent() {
-                                    panel.load_agent_thread(
-                                        agent,
-                                        entry.session_id.clone(),
-                                        entry.work_dirs.clone(),
-                                        entry.title.clone(),
-                                        true,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            });
-                        }
-                    }
-                }
             })
     }
 }

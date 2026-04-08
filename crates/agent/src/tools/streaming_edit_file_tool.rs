@@ -2,6 +2,7 @@ use super::edit_file_tool::EditFileTool;
 use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
 use super::save_file_tool::SaveFileTool;
 use super::tool_edit_parser::{ToolEditEvent, ToolEditParser};
+use crate::ToolInputPayload;
 use crate::{
     AgentTool, Thread, ToolCallEventStream, ToolInput,
     edit_agent::{
@@ -12,7 +13,7 @@ use crate::{
 use acp_thread::Diff;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use collections::HashSet;
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
@@ -22,7 +23,10 @@ use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{DeserializeOwned, Error as _},
+};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -89,7 +93,11 @@ pub struct StreamingEditFileToolInput {
 
     /// List of edit operations to apply sequentially (required for 'edit' mode).
     /// Each edit finds `old_text` in the file and replaces it with `new_text`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_vec_or_json_string"
+    )]
     pub edits: Option<Vec<Edit>>,
 }
 
@@ -104,12 +112,13 @@ pub enum StreamingEditFileMode {
 }
 
 /// A single edit operation that replaces old text with new text
+/// Properly escape all text fields as valid JSON strings.
+/// Remember to escape special characters like newlines (`\n`) and quotes (`"`) in JSON strings.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct Edit {
     /// The exact text to find in the file. This will be matched using fuzzy matching
     /// to handle minor differences in whitespace or formatting.
     ///
-    /// Always include complete lines. Do not start or end mid-line.
     /// Be minimal with replacements:
     /// - For unique lines, include only those lines
     /// - For non-unique lines, include enough context to identify them
@@ -128,7 +137,7 @@ struct StreamingEditFileToolPartialInput {
     mode: Option<StreamingEditFileMode>,
     #[serde(default)]
     content: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_vec_or_json_string")]
     edits: Option<Vec<PartialEdit>>,
 }
 
@@ -138,6 +147,33 @@ pub struct PartialEdit {
     pub old_text: Option<String>,
     #[serde(default)]
     pub new_text: Option<String>,
+}
+
+/// Sometimes the model responds with a stringified JSON array of edits (`"[...]"`) instead of a regular array (`[...]`)
+fn deserialize_optional_vec_or_json_string<'de, T, D>(
+    deserializer: D,
+) -> Result<Option<Vec<T>>, D::Error>
+where
+    T: DeserializeOwned,
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum VecOrJsonString<T> {
+        Vec(Vec<T>),
+        String(String),
+    }
+
+    let value = Option::<VecOrJsonString<T>>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(VecOrJsonString::Vec(items)) => Ok(Some(items)),
+        Some(VecOrJsonString::String(string)) => serde_json::from_str::<Vec<T>>(&string)
+            .map(Some)
+            .map_err(|error| {
+                D::Error::custom(format!("failed to parse stringified edits array: {error}"))
+            }),
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -153,6 +189,10 @@ pub enum StreamingEditFileToolOutput {
     },
     Error {
         error: String,
+        #[serde(default)]
+        input_path: Option<PathBuf>,
+        #[serde(default)]
+        diff: String,
     },
 }
 
@@ -160,6 +200,8 @@ impl StreamingEditFileToolOutput {
     pub fn error(error: impl Into<String>) -> Self {
         Self::Error {
             error: error.into(),
+            input_path: None,
+            diff: String::new(),
         }
     }
 }
@@ -180,7 +222,24 @@ impl std::fmt::Display for StreamingEditFileToolOutput {
                     )
                 }
             }
-            StreamingEditFileToolOutput::Error { error } => write!(f, "{error}"),
+            StreamingEditFileToolOutput::Error {
+                error,
+                diff,
+                input_path,
+            } => {
+                write!(f, "{error}\n")?;
+                if let Some(input_path) = input_path
+                    && !diff.is_empty()
+                {
+                    write!(
+                        f,
+                        "Edited {}:\n\n```diff\n{diff}\n```",
+                        input_path.display()
+                    )
+                } else {
+                    write!(f, "No edits were made.")
+                }
+            }
         }
     }
 }
@@ -196,6 +255,14 @@ pub struct StreamingEditFileTool {
     thread: WeakEntity<Thread>,
     action_log: Entity<ActionLog>,
     language_registry: Arc<LanguageRegistry>,
+}
+
+enum EditSessionResult {
+    Completed(EditSession),
+    Failed {
+        error: String,
+        session: Option<EditSession>,
+    },
 }
 
 impl StreamingEditFileTool {
@@ -239,6 +306,158 @@ impl StreamingEditFileTool {
             self.project.update(cx, |project, cx| {
                 project.set_agent_location(Some(AgentLocation { buffer, position }), cx);
             });
+        }
+    }
+
+    async fn ensure_buffer_saved(&self, buffer: &Entity<Buffer>, cx: &mut AsyncApp) {
+        let format_on_save_enabled = buffer.read_with(cx, |buffer, cx| {
+            let settings = language_settings::LanguageSettings::for_buffer(buffer, cx);
+            settings.format_on_save != FormatOnSave::Off
+        });
+
+        if format_on_save_enabled {
+            self.project
+                .update(cx, |project, cx| {
+                    project.format(
+                        HashSet::from_iter([buffer.clone()]),
+                        LspFormatTarget::Buffers,
+                        false,
+                        FormatTrigger::Save,
+                        cx,
+                    )
+                })
+                .await
+                .log_err();
+        }
+
+        self.project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .log_err();
+
+        self.action_log.update(cx, |log, cx| {
+            log.buffer_edited(buffer.clone(), cx);
+        });
+    }
+
+    async fn process_streaming_edits(
+        &self,
+        input: &mut ToolInput<StreamingEditFileToolInput>,
+        event_stream: &ToolCallEventStream,
+        cx: &mut AsyncApp,
+    ) -> EditSessionResult {
+        let mut session: Option<EditSession> = None;
+        let mut last_partial: Option<StreamingEditFileToolPartialInput> = None;
+
+        loop {
+            futures::select! {
+                payload = input.next().fuse() => {
+                    match payload {
+                        Ok(payload) => match payload {
+                            ToolInputPayload::Partial(partial) => {
+                                if let Ok(parsed) = serde_json::from_value::<StreamingEditFileToolPartialInput>(partial) {
+                                    let path_complete = parsed.path.is_some()
+                                        && parsed.path.as_ref() == last_partial.as_ref().and_then(|partial| partial.path.as_ref());
+
+                                    last_partial = Some(parsed.clone());
+
+                                    if session.is_none()
+                                        && path_complete
+                                        && let StreamingEditFileToolPartialInput {
+                                            path: Some(path),
+                                            display_description: Some(display_description),
+                                            mode: Some(mode),
+                                            ..
+                                        } = &parsed
+                                    {
+                                        match EditSession::new(
+                                            PathBuf::from(path),
+                                            display_description,
+                                            *mode,
+                                            self,
+                                            event_stream,
+                                            cx,
+                                        )
+                                        .await
+                                        {
+                                            Ok(created_session) => session = Some(created_session),
+                                            Err(error) => {
+                                                log::error!("Failed to create edit session: {}", error);
+                                                return EditSessionResult::Failed {
+                                                    error,
+                                                    session: None,
+                                                };
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(current_session) = &mut session
+                                        && let Err(error) = current_session.process(parsed, self, event_stream, cx)
+                                    {
+                                        log::error!("Failed to process edit: {}", error);
+                                        return EditSessionResult::Failed { error, session };
+                                    }
+                                }
+                            }
+                            ToolInputPayload::Full(full_input) => {
+                                let mut session = if let Some(session) = session {
+                                    session
+                                } else {
+                                    match EditSession::new(
+                                        full_input.path.clone(),
+                                        &full_input.display_description,
+                                        full_input.mode,
+                                        self,
+                                        event_stream,
+                                        cx,
+                                    )
+                                    .await
+                                    {
+                                        Ok(created_session) => created_session,
+                                        Err(error) => {
+                                            log::error!("Failed to create edit session: {}", error);
+                                            return EditSessionResult::Failed {
+                                                error,
+                                                session: None,
+                                            };
+                                        }
+                                    }
+                                };
+
+                                return match session.finalize(full_input, self, event_stream, cx).await {
+                                    Ok(()) => EditSessionResult::Completed(session),
+                                    Err(error) => {
+                                        log::error!("Failed to finalize edit: {}", error);
+                                        EditSessionResult::Failed {
+                                            error,
+                                            session: Some(session),
+                                        }
+                                    }
+                                };
+                            }
+                            ToolInputPayload::InvalidJson { error_message } => {
+                                log::error!("Received invalid JSON: {error_message}");
+                                return EditSessionResult::Failed {
+                                    error: error_message,
+                                    session,
+                                };
+                            }
+                        },
+                        Err(error) => {
+                            return EditSessionResult::Failed {
+                                error: format!("Failed to receive tool input: {error}"),
+                                session,
+                            };
+                        }
+                    }
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    return EditSessionResult::Failed {
+                        error: "Edit cancelled by user".to_string(),
+                        session,
+                    };
+                }
+            }
         }
     }
 }
@@ -313,94 +532,40 @@ impl AgentTool for StreamingEditFileTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
         cx.spawn(async move |cx: &mut AsyncApp| {
-            let mut state: Option<EditSession> = None;
-            let mut last_partial: Option<StreamingEditFileToolPartialInput> = None;
-            loop {
-                futures::select! {
-                    partial = input.recv_partial().fuse() => {
-                        let Some(partial_value) = partial else { break };
-                        if let Ok(parsed) = serde_json::from_value::<StreamingEditFileToolPartialInput>(partial_value) {
-                            let path_complete = parsed.path.is_some()
-                                && parsed.path.as_ref() == last_partial.as_ref().and_then(|p| p.path.as_ref());
-
-                            last_partial = Some(parsed.clone());
-
-                            if state.is_none()
-                                && path_complete
-                                && let StreamingEditFileToolPartialInput {
-                                    path: Some(path),
-                                    display_description: Some(display_description),
-                                    mode: Some(mode),
-                                    ..
-                                } = &parsed
-                            {
-                                match EditSession::new(
-                                    &PathBuf::from(path),
-                                    display_description,
-                                    *mode,
-                                    &self,
-                                    &event_stream,
-                                    cx,
-                                )
-                                .await
-                                {
-                                    Ok(session) => state = Some(session),
-                                    Err(e) => {
-                                        log::error!("Failed to create edit session: {}", e);
-                                        return Err(e);
-                                    }
-                                }
-                            }
-
-                            if let Some(state) = &mut state {
-                                if let Err(e) = state.process(parsed, &self, &event_stream, cx) {
-                                    log::error!("Failed to process edit: {}", e);
-                                    return Err(e);
-                                }
-                            }
-                        }
-                    }
-                    _ = event_stream.cancelled_by_user().fuse() => {
-                        return Err(StreamingEditFileToolOutput::error("Edit cancelled by user"));
-                    }
-                }
-            }
-            let full_input =
-                input
-                    .recv()
-                    .await
-                    .map_err(|e| {
-                        let err = StreamingEditFileToolOutput::error(format!("Failed to receive tool input: {e}"));
-                        log::error!("Failed to receive tool input: {e}");
-                        err
-                    })?;
-
-            let mut state = if let Some(state) = state {
-                state
-            } else {
-                match EditSession::new(
-                    &full_input.path,
-                    &full_input.display_description,
-                    full_input.mode,
-                    &self,
-                    &event_stream,
-                    cx,
-                )
+            match self
+                .process_streaming_edits(&mut input, &event_stream, cx)
                 .await
-                {
-                    Ok(session) => session,
-                    Err(e) => {
-                        log::error!("Failed to create edit session: {}", e);
-                        return Err(e);
-                    }
+            {
+                EditSessionResult::Completed(session) => {
+                    self.ensure_buffer_saved(&session.buffer, cx).await;
+                    let (new_text, diff) = session.compute_new_text_and_diff(cx).await;
+                    Ok(StreamingEditFileToolOutput::Success {
+                        old_text: session.old_text.clone(),
+                        new_text,
+                        input_path: session.input_path,
+                        diff,
+                    })
                 }
-            };
-            match state.finalize(full_input, &self, &event_stream, cx).await {
-                Ok(output) => Ok(output),
-                Err(e) => {
-                    log::error!("Failed to finalize edit: {}", e);
-                    Err(e)
+                EditSessionResult::Failed {
+                    error,
+                    session: Some(session),
+                } => {
+                    self.ensure_buffer_saved(&session.buffer, cx).await;
+                    let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
+                    Err(StreamingEditFileToolOutput::Error {
+                        error,
+                        input_path: Some(session.input_path),
+                        diff,
+                    })
                 }
+                EditSessionResult::Failed {
+                    error,
+                    session: None,
+                } => Err(StreamingEditFileToolOutput::Error {
+                    error,
+                    input_path: None,
+                    diff: String::new(),
+                }),
             }
         })
     }
@@ -437,6 +602,7 @@ impl AgentTool for StreamingEditFileTool {
 
 pub struct EditSession {
     abs_path: PathBuf,
+    input_path: PathBuf,
     buffer: Entity<Buffer>,
     old_text: Arc<String>,
     diff: Entity<Diff>,
@@ -483,23 +649,21 @@ impl EditPipeline {
 
 impl EditSession {
     async fn new(
-        path: &PathBuf,
+        path: PathBuf,
         display_description: &str,
         mode: StreamingEditFileMode,
         tool: &StreamingEditFileTool,
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
-    ) -> Result<Self, StreamingEditFileToolOutput> {
-        let project_path = cx
-            .update(|cx| resolve_path(mode, &path, &tool.project, cx))
-            .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
+    ) -> Result<Self, String> {
+        let project_path = cx.update(|cx| resolve_path(mode, &path, &tool.project, cx))?;
 
         let Some(abs_path) = cx.update(|cx| tool.project.read(cx).absolute_path(&project_path, cx))
         else {
-            return Err(StreamingEditFileToolOutput::error(format!(
+            return Err(format!(
                 "Worktree at '{}' does not exist",
                 path.to_string_lossy()
-            )));
+            ));
         };
 
         event_stream.update_fields(
@@ -508,13 +672,13 @@ impl EditSession {
 
         cx.update(|cx| tool.authorize(&path, &display_description, event_stream, cx))
             .await
-            .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         let buffer = tool
             .project
             .update(cx, |project, cx| project.open_buffer(project_path, cx))
             .await
-            .map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?;
+            .map_err(|e| e.to_string())?;
 
         ensure_buffer_saved(&buffer, &abs_path, tool, cx)?;
 
@@ -543,6 +707,7 @@ impl EditSession {
 
         Ok(Self {
             abs_path,
+            input_path: path,
             buffer,
             old_text,
             diff,
@@ -559,22 +724,20 @@ impl EditSession {
         tool: &StreamingEditFileTool,
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
-    ) -> Result<StreamingEditFileToolOutput, StreamingEditFileToolOutput> {
-        let old_text = self.old_text.clone();
-
+    ) -> Result<(), String> {
         match input.mode {
             StreamingEditFileMode::Write => {
-                let content = input.content.ok_or_else(|| {
-                    StreamingEditFileToolOutput::error("'content' field is required for write mode")
-                })?;
+                let content = input
+                    .content
+                    .ok_or_else(|| "'content' field is required for write mode".to_string())?;
 
                 let events = self.parser.finalize_content(&content);
                 self.process_events(&events, tool, event_stream, cx)?;
             }
             StreamingEditFileMode::Edit => {
-                let edits = input.edits.ok_or_else(|| {
-                    StreamingEditFileToolOutput::error("'edits' field is required for edit mode")
-                })?;
+                let edits = input
+                    .edits
+                    .ok_or_else(|| "'edits' field is required for edit mode".to_string())?;
                 let events = self.parser.finalize_edits(&edits);
                 self.process_events(&events, tool, event_stream, cx)?;
 
@@ -590,57 +753,15 @@ impl EditSession {
                 }
             }
         }
+        Ok(())
+    }
 
-        let format_on_save_enabled = self.buffer.read_with(cx, |buffer, cx| {
-            let settings = language_settings::language_settings(
-                buffer.language().map(|l| l.name()),
-                buffer.file(),
-                cx,
-            );
-            settings.format_on_save != FormatOnSave::Off
-        });
-
-        if format_on_save_enabled {
-            tool.action_log.update(cx, |log, cx| {
-                log.buffer_edited(self.buffer.clone(), cx);
-            });
-
-            let format_task = tool.project.update(cx, |project, cx| {
-                project.format(
-                    HashSet::from_iter([self.buffer.clone()]),
-                    LspFormatTarget::Buffers,
-                    false,
-                    FormatTrigger::Save,
-                    cx,
-                )
-            });
-            futures::select! {
-                result = format_task.fuse() => { result.log_err(); },
-                _ = event_stream.cancelled_by_user().fuse() => {
-                    return Err(StreamingEditFileToolOutput::error("Edit cancelled by user"));
-                }
-            };
-        }
-
-        let save_task = tool.project.update(cx, |project, cx| {
-            project.save_buffer(self.buffer.clone(), cx)
-        });
-        futures::select! {
-            result = save_task.fuse() => { result.map_err(|e| StreamingEditFileToolOutput::error(e.to_string()))?; },
-            _ = event_stream.cancelled_by_user().fuse() => {
-                return Err(StreamingEditFileToolOutput::error("Edit cancelled by user"));
-            }
-        };
-
-        tool.action_log.update(cx, |log, cx| {
-            log.buffer_edited(self.buffer.clone(), cx);
-        });
-
+    async fn compute_new_text_and_diff(&self, cx: &mut AsyncApp) -> (String, String) {
         let new_snapshot = self.buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let (new_text, unified_diff) = cx
             .background_spawn({
                 let new_snapshot = new_snapshot.clone();
-                let old_text = old_text.clone();
+                let old_text = self.old_text.clone();
                 async move {
                     let new_text = new_snapshot.text();
                     let diff = language::unified_diff(&old_text, &new_text);
@@ -648,14 +769,7 @@ impl EditSession {
                 }
             })
             .await;
-
-        let output = StreamingEditFileToolOutput::Success {
-            input_path: input.path,
-            new_text,
-            old_text: old_text.clone(),
-            diff: unified_diff,
-        };
-        Ok(output)
+        (new_text, unified_diff)
     }
 
     fn process(
@@ -664,7 +778,7 @@ impl EditSession {
         tool: &StreamingEditFileTool,
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
-    ) -> Result<(), StreamingEditFileToolOutput> {
+    ) -> Result<(), String> {
         match &self.mode {
             StreamingEditFileMode::Write => {
                 if let Some(content) = &partial.content {
@@ -688,7 +802,7 @@ impl EditSession {
         tool: &StreamingEditFileTool,
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
-    ) -> Result<(), StreamingEditFileToolOutput> {
+    ) -> Result<(), String> {
         for event in events {
             match event {
                 ToolEditEvent::ContentChunk { chunk } => {
@@ -729,7 +843,7 @@ impl EditSession {
                     {
                         if let Some(match_range) = matcher.push(chunk, None) {
                             let anchor_range = self.buffer.read_with(cx, |buffer, _cx| {
-                                buffer.anchor_range_between(match_range.clone())
+                                buffer.anchor_range_outside(match_range.clone())
                             });
                             self.diff
                                 .update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
@@ -764,7 +878,7 @@ impl EditSession {
 
                     let anchor_range = self
                         .buffer
-                        .read_with(cx, |buffer, _cx| buffer.anchor_range_between(range.clone()));
+                        .read_with(cx, |buffer, _cx| buffer.anchor_range_outside(range.clone()));
                     self.diff
                         .update(cx, |diff, cx| diff.reveal_range(anchor_range, cx));
 
@@ -922,7 +1036,7 @@ fn apply_char_operations(
             }
             CharOperation::Delete { bytes } => {
                 let delete_end = *edit_cursor + bytes;
-                let anchor_range = snapshot.anchor_range_around(*edit_cursor..delete_end);
+                let anchor_range = snapshot.anchor_range_inside(*edit_cursor..delete_end);
                 agent_edit_buffer(&buffer, [(anchor_range, "")], action_log, cx);
                 *edit_cursor = delete_end;
             }
@@ -938,14 +1052,14 @@ fn extract_match(
     buffer: &Entity<Buffer>,
     edit_index: &usize,
     cx: &mut AsyncApp,
-) -> Result<Range<usize>, StreamingEditFileToolOutput> {
+) -> Result<Range<usize>, String> {
     match matches.len() {
-        0 => Err(StreamingEditFileToolOutput::error(format!(
+        0 => Err(format!(
             "Could not find matching text for edit at index {}. \
                 The old_text did not match any content in the file. \
                 Please read the file again to get the current content.",
             edit_index,
-        ))),
+        )),
         1 => Ok(matches.into_iter().next().unwrap()),
         _ => {
             let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
@@ -954,12 +1068,12 @@ fn extract_match(
                 .map(|r| (snapshot.offset_to_point(r.start).row + 1).to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            Err(StreamingEditFileToolOutput::error(format!(
+            Err(format!(
                 "Edit {} matched multiple locations in the file at lines: {}. \
                     Please provide more context in old_text to uniquely \
                     identify the location.",
                 edit_index, lines
-            )))
+            ))
         }
     }
 }
@@ -991,7 +1105,7 @@ fn ensure_buffer_saved(
     abs_path: &PathBuf,
     tool: &StreamingEditFileTool,
     cx: &mut AsyncApp,
-) -> Result<(), StreamingEditFileToolOutput> {
+) -> Result<(), String> {
     let last_read_mtime = tool
         .action_log
         .read_with(cx, |log, _| log.file_read_time(abs_path));
@@ -1032,15 +1146,14 @@ fn ensure_buffer_saved(
                          then ask them to save or revert the file manually and inform you when it's ok to proceed."
             }
         };
-        return Err(StreamingEditFileToolOutput::error(message));
+        return Err(message.to_string());
     }
 
     if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime) {
         if current != last_read {
-            return Err(StreamingEditFileToolOutput::error(
-                "The file has been modified since you last read it. \
-                             Please read the file again to get the current state before editing it.",
-            ));
+            return Err("The file has been modified since you last read it. \
+                    Please read the file again to get the current state before editing it."
+                .to_string());
         }
     }
 
@@ -1052,56 +1165,63 @@ fn resolve_path(
     path: &PathBuf,
     project: &Entity<Project>,
     cx: &mut App,
-) -> Result<ProjectPath> {
+) -> Result<ProjectPath, String> {
     let project = project.read(cx);
 
     match mode {
         StreamingEditFileMode::Edit => {
             let path = project
                 .find_project_path(&path, cx)
-                .context("Can't edit file: path not found")?;
+                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
 
             let entry = project
                 .entry_for_path(&path, cx)
-                .context("Can't edit file: path not found")?;
+                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
 
-            anyhow::ensure!(entry.is_file(), "Can't edit file: path is a directory");
-            Ok(path)
+            if entry.is_file() {
+                Ok(path)
+            } else {
+                Err("Can't edit file: path is a directory".to_string())
+            }
         }
         StreamingEditFileMode::Write => {
             if let Some(path) = project.find_project_path(&path, cx)
                 && let Some(entry) = project.entry_for_path(&path, cx)
             {
-                anyhow::ensure!(entry.is_file(), "Can't write to file: path is a directory");
-                return Ok(path);
+                if entry.is_file() {
+                    return Ok(path);
+                } else {
+                    return Err("Can't write to file: path is a directory".to_string());
+                }
             }
 
-            let parent_path = path.parent().context("Can't create file: incorrect path")?;
+            let parent_path = path
+                .parent()
+                .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
 
             let parent_project_path = project.find_project_path(&parent_path, cx);
 
             let parent_entry = parent_project_path
                 .as_ref()
                 .and_then(|path| project.entry_for_path(path, cx))
-                .context("Can't create file: parent directory doesn't exist")?;
+                .ok_or_else(|| "Can't create file: parent directory doesn't exist")?;
 
-            anyhow::ensure!(
-                parent_entry.is_dir(),
-                "Can't create file: parent is not a directory"
-            );
+            if !parent_entry.is_dir() {
+                return Err("Can't create file: parent is not a directory".to_string());
+            }
 
             let file_name = path
                 .file_name()
                 .and_then(|file_name| file_name.to_str())
                 .and_then(|file_name| RelPath::unix(file_name).ok())
-                .context("Can't create file: invalid filename")?;
+                .ok_or_else(|| "Can't create file: invalid filename".to_string())?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
                 path: parent.path.join(file_name),
                 ..parent
             });
 
-            new_file_path.context("Can't create file")
+            new_file_path.ok_or_else(|| "Can't create file".to_string())
         }
     }
 }
@@ -1351,10 +1471,17 @@ mod tests {
             })
             .await;
 
-        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+        let StreamingEditFileToolOutput::Error {
+            error,
+            diff,
+            input_path,
+        } = result.unwrap_err()
+        else {
             panic!("expected error");
         };
         assert_eq!(error, "Can't edit file: path not found");
+        assert!(diff.is_empty());
+        assert_eq!(input_path, None);
     }
 
     #[gpui::test]
@@ -1380,7 +1507,7 @@ mod tests {
             })
             .await;
 
-        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+        let StreamingEditFileToolOutput::Error { error, .. } = result.unwrap_err() else {
             panic!("expected error");
         };
         assert!(
@@ -1393,7 +1520,7 @@ mod tests {
     async fn test_streaming_early_buffer_open(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "line 1\nline 2\nline 3\n"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -1416,7 +1543,7 @@ mod tests {
         cx.run_until_parked();
 
         // Now send the final complete input
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
@@ -1434,7 +1561,7 @@ mod tests {
     async fn test_streaming_path_completeness_heuristic(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "hello world"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -1454,7 +1581,7 @@ mod tests {
         cx.run_until_parked();
 
         // Send final
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
@@ -1472,7 +1599,7 @@ mod tests {
     async fn test_streaming_cancellation_during_partials(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "hello world"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver, mut cancellation_tx) =
             ToolCallEventStream::test_with_cancellation();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
@@ -1490,7 +1617,7 @@ mod tests {
         drop(sender);
 
         let result = task.await;
-        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+        let StreamingEditFileToolOutput::Error { error, .. } = result.unwrap_err() else {
             panic!("expected error");
         };
         assert!(
@@ -1506,7 +1633,7 @@ mod tests {
             json!({"file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"}),
         )
         .await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -1547,7 +1674,7 @@ mod tests {
         cx.run_until_parked();
 
         // Send final complete input
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit",
@@ -1570,7 +1697,7 @@ mod tests {
     #[gpui::test]
     async fn test_streaming_create_file_with_partials(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) = setup_test(cx, json!({"dir": {}})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -1594,7 +1721,7 @@ mod tests {
         cx.run_until_parked();
 
         // Final with full content
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write",
@@ -1612,12 +1739,12 @@ mod tests {
     async fn test_streaming_no_partials_direct_final(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "line 1\nline 2\nline 3\n"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
         // Send final immediately with no partials (simulates non-streaming path)
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
@@ -1638,7 +1765,7 @@ mod tests {
             json!({"file.txt": "line 1\nline 2\nline 3\nline 4\nline 5\n"}),
         )
         .await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -1708,7 +1835,7 @@ mod tests {
         );
 
         // Send final complete input
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Edit multiple lines",
             "path": "root/file.txt",
             "mode": "edit",
@@ -1736,7 +1863,7 @@ mod tests {
     async fn test_streaming_incremental_three_edits(cx: &mut TestAppContext) {
         let (tool, project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "aaa\nbbb\nccc\nddd\neee\n"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -1804,7 +1931,7 @@ mod tests {
         assert_eq!(buffer_text.as_deref(), Some("AAA\nbbb\nCCC\nddd\nEEEeee\n"));
 
         // Send final
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Edit three lines",
             "path": "root/file.txt",
             "mode": "edit",
@@ -1826,7 +1953,7 @@ mod tests {
     async fn test_streaming_edit_failure_mid_stream(cx: &mut TestAppContext) {
         let (tool, project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "line 1\nline 2\nline 3\n"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -1862,16 +1989,17 @@ mod tests {
         }));
         cx.run_until_parked();
 
-        // Verify edit 1 was applied
-        let buffer_text = project.update(cx, |project, cx| {
+        let buffer = project.update(cx, |project, cx| {
             let pp = project
                 .find_project_path(&PathBuf::from("root/file.txt"), cx)
                 .unwrap();
-            project.get_open_buffer(&pp, cx).map(|b| b.read(cx).text())
+            project.get_open_buffer(&pp, cx).unwrap()
         });
+
+        // Verify edit 1 was applied
+        let buffer_text = buffer.read_with(cx, |buffer, _cx| buffer.text());
         assert_eq!(
-            buffer_text.as_deref(),
-            Some("MODIFIED\nline 2\nline 3\n"),
+            buffer_text, "MODIFIED\nline 2\nline 3\n",
             "First edit should be applied even though second edit will fail"
         );
 
@@ -1894,12 +2022,24 @@ mod tests {
         drop(sender);
 
         let result = task.await;
-        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+        let StreamingEditFileToolOutput::Error {
+            error,
+            diff,
+            input_path,
+        } = result.unwrap_err()
+        else {
             panic!("expected error");
         };
+
         assert!(
             error.contains("Could not find matching text for edit at index 1"),
             "Expected error about edit 1 failing, got: {error}"
+        );
+        // Ensure that first edit was applied successfully and that we saved the buffer
+        assert_eq!(input_path, Some(PathBuf::from("root/file.txt")));
+        assert_eq!(
+            diff,
+            "@@ -1,3 +1,3 @@\n-line 1\n+MODIFIED\n line 2\n line 3\n"
         );
     }
 
@@ -1907,7 +2047,7 @@ mod tests {
     async fn test_streaming_single_edit_no_incremental(cx: &mut TestAppContext) {
         let (tool, project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "hello world\n"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -1944,7 +2084,7 @@ mod tests {
         );
 
         // Send final — the edit is applied during finalization
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Single edit",
             "path": "root/file.txt",
             "mode": "edit",
@@ -1962,7 +2102,7 @@ mod tests {
     async fn test_streaming_input_partials_then_final(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "line 1\nline 2\nline 3\n"})).await;
-        let (sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
+        let (mut sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
             ToolInput::test();
         let (event_stream, _event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
@@ -1989,7 +2129,7 @@ mod tests {
         cx.run_until_parked();
 
         // Send the final complete input
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Edit lines",
             "path": "root/file.txt",
             "mode": "edit",
@@ -2007,7 +2147,7 @@ mod tests {
     async fn test_streaming_input_sender_dropped_before_final(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "hello world\n"})).await;
-        let (sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
+        let (mut sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
             ToolInput::test();
         let (event_stream, _event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
@@ -2033,7 +2173,7 @@ mod tests {
         // Create a channel and send multiple partials before a final, then use
         // ToolInput::resolved-style immediate delivery to confirm recv() works
         // when partials are already buffered.
-        let (sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
+        let (mut sender, input): (ToolInputSender, ToolInput<StreamingEditFileToolInput>) =
             ToolInput::test();
         let (event_stream, _event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
@@ -2046,7 +2186,7 @@ mod tests {
             "path": "root/dir/new.txt",
             "mode": "write"
         }));
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Create",
             "path": "root/dir/new.txt",
             "mode": "write",
@@ -2078,13 +2218,13 @@ mod tests {
 
         let result = test_resolve_path(&mode, "root/dir/subdir", cx);
         assert_eq!(
-            result.await.unwrap_err().to_string(),
+            result.await.unwrap_err(),
             "Can't write to file: path is a directory"
         );
 
         let result = test_resolve_path(&mode, "root/dir/nonexistent_dir/new.txt", cx);
         assert_eq!(
-            result.await.unwrap_err().to_string(),
+            result.await.unwrap_err(),
             "Can't create file: parent directory doesn't exist"
         );
     }
@@ -2102,14 +2242,11 @@ mod tests {
         assert_resolved_path_eq(result.await, rel_path(path_without_root));
 
         let result = test_resolve_path(&mode, "root/nonexistent.txt", cx);
-        assert_eq!(
-            result.await.unwrap_err().to_string(),
-            "Can't edit file: path not found"
-        );
+        assert_eq!(result.await.unwrap_err(), "Can't edit file: path not found");
 
         let result = test_resolve_path(&mode, "root/dir", cx);
         assert_eq!(
-            result.await.unwrap_err().to_string(),
+            result.await.unwrap_err(),
             "Can't edit file: path is a directory"
         );
     }
@@ -2118,7 +2255,7 @@ mod tests {
         mode: &StreamingEditFileMode,
         path: &str,
         cx: &mut TestAppContext,
-    ) -> anyhow::Result<ProjectPath> {
+    ) -> Result<ProjectPath, String> {
         init_test(cx);
 
         let fs = project::FakeFs::new(cx.executor());
@@ -2139,7 +2276,7 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &RelPath) {
+    fn assert_resolved_path_eq(path: Result<ProjectPath, String>, expected: &RelPath) {
         let actual = path.expect("Should return valid path").path;
         assert_eq!(actual.as_ref(), expected);
     }
@@ -2228,7 +2365,7 @@ mod tests {
         });
 
         // Use streaming pattern so executor can pump the LSP request/response
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
@@ -2240,7 +2377,7 @@ mod tests {
         }));
         cx.run_until_parked();
 
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Create main function",
             "path": "root/src/main.rs",
             "mode": "write",
@@ -2279,7 +2416,7 @@ mod tests {
             });
         });
 
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
 
         let tool2 = Arc::new(StreamingEditFileTool::new(
@@ -2298,7 +2435,7 @@ mod tests {
         }));
         cx.run_until_parked();
 
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Update main function",
             "path": "root/src/main.rs",
             "mode": "write",
@@ -2462,7 +2599,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // Test 4: Path with .zed in the middle should require confirmation
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -2509,7 +2646,7 @@ mod tests {
         cx.update(|cx| tool.authorize(&PathBuf::from("/etc/hosts"), "test 5.2", &stream_tx, cx))
             .await
             .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // 5.3: Normal in-project path with allow — no confirmation needed
         let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -2523,7 +2660,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(stream_rx.try_next().is_err());
+        assert!(stream_rx.try_recv().is_err());
 
         // 5.4: With Confirm default, non-project paths still prompt
         cx.update(|cx| {
@@ -2581,7 +2718,10 @@ mod tests {
 
         event
             .response
-            .send(acp::PermissionOptionId::new("allow").into())
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
         authorize_task.await.unwrap();
     }
@@ -2733,8 +2873,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                stream_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                stream_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );
@@ -2776,7 +2916,7 @@ mod tests {
             } else {
                 auth.await.unwrap();
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -2853,7 +2993,7 @@ mod tests {
             } else {
                 auth.await.unwrap();
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -2913,7 +3053,7 @@ mod tests {
                 stream_rx.expect_authorization().await;
             } else {
                 assert!(
-                    stream_rx.try_next().is_err(),
+                    stream_rx.try_recv().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
@@ -2981,7 +3121,7 @@ mod tests {
             })
             .await
             .unwrap();
-            assert!(stream_rx.try_next().is_err());
+            assert!(stream_rx.try_recv().is_err());
         }
     }
 
@@ -3254,14 +3394,22 @@ mod tests {
             })
             .await;
 
-        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+        let StreamingEditFileToolOutput::Error {
+            error,
+            diff,
+            input_path,
+        } = result.unwrap_err()
+        else {
             panic!("expected error");
         };
+
         assert!(
             error.contains("has been modified since you last read it"),
             "Error should mention file modification, got: {}",
             error
         );
+        assert!(diff.is_empty());
+        assert!(input_path.is_none());
     }
 
     #[gpui::test]
@@ -3328,7 +3476,12 @@ mod tests {
             })
             .await;
 
-        let StreamingEditFileToolOutput::Error { error } = result.unwrap_err() else {
+        let StreamingEditFileToolOutput::Error {
+            error,
+            diff,
+            input_path,
+        } = result.unwrap_err()
+        else {
             panic!("expected error");
         };
         assert!(
@@ -3346,6 +3499,8 @@ mod tests {
             "Error should ask user to manually save or revert when tools aren't available, got: {}",
             error
         );
+        assert!(diff.is_empty());
+        assert!(input_path.is_none());
     }
 
     #[gpui::test]
@@ -3356,7 +3511,7 @@ mod tests {
         // the modified buffer and succeeds.
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "aaa\nbbb\nccc\nddd\neee\n"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -3386,7 +3541,7 @@ mod tests {
         cx.run_until_parked();
 
         // Send the final input with all three edits.
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Overlapping edits",
             "path": "root/file.txt",
             "mode": "edit",
@@ -3407,7 +3562,7 @@ mod tests {
     #[gpui::test]
     async fn test_streaming_create_content_streamed(cx: &mut TestAppContext) {
         let (tool, project, _action_log, _fs, _thread) = setup_test(cx, json!({"dir": {}})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -3461,7 +3616,7 @@ mod tests {
         );
 
         // Send final input
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Create new file",
             "path": "root/dir/new_file.txt",
             "mode": "write",
@@ -3482,7 +3637,7 @@ mod tests {
             json!({"file.txt": "old line 1\nold line 2\nold line 3\n"}),
         )
         .await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -3525,7 +3680,7 @@ mod tests {
         });
 
         // Send final input
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
@@ -3553,7 +3708,7 @@ mod tests {
             json!({"file.txt": "old line 1\nold line 2\nold line 3\n"}),
         )
         .await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -3600,7 +3755,7 @@ mod tests {
         );
 
         // Send final input with complete content
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Overwrite file",
             "path": "root/file.txt",
             "mode": "write",
@@ -3622,7 +3777,7 @@ mod tests {
     async fn test_streaming_edit_json_fixer_escape_corruption(cx: &mut TestAppContext) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "hello\nworld\nfoo\n"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -3656,7 +3811,7 @@ mod tests {
         cx.run_until_parked();
 
         // Send final.
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Edit",
             "path": "root/file.txt",
             "mode": "edit",
@@ -3668,6 +3823,35 @@ mod tests {
             panic!("expected success");
         };
         assert_eq!(new_text, "HELLO\nWORLD\nfoo\n");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_final_input_stringified_edits_succeeds(cx: &mut TestAppContext) {
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "hello\nworld\n"})).await;
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_partial(json!({
+            "display_description": "Edit",
+            "path": "root/file.txt",
+            "mode": "edit"
+        }));
+        cx.run_until_parked();
+
+        sender.send_full(json!({
+            "display_description": "Edit",
+            "path": "root/file.txt",
+            "mode": "edit",
+            "edits": "[{\"old_text\": \"hello\\nworld\", \"new_text\": \"HELLO\\nWORLD\"}]"
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "HELLO\nWORLD\n");
     }
 
     // Verifies that after streaming_edit_file_tool edits a file, the action log
@@ -3760,7 +3944,7 @@ mod tests {
     ) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "old_content"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -3786,7 +3970,7 @@ mod tests {
         cx.run_until_parked();
 
         // Send final.
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Overwrite file",
             "mode": "write",
             "content": "new_content",
@@ -3806,7 +3990,7 @@ mod tests {
     ) {
         let (tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "old_content"})).await;
-        let (sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
         let (event_stream, _receiver) = ToolCallEventStream::test();
         let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
 
@@ -3839,7 +4023,7 @@ mod tests {
         cx.run_until_parked();
 
         // Send final.
-        sender.send_final(json!({
+        sender.send_full(json!({
             "display_description": "Overwrite file",
             "mode": "edit",
             "edits": [{"old_text": "old_content", "new_text": "new_content"}],
@@ -3852,6 +4036,97 @@ mod tests {
             panic!("expected success");
         };
         assert_eq!(new_text, "new_content");
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_partial_last_line(cx: &mut TestAppContext) {
+        let file_content = indoc::indoc! {r#"
+            fn on_query_change(&mut self, cx: &mut Context<Self>) {
+                self.filter(cx);
+            }
+
+
+
+            fn render_search(&self, cx: &mut Context<Self>) -> Div {
+                div()
+            }
+        "#}
+        .to_string();
+
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": file_content})).await;
+
+        // The model sends old_text with a PARTIAL last line.
+        let old_text = "}\n\n\n\nfn render_search";
+        let new_text = "}\n\nfn render_search";
+
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_full(json!({
+            "display_description": "Remove extra blank lines",
+            "path": "root/file.rs",
+            "mode": "edit",
+            "edits": [{"old_text": old_text, "new_text": new_text}]
+        }));
+
+        let result = task.await;
+        let StreamingEditFileToolOutput::Success {
+            new_text: final_text,
+            ..
+        } = result.unwrap()
+        else {
+            panic!("expected success");
+        };
+
+        // The edit should reduce 3 blank lines to 1 blank line before
+        // fn render_search, without duplicating the function signature.
+        let expected = file_content.replace("}\n\n\n\nfn render_search", "}\n\nfn render_search");
+        pretty_assertions::assert_eq!(
+            final_text,
+            expected,
+            "Edit should only remove blank lines before render_search"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_preserves_blank_line_after_trailing_newline_replacement(
+        cx: &mut TestAppContext,
+    ) {
+        let file_content = "before\ntarget\n\nafter\n";
+        let old_text = "target\n";
+        let new_text = "one\ntwo\ntarget\n";
+        let expected = "before\none\ntwo\ntarget\n\nafter\n";
+
+        let (tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.rs": file_content})).await;
+        let (mut sender, input) = ToolInput::<StreamingEditFileToolInput>::test();
+        let (event_stream, _receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.clone().run(input, event_stream, cx));
+
+        sender.send_full(json!({
+            "display_description": "description",
+            "path": "root/file.rs",
+            "mode": "edit",
+            "edits": [{"old_text": old_text, "new_text": new_text}]
+        }));
+
+        let result = task.await;
+
+        let StreamingEditFileToolOutput::Success {
+            new_text: final_text,
+            ..
+        } = result.unwrap()
+        else {
+            panic!("expected success");
+        };
+
+        pretty_assertions::assert_eq!(
+            final_text,
+            expected,
+            "Edit should preserve a single blank line before test_after"
+        );
     }
 
     #[gpui::test]

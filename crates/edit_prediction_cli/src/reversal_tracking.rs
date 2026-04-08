@@ -2,8 +2,8 @@ use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
 
-use edit_prediction::udiff::apply_diff_to_string;
 use language::{char_diff, text_diff};
+use zeta_prompt::udiff::apply_diff_to_string;
 
 use zeta_prompt::ZetaPromptInput;
 
@@ -653,9 +653,9 @@ pub fn compute_prediction_reversal_ratio(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use edit_prediction::udiff::apply_diff_to_string;
     use indoc::indoc;
     use zeta_prompt::ExcerptRanges;
+    use zeta_prompt::udiff::apply_diff_to_string;
 
     fn make_test_prompt_inputs(
         content: &str,

@@ -4,13 +4,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use crate::DEFAULT_THREAD_TITLE;
 use crate::ThreadHistory;
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::Result;
-use editor::{
-    CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
-};
+use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
@@ -27,7 +26,7 @@ use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
 use settings::{Settings, TerminalDockPosition};
 use terminal::terminal_settings::TerminalSettings;
-use terminal_view::terminal_panel::TerminalPanel;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{Anchor, ToOffset as _, ToPoint as _};
 use ui::IconName;
 use ui::prelude::*;
@@ -192,7 +191,7 @@ pub struct EntryMatch {
 fn session_title(title: Option<SharedString>) -> SharedString {
     title
         .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| SharedString::new_static("New Thread"))
+        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE))
 }
 
 #[derive(Debug, Clone)]
@@ -561,8 +560,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .collect();
 
                 // Collect terminal selections from all terminal views if the terminal panel is visible
-                let terminal_selections: Vec<String> =
-                    terminal_selections_if_panel_open(workspace, cx);
+                let terminal_selections: Vec<String> = terminal_selections(workspace, cx);
 
                 const EDITOR_PLACEHOLDER: &str = "selection ";
                 const TERMINAL_PLACEHOLDER: &str = "terminal ";
@@ -621,7 +619,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                 for (terminal_text, terminal_range) in terminal_ranges {
                                     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
                                     let Some(start) =
-                                        snapshot.as_singleton_anchor(source_range.start)
+                                        snapshot.anchor_in_excerpt(source_range.start)
                                     else {
                                         return;
                                     };
@@ -873,7 +871,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let project = workspace.read(cx).project().clone();
         let repo = project.read(cx).active_repository(cx)?;
 
-        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(false));
+        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(true));
 
         Some(cx.spawn(async move |_cx| {
             let base_ref = default_branch_receiver
@@ -1098,11 +1096,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
+            && let Some(title) = thread.read(cx).title()
         {
-            let thread = thread.read(cx);
             mentions.insert(MentionUri::Thread {
-                id: thread.session_id().clone(),
-                name: thread.title().into(),
+                id: thread.read(cx).session_id().clone(),
+                name: title.to_string(),
             });
         }
 
@@ -1197,7 +1195,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 })
             });
 
-        let has_terminal_selection = !terminal_selections_if_panel_open(workspace, cx).is_empty();
+        let has_terminal_selection = !terminal_selections(workspace, cx).is_empty();
 
         if has_editor_selection || has_terminal_selection {
             entries.push(PromptContextEntry::Action(
@@ -1235,7 +1233,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletionProvider<T> {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
@@ -2147,7 +2144,7 @@ fn build_code_label_for_path(
         .theme()
         .syntax()
         .highlight_id("variable")
-        .map(HighlightId);
+        .map(HighlightId::new);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file, None);
@@ -2168,28 +2165,45 @@ fn build_code_label_for_path(
     label.build()
 }
 
-/// Returns terminal selections from all terminal views if the terminal panel is open.
-fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
-    let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-        return Vec::new();
-    };
+fn terminal_selections(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
+    let mut selections = Vec::new();
 
-    // Check if the dock containing this panel is open
-    let position = match TerminalSettings::get_global(cx).dock {
-        TerminalDockPosition::Left => DockPosition::Left,
-        TerminalDockPosition::Bottom => DockPosition::Bottom,
-        TerminalDockPosition::Right => DockPosition::Right,
-    };
-    let dock_is_open = workspace
+    // Check if the active item is a terminal (in a panel or not)
+    if let Some(terminal_view) = workspace
         .read(cx)
-        .dock_at_position(position)
-        .read(cx)
-        .is_open();
-    if !dock_is_open {
-        return Vec::new();
+        .active_item(cx)
+        .and_then(|item| item.act_as::<TerminalView>(cx))
+    {
+        if let Some(text) = terminal_view
+            .read(cx)
+            .terminal()
+            .read(cx)
+            .last_content
+            .selection_text
+            .clone()
+            .filter(|text| !text.is_empty())
+        {
+            selections.push(text);
+        }
     }
 
-    panel.read(cx).terminal_selections(cx)
+    if let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) {
+        let position = match TerminalSettings::get_global(cx).dock {
+            TerminalDockPosition::Left => DockPosition::Left,
+            TerminalDockPosition::Bottom => DockPosition::Bottom,
+            TerminalDockPosition::Right => DockPosition::Right,
+        };
+        let dock_is_open = workspace
+            .read(cx)
+            .dock_at_position(position)
+            .read(cx)
+            .is_open();
+        if dock_is_open {
+            selections.extend(panel.read(cx).terminal_selections(cx));
+        }
+    }
+
+    selections
 }
 
 fn selection_ranges(
@@ -2212,17 +2226,8 @@ fn selection_ranges(
 
         selections
             .into_iter()
-            .map(|s| {
-                let (start, end) = if s.is_empty() {
-                    let row = multi_buffer::MultiBufferRow(s.start.row);
-                    let line_start = text::Point::new(s.start.row, 0);
-                    let line_end = text::Point::new(s.start.row, snapshot.line_len(row));
-                    (line_start, line_end)
-                } else {
-                    (s.start, s.end)
-                };
-                snapshot.anchor_after(start)..snapshot.anchor_before(end)
-            })
+            .filter(|s| !s.is_empty())
+            .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
             .flat_map(|range| {
                 let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
                 let (end_buffer, end) = buffer.text_anchor_for_position(range.end, cx)?;
@@ -2576,7 +2581,7 @@ mod tests {
 
         let app_state = cx.update(|cx| {
             let state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             state
         });

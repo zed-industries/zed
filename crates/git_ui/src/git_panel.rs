@@ -2,6 +2,7 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
+use crate::git_panel_settings::GitPanelScrollbarAccessor;
 use crate::project_diff::{self, BranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
@@ -13,7 +14,6 @@ use agent_settings::AgentSettings;
 use alacritty_terminal::vte::ansi;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use cloud_llm_client::CompletionIntent;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KeyValueStore;
 use editor::{
@@ -45,10 +45,11 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
 };
 use menu;
-use multi_buffer::ExcerptInfo;
+use multi_buffer::ExcerptBoundaryInfo;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{PanelHeader, panel_button, panel_filled_button, panel_icon_button};
 use project::{
@@ -66,7 +67,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
     ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
@@ -259,7 +260,6 @@ pub enum Event {
 
 #[derive(Serialize, Deserialize)]
 struct SerializedGitPanel {
-    width: Option<Pixels>,
     #[serde(default)]
     amend_pending: bool,
     #[serde(default)]
@@ -646,7 +646,6 @@ pub struct GitPanel {
     tracked_count: usize,
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
-    width: Option<Pixels>,
     pub(crate) workspace: WeakEntity<Workspace>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
@@ -782,7 +781,7 @@ impl GitPanel {
                 move |this, _git_store, event, window, cx| match event {
                     GitStoreEvent::RepositoryUpdated(
                         _,
-                        RepositoryEvent::StatusesChanged | RepositoryEvent::BranchChanged,
+                        RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
                         true,
                     )
                     | GitStoreEvent::RepositoryAdded
@@ -833,7 +832,6 @@ impl GitPanel {
                 tracked_count: 0,
                 tracked_staged_count: 0,
                 update_visible_entries_task: Task::ready(()),
-                width: None,
                 show_placeholders: false,
                 local_committer: None,
                 local_committer_task: None,
@@ -926,7 +924,6 @@ impl GitPanel {
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
-        let width = self.width;
         let amend_pending = self.amend_pending;
         let signoff_enabled = self.signoff_enabled;
         let kvp = KeyValueStore::global(cx);
@@ -953,7 +950,6 @@ impl GitPanel {
                     kvp.write_kvp(
                         serialization_key,
                         serde_json::to_string(&SerializedGitPanel {
-                            width,
                             amend_pending,
                             signoff_enabled,
                         })?,
@@ -976,16 +972,11 @@ impl GitPanel {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("GitPanel");
 
-        if window
-            .focused(cx)
-            .is_some_and(|focused| self.focus_handle == focused)
-        {
-            dispatch_context.add("menu");
-            dispatch_context.add("ChangesList");
-        }
-
         if self.commit_editor.read(cx).is_focused(window) {
             dispatch_context.add("CommitEditor");
+        } else if self.focus_handle.contains_focused(window, cx) {
+            dispatch_context.add("menu");
+            dispatch_context.add("ChangesList");
         }
 
         dispatch_context
@@ -2165,6 +2156,7 @@ impl GitPanel {
                 CommitOptions {
                     amend: false,
                     signoff: self.signoff_enabled,
+                    allow_empty: false,
                 },
                 window,
                 cx,
@@ -2205,6 +2197,7 @@ impl GitPanel {
                         CommitOptions {
                             amend: true,
                             signoff: self.signoff_enabled,
+                            allow_empty: false,
                         },
                         window,
                         cx,
@@ -2277,6 +2270,7 @@ impl GitPanel {
                 RewrapOptions {
                     override_language_settings: false,
                     preserve_existing_whitespace: true,
+                    line_length: None,
                 },
                 cx,
             );
@@ -4463,7 +4457,11 @@ impl GitPanel {
                         git_panel
                             .update(cx, |git_panel, cx| {
                                 git_panel.commit_changes(
-                                    CommitOptions { amend, signoff },
+                                    CommitOptions {
+                                        amend,
+                                        signoff,
+                                        allow_empty: false,
+                                    },
                                     window,
                                     cx,
                                 );
@@ -4529,7 +4527,7 @@ impl GitPanel {
 
     fn render_previous_commit(
         &self,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.as_ref()?;
@@ -4614,18 +4612,16 @@ impl GitPanel {
                                     ),
                             )
                         })
-                        .when(window.is_action_available(&Open, cx), |this| {
-                            this.child(
-                                panel_icon_button("git-graph-button", IconName::GitGraph)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(|_window, cx| {
-                                        Tooltip::for_action("Open Git Graph", &Open, cx)
-                                    })
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(Open.boxed_clone(), cx)
-                                    }),
-                            )
-                        }),
+                        .child(
+                            panel_icon_button("git-graph-button", IconName::GitGraph)
+                                .icon_size(IconSize::Small)
+                                .tooltip(|_window, cx| {
+                                    Tooltip::for_action("Open Git Graph", &Open, cx)
+                                })
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Open.boxed_clone(), cx)
+                                }),
+                        ),
                 ),
         )
     }
@@ -4893,7 +4889,7 @@ impl GitPanel {
                         }),
                     )
                     .custom_scrollbars(
-                        Scrollbars::for_settings::<GitPanelSettings>()
+                        Scrollbars::for_settings::<GitPanelScrollbarAccessor>()
                             .tracked_scroll_handle(&self.scroll_handle)
                             .with_track_along(
                                 ScrollAxes::Horizontal,
@@ -5158,7 +5154,9 @@ impl GitPanel {
                         }),
                 )
             })
-            .child(git_status_icon(status))
+            .when(status_style != StatusStyle::LabelColor, |el| {
+                el.child(git_status_icon(status))
+            })
             .map(|this| {
                 if tree_view {
                     this.pl(px(depth as f32 * TREE_INDENT)).child(
@@ -5567,7 +5565,6 @@ impl GitPanel {
 
             if let Some(serialized_panel) = serialized_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width;
                     panel.amend_pending = serialized_panel.amend_pending;
                     panel.signoff_enabled = serialized_panel.signoff_enabled;
                     cx.notify();
@@ -5760,11 +5757,12 @@ impl editor::Addon for GitPanelAddon {
 
     fn render_buffer_header_controls(
         &self,
-        excerpt_info: &ExcerptInfo,
+        _excerpt_info: &ExcerptBoundaryInfo,
+        buffer: &language::BufferSnapshot,
         window: &Window,
         cx: &App,
     ) -> Option<AnyElement> {
-        let file = excerpt_info.buffer.file()?;
+        let file = buffer.file()?;
         let git_panel = self.workspace.upgrade()?.read(cx).panel::<GitPanel>(cx)?;
 
         git_panel
@@ -5796,15 +5794,8 @@ impl Panel for GitPanel {
         });
     }
 
-    fn size(&self, _: &Window, cx: &App) -> Pixels {
-        self.width
-            .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut Context<Self>) {
-        self.width = size;
-        self.serialize(cx);
-        cx.notify();
+    fn default_size(&self, _: &Window, cx: &App) -> Pixels {
+        GitPanelSettings::get_global(cx).default_width
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
@@ -5832,7 +5823,7 @@ impl Panel for GitPanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        2
+        3
     }
 }
 
@@ -6518,7 +6509,7 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
     use indoc::indoc;
     use project::FakeFs;
     use serde_json::json;
@@ -6537,7 +6528,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(LoadThemes::JustBase, cx);
+            theme_settings::init(LoadThemes::JustBase, cx);
             editor::init(cx);
             crate::init(cx);
         });
@@ -7922,5 +7913,134 @@ mod tests {
             processor.advance(&mut handler, input.as_bytes());
             assert_eq!(handler.output, expected);
         }
+    }
+
+    #[gpui::test]
+    async fn test_dispatch_context_with_focus_states(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked", "old tracked\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        // Case 1: Focus the commit editor — should have "CommitEditor" but NOT "menu"/"ChangesList"
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_editor(&FocusEditor, window, cx);
+            let editor_is_focused = panel.commit_editor.read(cx).is_focused(window);
+            assert!(
+                editor_is_focused,
+                "commit editor should be focused after focus_editor action"
+            );
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("GitPanel"),
+                "should always have GitPanel context"
+            );
+            assert!(
+                context.contains("CommitEditor"),
+                "should have CommitEditor context when commit editor is focused"
+            );
+            assert!(
+                !context.contains("menu"),
+                "should not have menu context when commit editor is focused"
+            );
+            assert!(
+                !context.contains("ChangesList"),
+                "should not have ChangesList context when commit editor is focused"
+            );
+        });
+
+        // Case 2: Focus the panel's focus handle directly — should have "menu" and "ChangesList".
+        // We force a draw via simulate_resize to ensure the dispatch tree is populated,
+        // since contains_focused() depends on the rendered dispatch tree.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_handle.focus(window, cx);
+        });
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+
+        panel.update_in(cx, |panel, window, cx| {
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("GitPanel"),
+                "should always have GitPanel context"
+            );
+            assert!(
+                context.contains("menu"),
+                "should have menu context when changes list is focused"
+            );
+            assert!(
+                context.contains("ChangesList"),
+                "should have ChangesList context when changes list is focused"
+            );
+            assert!(
+                !context.contains("CommitEditor"),
+                "should not have CommitEditor context when changes list is focused"
+            );
+        });
+
+        // Case 3: Switch back to commit editor and verify context switches correctly
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_editor(&FocusEditor, window, cx);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("CommitEditor"),
+                "should have CommitEditor after switching focus back to editor"
+            );
+            assert!(
+                !context.contains("menu"),
+                "should not have menu after switching focus back to editor"
+            );
+        });
+
+        // Case 4: Re-focus changes list and verify it transitions back correctly
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_handle.focus(window, cx);
+        });
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(
+                panel.focus_handle.contains_focused(window, cx),
+                "panel focus handle should report contains_focused when directly focused"
+            );
+            let context = panel.dispatch_context(window, cx);
+            assert!(
+                context.contains("menu"),
+                "should have menu context after re-focusing changes list"
+            );
+            assert!(
+                context.contains("ChangesList"),
+                "should have ChangesList context after re-focusing changes list"
+            );
+        });
     }
 }

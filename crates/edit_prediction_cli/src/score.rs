@@ -10,13 +10,13 @@ use crate::{
     reversal_tracking,
 };
 use anyhow::Context as _;
-use edit_prediction::udiff::{apply_diff_to_string, apply_diff_to_string_with_hunk_offset};
 use gpui::AsyncApp;
 use serde::Serialize;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
+use zeta_prompt::udiff::{apply_diff_to_string, apply_diff_to_string_with_hunk_offset};
 
 pub async fn run_scoring(
     example: &mut Example,
@@ -67,6 +67,12 @@ pub async fn run_scoring(
 
     let zero_scores = ExampleScore {
         delta_chr_f: 0.0,
+        delta_chr_f_true_positives: 0,
+        delta_chr_f_false_positives: 0,
+        delta_chr_f_false_negatives: 0,
+        delta_chr_f_precision: 0.0,
+        delta_chr_f_recall: 0.0,
+        delta_chr_f_beta: metrics::delta_chr_f_beta(),
         braces_disbalance: 0,
         exact_lines_tp: 0,
         exact_lines_fp: 0,
@@ -78,6 +84,9 @@ pub async fn run_scoring(
         has_isolated_whitespace_changes: false,
         inserted_tokens: 0,
         deleted_tokens: 0,
+        kept_rate: None,
+        cumulative_logprob: None,
+        avg_logprob: None,
     };
 
     let cursor_path = example.spec.cursor_path.as_ref();
@@ -109,15 +118,17 @@ pub async fn run_scoring(
             }
         };
 
-        let mut best_delta_chr_f = 0.0f32;
+        let mut best_delta_chr_f_metrics = metrics::DeltaChrFMetrics::default();
         let mut best_expected_cursor: Option<usize> = None;
         let mut best_patch_idx: Option<usize> = None;
+        let mut best_expected_text: Option<&str> = None;
 
         for (idx, expected) in expected_texts.iter().enumerate() {
-            let delta_chr_f = metrics::delta_chr_f(original_text, expected, &actual_text) as f32;
-            if delta_chr_f > best_delta_chr_f {
-                best_delta_chr_f = delta_chr_f;
+            let delta_chr_f_metrics = metrics::delta_chr_f(original_text, expected, &actual_text);
+            if delta_chr_f_metrics.score > best_delta_chr_f_metrics.score {
+                best_delta_chr_f_metrics = delta_chr_f_metrics;
                 best_patch_idx = Some(idx);
+                best_expected_text = Some(expected);
             }
         }
 
@@ -176,8 +187,18 @@ pub async fn run_scoring(
             prediction.actual_cursor.as_ref(),
         );
 
+        let kept_rate = best_expected_text.map(|final_text| {
+            metrics::compute_kept_rate(original_text, &actual_text, final_text).kept_rate
+        });
+
         scores.push(ExampleScore {
-            delta_chr_f: best_delta_chr_f,
+            delta_chr_f: best_delta_chr_f_metrics.score as f32,
+            delta_chr_f_true_positives: best_delta_chr_f_metrics.counts.true_positives,
+            delta_chr_f_false_positives: best_delta_chr_f_metrics.counts.false_positives,
+            delta_chr_f_false_negatives: best_delta_chr_f_metrics.counts.false_negatives,
+            delta_chr_f_precision: best_delta_chr_f_metrics.precision,
+            delta_chr_f_recall: best_delta_chr_f_metrics.recall,
+            delta_chr_f_beta: best_delta_chr_f_metrics.beta,
             braces_disbalance,
             exact_lines_tp: best_exact_lines.true_positives,
             exact_lines_fp: best_exact_lines.false_positives,
@@ -189,6 +210,9 @@ pub async fn run_scoring(
             has_isolated_whitespace_changes,
             inserted_tokens: token_changes.inserted_tokens,
             deleted_tokens: token_changes.deleted_tokens,
+            kept_rate,
+            cumulative_logprob: prediction.cumulative_logprob,
+            avg_logprob: prediction.avg_logprob,
         });
     }
 
@@ -234,6 +258,10 @@ pub fn print_report(examples: &[Example], verbose: bool) {
     let mut all_delta_chr_f_scores = Vec::new();
     let mut all_reversal_ratios = Vec::new();
     let mut braces_disbalance_sum: usize = 0;
+    let mut total_delta_chr_f = ClassificationMetrics::default();
+    let mut total_delta_chr_f_precision = 0.0;
+    let mut total_delta_chr_f_recall = 0.0;
+    let mut delta_chr_f_beta = 0.0;
     let mut total_exact_lines = ClassificationMetrics::default();
     let mut total_scores: usize = 0;
     let mut qa_reverts_count: usize = 0;
@@ -247,6 +275,8 @@ pub fn print_report(examples: &[Example], verbose: bool) {
     let mut wrong_editable_region_count: usize = 0;
     let mut wrong_editable_region_total: usize = 0;
     let mut isolated_whitespace_count: usize = 0;
+    let mut kept_rate_sum: f64 = 0.0;
+    let mut kept_rate_count: usize = 0;
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
@@ -256,11 +286,7 @@ pub fn print_report(examples: &[Example], verbose: bool) {
 
     for example in examples {
         for (score_idx, score) in example.score.iter().enumerate() {
-            let exact_lines = ClassificationMetrics {
-                true_positives: score.exact_lines_tp,
-                false_positives: score.exact_lines_fp,
-                false_negatives: score.exact_lines_fn,
-            };
+            let exact_lines = score.exact_lines_counts();
 
             // Get QA results for this prediction if available
             let qa_result = example.qa.get(score_idx).and_then(|q| q.as_ref());
@@ -310,9 +336,11 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             all_reversal_ratios.push(score.reversal_ratio);
             total_scores += 1;
             braces_disbalance_sum += score.braces_disbalance;
-            total_exact_lines.true_positives += score.exact_lines_tp;
-            total_exact_lines.false_positives += score.exact_lines_fp;
-            total_exact_lines.false_negatives += score.exact_lines_fn;
+            total_delta_chr_f.accumulate(&score.delta_chr_f_counts());
+            total_delta_chr_f_precision += score.delta_chr_f_precision;
+            total_delta_chr_f_recall += score.delta_chr_f_recall;
+            delta_chr_f_beta = score.delta_chr_f_beta;
+            total_exact_lines.accumulate(&score.exact_lines_counts());
 
             // Accumulate QA metrics
             if let Some(qa) = qa_result {
@@ -339,6 +367,12 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             // Accumulate isolated whitespace metrics
             if score.has_isolated_whitespace_changes {
                 isolated_whitespace_count += 1;
+            }
+
+            // Accumulate kept rate metrics
+            if let Some(kr) = score.kept_rate {
+                kept_rate_sum += kr;
+                kept_rate_count += 1;
             }
 
             // Accumulate token change metrics (only for predictions that produced a patch)
@@ -444,6 +478,15 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             wrong_er_str
         );
         println!("{}", separator);
+        println!(
+            "Delta chrF (β={:.1}): TP={}, FP={}, FN={}, P={:.1}%, R={:.1}%",
+            delta_chr_f_beta,
+            total_delta_chr_f.true_positives,
+            total_delta_chr_f.false_positives,
+            total_delta_chr_f.false_negatives,
+            total_delta_chr_f_precision / total_scores as f64 * 100.0,
+            total_delta_chr_f_recall / total_scores as f64 * 100.0
+        );
 
         // Print additional cursor metrics if available
         if let Some(avg_dist) = avg_cursor_distance {
@@ -459,6 +502,16 @@ pub fn print_report(examples: &[Example], verbose: bool) {
         // Print isolated whitespace metrics
         if total_scores > 0 {
             println!("Isolated whitespace changes: {}", isolated_ws_str);
+        }
+
+        // Print kept rate metrics
+        if kept_rate_count > 0 {
+            let avg_kept_rate = kept_rate_sum / kept_rate_count as f64;
+            println!(
+                "Kept rate: {:.1}% avg ({} evaluated)",
+                avg_kept_rate * 100.0,
+                kept_rate_count
+            );
         }
 
         // Print token change percentile summary (only for predictions with a patch)
@@ -536,6 +589,12 @@ fn truncate_name(name: &str, max_len: usize) -> String {
 pub struct SummaryJson {
     pub total_examples: usize,
     pub avg_delta_chr_f: f32,
+    pub delta_chr_f_beta: f64,
+    pub delta_chr_f_true_positives: usize,
+    pub delta_chr_f_false_positives: usize,
+    pub delta_chr_f_false_negatives: usize,
+    pub delta_chr_f_precision: f64,
+    pub delta_chr_f_recall: f64,
     pub avg_braces_disbalance: f32,
     pub exact_lines_true_positives: usize,
     pub exact_lines_false_positives: usize,
@@ -557,6 +616,8 @@ pub struct SummaryJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wrong_editable_region_rate: Option<f32>,
     pub isolated_whitespace_rate: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_kept_rate: Option<f64>,
 }
 
 pub fn compute_summary(examples: &[Example]) -> SummaryJson {
@@ -565,6 +626,10 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     let mut all_delta_chr_f_scores = Vec::new();
     let mut all_reversal_ratios = Vec::new();
     let mut braces_disbalance_sum: usize = 0;
+    let mut total_delta_chr_f = ClassificationMetrics::default();
+    let mut total_delta_chr_f_precision = 0.0;
+    let mut total_delta_chr_f_recall = 0.0;
+    let mut delta_chr_f_beta = 0.0;
     let mut total_exact_lines = ClassificationMetrics::default();
     let mut total_scores: usize = 0;
     let mut qa_reverts_count: usize = 0;
@@ -578,6 +643,8 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
     let mut wrong_editable_region_count: usize = 0;
     let mut wrong_editable_region_total: usize = 0;
     let mut isolated_whitespace_count: usize = 0;
+    let mut kept_rate_sum: f64 = 0.0;
+    let mut kept_rate_count: usize = 0;
 
     for example in examples {
         for (score_idx, score) in example.score.iter().enumerate() {
@@ -585,9 +652,11 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
             all_reversal_ratios.push(score.reversal_ratio);
             total_scores += 1;
             braces_disbalance_sum += score.braces_disbalance;
-            total_exact_lines.true_positives += score.exact_lines_tp;
-            total_exact_lines.false_positives += score.exact_lines_fp;
-            total_exact_lines.false_negatives += score.exact_lines_fn;
+            total_delta_chr_f.accumulate(&score.delta_chr_f_counts());
+            total_delta_chr_f_precision += score.delta_chr_f_precision;
+            total_delta_chr_f_recall += score.delta_chr_f_recall;
+            delta_chr_f_beta = score.delta_chr_f_beta;
+            total_exact_lines.accumulate(&score.exact_lines_counts());
 
             // Accumulate QA metrics
             if let Some(Some(qa)) = example.qa.get(score_idx) {
@@ -614,6 +683,12 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
             // Accumulate isolated whitespace metrics
             if score.has_isolated_whitespace_changes {
                 isolated_whitespace_count += 1;
+            }
+
+            // Accumulate kept rate metrics
+            if let Some(kr) = score.kept_rate {
+                kept_rate_sum += kr;
+                kept_rate_count += 1;
             }
 
             // Accumulate cursor metrics
@@ -690,9 +765,29 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         None
     };
 
+    let avg_kept_rate = if kept_rate_count > 0 {
+        Some(kept_rate_sum / kept_rate_count as f64)
+    } else {
+        None
+    };
+
     SummaryJson {
         total_examples: total_scores,
         avg_delta_chr_f,
+        delta_chr_f_beta,
+        delta_chr_f_true_positives: total_delta_chr_f.true_positives,
+        delta_chr_f_false_positives: total_delta_chr_f.false_positives,
+        delta_chr_f_false_negatives: total_delta_chr_f.false_negatives,
+        delta_chr_f_precision: if total_scores == 0 {
+            0.0
+        } else {
+            total_delta_chr_f_precision / total_scores as f64
+        },
+        delta_chr_f_recall: if total_scores == 0 {
+            0.0
+        } else {
+            total_delta_chr_f_recall / total_scores as f64
+        },
         avg_braces_disbalance,
         exact_lines_true_positives: total_exact_lines.true_positives,
         exact_lines_false_positives: total_exact_lines.false_positives,
@@ -708,6 +803,7 @@ pub fn compute_summary(examples: &[Example]) -> SummaryJson {
         cursor_total_evaluated,
         wrong_editable_region_rate,
         isolated_whitespace_rate,
+        avg_kept_rate,
     }
 }
 

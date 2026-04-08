@@ -33,6 +33,68 @@ pub enum NewThreadLocation {
     NewWorktree,
 }
 
+/// Where to position the sidebar.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarDockPosition {
+    /// Always show the sidebar on the left side.
+    #[default]
+    Left,
+    /// Always show the sidebar on the right side.
+    Right,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum SidebarSide {
+    #[default]
+    Left,
+    Right,
+}
+
+/// How thinking blocks should be displayed by default in the agent panel.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingBlockDisplay {
+    /// Thinking blocks fully expand during streaming, then auto-collapse
+    /// when the model finishes thinking. Users can re-expand after collapse.
+    #[default]
+    Auto,
+    /// Thinking blocks auto-expand with a height constraint during streaming,
+    /// then remain in their constrained state when complete. Users can click
+    /// to fully expand or collapse.
+    Preview,
+    /// Thinking blocks are always fully expanded by default (no height constraint).
+    AlwaysExpanded,
+    /// Thinking blocks are always collapsed by default.
+    AlwaysCollapsed,
+}
+
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -48,6 +110,14 @@ pub struct AgentSettingsContent {
     ///
     /// Default: right
     pub dock: Option<DockPosition>,
+    /// Whether the agent panel should use flexible (proportional) sizing.
+    ///
+    /// Default: true
+    pub flexible: Option<bool>,
+    /// Where to position the sidebar.
+    ///
+    /// Default: left
+    pub sidebar_side: Option<SidebarDockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -58,6 +128,12 @@ pub struct AgentSettingsContent {
     /// Default: 320
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_height: Option<f32>,
+    /// Maximum content width in pixels for the agent panel. Content will be
+    /// centered when the panel is wider than this value.
+    ///
+    /// Default: 850
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub max_content_width: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
     /// Favorite models to show at the top of the model selector.
@@ -79,10 +155,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: write
     pub default_profile: Option<Arc<str>>,
-    /// Which view type to show by default in the agent panel.
-    ///
-    /// Default: "thread"
-    pub default_view: Option<DefaultAgentView>,
     /// Where new threads should start by default.
     ///
     /// Default: "local_project"
@@ -93,10 +165,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: "primary_screen"
     pub notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
-    /// Whether to play a sound when the agent has either completed its response, or needs user input.
+    /// When to play a sound when the agent has either completed its response, or needs user input.
     ///
-    /// Default: false
-    pub play_sound_when_agent_done: Option<bool>,
+    /// Default: never
+    pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
     /// Default: true
@@ -122,6 +194,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// How thinking blocks should be displayed by default in the agent panel.
+    ///
+    /// Default: automatic
+    pub thinking_display: Option<ThinkingBlockDisplay>,
     /// Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     /// Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     ///
@@ -139,6 +215,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
+    /// Whether to show the merge conflict indicator in the status bar
+    /// that offers to resolve conflicts using the agent.
+    ///
+    /// Default: true
+    pub show_merge_conflict_indicator: Option<bool>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
@@ -157,6 +238,14 @@ impl AgentSettingsContent {
         self.dock = Some(dock);
     }
 
+    pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
+        self.sidebar_side = Some(position);
+    }
+
+    pub fn set_flexible_size(&mut self, flexible: bool) {
+        self.flexible = Some(flexible);
+    }
+
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
         self.default_model = Some(language_model)
     }
@@ -167,6 +256,7 @@ impl AgentSettingsContent {
             model,
             enable_thinking: false,
             effort: None,
+            speed: None,
         });
     }
 
@@ -248,14 +338,6 @@ pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
 }
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-#[serde(rename_all = "snake_case")]
-pub enum DefaultAgentView {
-    #[default]
-    Thread,
-    TextThread,
-}
-
 #[derive(
     Copy,
     Clone,
@@ -277,6 +359,37 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaySoundWhenAgentDone {
+    #[default]
+    Never,
+    WhenHidden,
+    Always,
+}
+
+impl PlaySoundWhenAgentDone {
+    pub fn should_play(&self, visible: bool) -> bool {
+        match self {
+            PlaySoundWhenAgentDone::Never => false,
+            PlaySoundWhenAgentDone::WhenHidden => !visible,
+            PlaySoundWhenAgentDone::Always => true,
+        }
+    }
+}
+
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelSelection {
@@ -285,6 +398,7 @@ pub struct LanguageModelSelection {
     #[serde(default)]
     pub enable_thinking: bool,
     pub effort: Option<String>,
+    pub speed: Option<language_model_core::Speed>,
 }
 
 #[with_fallible_options]

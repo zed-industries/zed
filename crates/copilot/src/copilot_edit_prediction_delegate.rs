@@ -1045,7 +1045,7 @@ mod tests {
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        assert!(copilot_requests.try_next().is_err());
+        assert!(copilot_requests.try_recv().is_err());
 
         _ = editor.update(cx, |editor, window, cx| {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -1055,7 +1055,7 @@ mod tests {
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        assert!(copilot_requests.try_next().is_ok());
+        assert!(copilot_requests.try_recv().is_ok());
     }
 
     fn handle_copilot_completion_request(
@@ -1120,7 +1120,7 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
                 store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
             });

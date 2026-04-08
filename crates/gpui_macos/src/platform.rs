@@ -1389,6 +1389,7 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+    pub(super) fn TISCopyCurrentKeyboardInputSource() -> *mut Object;
     pub(super) fn TISGetInputSourceProperty(
         inputSource: *mut Object,
         propertyKey: *const c_void,
@@ -1410,6 +1411,9 @@ unsafe extern "C" {
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
     pub(super) static kTISPropertyLocalizedName: CFStringRef;
+    pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
+    pub(super) static kTISPropertyInputSourceType: CFStringRef;
+    pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
 }
 
 mod security {

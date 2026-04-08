@@ -212,8 +212,13 @@ message Selection {
 }
 
 message EditorAnchor {
-  uint64 excerpt_id = 1;
+  optional uint64 excerpt_id = 1;
   Anchor anchor = 2;
+}
+
+message PathKey {
+  optional uint64 sort_prefix = 1;
+  string path = 2;
 }
 
 enum CursorShape {

@@ -225,6 +225,11 @@
   // 3. Hide on both typing and cursor movement:
   //    "on_typing_and_movement"
   "hide_mouse": "on_typing_and_movement",
+  // Determines whether the focused panel follows the mouse location.
+  "focus_follows_mouse": {
+    "enabled": false,
+    "debounce_ms": 250,
+  },
   // Determines how snippets are sorted relative to other completion items.
   //
   // 1. Place snippets at the top of the completion list:
@@ -299,6 +304,13 @@
   //
   // Default: split
   "diff_view_style": "split",
+  // The minimum width (in em-widths) at which the split diff view is used.
+  // When the editor is narrower than this, the diff view automatically
+  // switches to unified mode and switches back when the editor is wide
+  // enough. Set to 0 to disable automatic switching.
+  //
+  // Default: 100
+  "minimum_split_diff_width": 100,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   // Whether to show the signature help after completion or a bracket pair inserted.
@@ -460,12 +472,10 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false,
+    // The layout of window control buttons in the title bar (Linux only).
+    "button_layout": "platform_default",
   },
   "audio": {
-    // Opt into the new audio system.
-    "experimental.rodio_audio": false,
-    // Requires 'rodio_audio: true'
-    //
     // Automatically increase or decrease you microphone's volume. This affects how
     // loud you sound to others.
     //
@@ -474,33 +484,10 @@
     // audio and has auto speaker volume on this will make you very loud
     // compared to other speakers.
     "experimental.auto_microphone_volume": false,
-    // Requires 'rodio_audio: true'
-    //
-    // Automatically increate or decrease the volume of other call members.
-    // This only affects how things sound for you.
-    "experimental.auto_speaker_volume": true,
-    // Requires 'rodio_audio: true'
-    //
-    // Remove background noises. Works great for typing, cars, dogs, AC. Does
-    // not work well on music.
-    "experimental.denoise": true,
-    // Requires 'rodio_audio: true'
-    //
-    // Use audio parameters compatible with the previous versions of
-    // experimental audio and non-experimental audio. When this is false you
-    // will sound strange to anyone not on the latest experimental audio. In
-    // the future we will migrate by setting this to false
-    //
-    // You need to rejoin a call for this setting to apply
-    "experimental.legacy_audio_compatible": true,
-    // Requires 'rodio_audio: true'
-    //
     // Select specific output audio device.
     // `null` means use system default.
     // Any unrecognized output device will fall back to system default.
     "experimental.output_audio_device": null,
-    // Requires 'rodio_audio: true'
-    //
     // Select specific input audio device.
     // `null` means use system default.
     // Any unrecognized input device will fall back to system default.
@@ -730,7 +717,7 @@
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Spacing between worktree entries in the project panel. Can be 'comfortable' or 'standard'.
     "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
@@ -805,8 +792,25 @@
     // 3. Show files first, then directories:
     //    "files_first"
     "sort_mode": "directories_first",
+    // Whether to sort file and folder names case-sensitively in the project panel.
+    // This setting can take four values:
+    //
+    // 1. Case-insensitive natural sort with lowercase preferred in ties (default):
+    //    "default"
+    // 2. Uppercase names are grouped before lowercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "upper"
+    // 3. Lowercase names are grouped before uppercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "lower"
+    // 4. Pure Unicode codepoint comparison.
+    //    No case folding, no natural number sorting:
+    //    "unicode"
+    "sort_order": "default",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
+    // Whether to show the git status indicator next to file names in the project panel.
+    "git_status_indicator": false,
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window;
@@ -830,7 +834,7 @@
     // Default width of the outline panel.
     "default_width": 300,
     // Where to dock the outline panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Whether to show file icons in the outline panel.
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the outline panel.
@@ -882,7 +886,7 @@
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
     // Where to dock the collaboration panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Default width of the collaboration panel.
     "default_width": 240,
   },
@@ -890,7 +894,7 @@
     // Whether to show the git panel button in the status bar.
     "button": true,
     // Where to dock the git panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Default width of the git panel.
     "default_width": 360,
     // Style of the git status indicator in the panel.
@@ -947,16 +951,6 @@
     // For example: typing `:wave:` gets replaced with `👋`.
     "auto_replace_emoji_shortcode": true,
   },
-  "notification_panel": {
-    // Whether to show the notification panel button in the status bar.
-    "button": true,
-    // Where to dock the notification panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the notification panel.
-    "default_width": 380,
-    // Whether to show a badge on the notification panel icon with the count of unread notifications.
-    "show_count_badge": false,
-  },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
@@ -965,13 +959,20 @@
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
-    "dock": "right",
+    "dock": "left",
+    // Whether the agent panel should use flexible (proportional) sizing.
+    //
+    // Default: true
+    "flexible": true,
+    // Where to position the sidebar. Can be 'left' or 'right'.
+    "sidebar_side": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
-    // The view to use by default (thread, or text_thread)
-    "default_view": "thread",
+    // Maximum content width when the agent panel is wider than this value.
+    // Content will be centered within the panel.
+    "max_content_width": 850,
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
@@ -1114,11 +1115,14 @@
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
     "notify_when_agent_waiting": "primary_screen",
-    // Whether to play a sound when the agent has either completed
+    // When to play a sound when the agent has either completed
     // its response, or needs user input.
-
-    // Default: false
-    "play_sound_when_agent_done": false,
+    // "never" - Never play the sound
+    // "when_hidden" - Only play the sound when the agent panel is not visible
+    // "always" - Always play the sound
+    //
+    // Default: never
+    "play_sound_when_agent_done": "never",
     // Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
     //
     // Default: true
@@ -1127,6 +1131,10 @@
     //
     // Default: true
     "expand_terminal_card": true,
+    // How thinking blocks should be displayed by default in the agent panel.
+    //
+    // Default: auto
+    "thinking_display": "auto",
     // Whether clicking the stop button on a running terminal tool should also cancel the agent's generation.
     // Note that this only applies to the stop button, not to ctrl+c inside the terminal.
     //
@@ -1144,6 +1152,11 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // Whether to show the merge conflict indicator in the status bar
+    // that offers to resolve conflicts using the agent.
+    //
+    // Default: true
+    "show_merge_conflict_indicator": true,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -1371,6 +1384,12 @@
   "hard_tabs": false,
   // How many columns a tab should occupy.
   "tab_size": 4,
+  // Number of lines to search for modelines at the beginning and end of files.
+  // Modelines contain editor directives (e.g., vim/emacs settings) that configure
+  // the editor behavior for specific files.
+  //
+  // A value of 0 disables modelines support.
+  "modeline_lines": 5,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
   // Whether to enable word diff highlighting in the editor.
@@ -1602,13 +1621,6 @@
       "model": "codestral-latest",
       "max_tokens": 150,
     },
-    "sweep": {
-      // When enabled, Sweep will not store edit prediction inputs or outputs.
-      // When disabled, Sweep may collect data including buffer contents,
-      // diagnostics, file paths, repository names, and generated predictions
-      // to improve the service.
-      "privacy_mode": false,
-    },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
@@ -1621,9 +1633,6 @@
       "prompt_format": "infer",
       "max_output_tokens": 64,
     },
-    // Whether edit predictions are enabled when editing text threads in the agent panel.
-    // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true,
   },
   // Settings specific to journaling
   "journal": {
@@ -1639,6 +1648,8 @@
   "status_bar": {
     // Whether to show the status bar.
     "experimental.show": true,
+    // Whether to show the name of the active file in the status bar.
+    "show_active_file": false,
     // Whether to show the active language button in the status bar.
     "active_language_button": true,
     // Whether to show the cursor position button in the status bar.
@@ -1667,6 +1678,10 @@
     "shell": "system",
     // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
+    // Whether the terminal panel should use flexible (proportional) sizing.
+    //
+    // Default: true
+    "flexible": true,
     // Default width when the terminal is docked to the left or right.
     "default_width": 640,
     // Default height when the terminal is docked to the bottom.
@@ -2046,8 +2061,11 @@
       "remove_trailing_whitespace_on_save": false,
       "ensure_final_newline_on_save": false,
     },
-    "Elixir": {
+    "EEx": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+    },
+    "Elixir": {
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
       "tab_size": 4,
@@ -2072,7 +2090,7 @@
         "allowed": true,
       },
     },
-    "HEEX": {
+    "HEEx": {
       "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
@@ -2245,6 +2263,9 @@
       "api_url": "https://api.openai.com/v1",
     },
     "openai_compatible": {},
+    "opencode": {
+      "api_url": "https://opencode.ai/zen",
+    },
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1",
     },
@@ -2404,6 +2425,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "use_regex_search": true,
     "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},
@@ -2529,21 +2551,31 @@
     "format_dap_log_messages": true,
     "button": true,
   },
-  // Configures any number of settings profiles that are temporarily applied on
-  // top of your existing user settings when selected from
-  // `settings profile selector: toggle`.
+  // Configures any number of settings profiles that are temporarily applied
+  // when selected from `settings profile selector: toggle`.
+  //
+  // Each profile has an optional `base` ("user" or "default") and a `settings`
+  // object. When `base` is "user" (the default), the profile applies on top of
+  // your user settings. When `base` is "default", user settings are ignored and
+  // the profile applies on top of Zed's defaults.
+  //
   // Examples:
   // "profiles": {
   //   "Presenting": {
-  //     "agent_ui_font_size": 20.0,
-  //     "buffer_font_size": 20.0,
-  //     "theme": "One Light",
-  //     "ui_font_size": 20.0
+  //     "base": "default",
+  //     "settings": {
+  //       "agent_ui_font_size": 20.0,
+  //       "buffer_font_size": 20.0,
+  //       "theme": "One Light",
+  //       "ui_font_size": 20.0
+  //     }
   //   },
   //   "Python (ty)": {
-  //     "languages": {
-  //       "Python": {
-  //         "language_servers": ["ty"]
+  //     "settings": {
+  //       "languages": {
+  //         "Python": {
+  //           "language_servers": ["ty"]
+  //         }
   //       }
   //     }
   //   }

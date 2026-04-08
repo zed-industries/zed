@@ -6,7 +6,7 @@ use gpui::{
     App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
 use itertools::Itertools;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use project::{
     lsp_store::{
         BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer,
@@ -148,20 +148,16 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
+            .visible_buffers(cx)
+            .into_iter()
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter_map(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
                 if self.registered_buffers.contains_key(&editor_buffer_id)
-                    && language_settings(
-                        editor_buffer.read(cx).language().map(|l| l.name()),
-                        editor_buffer.read(cx).file(),
-                        cx,
-                    )
-                    .semantic_tokens
-                    .enabled()
+                    && LanguageSettings::for_buffer(editor_buffer.read(cx), cx)
+                        .semantic_tokens
+                        .enabled()
                 {
                     Some((editor_buffer_id, editor_buffer))
                 } else {
@@ -184,7 +180,7 @@ impl Editor {
                     .buffer(*buffer_id)
                     .is_some_and(|buffer| {
                         let buffer = buffer.read(cx);
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                        LanguageSettings::for_buffer(&buffer, cx)
                             .semantic_tokens
                             .enabled()
                     })
@@ -369,11 +365,20 @@ fn convert_token(
     modifiers: u32,
 ) -> Option<HighlightStyle> {
     let rules = stylizer.rules_for_token(token_type)?;
-    let matching = rules.iter().filter(|rule| {
-        rule.token_modifiers
-            .iter()
-            .all(|m| stylizer.has_modifier(modifiers, m))
-    });
+    let matching: Vec<_> = rules
+        .iter()
+        .filter(|rule| {
+            rule.token_modifiers
+                .iter()
+                .all(|m| stylizer.has_modifier(modifiers, m))
+        })
+        .collect();
+
+    if let Some(rule) = matching.last() {
+        if rule.no_style_defined() {
+            return None;
+        }
+    }
 
     let mut highlight = HighlightStyle::default();
     let mut empty = true;
@@ -381,7 +386,10 @@ fn convert_token(
     for rule in matching {
         empty = false;
 
-        let style = rule.style.iter().find_map(|style| theme.get_opt(style));
+        let style = rule
+            .style
+            .iter()
+            .find_map(|style| theme.style_for_name(style));
 
         macro_rules! overwrite {
             (
@@ -464,16 +472,25 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::{AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext};
-    use language::{Language, LanguageConfig, LanguageMatcher};
+    use gpui::{
+        AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext, UpdateGlobal as _,
+    };
+    use language::{
+        Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageAwareStyling, LanguageConfig,
+        LanguageMatcher,
+    };
     use languages::FakeLspAdapter;
+    use lsp::LanguageServerId;
     use multi_buffer::{
         AnchorRangeExt, ExpandExcerptDirection, MultiBuffer, MultiBufferOffset, PathKey,
     };
     use project::Project;
-    use rope::Point;
+    use rope::{Point, PointUtf16};
     use serde_json::json;
-    use settings::{LanguageSettingsContent, SemanticTokenRules, SemanticTokens, SettingsStore};
+    use settings::{
+        GlobalLspSettingsContent, LanguageSettingsContent, SemanticTokenRule, SemanticTokenRules,
+        SemanticTokens, SettingsStore,
+    };
     use workspace::{MultiWorkspace, WorkspaceHandle as _};
 
     use crate::{
@@ -1215,11 +1232,19 @@ mod tests {
         );
 
         // Get the excerpt id for the TOML excerpt and expand it down by 2 lines.
-        let toml_excerpt_id =
-            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).excerpt_ids()[0]);
+        let toml_anchor = editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_in_excerpt(text::Anchor::min_for_buffer(
+                    toml_buffer.read(cx).remote_id(),
+                ))
+                .unwrap()
+        });
         editor.update_in(cx, |editor, _, cx| {
             editor.buffer().update(cx, |buffer, cx| {
-                buffer.expand_excerpts([toml_excerpt_id], 2, ExpandExcerptDirection::Down, cx);
+                buffer.expand_excerpts([toml_anchor], 2, ExpandExcerptDirection::Down, cx);
             });
         });
 
@@ -1384,7 +1409,7 @@ mod tests {
     async fn test_theme_override_changes_restyle_semantic_tokens(cx: &mut TestAppContext) {
         use collections::IndexMap;
         use gpui::{Hsla, Rgba, UpdateGlobal as _};
-        use theme::{HighlightStyleContent, ThemeStyleContent};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
 
         init_test(cx, |_| {});
 
@@ -1549,7 +1574,7 @@ mod tests {
     async fn test_per_theme_overrides_restyle_semantic_tokens(cx: &mut TestAppContext) {
         use collections::IndexMap;
         use gpui::{Hsla, Rgba, UpdateGlobal as _};
-        use theme::{HighlightStyleContent, ThemeStyleContent};
+        use theme_settings::{HighlightStyleContent, ThemeStyleContent};
         use ui::ActiveTheme as _;
 
         init_test(cx, |_| {});
@@ -1814,6 +1839,380 @@ mod tests {
             extract_semantic_highlights(&cx.editor, &cx),
             Vec::new(),
             "Semantic tokens should be cleared after disabling the setting"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_semantic_token_disabling_with_empty_rule(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|s| {
+            s.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..Default::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["function".into()],
+                                token_modifiers: vec![],
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..Default::default()
+                        },
+                    ),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![0, 3, 4, 0, 0],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        // Verify it highlights by default
+        cx.set_state("ˇfn main() {}");
+        full_request.next().await;
+        cx.run_until_parked();
+        assert_eq!(extract_semantic_highlights(&cx.editor, &cx).len(), 1);
+
+        // Apply EMPTY rule to disable it
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                        semantic_token_rules: Some(SemanticTokenRules {
+                            rules: vec![SemanticTokenRule {
+                                token_type: Some("function".to_string()),
+                                ..Default::default()
+                            }],
+                        }),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        cx.set_state("ˇfn main() { }");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        assert!(
+            extract_semantic_highlights(&cx.editor, &cx).is_empty(),
+            "Highlighting should be disabled by empty style setting"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_semantic_token_broad_rule_disables_specific_token(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|s| {
+            s.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..Default::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["comment".into()],
+                                token_modifiers: vec!["documentation".into()],
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..Default::default()
+                        },
+                    ),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![0, 0, 5, 0, 1], // comment [documentation]
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇ/// d\n");
+        full_request.next().await;
+        cx.run_until_parked();
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx).len(),
+            1,
+            "Documentation comment should be highlighted"
+        );
+
+        // Apply a BROAD empty rule for "comment" (no modifiers)
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                        semantic_token_rules: Some(SemanticTokenRules {
+                            rules: vec![SemanticTokenRule {
+                                token_type: Some("comment".to_string()),
+                                ..Default::default()
+                            }],
+                        }),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        cx.set_state("ˇ/// d\n");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        assert!(
+            extract_semantic_highlights(&cx.editor, &cx).is_empty(),
+            "Broad empty rule should disable specific documentation comment"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_semantic_token_specific_rule_does_not_disable_broad_token(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::UpdateGlobal as _;
+        use settings::{GlobalLspSettingsContent, SemanticTokenRule};
+
+        init_test(cx, |_| {});
+        update_test_language_settings(cx, &|s| {
+            s.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..Default::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["comment".into()],
+                                token_modifiers: vec!["documentation".into()],
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..Default::default()
+                        },
+                    ),
+                ),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::SemanticTokensResult::Tokens(
+                        lsp::SemanticTokens {
+                            data: vec![
+                                0, 0, 5, 0, 1, // comment [documentation]
+                                1, 0, 5, 0, 0, // normal comment
+                            ],
+                            result_id: None,
+                        },
+                    )))
+                },
+            );
+
+        cx.set_state("ˇ/// d\n// n\n");
+        full_request.next().await;
+        cx.run_until_parked();
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx).len(),
+            2,
+            "Both documentation and normal comments should be highlighted initially"
+        );
+
+        // Apply a SPECIFIC empty rule for documentation only
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                        semantic_token_rules: Some(SemanticTokenRules {
+                            rules: vec![SemanticTokenRule {
+                                token_type: Some("comment".to_string()),
+                                token_modifiers: vec!["documentation".to_string()],
+                                ..Default::default()
+                            }],
+                        }),
+                        ..Default::default()
+                    });
+                });
+            });
+        });
+
+        cx.set_state("ˇ/// d\n// n\n");
+        full_request.next().await;
+        cx.run_until_parked();
+
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx).len(),
+            1,
+            "Normal comment should still be highlighted (matched by default rule)"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_diagnostics_visible_when_semantic_token_set_to_full(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|language_settings| {
+            language_settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                semantic_tokens_provider: Some(
+                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                        lsp::SemanticTokensOptions {
+                            legend: lsp::SemanticTokensLegend {
+                                token_types: vec!["function".into()],
+                                token_modifiers: Vec::new(),
+                            },
+                            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                            ..lsp::SemanticTokensOptions::default()
+                        },
+                    ),
+                ),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                move |_, _, _| {
+                    async move {
+                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                            lsp::SemanticTokens {
+                                data: vec![
+                                    0, // delta_line
+                                    3, // delta_start
+                                    4, // length
+                                    0, // token_type
+                                    0, // token_modifiers_bitset
+                                ],
+                                result_id: Some("a".into()),
+                            },
+                        )))
+                    }
+                },
+            );
+
+        cx.set_state("ˇfn main() {}");
+        assert!(full_request.next().await.is_some());
+
+        let task = cx.update_editor(|e, _, _| e.semantic_token_state.take_update_task());
+        task.await;
+
+        cx.update_buffer(|buffer, cx| {
+            buffer.update_diagnostics(
+                LanguageServerId(0),
+                DiagnosticSet::new(
+                    [DiagnosticEntry {
+                        range: PointUtf16::new(0, 3)..PointUtf16::new(0, 7),
+                        diagnostic: Diagnostic {
+                            severity: lsp::DiagnosticSeverity::ERROR,
+                            group_id: 1,
+                            message: "unused function".into(),
+                            ..Default::default()
+                        },
+                    }],
+                    buffer,
+                ),
+                cx,
+            )
+        });
+
+        cx.run_until_parked();
+        let chunks = cx.update_editor(|editor, window, cx| {
+            editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .chunks(
+                    crate::display_map::DisplayRow(0)..crate::display_map::DisplayRow(1),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: true,
+                    },
+                    crate::HighlightStyles::default(),
+                )
+                .map(|chunk| {
+                    (
+                        chunk.text.to_string(),
+                        chunk.diagnostic_severity,
+                        chunk.highlight_style,
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx),
+            vec![MultiBufferOffset(3)..MultiBufferOffset(7)]
+        );
+
+        assert!(
+            chunks.iter().any(
+                |(text, severity, style): &(
+                    String,
+                    Option<lsp::DiagnosticSeverity>,
+                    Option<gpui::HighlightStyle>
+                )| {
+                    text == "main"
+                        && *severity == Some(lsp::DiagnosticSeverity::ERROR)
+                        && style.is_some()
+                }
+            ),
+            "expected 'main' chunk to have both diagnostic and semantic styling: {:?}",
+            chunks
         );
     }
 

@@ -80,11 +80,8 @@ impl CsvPreviewView {
                     .insert("Parsing", (parse_duration, Instant::now()));
 
                 log::debug!("Parsed {} rows", parsed_csv.rows.len());
-                // Update table width so it can be rendered properly
-                let cols = parsed_csv.headers.cols();
-                view.column_widths.replace(cx, cols + 1); // Add 1 for the line number column
-
                 view.engine.contents = parsed_csv;
+                view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
 
                 view.apply_filter_sort();

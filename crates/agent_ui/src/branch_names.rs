@@ -1,710 +1,77 @@
 use collections::HashSet;
 use rand::Rng;
 
-/// Names of historical typewriter brands, for use in auto-generated branch names.
-/// (Hyphens and parens have been dropped so that the branch names are one-word.)
-///
-/// Thanks to https://typewriterdatabase.com/alph.0.brands for the names!
-const TYPEWRITER_NAMES: &[&str] = &[
-    "abeille",
-    "acme",
-    "addo",
-    "adler",
-    "adlerette",
-    "adlerita",
-    "admiral",
-    "agamli",
-    "agar",
-    "agidel",
-    "agil",
-    "aguia",
-    "aguila",
-    "ahram",
-    "aigle",
-    "ajax",
-    "aktiv",
-    "ala",
-    "alba",
-    "albus",
-    "alexander",
-    "alexis",
-    "alfa",
-    "allen",
-    "alonso",
-    "alpina",
-    "amata",
-    "amaya",
-    "amka",
-    "anavi",
-    "anderson",
-    "andina",
-    "antares",
-    "apex",
-    "apsco",
-    "aquila",
-    "archo",
-    "ardita",
-    "argyle",
-    "aristocrat",
-    "aristokrat",
-    "arlington",
-    "armstrong",
-    "arpha",
-    "artus",
-    "astoria",
-    "atlantia",
-    "atlantic",
-    "atlas",
-    "augusta",
-    "aurora",
-    "austro",
-    "automatic",
-    "avanti",
-    "avona",
-    "azzurra",
-    "bajnok",
-    "baldwin",
-    "balkan",
-    "baltica",
-    "baltimore",
-    "barlock",
-    "barr",
-    "barrat",
-    "bartholomew",
-    "bashkiriya",
-    "bavaria",
-    "beaucourt",
-    "beko",
-    "belka",
-    "bennett",
-    "bennington",
-    "berni",
-    "bianca",
-    "bijou",
-    "bing",
-    "bisei",
-    "biser",
-    "bluebird",
-    "bolida",
-    "borgo",
-    "boston",
-    "boyce",
-    "bradford",
-    "brandenburg",
-    "brigitte",
-    "briton",
-    "brooks",
-    "brosette",
-    "buddy",
-    "burns",
-    "burroughs",
-    "byron",
-    "calanda",
-    "caligraph",
-    "cappel",
-    "cardinal",
-    "carissima",
-    "carlem",
-    "carlton",
-    "carmen",
-    "cawena",
-    "cella",
-    "celtic",
-    "century",
-    "champignon",
-    "cherryland",
-    "chevron",
-    "chicago",
-    "cicero",
-    "cifra",
-    "citizen",
-    "claudia",
-    "cleveland",
-    "clover",
-    "coffman",
-    "cole",
-    "columbia",
-    "commercial",
-    "companion",
-    "concentra",
-    "concord",
-    "concordia",
-    "conover",
-    "constanta",
-    "consul",
-    "conta",
-    "contenta",
-    "contimat",
-    "contina",
-    "continento",
-    "cornelia",
-    "coronado",
-    "cosmopolita",
-    "courier",
-    "craftamatic",
-    "crandall",
-    "crown",
-    "culema",
-    "dactyle",
-    "dankers",
-    "dart",
-    "daugherty",
-    "davis",
-    "dayton",
-    "dea",
-    "delmar",
-    "densmore",
-    "depantio",
-    "diadema",
-    "dial",
-    "diamant",
-    "diana",
-    "dictatype",
-    "diplomat",
-    "diskret",
-    "dolfus",
-    "dollar",
-    "domus",
-    "drake",
-    "draper",
-    "duplex",
-    "durabel",
-    "dynacord",
-    "eagle",
-    "eclipse",
-    "edelmann",
-    "edelweiss",
-    "edison",
-    "edita",
-    "edland",
-    "efka",
-    "eldorado",
-    "electa",
-    "electromatic",
-    "elektro",
-    "elgin",
-    "elliot",
-    "emerson",
-    "emka",
-    "emona",
-    "empire",
-    "engadine",
-    "engler",
-    "erfurt",
-    "erika",
-    "esko",
-    "essex",
-    "eureka",
-    "europa",
-    "everest",
-    "everlux",
-    "excelsior",
-    "express",
-    "fabers",
-    "facit",
-    "fairbanks",
-    "faktotum",
-    "famos",
-    "federal",
-    "felio",
-    "fidat",
-    "filius",
-    "fips",
-    "fish",
-    "fitch",
-    "fleet",
-    "florida",
-    "flott",
-    "flyer",
-    "flying",
-    "fontana",
-    "ford",
-    "forto",
-    "fortuna",
-    "fox",
-    "framo",
-    "franconia",
-    "franklin",
-    "friden",
-    "frolio",
-    "furstenberg",
-    "galesburg",
-    "galiette",
-    "gallia",
-    "garbell",
-    "gardner",
-    "geka",
-    "generation",
-    "genia",
-    "geniatus",
-    "gerda",
-    "gisela",
-    "glashutte",
-    "gloria",
-    "godrej",
-    "gossen",
-    "gourland",
-    "grandjean",
-    "granta",
-    "granville",
-    "graphic",
-    "gritzner",
-    "groma",
-    "guhl",
-    "guidonia",
-    "gundka",
-    "hacabo",
-    "haddad",
-    "halberg",
-    "halda",
-    "hall",
-    "hammond",
-    "hammonia",
-    "hanford",
-    "hansa",
-    "harmony",
-    "harris",
-    "hartford",
-    "hassia",
-    "hatch",
-    "heady",
-    "hebronia",
-    "hebros",
-    "hega",
-    "helios",
-    "helma",
-    "herald",
-    "hercules",
-    "hermes",
-    "herold",
-    "heros",
-    "hesperia",
-    "hogar",
-    "hooven",
-    "hopkins",
-    "horton",
-    "hugin",
-    "hungaria",
-    "hurtu",
-    "iberia",
-    "idea",
-    "ideal",
-    "imperia",
-    "impo",
-    "industria",
-    "industrio",
-    "ingersoll",
-    "international",
-    "invicta",
-    "irene",
-    "iris",
-    "iskra",
-    "ivitsa",
-    "ivriah",
-    "jackson",
-    "janalif",
-    "janos",
-    "jolux",
-    "juki",
-    "junior",
-    "juventa",
-    "juwel",
-    "kamkap",
-    "kamo",
-    "kanzler",
-    "kappel",
-    "karli",
-    "karstadt",
-    "keaton",
-    "kenbar",
-    "keystone",
-    "kim",
-    "klein",
-    "kneist",
-    "knoch",
-    "koh",
-    "kolibri",
-    "kolumbus",
-    "komet",
-    "kondor",
-    "koniger",
-    "konryu",
-    "kontor",
-    "kosmopolit",
-    "krypton",
-    "lambert",
-    "lasalle",
-    "lectra",
-    "leframa",
-    "lemair",
-    "lemco",
-    "liberty",
-    "libia",
-    "liga",
-    "lignose",
-    "lilliput",
-    "lindeteves",
-    "linowriter",
-    "listvitsa",
-    "ludolf",
-    "lutece",
-    "luxa",
-    "lyubava",
-    "mafra",
-    "magnavox",
-    "maher",
-    "majestic",
-    "majitouch",
-    "manhattan",
-    "mapuua",
-    "marathon",
-    "marburger",
-    "maritsa",
-    "maruzen",
-    "maskelyne",
-    "masspro",
-    "matous",
-    "mccall",
-    "mccool",
-    "mcloughlin",
-    "mead",
-    "mechno",
-    "mehano",
-    "meiselbach",
-    "melbi",
-    "melior",
-    "melotyp",
-    "mentor",
-    "mepas",
-    "mercedesia",
-    "mercurius",
-    "mercury",
-    "merkur",
-    "merritt",
-    "merz",
-    "messa",
-    "meteco",
-    "meteor",
-    "micron",
-    "mignon",
-    "mikro",
-    "minerva",
-    "mirian",
-    "mirina",
-    "mitex",
-    "molle",
-    "monac",
-    "monarch",
-    "mondiale",
-    "monica",
-    "monofix",
-    "monopol",
-    "monpti",
-    "monta",
-    "montana",
-    "montgomery",
-    "moon",
-    "morgan",
-    "morris",
-    "morse",
-    "moya",
-    "moyer",
-    "munson",
-    "musicwriter",
-    "nadex",
-    "nakajima",
-    "neckermann",
-    "neubert",
-    "neya",
-    "ninety",
-    "nisa",
-    "noiseless",
-    "noor",
-    "nora",
-    "nord",
-    "norden",
-    "norica",
-    "norma",
-    "norman",
-    "north",
-    "nototyp",
-    "nova",
-    "novalevi",
-    "odell",
-    "odhner",
-    "odo",
-    "odoma",
-    "ohio",
-    "ohtani",
-    "oliva",
-    "oliver",
-    "olivetti",
-    "olympia",
-    "omega",
-    "optima",
-    "orbis",
-    "orel",
-    "orga",
-    "oriette",
-    "orion",
-    "orn",
-    "orplid",
-    "pacior",
-    "pagina",
-    "parisienne",
-    "passat",
-    "pearl",
-    "peerless",
-    "perfect",
-    "perfecta",
-    "perkeo",
-    "perkins",
-    "perlita",
-    "pettypet",
-    "phoenix",
-    "piccola",
-    "picht",
-    "pinnock",
-    "pionier",
-    "plurotyp",
-    "plutarch",
-    "pneumatic",
-    "pocket",
-    "polyglott",
-    "polygraph",
-    "pontiac",
-    "portable",
-    "portex",
-    "pozzi",
-    "premier",
-    "presto",
-    "primavera",
-    "progress",
-    "protos",
-    "pterotype",
-    "pullman",
-    "pulsatta",
-    "quick",
-    "racer",
-    "radio",
-    "rally",
-    "rand",
-    "readers",
-    "reed",
-    "referent",
-    "reff",
-    "regent",
-    "regia",
-    "regina",
-    "rekord",
-    "reliable",
-    "reliance",
-    "remagg",
-    "rembrandt",
-    "remer",
-    "remington",
-    "remsho",
-    "remstar",
-    "remtor",
-    "reporters",
-    "resko",
-    "rex",
-    "rexpel",
-    "rheinita",
-    "rheinmetall",
-    "rival",
-    "roberts",
-    "robotron",
-    "rocher",
-    "rochester",
-    "roebuck",
-    "rofa",
-    "roland",
-    "rooy",
-    "rover",
-    "roxy",
-    "roy",
-    "royal",
-    "rundstatler",
-    "sabaudia",
-    "sabb",
-    "saleem",
-    "salter",
-    "sampo",
-    "sarafan",
-    "saturn",
-    "saxonia",
-    "schade",
-    "schapiro",
-    "schreibi",
-    "scripta",
-    "sears",
-    "secor",
-    "selectric",
-    "selekta",
-    "senator",
-    "sense",
-    "senta",
-    "serd",
-    "shilling",
-    "shimade",
-    "shimer",
-    "sholes",
-    "shuang",
-    "siegfried",
-    "siemag",
-    "silma",
-    "silver",
-    "simplex",
-    "simtype",
-    "singer",
-    "smith",
-    "soemtron",
-    "sonja",
-    "speedwriter",
-    "sphinx",
-    "starlet",
-    "stearns",
-    "steel",
-    "stella",
-    "steno",
-    "sterling",
-    "stoewer",
-    "stolzenberg",
-    "stott",
-    "strangfeld",
-    "sture",
-    "stylotyp",
-    "sun",
-    "superba",
-    "superia",
-    "supermetall",
-    "surety",
-    "swintec",
-    "swissa",
-    "talbos",
-    "talleres",
-    "tatrapoint",
-    "taurus",
-    "taylorix",
-    "tell",
-    "tempotype",
-    "tippco",
-    "titania",
-    "tops",
-    "towa",
-    "toyo",
-    "tradition",
-    "transatlantic",
-    "traveller",
-    "trebla",
-    "triumph",
-    "turia",
-    "typatune",
-    "typen",
-    "typorium",
-    "ugro",
-    "ultima",
-    "unda",
-    "underwood",
-    "unica",
-    "unitype",
-    "ursula",
-    "utax",
-    "varityper",
-    "vasanta",
-    "vendex",
-    "venus",
-    "victor",
-    "victoria",
-    "video",
-    "viking",
-    "vira",
-    "virotyp",
-    "visigraph",
-    "vittoria",
-    "volcan",
-    "vornado",
-    "voss",
-    "vultur",
-    "waltons",
-    "wanamaker",
-    "wanderer",
-    "ward",
-    "warner",
-    "waterloo",
-    "waverley",
-    "wayne",
-    "webster",
-    "wedgefield",
-    "welco",
-    "wellington",
-    "wellon",
-    "weltblick",
-    "westphalia",
-    "wiedmer",
-    "williams",
-    "wilson",
-    "winkel",
-    "winsor",
-    "wizard",
-    "woodstock",
-    "woodwards",
-    "yatran",
-    "yost",
-    "zenit",
-    "zentronik",
-    "zeta",
-    "zeya",
+const ADJECTIVES: &[&str] = &[
+    "able", "agate", "agile", "alpine", "amber", "ample", "aqua", "arctic", "arid", "astral",
+    "autumn", "avid", "azure", "balmy", "birch", "bold", "boreal", "brave", "breezy", "brief",
+    "bright", "brisk", "broad", "bronze", "calm", "cerith", "civil", "clean", "clear", "clever",
+    "cobalt", "cool", "copper", "coral", "cozy", "crisp", "cubic", "cyan", "deft", "dense", "dewy",
+    "direct", "dusky", "dusty", "eager", "early", "earnest", "elder", "elfin", "equal", "even",
+    "exact", "faint", "fair", "fast", "fawn", "ferny", "fiery", "fine", "firm", "fleet", "floral",
+    "focal", "fond", "frank", "fresh", "frosty", "full", "gentle", "gilded", "glacial", "glad",
+    "glossy", "golden", "grand", "green", "gusty", "hale", "happy", "hardy", "hazel", "hearty",
+    "hilly", "humble", "hushed", "icy", "ideal", "inner", "iron", "ivory", "jade", "jovial",
+    "keen", "kind", "lapis", "leafy", "level", "light", "lilac", "limber", "lively", "local",
+    "lofty", "lucid", "lunar", "major", "maple", "mellow", "merry", "mild", "milky", "misty",
+    "modal", "modest", "mossy", "muted", "native", "naval", "neat", "nimble", "noble", "north",
+    "novel", "oaken", "ochre", "olive", "onyx", "opal", "open", "optic", "outer", "owed", "ozone",
+    "pale", "pastel", "pearl", "pecan", "peppy", "pilot", "placid", "plain", "plum", "plush",
+    "poised", "polar", "polished", "poplar", "prime", "proof", "proud", "pure", "quartz", "quick",
+    "quiet", "rapid", "raspy", "ready", "regal", "rooted", "rosy", "round", "royal", "ruby",
+    "ruddy", "russet", "rustic", "sage", "salty", "sandy", "satin", "scenic", "sedge", "serene",
+    "sharp", "sheer", "silky", "silver", "sleek", "smart", "smooth", "snowy", "solar", "solid",
+    "south", "spry", "stark", "steady", "steel", "steep", "still", "stoic", "stony", "stout",
+    "sturdy", "suede", "sunny", "supple", "sure", "swift", "tall", "tawny", "teal", "terse",
+    "thick", "tidal", "tidy", "timber", "topaz", "total", "trim", "tropic", "true", "tulip",
+    "upper", "urban", "valid", "vast", "velvet", "verde", "vivid", "vocal", "warm", "waxen",
+    "west", "whole", "wide", "wild", "wise", "witty", "woven", "young", "zealous", "zephyr",
+    "zesty", "zinc",
 ];
 
-/// Picks a typewriter name that isn't already taken by an existing branch.
-///
-/// Each entry in `existing_branches` is expected to be a full branch name
-/// like `"olivetti-a3f9b2c1"`. The prefix before the last `'-'` is treated
-/// as the taken typewriter name. Branches without a `'-'` are ignored.
-///
-/// Returns `None` when every name in the pool is already taken.
-pub fn pick_typewriter_name(
-    existing_branches: &[&str],
-    rng: &mut impl Rng,
-) -> Option<&'static str> {
-    let disallowed: HashSet<&str> = existing_branches
-        .iter()
-        .filter_map(|branch| branch.rsplit_once('-').map(|(prefix, _)| prefix))
-        .collect();
+const NOUNS: &[&str] = &[
+    "anchor", "anvil", "arbor", "arch", "arrow", "atlas", "badge", "badger", "basin", "bay",
+    "beacon", "beam", "bell", "birch", "blade", "bloom", "bluff", "bolt", "bower", "breeze",
+    "bridge", "brook", "bunting", "cabin", "cairn", "canyon", "cape", "cedar", "chasm", "cliff",
+    "cloud", "clover", "coast", "cobble", "colt", "comet", "condor", "coral", "cove", "crane",
+    "crater", "creek", "crest", "curlew", "cypress", "dale", "dawn", "delta", "den", "dove",
+    "drake", "drift", "drum", "dune", "dusk", "eagle", "echo", "egret", "elk", "elm", "ember",
+    "falcon", "fawn", "fern", "ferry", "field", "finch", "fjord", "flame", "flint", "flower",
+    "forge", "fossil", "fox", "frost", "gale", "garnet", "gate", "gazelle", "geyser", "glade",
+    "glen", "gorge", "granite", "grove", "gull", "harbor", "hare", "haven", "hawk", "hazel",
+    "heath", "hedge", "heron", "hill", "hollow", "horizon", "ibis", "inlet", "isle", "ivy",
+    "jackal", "jasper", "juniper", "kestrel", "kinglet", "knoll", "lagoon", "lake", "lantern",
+    "larch", "lark", "laurel", "lava", "leaf", "ledge", "lily", "linden", "lodge", "loft", "lotus",
+    "lynx", "mantle", "maple", "marble", "marsh", "marten", "meadow", "merlin", "mesa", "mill",
+    "mint", "moon", "moose", "moss", "newt", "north", "nutmeg", "oak", "oasis", "obsidian",
+    "orbit", "orchid", "oriole", "osprey", "otter", "owl", "palm", "panther", "pass", "path",
+    "peak", "pebble", "pelican", "peony", "perch", "pier", "pine", "plover", "plume", "pond",
+    "poppy", "prairie", "prism", "puma", "quail", "quarry", "quartz", "rain", "rampart", "range",
+    "raven", "ravine", "reed", "reef", "ridge", "river", "robin", "rowan", "sage", "salmon",
+    "sequoia", "shore", "shrike", "sigma", "sky", "slate", "slope", "snow", "spark", "sparrow",
+    "spider", "spruce", "stag", "star", "stone", "stork", "storm", "stream", "summit", "swift",
+    "sycamore", "tern", "terrace", "thistle", "thorn", "thrush", "tide", "timber", "torch",
+    "tower", "trail", "trout", "tulip", "tundra", "vale", "valley", "veranda", "viper", "vista",
+    "vole", "walrus", "warbler", "willow", "wolf", "wren", "yew", "zenith",
+];
 
-    let available: Vec<&'static str> = TYPEWRITER_NAMES
-        .iter()
-        .copied()
-        .filter(|name| !disallowed.contains(name))
-        .collect();
+/// Generates a branch name in `"adjective-noun"` format (e.g. `"swift-falcon"`).
+///
+/// Tries up to 100 random combinations, skipping any name that already appears
+/// in `existing_branches`. Returns `None` if no unused name is found.
+pub fn generate_branch_name(existing_branches: &[&str], rng: &mut impl Rng) -> Option<String> {
+    let existing: HashSet<&str> = existing_branches.iter().copied().collect();
 
-    if available.is_empty() {
-        return None;
+    for _ in 0..100 {
+        let adjective = ADJECTIVES[rng.random_range(0..ADJECTIVES.len())];
+        let noun = NOUNS[rng.random_range(0..NOUNS.len())];
+        let name = format!("{adjective}-{noun}");
+
+        if !existing.contains(name.as_str()) {
+            return Some(name);
+        }
     }
 
-    let index = rng.random_range(0..available.len());
-    Some(available[index])
-}
-
-/// Generates a branch name like `"olivetti-a3f9b2c1"` by picking a typewriter
-/// name that isn't already taken and appending an 8-character alphanumeric hash.
-///
-/// Returns `None` when every typewriter name in the pool is already taken.
-pub fn generate_branch_name(existing_branches: &[&str], rng: &mut impl Rng) -> Option<String> {
-    let typewriter_name = pick_typewriter_name(existing_branches, rng)?;
-    let hash: String = (0..8)
-        .map(|_| {
-            let idx: u8 = rng.random_range(0..36);
-            if idx < 10 {
-                (b'0' + idx) as char
-            } else {
-                (b'a' + idx - 10) as char
-            }
-        })
-        .collect();
-    Some(format!("{typewriter_name}-{hash}"))
+    None
 }
 
 #[cfg(test)]
@@ -713,134 +80,91 @@ mod tests {
     use rand::rngs::StdRng;
 
     #[gpui::test(iterations = 10)]
-    fn test_pick_typewriter_name_with_no_disallowed(mut rng: StdRng) {
-        let name = pick_typewriter_name(&[], &mut rng);
-        assert!(name.is_some());
-        assert!(TYPEWRITER_NAMES.contains(&name.unwrap()));
-    }
-
-    #[gpui::test(iterations = 10)]
-    fn test_pick_typewriter_name_excludes_taken_names(mut rng: StdRng) {
-        let branch_names = &["olivetti-abc12345", "selectric-def67890"];
-        let name = pick_typewriter_name(branch_names, &mut rng).unwrap();
-        assert_ne!(name, "olivetti");
-        assert_ne!(name, "selectric");
-    }
-
-    #[gpui::test]
-    fn test_pick_typewriter_name_all_taken(mut rng: StdRng) {
-        let branch_names: Vec<String> = TYPEWRITER_NAMES
-            .iter()
-            .map(|name| format!("{name}-00000000"))
-            .collect();
-        let branch_name_refs: Vec<&str> = branch_names.iter().map(|s| s.as_str()).collect();
-        let name = pick_typewriter_name(&branch_name_refs, &mut rng);
-        assert!(name.is_none());
-    }
-
-    #[gpui::test(iterations = 10)]
-    fn test_pick_typewriter_name_ignores_branches_without_hyphen(mut rng: StdRng) {
-        let branch_names = &["main", "develop", "feature"];
-        let name = pick_typewriter_name(branch_names, &mut rng);
-        assert!(name.is_some());
-        assert!(TYPEWRITER_NAMES.contains(&name.unwrap()));
-    }
-
-    #[gpui::test(iterations = 10)]
     fn test_generate_branch_name_format(mut rng: StdRng) {
-        let branch_name = generate_branch_name(&[], &mut rng).unwrap();
-        let (prefix, suffix) = branch_name.rsplit_once('-').unwrap();
-        assert!(TYPEWRITER_NAMES.contains(&prefix));
-        assert_eq!(suffix.len(), 8);
-        assert!(suffix.chars().all(|c| c.is_ascii_alphanumeric()));
+        let name = generate_branch_name(&[], &mut rng).unwrap();
+        let (adjective, noun) = name.split_once('-').expect("name should contain a hyphen");
+        assert!(
+            ADJECTIVES.contains(&adjective),
+            "{adjective:?} is not in ADJECTIVES"
+        );
+        assert!(NOUNS.contains(&noun), "{noun:?} is not in NOUNS");
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_generate_branch_name_avoids_existing(mut rng: StdRng) {
+        let existing = &["swift-falcon", "calm-river", "bold-cedar"];
+        let name = generate_branch_name(existing, &mut rng).unwrap();
+        for &branch in existing {
+            assert_ne!(
+                name, branch,
+                "generated name should not match an existing branch"
+            );
+        }
     }
 
     #[gpui::test]
-    fn test_generate_branch_name_returns_none_when_exhausted(mut rng: StdRng) {
-        let branch_names: Vec<String> = TYPEWRITER_NAMES
+    fn test_generate_branch_name_returns_none_when_stuck(mut rng: StdRng) {
+        let all_names: Vec<String> = ADJECTIVES
             .iter()
-            .map(|name| format!("{name}-00000000"))
+            .flat_map(|adj| NOUNS.iter().map(move |noun| format!("{adj}-{noun}")))
             .collect();
-        let branch_name_refs: Vec<&str> = branch_names.iter().map(|s| s.as_str()).collect();
-        let result = generate_branch_name(&branch_name_refs, &mut rng);
+        let refs: Vec<&str> = all_names.iter().map(|s| s.as_str()).collect();
+        let result = generate_branch_name(&refs, &mut rng);
         assert!(result.is_none());
     }
 
-    #[gpui::test(iterations = 100)]
-    fn test_generate_branch_name_never_reuses_taken_prefix(mut rng: StdRng) {
-        let existing = &["olivetti-123abc", "selectric-def456"];
-        let branch_name = generate_branch_name(existing, &mut rng).unwrap();
-        let (prefix, _) = branch_name.rsplit_once('-').unwrap();
-        assert_ne!(prefix, "olivetti");
-        assert_ne!(prefix, "selectric");
-    }
+    #[test]
+    fn test_adjectives_are_valid() {
+        let mut seen = HashSet::default();
+        for &word in ADJECTIVES {
+            assert!(seen.insert(word), "duplicate entry in ADJECTIVES: {word:?}");
+        }
 
-    #[gpui::test(iterations = 100)]
-    fn test_generate_branch_name_avoids_multiple_taken_prefixes(mut rng: StdRng) {
-        let existing = &[
-            "olivetti-aaa11111",
-            "selectric-bbb22222",
-            "corona-ccc33333",
-            "remington-ddd44444",
-            "underwood-eee55555",
-        ];
-        let taken_prefixes: HashSet<&str> = existing
-            .iter()
-            .filter_map(|b| b.rsplit_once('-').map(|(prefix, _)| prefix))
-            .collect();
-        let branch_name = generate_branch_name(existing, &mut rng).unwrap();
-        let (prefix, _) = branch_name.rsplit_once('-').unwrap();
-        assert!(
-            !taken_prefixes.contains(prefix),
-            "generated prefix {prefix:?} collides with an existing branch"
-        );
-    }
+        for window in ADJECTIVES.windows(2) {
+            assert!(
+                window[0] < window[1],
+                "ADJECTIVES is not sorted: {0:?} should come before {1:?}",
+                window[0],
+                window[1],
+            );
+        }
 
-    #[gpui::test(iterations = 100)]
-    fn test_generate_branch_name_with_varied_hash_suffixes(mut rng: StdRng) {
-        let existing = &[
-            "olivetti-aaaaaaaa",
-            "olivetti-bbbbbbbb",
-            "olivetti-cccccccc",
-        ];
-        let branch_name = generate_branch_name(existing, &mut rng).unwrap();
-        let (prefix, _) = branch_name.rsplit_once('-').unwrap();
-        assert_ne!(
-            prefix, "olivetti",
-            "should avoid olivetti regardless of how many variants exist"
-        );
+        for &word in ADJECTIVES {
+            assert!(
+                !word.contains('-'),
+                "ADJECTIVES entry contains a hyphen: {word:?}"
+            );
+            assert!(
+                word.chars().all(|c| c.is_lowercase()),
+                "ADJECTIVES entry is not all lowercase: {word:?}"
+            );
+        }
     }
 
     #[test]
-    fn test_typewriter_names_are_valid() {
+    fn test_nouns_are_valid() {
         let mut seen = HashSet::default();
-        for &name in TYPEWRITER_NAMES {
-            assert!(
-                seen.insert(name),
-                "duplicate entry in TYPEWRITER_NAMES: {name:?}"
-            );
+        for &word in NOUNS {
+            assert!(seen.insert(word), "duplicate entry in NOUNS: {word:?}");
         }
 
-        for window in TYPEWRITER_NAMES.windows(2) {
+        for window in NOUNS.windows(2) {
             assert!(
-                window[0] <= window[1],
-                "TYPEWRITER_NAMES is not sorted: {0:?} should come after {1:?}",
-                window[1],
+                window[0] < window[1],
+                "NOUNS is not sorted: {0:?} should come before {1:?}",
                 window[0],
+                window[1],
             );
         }
 
-        for &name in TYPEWRITER_NAMES {
+        for &word in NOUNS {
             assert!(
-                !name.contains('-'),
-                "TYPEWRITER_NAMES entry contains a hyphen: {name:?}"
+                !word.contains('-'),
+                "NOUNS entry contains a hyphen: {word:?}"
             );
-        }
-
-        for &name in TYPEWRITER_NAMES {
             assert!(
-                name.chars().all(|c| c.is_lowercase() || !c.is_alphabetic()),
-                "TYPEWRITER_NAMES entry is not lowercase: {name:?}"
+                word.chars().all(|c| c.is_lowercase()),
+                "NOUNS entry is not all lowercase: {word:?}"
             );
         }
     }

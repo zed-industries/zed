@@ -117,7 +117,7 @@ pub trait AgentConnection {
         &self,
         _method: &acp::AuthMethodId,
         _cx: &App,
-    ) -> Option<SpawnInTerminal> {
+    ) -> Option<Task<Result<SpawnInTerminal>>> {
         None
     }
 
@@ -477,6 +477,24 @@ impl PermissionOptionChoice {
     pub fn label(&self) -> SharedString {
         self.allow.name.clone().into()
     }
+
+    /// Build a `SelectedPermissionOutcome` for this choice.
+    ///
+    /// If the choice carries `sub_patterns`, they are attached as
+    /// `SelectedPermissionParams::Terminal`.
+    pub fn build_outcome(&self, is_allow: bool) -> crate::SelectedPermissionOutcome {
+        let option = if is_allow { &self.allow } else { &self.deny };
+
+        let params = if !self.sub_patterns.is_empty() {
+            Some(crate::SelectedPermissionParams::Terminal {
+                patterns: self.sub_patterns.clone(),
+            })
+        } else {
+            None
+        };
+
+        crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind).params(params)
+    }
 }
 
 /// Pairs a tool's permission pattern with its display name
@@ -547,6 +565,57 @@ impl PermissionOptions {
     pub fn deny_once_option_id(&self) -> Option<acp::PermissionOptionId> {
         self.first_option_of_kind(acp::PermissionOptionKind::RejectOnce)
             .map(|option| option.option_id.clone())
+    }
+
+    /// Build a `SelectedPermissionOutcome` for the `DropdownWithPatterns`
+    /// variant when the user has checked specific pattern indices.
+    ///
+    /// Returns `Some` with the always-allow/deny outcome when at least one
+    /// pattern is checked. Returns `None` when zero patterns are checked,
+    /// signaling that the caller should degrade to allow-once / deny-once.
+    ///
+    /// Panics (debug) or returns `None` (release) if called on a non-
+    /// `DropdownWithPatterns` variant.
+    pub fn build_outcome_for_checked_patterns(
+        &self,
+        checked_indices: &[usize],
+        is_allow: bool,
+    ) -> Option<crate::SelectedPermissionOutcome> {
+        let PermissionOptions::DropdownWithPatterns {
+            choices, patterns, ..
+        } = self
+        else {
+            debug_assert!(
+                false,
+                "build_outcome_for_checked_patterns called on non-DropdownWithPatterns"
+            );
+            return None;
+        };
+
+        let checked_patterns: Vec<String> = patterns
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| checked_indices.contains(index))
+            .map(|(_, cp)| cp.pattern.clone())
+            .collect();
+
+        if checked_patterns.is_empty() {
+            return None;
+        }
+
+        // Use the first choice (the "Always" choice) as the base for the outcome.
+        let always_choice = choices.first()?;
+        let option = if is_allow {
+            &always_choice.allow
+        } else {
+            &always_choice.deny
+        };
+
+        let outcome = crate::SelectedPermissionOutcome::new(option.option_id.clone(), option.kind)
+            .params(Some(crate::SelectedPermissionParams::Terminal {
+                patterns: checked_patterns,
+            }));
+        Some(outcome)
     }
 }
 
@@ -665,11 +734,10 @@ mod test_support {
             cx: &mut gpui::App,
         ) -> Entity<AcpThread> {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread_title = title.unwrap_or_else(|| SharedString::new_static("Test"));
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     None,
-                    thread_title,
+                    title,
                     Some(work_dirs),
                     self.clone(),
                     project,

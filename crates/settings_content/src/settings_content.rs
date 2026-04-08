@@ -9,6 +9,7 @@ mod project;
 mod serde_helper;
 mod terminal;
 mod theme;
+mod title_bar;
 mod workspace;
 
 pub use agent::*;
@@ -26,6 +27,7 @@ pub use serde_helper::{
 use settings_json::parse_json_with_comments;
 pub use terminal::*;
 pub use theme::*;
+pub use title_bar::*;
 pub use workspace::*;
 
 use collections::{HashMap, IndexMap};
@@ -63,7 +65,8 @@ macro_rules! settings_overrides {
         }
     }
 }
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::Hash;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
@@ -171,9 +174,6 @@ pub struct SettingsContent {
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
-    /// Configuration for the Notification Panel
-    pub notification_panel: Option<NotificationPanelSettingsContent>,
-
     pub proxy: Option<String>,
 
     /// The URL of the Zed server to connect to.
@@ -202,6 +202,13 @@ pub struct SettingsContent {
 
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
+
+    /// Number of lines to search for modelines at the beginning and end of files.
+    /// Modelines contain editor directives (e.g., vim/emacs settings) that configure
+    /// the editor behavior for specific files.
+    ///
+    /// Default: 5
+    pub modeline_lines: Option<usize>,
 }
 
 impl SettingsContent {
@@ -255,6 +262,35 @@ settings_overrides! {
     pub struct PlatformOverrides { macos, linux, windows }
 }
 
+/// Determines what settings a profile starts from before applying its overrides.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileBase {
+    /// Apply profile settings on top of the user's current settings.
+    #[default]
+    User,
+    /// Apply profile settings on top of Zed's default settings, ignoring user customizations.
+    Default,
+}
+
+/// A named settings profile that can temporarily override settings.
+#[with_fallible_options]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SettingsProfile {
+    /// What base settings to start from before applying this profile's overrides.
+    ///
+    /// - `user`: Apply on top of user's settings (default)
+    /// - `default`: Apply on top of Zed's default settings, ignoring user customizations
+    #[serde(default)]
+    pub base: ProfileBase,
+
+    /// The settings overrides for this profile.
+    #[serde(default)]
+    pub settings: Box<SettingsContent>,
+}
+
 #[with_fallible_options]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
@@ -268,7 +304,7 @@ pub struct UserSettingsContent {
     pub platform_overrides: PlatformOverrides,
 
     #[serde(default)]
-    pub profiles: IndexMap<String, SettingsContent>,
+    pub profiles: IndexMap<String, SettingsProfile>,
 }
 
 pub struct ExtensionsSettingsContent {
@@ -316,54 +352,10 @@ impl strum::VariantNames for BaseKeymapContent {
     ];
 }
 
-#[with_fallible_options]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
-pub struct TitleBarSettingsContent {
-    /// Whether to show the branch icon beside branch switcher in the title bar.
-    ///
-    /// Default: false
-    pub show_branch_icon: Option<bool>,
-    /// Whether to show onboarding banners in the title bar.
-    ///
-    /// Default: true
-    pub show_onboarding_banner: Option<bool>,
-    /// Whether to show user avatar in the title bar.
-    ///
-    /// Default: true
-    pub show_user_picture: Option<bool>,
-    /// Whether to show the branch name button in the titlebar.
-    ///
-    /// Default: true
-    pub show_branch_name: Option<bool>,
-    /// Whether to show the project host and name in the titlebar.
-    ///
-    /// Default: true
-    pub show_project_items: Option<bool>,
-    /// Whether to show the sign in button in the title bar.
-    ///
-    /// Default: true
-    pub show_sign_in: Option<bool>,
-    /// Whether to show the user menu button in the title bar.
-    ///
-    /// Default: true
-    pub show_user_menu: Option<bool>,
-    /// Whether to show the menus in the title bar.
-    ///
-    /// Default: false
-    pub show_menus: Option<bool>,
-}
-
 /// Configuration of audio in Zed.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
-    /// Opt into the new audio system.
-    ///
-    /// You need to rejoin a call for this setting to apply
-    #[serde(rename = "experimental.rodio_audio")]
-    pub rodio_audio: Option<bool>, // default is false
-    /// Requires 'rodio_audio: true'
-    ///
     /// Automatically increase or decrease you microphone's volume. This affects how
     /// loud you sound to others.
     ///
@@ -373,35 +365,11 @@ pub struct AudioSettingsContent {
     /// compared to other speakers.
     #[serde(rename = "experimental.auto_microphone_volume")]
     pub auto_microphone_volume: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Automatically increate or decrease the volume of other call members.
-    /// This only affects how things sound for you.
-    #[serde(rename = "experimental.auto_speaker_volume")]
-    pub auto_speaker_volume: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Remove background noises. Works great for typing, cars, dogs, AC. Does
     /// not work well on music.
-    #[serde(rename = "experimental.denoise")]
-    pub denoise: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Use audio parameters compatible with the previous versions of
-    /// experimental audio and non-experimental audio. When this is false you
-    /// will sound strange to anyone not on the latest experimental audio. In
-    /// the future we will migrate by setting this to false
-    ///
-    /// You need to rejoin a call for this setting to apply
-    #[serde(rename = "experimental.legacy_audio_compatible")]
-    pub legacy_audio_compatible: Option<bool>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
     pub output_audio_device: Option<AudioOutputDeviceName>,
-    /// Requires 'rodio_audio: true'
-    ///
     /// Select specific input audio device.
     #[serde(rename = "experimental.input_audio_device")]
     pub input_audio_device: Option<AudioInputDeviceName>,
@@ -542,22 +510,6 @@ pub enum DockPosition {
     Right,
 }
 
-/// Settings for slash commands.
-#[with_fallible_options]
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct SlashCommandSettings {
-    /// Settings for the `/cargo-workspace` slash command.
-    pub cargo_workspace: Option<CargoWorkspaceCommandSettings>,
-}
-
-/// Settings for the `/cargo-workspace` slash command.
-#[with_fallible_options]
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct CargoWorkspaceCommandSettings {
-    /// Whether `/cargo-workspace` is enabled.
-    pub enabled: Option<bool>,
-}
-
 /// Configuration of voice calls in Zed.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
@@ -678,28 +630,6 @@ pub struct ScrollbarSettings {
 
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct NotificationPanelSettingsContent {
-    /// Whether to show the panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Where to dock the panel.
-    ///
-    /// Default: right
-    pub dock: Option<DockPosition>,
-    /// Default width of the panel in pixels.
-    ///
-    /// Default: 300
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
-    /// Whether to show a badge on the notification panel icon with the count of unread notifications.
-    ///
-    /// Default: false
-    pub show_count_badge: Option<bool>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -808,6 +738,7 @@ pub struct VimSettingsContent {
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
+    pub use_regex_search: Option<bool>,
     /// When enabled, the `:substitute` command replaces all matches in a line
     /// by default. The 'g' flag then toggles this behavior.,
     pub gdefault: Option<bool>,
@@ -1098,6 +1029,8 @@ pub struct DevContainerConnection {
     pub remote_user: String,
     pub container_id: String,
     pub use_podman: bool,
+    pub extension_ids: Vec<String>,
+    pub remote_env: BTreeMap<String, String>,
 }
 
 #[with_fallible_options]
@@ -1192,15 +1125,15 @@ pub struct WhichKeySettingsContent {
     pub delay_ms: Option<u64>,
 }
 
+// An ExtendingVec in the settings can only accumulate new values.
+//
+// This is useful for things like private files where you only want
+// to allow new values to be added.
+//
+// Consider using a HashMap<String, bool> instead of this type
+// (like auto_install_extensions) so that user settings files can both add
+// and remove values from the set.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-/// An ExtendingVec in the settings can only accumulate new values.
-///
-/// This is useful for things like private files where you only want
-/// to allow new values to be added.
-///
-/// Consider using a HashMap<String, bool> instead of this type
-/// (like auto_install_extensions) so that user settings files can both add
-/// and remove values from the set.
 pub struct ExtendingVec<T>(pub Vec<T>);
 
 impl<T> Into<Vec<T>> for ExtendingVec<T> {
@@ -1220,10 +1153,10 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
-/// A SaturatingBool in the settings can only ever be set to true,
-/// later attempts to set it to false will be ignored.
-///
-/// Used by `disable_ai`.
+// A SaturatingBool in the settings can only ever be set to true,
+// later attempts to set it to false will be ignored.
+//
+// Used by `disable_ai`.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SaturatingBool(pub bool);
 
