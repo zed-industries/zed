@@ -687,6 +687,7 @@ jobs:
         name: compliance-report.md
         path: compliance-report.md
         if-no-files-found: error
+        overwrite: true
     - name: send_compliance_slack_notification
       if: always()
       run: |
