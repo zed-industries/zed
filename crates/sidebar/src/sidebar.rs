@@ -875,7 +875,7 @@ impl Sidebar {
                     }
                 };
 
-                // === Main code path: one query per group via main_worktree_paths ===
+                // Main code path: one query per group via main_worktree_paths.
                 // The main_worktree_paths column is set on all new threads and
                 // points to the group's canonical paths regardless of which
                 // linked worktree the thread was opened in.
@@ -2463,7 +2463,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // --- Determine if worktree cleanup is needed (must come before archive call) ---
+        // Determine if worktree cleanup is needed (must come before archive call).
         let metadata = ThreadMetadataStore::global(cx)
             .read(cx)
             .entry(session_id)
