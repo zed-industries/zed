@@ -311,7 +311,7 @@ jobs:
     - id: run-compliance-check
       name: release::compliance_check::run_compliance_check
       run: |
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report-${GITHUB_REF_NAME}.md
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
@@ -681,7 +681,7 @@ jobs:
     - id: run-post-upload-compliance-check
       name: release::validate_release_assets::run_post_upload_compliance_check
       run: |
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report-${GITHUB_REF_NAME}.md
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}

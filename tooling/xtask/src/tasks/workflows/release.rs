@@ -221,7 +221,7 @@ pub(crate) fn add_compliance_notification_steps(
 fn compliance_check() -> NamedJob {
     fn run_compliance_check() -> Step<Run> {
         named::bash(formatdoc! {r#"
-            cargo xtask compliance "$GITHUB_REF_NAME" --report-path {COMPLIANCE_REPORT_PATH}
+            cargo xtask compliance "$GITHUB_REF_NAME" --report-path "{COMPLIANCE_REPORT_PATH}"
             "#,
         })
         .id("run-compliance-check")
@@ -270,7 +270,7 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
 
     fn run_post_upload_compliance_check() -> Step<Run> {
         named::bash(formatdoc! {r#"
-            cargo xtask compliance "$GITHUB_REF_NAME" --report-path {COMPLIANCE_REPORT_PATH}
+            cargo xtask compliance "$GITHUB_REF_NAME" --report-path "{COMPLIANCE_REPORT_PATH}"
             "#,
         })
         .id("run-post-upload-compliance-check")
