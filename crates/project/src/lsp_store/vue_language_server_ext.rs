@@ -155,7 +155,6 @@ fn send_null_responses(
     }
 }
 
-/// Flush queued requests if vtsls is now Running. Returns true if flushed.
 fn try_flush_queue(
     pending_queue: &Arc<Mutex<Option<PendingBridgeQueue>>>,
     target_server: Arc<LanguageServer>,
@@ -184,7 +183,6 @@ fn try_flush_queue(
     true
 }
 
-/// vtsls is Running: flush any pending queue and forward requests directly.
 fn handle_requests_with_running_ts_server(
     requests: Vec<(u64, String, serde_json::Value)>,
     target_server: Arc<LanguageServer>,
@@ -202,8 +200,6 @@ fn handle_requests_with_running_ts_server(
     forward_requests(requests, target_server, vue_server, request_timeout, cx);
 }
 
-/// vtsls is not Running: buffer requests and set up a subscription + timeout
-/// to flush or discard them once vtsls starts (or doesn't).
 #[allow(clippy::redundant_clone)]
 fn buffer_requests_until_ts_server_ready(
     requests: Vec<(u64, String, serde_json::Value)>,
@@ -256,10 +252,7 @@ fn buffer_requests_until_ts_server_ready(
                     return;
                 };
 
-                log::info!(
-                    "[vue-bridge] {} reached Running (event-driven flush)",
-                    name
-                );
+                log::info!("[vue-bridge] {} reached Running (event-driven flush)", name);
 
                 let request_timeout = ProjectSettings::get_global(cx)
                     .global_lsp_settings
@@ -309,8 +302,8 @@ pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &Lang
     let vue_server_id = language_server.server_id();
 
     // Shared queue state:
-    // - Some(queue) = Queuing phase (vtsls not yet Running, requests are buffered)
-    // - None = Direct phase (vtsls is Running, or queue was drained by timeout)
+    // - Some(queue) = Queuing phase (TS LSP not yet Running, requests are buffered)
+    // - None = Direct phase (TS LSP is Running, or queue was drained by timeout)
     let pending_queue: Arc<Mutex<Option<PendingBridgeQueue>>> = Arc::new(Mutex::new(None));
 
     let subscription_registered: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
