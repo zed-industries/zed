@@ -134,7 +134,12 @@ impl ActiveEntry {
             (ActiveEntry::Thread { session_id, .. }, ListEntry::Thread(thread)) => {
                 thread.metadata.session_id == *session_id
             }
-            (ActiveEntry::Draft(_workspace), ListEntry::DraftThread { .. }) => true,
+            (
+                ActiveEntry::Draft(_),
+                ListEntry::DraftThread {
+                    workspace: None, ..
+                },
+            ) => true,
             _ => false,
         }
     }
@@ -218,16 +223,9 @@ enum ListEntry {
     /// The user's active draft thread. Shows a prefix of the currently-typed
     /// prompt, or "Untitled Thread" if the prompt is empty.
     DraftThread {
-        worktrees: Vec<WorktreeInfo>,
-    },
-    /// A convenience row for starting a new thread. Shown when a project group
-    /// has no threads, or when an open linked worktree workspace has no threads.
-    /// When `workspace` is `Some`, this entry is for a specific linked worktree
-    /// workspace and can be dismissed (removing that workspace).
-    NewThread {
         key: project::ProjectGroupKey,
-        worktrees: Vec<WorktreeInfo>,
         workspace: Option<Entity<Workspace>>,
+        worktrees: Vec<WorktreeInfo>,
     },
 }
 
@@ -250,35 +248,22 @@ impl ListEntry {
                 ThreadEntryWorkspace::Open(ws) => vec![ws.clone()],
                 ThreadEntryWorkspace::Closed(_) => Vec::new(),
             },
-            ListEntry::DraftThread { .. } => {
-                vec![multi_workspace.workspace().clone()]
-            }
-            ListEntry::ProjectHeader { key, .. } => {
-                // The header only activates the main worktree workspace
-                // (the one whose root paths match the group key's path list).
-                multi_workspace
-                    .workspaces()
-                    .find(|ws| PathList::new(&ws.read(cx).root_paths(cx)) == *key.path_list())
-                    .cloned()
-                    .into_iter()
-                    .collect()
-            }
-            ListEntry::NewThread { key, workspace, .. } => {
-                // When the NewThread entry is for a specific linked worktree
-                // workspace, that workspace is reachable. Otherwise fall back
-                // to the main worktree workspace.
+            ListEntry::DraftThread { workspace, .. } => {
                 if let Some(ws) = workspace {
                     vec![ws.clone()]
                 } else {
-                    multi_workspace
-                        .workspaces()
-                        .find(|ws| PathList::new(&ws.read(cx).root_paths(cx)) == *key.path_list())
-                        .cloned()
-                        .into_iter()
-                        .collect()
+                    // workspace: None means this is the active draft,
+                    // which always lives on the current workspace.
+                    vec![multi_workspace.workspace().clone()]
                 }
             }
-            _ => Vec::new(),
+            ListEntry::ProjectHeader { key, .. } => multi_workspace
+                .workspaces()
+                .find(|ws| PathList::new(&ws.read(cx).root_paths(cx)) == *key.path_list())
+                .cloned()
+                .into_iter()
+                .collect(),
+            ListEntry::ViewMore { .. } => Vec::new(),
         }
     }
 }
@@ -1115,17 +1100,31 @@ impl Sidebar {
                         let ws_path_list = workspace_path_list(draft_ws, cx);
                         let worktrees = worktree_info_from_thread_paths(&ws_path_list, &group_key);
                         entries.push(ListEntry::DraftThread {
+                            key: group_key.clone(),
+                            workspace: None,
                             worktrees: worktrees.collect(),
                         });
                     }
                 }
 
-                // Emit a NewThread for each open linked worktree workspace
-                // that has no threads. Skip the workspace if it's showing
-                // the active draft (it already has a DraftThread entry).
-                if !is_draft_for_group && is_active {
+                // Emit a DraftThread for each open linked worktree workspace
+                // that has no threads. Skip the specific workspace that is
+                // showing the active draft (it already has a DraftThread entry
+                // from the block above).
+                {
+                    let draft_ws_id = if is_draft_for_group {
+                        self.active_entry.as_ref().and_then(|e| match e {
+                            ActiveEntry::Draft(ws) => Some(ws.entity_id()),
+                            _ => None,
+                        })
+                    } else {
+                        None
+                    };
                     let thread_store = ThreadMetadataStore::global(cx);
                     for ws in &group_workspaces {
+                        if Some(ws.entity_id()) == draft_ws_id {
+                            continue;
+                        }
                         let ws_path_list = workspace_path_list(ws, cx);
                         let has_linked_worktrees =
                             worktree_info_from_thread_paths(&ws_path_list, &group_key)
@@ -1145,10 +1144,10 @@ impl Sidebar {
                         let worktrees: Vec<WorktreeInfo> =
                             worktree_info_from_thread_paths(&ws_path_list, &group_key).collect();
 
-                        entries.push(ListEntry::NewThread {
+                        entries.push(ListEntry::DraftThread {
                             key: group_key.clone(),
-                            worktrees,
                             workspace: Some(ws.clone()),
+                            worktrees,
                         });
                     }
                 }
@@ -1307,14 +1306,17 @@ impl Sidebar {
                 key,
                 is_fully_expanded,
             } => self.render_view_more(ix, key.path_list(), *is_fully_expanded, is_selected, cx),
-            ListEntry::DraftThread { worktrees, .. } => {
-                self.render_draft_thread(ix, is_active, worktrees, is_selected, cx)
-            }
-            ListEntry::NewThread {
+            ListEntry::DraftThread {
                 key,
-                worktrees,
                 workspace,
-            } => self.render_new_thread(ix, key, worktrees, workspace.as_ref(), is_selected, cx),
+                worktrees,
+            } => {
+                if workspace.is_some() {
+                    self.render_new_thread(ix, key, worktrees, workspace.as_ref(), is_selected, cx)
+                } else {
+                    self.render_draft_thread(ix, is_active, worktrees, is_selected, cx)
+                }
+            }
         };
 
         if is_group_header_after_first {
@@ -1977,18 +1979,18 @@ impl Sidebar {
                     self.expand_thread_group(&path_list, cx);
                 }
             }
-            ListEntry::DraftThread { .. } => {
-                // Already active — nothing to do.
-            }
-            ListEntry::NewThread { key, workspace, .. } => {
-                let path_list = key.path_list().clone();
-                if let Some(workspace) = workspace
-                    .clone()
-                    .or_else(|| self.workspace_for_group(&path_list, cx))
-                {
+            ListEntry::DraftThread { key, workspace, .. } => {
+                if let Some(workspace) = workspace.clone() {
                     self.create_new_thread(&workspace, window, cx);
                 } else {
-                    self.open_workspace_for_group(&path_list, window, cx);
+                    let path_list = key.path_list().clone();
+                    if let Some(workspace) = self.workspace_for_group(&path_list, cx) {
+                        if !AgentPanel::is_visible(&workspace, cx) {
+                            workspace.update(cx, |workspace, cx| {
+                                workspace.focus_panel::<AgentPanel>(window, cx);
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -2269,10 +2271,7 @@ impl Sidebar {
                 }
             }
             Some(
-                ListEntry::Thread(_)
-                | ListEntry::ViewMore { .. }
-                | ListEntry::NewThread { .. }
-                | ListEntry::DraftThread { .. },
+                ListEntry::Thread(_) | ListEntry::ViewMore { .. } | ListEntry::DraftThread { .. },
             ) => {
                 for i in (0..ix).rev() {
                     if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(i)
@@ -2300,10 +2299,7 @@ impl Sidebar {
         let header_ix = match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { .. }) => Some(ix),
             Some(
-                ListEntry::Thread(_)
-                | ListEntry::ViewMore { .. }
-                | ListEntry::NewThread { .. }
-                | ListEntry::DraftThread { .. },
+                ListEntry::Thread(_) | ListEntry::ViewMore { .. } | ListEntry::DraftThread { .. },
             ) => (0..ix).rev().find(|&i| {
                 matches!(
                     self.contents.entries.get(i),
@@ -2582,7 +2578,7 @@ impl Sidebar {
                 let session_id = thread.metadata.session_id.clone();
                 self.archive_thread(&session_id, window, cx);
             }
-            Some(ListEntry::NewThread {
+            Some(ListEntry::DraftThread {
                 workspace: Some(workspace),
                 ..
             }) => {
@@ -3479,7 +3475,7 @@ impl Sidebar {
                 }
             }));
 
-        // Linked worktree NewThread entries can be dismissed, which removes
+        // Linked worktree DraftThread entries can be dismissed, which removes
         // the workspace from the multi-workspace.
         if let Some(workspace) = workspace.cloned() {
             thread_item = thread_item.action_slot(

@@ -267,13 +267,17 @@ fn visible_entries_as_strings(
                             format!("  + View More{}", selected)
                         }
                     }
-                    ListEntry::DraftThread { worktrees, .. } => {
+                    ListEntry::DraftThread {
+                        workspace,
+                        worktrees,
+                        ..
+                    } => {
                         let worktree = format_linked_worktree_chips(worktrees);
-                        format!("  [~ Draft{}]{}", worktree, selected)
-                    }
-                    ListEntry::NewThread { worktrees, .. } => {
-                        let worktree = format_linked_worktree_chips(worktrees);
-                        format!("  [+ New Thread{}]{}", worktree, selected)
+                        if workspace.is_some() {
+                            format!("  [+ New Thread{}]{}", worktree, selected)
+                        } else {
+                            format!("  [~ Draft{}]{}", worktree, selected)
+                        }
                     }
                 }
             })
@@ -3351,7 +3355,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                 ListEntry::ViewMore { .. } => {
                     panic!("unexpected `View More` entry while opening linked worktree thread");
                 }
-                ListEntry::DraftThread { .. } | ListEntry::NewThread { .. } => {}
+                ListEntry::DraftThread { .. } => {}
             }
         }
 
@@ -4954,7 +4958,7 @@ async fn test_archived_threads_excluded_from_sidebar_entries(cx: &mut TestAppCon
 #[gpui::test]
 async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestAppContext) {
     // When a linked worktree is opened as its own workspace and the user
-    // switches away, the workspace must still be reachable from a NewThread
+    // switches away, the workspace must still be reachable from a DraftThread
     // sidebar entry. Pressing RemoveSelectedThread (shift-backspace) on that
     // entry should remove the workspace.
     init_test(cx);
@@ -5049,7 +5053,7 @@ async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestA
         "linked worktree workspace should be reachable, but reachable are: {reachable:?}"
     );
 
-    // Find the NewThread entry for the linked worktree and dismiss it.
+    // Find the DraftThread entry for the linked worktree and dismiss it.
     let new_thread_ix = sidebar.read_with(cx, |sidebar, _| {
         sidebar
             .contents
@@ -5058,13 +5062,13 @@ async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestA
             .position(|entry| {
                 matches!(
                     entry,
-                    ListEntry::NewThread {
+                    ListEntry::DraftThread {
                         workspace: Some(_),
                         ..
                     }
                 )
             })
-            .expect("expected a NewThread entry for the linked worktree")
+            .expect("expected a DraftThread entry for the linked worktree")
     });
 
     assert_eq!(
@@ -5081,7 +5085,7 @@ async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestA
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
         1,
-        "linked worktree workspace should be removed after dismissing NewThread entry"
+        "linked worktree workspace should be removed after dismissing DraftThread entry"
     );
 }
 
@@ -5448,6 +5452,175 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
     );
 }
 
+#[gpui::test]
+async fn test_linked_worktree_workspace_reachable_after_adding_unrelated_project(
+    cx: &mut TestAppContext,
+) {
+    // Regression test for a property-test finding:
+    //   AddLinkedWorktree { project_group_index: 0 }
+    //   AddProject { use_worktree: true }
+    //   AddProject { use_worktree: false }
+    // After these three steps, the linked-worktree workspace was not
+    // reachable from any sidebar entry.
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+
+        cx.observe_new(
+            |workspace: &mut Workspace,
+             window: Option<&mut Window>,
+             cx: &mut gpui::Context<Workspace>| {
+                if let Some(window) = window {
+                    let panel = cx.new(|cx| AgentPanel::test_new(workspace, window, cx));
+                    workspace.add_panel(panel, window, cx);
+                }
+            },
+        )
+        .detach();
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/my-project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let project =
+        project::Project::test(fs.clone() as Arc<dyn fs::Fs>, ["/my-project".as_ref()], cx).await;
+    project.update(cx, |p, cx| p.git_scans_complete(cx)).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Step 1: Create a linked worktree for the main project.
+    let worktree_name = "wt-0";
+    let worktree_path = "/worktrees/wt-0";
+
+    fs.insert_tree(
+        worktree_path,
+        serde_json::json!({
+            ".git": "gitdir: /my-project/.git/worktrees/wt-0",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/my-project/.git/worktrees/wt-0",
+        serde_json::json!({
+            "commondir": "../../",
+            "HEAD": "ref: refs/heads/wt-0",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/my-project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from(worktree_path),
+            ref_name: Some(format!("refs/heads/{}", worktree_name).into()),
+            sha: "aaa".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let main_project = main_workspace.read_with(cx, |ws, _| ws.project().clone());
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    // Step 2: Open the linked worktree as its own workspace.
+    let worktree_project =
+        project::Project::test(fs.clone() as Arc<dyn fs::Fs>, [worktree_path.as_ref()], cx).await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+    cx.run_until_parked();
+
+    // Step 3: Add an unrelated project.
+    fs.insert_tree(
+        "/other-project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    let other_project = project::Project::test(
+        fs.clone() as Arc<dyn fs::Fs>,
+        ["/other-project".as_ref()],
+        cx,
+    )
+    .await;
+    other_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(other_project.clone(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Force a full sidebar rebuild with all groups expanded.
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.collapsed_groups.clear();
+        let path_lists: Vec<PathList> = sidebar
+            .contents
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::ProjectHeader { key, .. } => Some(key.path_list().clone()),
+                _ => None,
+            })
+            .collect();
+        for path_list in path_lists {
+            sidebar.expanded_groups.insert(path_list, 10_000);
+        }
+        sidebar.update_entries(cx);
+    });
+    cx.run_until_parked();
+
+    // The linked-worktree workspace must be reachable from at least one
+    // sidebar entry — otherwise the user has no way to navigate to it.
+    let worktree_ws_id = worktree_workspace.entity_id();
+    let (all_ids, reachable_ids) = sidebar.read_with(cx, |sidebar, cx| {
+        let mw = multi_workspace.read(cx);
+
+        let all: HashSet<gpui::EntityId> = mw.workspaces().map(|ws| ws.entity_id()).collect();
+        let reachable: HashSet<gpui::EntityId> = sidebar
+            .contents
+            .entries
+            .iter()
+            .flat_map(|entry| entry.reachable_workspaces(mw, cx))
+            .map(|ws| ws.entity_id())
+            .collect();
+        (all, reachable)
+    });
+
+    let unreachable = &all_ids - &reachable_ids;
+    eprintln!("{}", visible_entries_as_strings(&sidebar, cx).join("\n"));
+
+    assert!(
+        unreachable.is_empty(),
+        "workspaces not reachable from any sidebar entry: {:?}\n\
+         (linked-worktree workspace id: {:?})",
+        unreachable,
+        worktree_ws_id,
+    );
+}
+
 mod property_test {
     use super::*;
     use gpui::proptest::prelude::*;
@@ -5706,6 +5879,7 @@ mod property_test {
                     mw.test_add_workspace(project.clone(), window, cx)
                 });
             }
+
             Operation::ArchiveThread { index } => {
                 let session_id = state.saved_thread_ids[index].clone();
                 sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
@@ -6070,18 +6244,20 @@ mod property_test {
             anyhow::bail!("sidebar should still have an associated multi-workspace");
         };
 
-        let mw = multi_workspace.read(cx);
+        let multi_workspace = multi_workspace.read(cx);
 
         let reachable_workspaces: HashSet<gpui::EntityId> = sidebar
             .contents
             .entries
             .iter()
-            .flat_map(|entry| entry.reachable_workspaces(mw, cx))
+            .flat_map(|entry| entry.reachable_workspaces(multi_workspace, cx))
             .map(|ws| ws.entity_id())
             .collect();
 
-        let all_workspace_ids: HashSet<gpui::EntityId> =
-            mw.workspaces().map(|ws| ws.entity_id()).collect();
+        let all_workspace_ids: HashSet<gpui::EntityId> = multi_workspace
+            .workspaces()
+            .map(|ws| ws.entity_id())
+            .collect();
 
         let unreachable = &all_workspace_ids - &reachable_workspaces;
 
@@ -6098,7 +6274,6 @@ mod property_test {
         cases: 50,
         ..Default::default()
     })]
-    #[ignore = "temporarily disabled to unblock PRs from landing"]
     async fn test_sidebar_invariants(
         #[strategy = gpui::proptest::collection::vec(0u32..DISTRIBUTION_SLOTS * 10, 1..5)]
         raw_operations: Vec<u32>,
