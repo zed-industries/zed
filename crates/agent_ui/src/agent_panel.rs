@@ -1861,6 +1861,7 @@ impl AgentPanel {
                                 model,
                                 enable_thinking,
                                 effort,
+                                speed: None,
                             })
                     });
                 }
@@ -1891,6 +1892,14 @@ impl AgentPanel {
             ActiveView::AgentThread { conversation_view } => Some(conversation_view),
             _ => None,
         }
+    }
+
+    pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
+        self.active_conversation_view()
+            .into_iter()
+            .cloned()
+            .chain(self.background_threads.values().cloned())
+            .collect()
     }
 
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {

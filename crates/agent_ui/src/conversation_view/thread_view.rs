@@ -8467,13 +8467,20 @@ impl ThreadView {
             return;
         };
         thread.update(cx, |thread, cx| {
-            thread.set_speed(
-                thread
-                    .speed()
-                    .map(|speed| speed.toggle())
-                    .unwrap_or(Speed::Fast),
-                cx,
-            );
+            let new_speed = thread
+                .speed()
+                .map(|speed| speed.toggle())
+                .unwrap_or(Speed::Fast);
+            thread.set_speed(new_speed, cx);
+
+            let fs = thread.project().read(cx).fs().clone();
+            update_settings_file(fs, cx, move |settings, _| {
+                if let Some(agent) = settings.agent.as_mut()
+                    && let Some(default_model) = agent.default_model.as_mut()
+                {
+                    default_model.speed = Some(new_speed);
+                }
+            });
         });
     }
 

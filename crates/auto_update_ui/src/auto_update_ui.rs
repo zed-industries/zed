@@ -200,9 +200,9 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                     description: "Run multiple agent threads simultaneously across projects."
                         .into(),
                     bullet_items: vec![
-                        "Mix and match Zed's agent with any ACP-compatible agent".into(),
-                        "Optional worktree isolation keeps agents from conflicting".into(),
-                        "Updated workspace layout designed for agentic workflows".into(),
+                        "Use your favorite agents in parallel".into(),
+                        "Optionally isolate agents using worktrees".into(),
+                        "Combine multiple projects in one window".into(),
                     ],
                     primary_action_label: "Try Now".into(),
                     primary_action_url: None,
