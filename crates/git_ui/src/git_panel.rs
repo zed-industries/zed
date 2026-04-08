@@ -1,4 +1,3 @@
-use alacritty_terminal::vte::ansi;
 use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
@@ -11,6 +10,7 @@ use crate::{
     repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
+use alacritty_terminal::vte::ansi;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use cloud_llm_client::CompletionIntent;
@@ -6442,6 +6442,7 @@ fn open_output(
 #[derive(Default)]
 struct GitOutputHandler {
     output: String,
+    line_start: usize,
 }
 
 impl ansi::Handler for GitOutputHandler {
@@ -6451,11 +6452,16 @@ impl ansi::Handler for GitOutputHandler {
 
     fn linefeed(&mut self) {
         self.output.push('\n');
+        self.line_start = self.output.len();
+    }
+
+    fn carriage_return(&mut self) {
+        self.output.truncate(self.line_start);
     }
 
     fn put_tab(&mut self, count: u16) {
         self.output
-            .extend(std::iter::repeat('\t').take(count as usize));
+            .extend(std::iter::repeat_n('\t', count as usize));
     }
 }
 
@@ -7903,17 +7909,18 @@ mod tests {
     fn test_git_output_handler_strips_ansi_codes() {
         use alacritty_terminal::vte::ansi;
 
-        let cases: &[(&[u8], &str)] = &[
-            (b"no escape codes here\n", "no escape codes here\n"),
-            (b"\x1b[31mhello\x1b[0m", "hello"),
-            (b"\x1b[1;32mfoo\x1b[0m bar", "foo bar"),
+        let cases = [
+            ("no escape codes here\n", "no escape codes here\n"),
+            ("\x1b[31mhello\x1b[0m", "hello"),
+            ("\x1b[1;32mfoo\x1b[0m bar", "foo bar"),
+            ("progress 10%\rprogress 100%\n", "progress 100%\n"),
         ];
 
         for (input, expected) in cases {
             let mut handler = GitOutputHandler::default();
             let mut processor = ansi::Processor::<ansi::StdSyncHandler>::default();
-            processor.advance(&mut handler, input);
-            assert_eq!(handler.output, *expected);
+            processor.advance(&mut handler, input.as_bytes());
+            assert_eq!(handler.output, expected);
         }
     }
 }
