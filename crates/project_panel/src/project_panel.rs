@@ -7280,7 +7280,7 @@ fn cmp_worktree_entries(
     a: &Entry,
     b: &Entry,
     mode: &settings::ProjectPanelSortMode,
-    order: &settings::SortOrderLexicographic,
+    order: &settings::ProjectPanelSortOrderLexicographic,
 ) -> cmp::Ordering {
     let a = (&*a.path, a.is_file());
     let b = (&*b.path, b.is_file());
@@ -7301,7 +7301,7 @@ fn cmp_worktree_entries(
 pub fn sort_worktree_entries(
     entries: &mut [impl AsRef<Entry>],
     mode: settings::ProjectPanelSortMode,
-    order: settings::SortOrderLexicographic,
+    order: settings::ProjectPanelSortOrderLexicographic,
 ) {
     entries.sort_by(|lhs, rhs| cmp_worktree_entries(lhs.as_ref(), rhs.as_ref(), &mode, &order));
 }
@@ -7309,7 +7309,7 @@ pub fn sort_worktree_entries(
 pub fn par_sort_worktree_entries(
     entries: &mut Vec<GitEntry>,
     mode: settings::ProjectPanelSortMode,
-    order: settings::SortOrderLexicographic,
+    order: settings::ProjectPanelSortOrderLexicographic,
 ) {
     entries.par_sort_by(|lhs, rhs| cmp_worktree_entries(lhs, rhs, &mode, &order));
 }

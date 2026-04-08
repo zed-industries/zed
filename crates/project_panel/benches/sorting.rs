@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use project::{Entry, EntryKind, GitEntry, ProjectEntryId};
 use project_panel::par_sort_worktree_entries;
-use settings::{ProjectPanelSortMode, SortOrderLexicographic};
+use settings::{ProjectPanelSortMode, ProjectPanelSortOrderLexicographic};
 use std::sync::Arc;
 use util::rel_path::RelPath;
 
@@ -52,7 +52,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 par_sort_worktree_entries(
                     &mut snapshot,
                     ProjectPanelSortMode::DirectoriesFirst,
-                    SortOrderLexicographic::Default,
+                    ProjectPanelSortOrderLexicographic::Default,
                 )
             },
             criterion::BatchSize::LargeInput,
@@ -66,7 +66,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 par_sort_worktree_entries(
                     &mut snapshot,
                     ProjectPanelSortMode::Mixed,
-                    SortOrderLexicographic::Default,
+                    ProjectPanelSortOrderLexicographic::Default,
                 )
             },
             criterion::BatchSize::LargeInput,
@@ -80,7 +80,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                 par_sort_worktree_entries(
                     &mut snapshot,
                     ProjectPanelSortMode::FilesFirst,
-                    SortOrderLexicographic::Default,
+                    ProjectPanelSortOrderLexicographic::Default,
                 )
             },
             criterion::BatchSize::LargeInput,

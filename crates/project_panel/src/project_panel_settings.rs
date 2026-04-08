@@ -3,8 +3,8 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, RegisterSetting, Settings,
-    ShowDiagnostics, ShowIndentGuides, SortOrderLexicographic,
+    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, ProjectPanelSortOrderLexicographic,
+    RegisterSetting, Settings, ShowDiagnostics, ShowIndentGuides,
 };
 use ui::{
     px,
@@ -37,7 +37,7 @@ pub struct ProjectPanelSettings {
     pub sort_mode: ProjectPanelSortMode,
     pub diagnostic_badges: bool,
     pub git_status_indicator: bool,
-    pub sort_order_lexicographic: SortOrderLexicographic,
+    pub sort_order_lexicographic: ProjectPanelSortOrderLexicographic,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
