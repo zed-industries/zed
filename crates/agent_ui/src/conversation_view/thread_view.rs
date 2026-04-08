@@ -3165,12 +3165,14 @@ impl ThreadView {
             .child(
                 v_flex()
                     .flex_1()
+                    .min_h_0()
                     .w_full()
                     .max_w(max_content_width)
                     .mx_auto()
                     .child(
                         v_flex()
                             .relative()
+                            .min_h_0()
                             .size_full()
                             .when(v2_empty_state, |this| this.flex_1())
                             .pt_1()
@@ -3208,36 +3210,39 @@ impl ThreadView {
                                         ),
                                 )
                             }),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .max_w(max_content_width)
+                    .mx_auto()
+                    .flex_none()
+                    .flex_wrap()
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(self.render_add_context_button(cx))
+                            .child(self.render_follow_toggle(cx))
+                            .children(self.render_fast_mode_control(cx))
+                            .children(self.render_thinking_control(cx)),
                     )
                     .child(
                         h_flex()
-                            .flex_none()
-                            .flex_wrap()
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .child(self.render_add_context_button(cx))
-                                    .child(self.render_follow_toggle(cx))
-                                    .children(self.render_fast_mode_control(cx))
-                                    .children(self.render_thinking_control(cx)),
-                            )
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .children(self.render_token_usage(cx))
-                                    .children(self.profile_selector.clone())
-                                    .map(|this| {
-                                        // Either config_options_view OR (mode_selector + model_selector)
-                                        match self.config_options_view.clone() {
-                                            Some(config_view) => this.child(config_view),
-                                            None => this
-                                                .children(self.mode_selector.clone())
-                                                .children(self.model_selector.clone()),
-                                        }
-                                    })
-                                    .child(self.render_send_button(cx)),
-                            ),
+                            .gap_1()
+                            .children(self.render_token_usage(cx))
+                            .children(self.profile_selector.clone())
+                            .map(|this| {
+                                // Either config_options_view OR (mode_selector + model_selector)
+                                match self.config_options_view.clone() {
+                                    Some(config_view) => this.child(config_view),
+                                    None => this
+                                        .children(self.mode_selector.clone())
+                                        .children(self.model_selector.clone()),
+                                }
+                            })
+                            .child(self.render_send_button(cx)),
                     ),
             )
             .into_any()
