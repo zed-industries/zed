@@ -355,7 +355,13 @@ mod integration {
         project.update(cx, |project, cx| {
             let buffer_snapshot = buffer.read(cx).snapshot();
             project.bookmark_store().update(cx, |store, cx| {
-                store.bookmarks_for_buffer(buffer.clone(), None, &buffer_snapshot, cx);
+                store.bookmarks_for_buffer(
+                    buffer.clone(),
+                    buffer_snapshot.anchor_before(0)
+                        ..buffer_snapshot.anchor_after(buffer_snapshot.len()),
+                    &buffer_snapshot,
+                    cx,
+                );
             });
         });
 
@@ -414,7 +420,13 @@ mod integration {
         project.update(cx, |project, cx| {
             let buffer_snapshot = buffer.read(cx).snapshot();
             project.bookmark_store().update(cx, |store, cx| {
-                store.bookmarks_for_buffer(buffer.clone(), None, &buffer_snapshot, cx);
+                store.bookmarks_for_buffer(
+                    buffer.clone(),
+                    buffer_snapshot.anchor_before(0)
+                        ..buffer_snapshot.anchor_after(buffer_snapshot.len()),
+                    &buffer_snapshot,
+                    cx,
+                );
             });
         });
 
