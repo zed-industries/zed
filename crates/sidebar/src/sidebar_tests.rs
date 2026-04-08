@@ -5162,21 +5162,17 @@ mod property_test {
         workspace_counter: u32,
         worktree_counter: u32,
         saved_thread_ids: Vec<acp::SessionId>,
-        workspace_paths: Vec<String>,
-        main_repo_indices: Vec<usize>,
         unopened_worktrees: Vec<UnopenedWorktree>,
     }
 
     impl TestState {
-        fn new(fs: Arc<FakeFs>, initial_workspace_path: String) -> Self {
+        fn new(fs: Arc<FakeFs>) -> Self {
             Self {
                 fs,
                 thread_counter: 0,
                 workspace_counter: 1,
                 worktree_counter: 0,
                 saved_thread_ids: Vec::new(),
-                workspace_paths: vec![initial_workspace_path],
-                main_repo_indices: vec![0],
                 unopened_worktrees: Vec::new(),
             }
         }
@@ -5208,73 +5204,76 @@ mod property_test {
 
     #[derive(Debug)]
     enum Operation {
-        SaveThread { workspace_index: usize },
+        SaveThread { project_group_index: usize },
         SaveWorktreeThread { worktree_index: usize },
         DeleteThread { index: usize },
         ToggleAgentPanel,
         CreateDraftThread,
-        AddWorkspace,
-        OpenWorktreeAsWorkspace { worktree_index: usize },
+        AddProject { use_worktree: bool },
         ArchiveThread { index: usize },
-        SwitchWorkspace { index: usize },
-        AddLinkedWorktree { workspace_index: usize },
+        SwitchToThread { index: usize },
+        SwitchToProjectGroup { index: usize },
+        AddLinkedWorktree { project_group_index: usize },
     }
 
-    // Distribution (out of 20 slots):
+    // Distribution (out of 22 slots):
     //   SaveThread:              5 slots (~23%)
     //   SaveWorktreeThread:      2 slots (~9%)
     //   DeleteThread:            2 slots (~9%)
-    //   ToggleAgentPanel:        2 slots (~9%)
-    //   CreateDraftThread:       2 slots (~9%)
-    //   AddWorkspace:            1 slot  (~5%)
-    //   OpenWorktreeAsWorkspace: 1 slot  (~5%)
+    //   ToggleAgentPanel:        1 slot  (~5%)
+    //   CreateDraftThread:       1 slot  (~5%)
+    //   AddProject:              1 slot  (~5%)
     //   ArchiveThread:           1 slot  (~5%)
-    //   SwitchWorkspace:         2 slots (~9%)
-    //   AddLinkedWorktree:       4 slots (~18%)
+    //   SwitchToThread:          2 slots (~9%)
+    //   SwitchToProjectGroup:    2 slots (~9%)
+    //   AddLinkedWorktree:       5 slots (~23%)
     const DISTRIBUTION_SLOTS: u32 = 22;
 
     impl TestState {
-        fn generate_operation(&self, raw: u32) -> Operation {
+        fn generate_operation(&self, raw: u32, project_group_count: usize) -> Operation {
             let extra = (raw / DISTRIBUTION_SLOTS) as usize;
-            let workspace_count = self.workspace_paths.len();
 
             match raw % DISTRIBUTION_SLOTS {
                 0..=4 => Operation::SaveThread {
-                    workspace_index: extra % workspace_count,
+                    project_group_index: extra % project_group_count,
                 },
                 5..=6 if !self.unopened_worktrees.is_empty() => Operation::SaveWorktreeThread {
                     worktree_index: extra % self.unopened_worktrees.len(),
                 },
                 5..=6 => Operation::SaveThread {
-                    workspace_index: extra % workspace_count,
+                    project_group_index: extra % project_group_count,
                 },
                 7..=8 if !self.saved_thread_ids.is_empty() => Operation::DeleteThread {
                     index: extra % self.saved_thread_ids.len(),
                 },
                 7..=8 => Operation::SaveThread {
-                    workspace_index: extra % workspace_count,
+                    project_group_index: extra % project_group_count,
                 },
-                9..=10 => Operation::ToggleAgentPanel,
-                11..=12 => Operation::CreateDraftThread,
-                13 if !self.unopened_worktrees.is_empty() => Operation::OpenWorktreeAsWorkspace {
-                    worktree_index: extra % self.unopened_worktrees.len(),
+                9 => Operation::ToggleAgentPanel,
+                10 => Operation::CreateDraftThread,
+                11 => Operation::AddProject {
+                    use_worktree: !self.unopened_worktrees.is_empty() && extra % 4 == 0,
                 },
-                13 => Operation::AddWorkspace,
-                14 if !self.saved_thread_ids.is_empty() => Operation::ArchiveThread {
+                12 if !self.saved_thread_ids.is_empty() => Operation::ArchiveThread {
                     index: extra % self.saved_thread_ids.len(),
                 },
-                14 => Operation::AddWorkspace,
-                15..=16 => Operation::SwitchWorkspace {
-                    index: extra % workspace_count,
+                12 => Operation::AddProject {
+                    use_worktree: !self.unopened_worktrees.is_empty() && extra % 4 == 0,
                 },
-                17..=21 if !self.main_repo_indices.is_empty() => {
-                    let main_index = self.main_repo_indices[extra % self.main_repo_indices.len()];
-                    Operation::AddLinkedWorktree {
-                        workspace_index: main_index,
-                    }
-                }
+                13..=14 if !self.saved_thread_ids.is_empty() => Operation::SwitchToThread {
+                    index: extra % self.saved_thread_ids.len(),
+                },
+                13..=14 => Operation::SwitchToProjectGroup {
+                    index: extra % project_group_count,
+                },
+                15..=16 => Operation::SwitchToProjectGroup {
+                    index: extra % project_group_count,
+                },
+                17..=21 if project_group_count > 0 => Operation::AddLinkedWorktree {
+                    project_group_index: extra % project_group_count,
+                },
                 17..=21 => Operation::SaveThread {
-                    workspace_index: extra % workspace_count,
+                    project_group_index: extra % project_group_count,
                 },
                 _ => unreachable!(),
             }
@@ -5330,11 +5329,15 @@ mod property_test {
         cx: &mut gpui::VisualTestContext,
     ) {
         match operation {
-            Operation::SaveThread { workspace_index } => {
+            Operation::SaveThread {
+                project_group_index,
+            } => {
                 let project = multi_workspace.read_with(cx, |mw, cx| {
-                    mw.workspaces()
-                        .nth(workspace_index)
-                        .unwrap()
+                    let key = mw.project_group_keys().nth(project_group_index).unwrap();
+                    // Find a workspace for this group, or use the active one.
+                    mw.workspaces_for_project_group(key, cx)
+                        .next()
+                        .unwrap_or(mw.workspace())
                         .read(cx)
                         .project()
                         .clone()
@@ -5380,18 +5383,26 @@ mod property_test {
                     workspace.focus_panel::<AgentPanel>(window, cx);
                 });
             }
-            Operation::AddWorkspace => {
-                let path = state.next_workspace_path();
-                state
-                    .fs
-                    .insert_tree(
-                        &path,
-                        serde_json::json!({
-                            ".git": {},
-                            "src": {},
-                        }),
-                    )
-                    .await;
+            Operation::AddProject { use_worktree } => {
+                let path = if use_worktree {
+                    // Open an existing linked worktree as a project (simulates Cmd+O
+                    // on a worktree directory).
+                    state.unopened_worktrees.remove(0).path
+                } else {
+                    // Create a brand new project.
+                    let path = state.next_workspace_path();
+                    state
+                        .fs
+                        .insert_tree(
+                            &path,
+                            serde_json::json!({
+                                ".git": {},
+                                "src": {},
+                            }),
+                        )
+                        .await;
+                    path
+                };
                 let project = project::Project::test(
                     state.fs.clone() as Arc<dyn fs::Fs>,
                     [path.as_ref()],
@@ -5403,24 +5414,6 @@ mod property_test {
                     mw.test_add_workspace(project.clone(), window, cx)
                 });
                 add_agent_panel(&workspace, cx);
-                let new_index = state.workspace_paths.len();
-                state.workspace_paths.push(path);
-                state.main_repo_indices.push(new_index);
-            }
-            Operation::OpenWorktreeAsWorkspace { worktree_index } => {
-                let worktree = state.unopened_worktrees.remove(worktree_index);
-                let project = project::Project::test(
-                    state.fs.clone() as Arc<dyn fs::Fs>,
-                    [worktree.path.as_ref()],
-                    cx,
-                )
-                .await;
-                project.update(cx, |p, cx| p.git_scans_complete(cx)).await;
-                let workspace = multi_workspace.update_in(cx, |mw, window, cx| {
-                    mw.test_add_workspace(project.clone(), window, cx)
-                });
-                add_agent_panel(&workspace, cx);
-                state.workspace_paths.push(worktree.path);
             }
             Operation::ArchiveThread { index } => {
                 let session_id = state.saved_thread_ids[index].clone();
@@ -5430,15 +5423,49 @@ mod property_test {
                 cx.run_until_parked();
                 state.saved_thread_ids.remove(index);
             }
-            Operation::SwitchWorkspace { index } => {
-                let workspace = multi_workspace
-                    .read_with(cx, |mw, _| mw.workspaces().nth(index).unwrap().clone());
+            Operation::SwitchToThread { index } => {
+                let session_id = state.saved_thread_ids[index].clone();
+                // Find the thread's position in the sidebar entries and select it.
+                let thread_index = sidebar.read_with(cx, |sidebar, _| {
+                    sidebar.contents.entries.iter().position(|entry| {
+                        matches!(
+                            entry,
+                            ListEntry::Thread(t) if t.metadata.session_id == session_id
+                        )
+                    })
+                });
+                if let Some(ix) = thread_index {
+                    sidebar.update_in(cx, |sidebar, window, cx| {
+                        sidebar.selection = Some(ix);
+                        sidebar.confirm(&Confirm, window, cx);
+                    });
+                }
+            }
+            Operation::SwitchToProjectGroup { index } => {
+                let workspace = multi_workspace.read_with(cx, |mw, cx| {
+                    let key = mw.project_group_keys().nth(index).unwrap();
+                    mw.workspaces_for_project_group(key, cx)
+                        .next()
+                        .unwrap_or(mw.workspace())
+                        .clone()
+                });
                 multi_workspace.update_in(cx, |mw, window, cx| {
                     mw.activate(workspace, window, cx);
                 });
             }
-            Operation::AddLinkedWorktree { workspace_index } => {
-                let main_path = state.workspace_paths[workspace_index].clone();
+            Operation::AddLinkedWorktree {
+                project_group_index,
+            } => {
+                // Get the main worktree path from the project group key.
+                let main_path = multi_workspace.read_with(cx, |mw, _| {
+                    let key = mw.project_group_keys().nth(project_group_index).unwrap();
+                    key.path_list()
+                        .paths()
+                        .first()
+                        .unwrap()
+                        .to_string_lossy()
+                        .to_string()
+                });
                 let dot_git = format!("{}/.git", main_path);
                 let worktree_name = state.next_worktree_name();
                 let worktree_path = format!("/worktrees/{}", worktree_name);
@@ -5482,8 +5509,12 @@ mod property_test {
                     .await;
 
                 // Re-scan the main workspace's project so it discovers the new worktree.
-                let main_workspace = multi_workspace.read_with(cx, |mw, _| {
-                    mw.workspaces().nth(workspace_index).unwrap().clone()
+                let main_workspace = multi_workspace.read_with(cx, |mw, cx| {
+                    let key = mw.project_group_keys().nth(project_group_index).unwrap();
+                    mw.workspaces_for_project_group(key, cx)
+                        .next()
+                        .unwrap()
+                        .clone()
                 });
                 let main_project = main_workspace.read_with(cx, |ws, _| ws.project().clone());
                 main_project
@@ -5518,14 +5549,14 @@ mod property_test {
     }
 
     fn validate_sidebar_properties(sidebar: &Sidebar, cx: &App) -> anyhow::Result<()> {
-        verify_every_workspace_in_multiworkspace_is_shown(sidebar, cx)?;
+        verify_every_group_in_multiworkspace_is_shown(sidebar, cx)?;
         verify_all_threads_are_shown(sidebar, cx)?;
         verify_active_state_matches_current_workspace(sidebar, cx)?;
         verify_all_workspaces_are_reachable(sidebar, cx)?;
         Ok(())
     }
 
-    fn verify_every_workspace_in_multiworkspace_is_shown(
+    fn verify_every_group_in_multiworkspace_is_shown(
         sidebar: &Sidebar,
         cx: &App,
     ) -> anyhow::Result<()> {
@@ -5807,11 +5838,13 @@ mod property_test {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
-        let mut state = TestState::new(fs, "/my-project".to_string());
+        let mut state = TestState::new(fs);
         let mut executed: Vec<String> = Vec::new();
 
         for &raw_op in &raw_operations {
-            let operation = state.generate_operation(raw_op);
+            let project_group_count =
+                multi_workspace.read_with(cx, |mw, _| mw.project_group_keys().count());
+            let operation = state.generate_operation(raw_op, project_group_count);
             executed.push(format!("{:?}", operation));
             perform_operation(operation, &mut state, &multi_workspace, &sidebar, cx).await;
             cx.run_until_parked();
