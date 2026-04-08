@@ -4450,7 +4450,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 28] {
+    fn project_panel_section() -> [SettingsPageItem; 29] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4948,12 +4948,6 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]
-    }
-
-    fn auto_open_files_section() -> [SettingsPageItem; 6] {
-        [
-            SettingsPageItem::SectionHeader("Auto Open Files"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto Open Files On Create",
                 description: "Whether to automatically open newly created files in the editor.",
@@ -5051,23 +5045,23 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Case-Sensitive",
-                description: "Whether to sort files and directories case-sensitive in the project panel.",
+                title: "Sort Order (Lexicographic)",
+                description: "Whether to sort file and folder names case-sensitively in the project panel.",
                 field: Box::new(SettingField {
                     pick: |settings_content| {
                         settings_content
                             .project_panel
                             .as_ref()?
-                            .case_sensitive
+                            .sort_order_lexicographic
                             .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
-                            .case_sensitive = value;
+                            .sort_order_lexicographic = value;
                     },
-                    json_path: Some("project_panel.case_sensitive"),
+                    json_path: Some("project_panel.sort_order_lexicographic"),
                 }),
                 metadata: None,
                 files: USER,

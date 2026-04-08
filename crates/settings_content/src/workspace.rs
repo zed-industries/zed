@@ -754,10 +754,12 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
-    /// Whether to sort files and directories case-sensitive in the project panel.
+    /// Whether to sort file and folder names case-sensitively in the project panel.
+    /// This works in combination with `sort_mode`. `sort_mode` controls how files and
+    /// directories are grouped, while this setting controls how names are compared.
     ///
-    /// Default: false
-    pub case_sensitive: Option<bool>,
+    /// Default: default
+    pub sort_order_lexicographic: Option<SortOrderLexicographic>,
 }
 
 #[derive(
@@ -806,6 +808,48 @@ pub enum ProjectPanelSortMode {
     Mixed,
     /// Show files first, then directories
     FilesFirst,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SortOrderLexicographic {
+    /// Case-insensitive natural sort with lowercase preferred in ties.
+    /// Numbers in file names are compared by value (e.g., `file2` before `file10`).
+    #[default]
+    Default,
+    /// Uppercase names are grouped before lowercase names, with case-insensitive
+    /// natural sort within each group. Dot-prefixed names sort before both groups.
+    Upper,
+    /// Lowercase names are grouped before uppercase names, with case-insensitive
+    /// natural sort within each group. Dot-prefixed names sort before both groups.
+    Lower,
+    /// Pure Unicode codepoint comparison. No case folding, no natural number sorting.
+    /// Uppercase ASCII sorts before lowercase. Accented characters sort after ASCII.
+    Unicode,
+}
+
+impl From<SortOrderLexicographic> for util::paths::SortOrderLexicographic {
+    fn from(order: SortOrderLexicographic) -> Self {
+        match order {
+            SortOrderLexicographic::Default => Self::Default,
+            SortOrderLexicographic::Upper => Self::Upper,
+            SortOrderLexicographic::Lower => Self::Lower,
+            SortOrderLexicographic::Unicode => Self::Unicode,
+        }
+    }
 }
 
 #[with_fallible_options]

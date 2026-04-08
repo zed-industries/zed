@@ -475,8 +475,12 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "hide_root": false,
     // Whether to hide the hidden entries in the project panel.
     "hide_hidden": false,
-    // Whether to sort files and directories case-sensitive in the project panel.
-    "case_sensitive": false
+    // Whether to sort file and folder names case-sensitively.
+    // "default": Case-insensitive natural sort, lowercase preferred in ties.
+    // "upper":   Uppercase names grouped before lowercase, natural sort within.
+    // "lower":   Lowercase names grouped before uppercase, natural sort within.
+    // "unicode":  Pure Unicode codepoint comparison, no case folding.
+    "sort_order_lexicographic": "default"
   }
 ```
 

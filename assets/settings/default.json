@@ -739,8 +739,21 @@
     "auto_fold_dirs": true,
     // Whether to show folder names with bold text in the project panel.
     "bold_folder_labels": false,
-    // Whether to sort files and directories case-sensitive in the project panel.
-    "case_sensitive": false,
+    // Whether to sort file and folder names case-sensitively in the project panel.
+    // This setting can take four values:
+    //
+    // 1. Case-insensitive natural sort with lowercase preferred in ties (default):
+    //    "default"
+    // 2. Uppercase names are grouped before lowercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "upper"
+    // 3. Lowercase names are grouped before uppercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "lower"
+    // 4. Pure Unicode codepoint comparison.
+    //    No case folding, no natural number sorting:
+    //    "unicode"
+    "sort_order_lexicographic": "default",
     // Scrollbar-related settings
     "scrollbar": {
       // When to show the scrollbar in the project panel.

@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use project::{Entry, EntryKind, GitEntry, ProjectEntryId};
-use project_panel::par_sort_worktree_entries_with_mode;
-use settings::ProjectPanelSortMode;
+use project_panel::par_sort_worktree_entries;
+use settings::{ProjectPanelSortMode, SortOrderLexicographic};
 use std::sync::Arc;
 use util::rel_path::RelPath;
 
@@ -49,9 +49,10 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched(
             || snapshot.clone(),
             |mut snapshot| {
-                par_sort_worktree_entries_with_mode(
+                par_sort_worktree_entries(
                     &mut snapshot,
                     ProjectPanelSortMode::DirectoriesFirst,
+                    SortOrderLexicographic::Default,
                 )
             },
             criterion::BatchSize::LargeInput,
@@ -62,7 +63,11 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched(
             || snapshot.clone(),
             |mut snapshot| {
-                par_sort_worktree_entries_with_mode(&mut snapshot, ProjectPanelSortMode::Mixed)
+                par_sort_worktree_entries(
+                    &mut snapshot,
+                    ProjectPanelSortMode::Mixed,
+                    SortOrderLexicographic::Default,
+                )
             },
             criterion::BatchSize::LargeInput,
         );
@@ -72,7 +77,11 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter_batched(
             || snapshot.clone(),
             |mut snapshot| {
-                par_sort_worktree_entries_with_mode(&mut snapshot, ProjectPanelSortMode::FilesFirst)
+                par_sort_worktree_entries(
+                    &mut snapshot,
+                    ProjectPanelSortMode::FilesFirst,
+                    SortOrderLexicographic::Default,
+                )
             },
             criterion::BatchSize::LargeInput,
         );
