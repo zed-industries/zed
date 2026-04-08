@@ -77,8 +77,13 @@ impl RenderImage {
 
     /// Get the size of this image, in pixels.
     pub fn size(&self, frame_index: usize) -> Size<DevicePixels> {
-        let (width, height) = self.data[frame_index].buffer().dimensions();
-        size(width.into(), height.into())
+        self.data
+            .get(frame_index)
+            .map(|frame| {
+                let (width, height) = frame.buffer().dimensions();
+                size(width.into(), height.into())
+            })
+            .unwrap_or_default()
     }
 
     /// Get the size of this image, in pixels for display, adjusted for the scale factor.
@@ -89,7 +94,10 @@ impl RenderImage {
 
     /// Get the delay of this frame from the previous
     pub fn delay(&self, frame_index: usize) -> Delay {
-        self.data[frame_index].delay()
+        self.data
+            .get(frame_index)
+            .map(|frame| frame.delay())
+            .unwrap_or(Delay::from_numer_denom_ms(100, 1))
     }
 
     /// Get the number of frames for this image.
@@ -102,7 +110,24 @@ impl fmt::Debug for RenderImage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ImageData")
             .field("id", &self.id)
-            .field("size", &self.size(0))
+            .field("size", &self.data.first().map(|f| f.buffer().dimensions()))
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smallvec::SmallVec;
+
+    #[test]
+    fn empty_render_image_does_not_panic() {
+        // A zero-frame RenderImage must remain safe to inspect — size(), delay(), and
+        // Debug should all return sensible defaults rather than panicking.
+        let image = RenderImage::new(SmallVec::new());
+        assert_eq!(image.frame_count(), 0);
+        assert_eq!(image.size(0), Size::default());
+        let _ = image.delay(0);
+        let _ = format!("{image:?}");
     }
 }
