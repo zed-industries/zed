@@ -804,7 +804,19 @@ impl VsCodeSettings {
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
-            sort_mode: None,
+            sort_mode: self.read_enum("explorer.sortOrder", |s| match s {
+                "default" | "foldersNestsFiles" => Some(ProjectPanelSortMode::DirectoriesFirst),
+                "mixed" => Some(ProjectPanelSortMode::Mixed),
+                "filesFirst" => Some(ProjectPanelSortMode::FilesFirst),
+                _ => None,
+            }),
+            sort_order: self.read_enum("explorer.sortOrderLexicographicOptions", |s| match s {
+                "default" => Some(ProjectPanelSortOrder::Default),
+                "upper" => Some(ProjectPanelSortOrder::Upper),
+                "lower" => Some(ProjectPanelSortOrder::Lower),
+                "unicode" => Some(ProjectPanelSortOrder::Unicode),
+                _ => None,
+            }),
             starts_open: None,
             sticky_scroll: None,
             auto_open: None,

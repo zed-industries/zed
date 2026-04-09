@@ -4450,7 +4450,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 28] {
+    fn project_panel_section() -> [SettingsPageItem; 29] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4944,6 +4944,24 @@ fn panels_page() -> SettingsPage {
                             .get_or_insert_default()
                             .sort_mode = value;
                     },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sort Order",
+                description: "Whether to sort file and folder names case-sensitively in the project panel.",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        settings_content.project_panel.as_ref()?.sort_order.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .sort_order = value;
+                    },
+                    json_path: Some("project_panel.sort_order"),
                 }),
                 metadata: None,
                 files: USER,
@@ -7168,7 +7186,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 2] {
+    fn general_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7183,6 +7201,19 @@ fn ai_page(cx: &App) -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar Side",
+                description: "Which side of the window the threads sidebar appears on.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.sidebar_side"),
+                    pick: |settings_content| settings_content.agent.as_ref()?.sidebar_side.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.agent.get_or_insert_default().sidebar_side = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }

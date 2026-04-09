@@ -523,6 +523,9 @@ impl HeadlessProject {
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
                 canonicalized_path: canonicalized.to_string_lossy().into_owned(),
+                root_repo_common_dir: worktree
+                    .root_repo_common_dir()
+                    .map(|p| p.to_string_lossy().into_owned()),
             }
         });
 
