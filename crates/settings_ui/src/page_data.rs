@@ -1737,7 +1737,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn hover_popover_section() -> [SettingsPageItem; 3] {
+    fn hover_popover_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Hover Popover"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1762,6 +1762,35 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.hover_popover_delay.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.hover_popover_delay = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sticky",
+                description: "Whether the hover popover sticks when the mouse moves toward it, allowing interaction with its contents.",
+                field: Box::new(SettingField {
+                    json_path: Some("hover_popover_sticky"),
+                    pick: |settings_content| settings_content.editor.hover_popover_sticky.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.hover_popover_sticky = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            // todo(settings ui): add units to this number input
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sticky Delay",
+                description: "Time to wait in milliseconds before hiding the hover popover after the mouse moves away.",
+                field: Box::new(SettingField {
+                    json_path: Some("hover_popover_sticky_delay"),
+                    pick: |settings_content| {
+                        settings_content.editor.hover_popover_sticky_delay.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.hover_popover_sticky_delay = value;
                     },
                 }),
                 metadata: None,

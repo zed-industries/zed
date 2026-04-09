@@ -24,6 +24,8 @@ pub struct EditorSettings {
     pub lsp_highlight_debounce: DelayMs,
     pub hover_popover_enabled: bool,
     pub hover_popover_delay: DelayMs,
+    pub hover_popover_sticky: bool,
+    pub hover_popover_sticky_delay: DelayMs,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub minimap: Minimap,
@@ -204,6 +206,8 @@ impl Settings for EditorSettings {
             lsp_highlight_debounce: editor.lsp_highlight_debounce.unwrap(),
             hover_popover_enabled: editor.hover_popover_enabled.unwrap(),
             hover_popover_delay: editor.hover_popover_delay.unwrap(),
+            hover_popover_sticky: editor.hover_popover_sticky.unwrap(),
+            hover_popover_sticky_delay: editor.hover_popover_sticky_delay.unwrap(),
             toolbar: Toolbar {
                 breadcrumbs: toolbar.breadcrumbs.unwrap(),
                 quick_actions: toolbar.quick_actions.unwrap(),

@@ -63,6 +63,12 @@ pub fn hover_at(
             editor.hover_state.closest_mouse_distance = None;
             show_hover(editor, anchor, false, window, cx);
         } else {
+            let settings = EditorSettings::get_global(cx);
+            if !settings.hover_popover_sticky {
+                hide_hover(editor, cx);
+                return;
+            }
+
             let mut getting_closer = false;
             if let Some(mouse_position) = mouse_position {
                 getting_closer = editor.hover_state.is_mouse_getting_closer(mouse_position);
@@ -73,8 +79,8 @@ pub fn hover_at(
                 return;
             }
 
-            // If we are moving closer, or if no timer is running at all, start/restart the 300ms timer.
-            let delay = Duration::from_millis(300u64);
+            // If we are moving closer, or if no timer is running at all, start/restart the timer.
+            let delay = Duration::from_millis(settings.hover_popover_sticky_delay.0);
             let task = cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(delay).await;
                 this.update(cx, |editor, cx| {
