@@ -536,12 +536,77 @@ impl RemoteClientDelegate {
     }
 }
 
-/// A delegate for headless (non-interactive) remote client connections.
-/// Logs warnings instead of showing UI when user interaction would be needed,
-/// but fully supports server binary downloads via AutoUpdater.
-pub struct HeadlessRemoteClientDelegate;
+/// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
+/// a remote connection. This is a convenience wrapper around
+/// [`RemoteConnectionModal`] and [`connect`] suitable for use as the
+/// `connect_remote` callback in [`MultiWorkspace::find_or_create_workspace`].
+///
+/// When the global connection pool already has a live connection for the
+/// given options, the modal is skipped entirely and the connection is
+/// reused silently.
+pub fn connect_with_modal(
+    workspace: &Entity<Workspace>,
+    connection_options: RemoteConnectionOptions,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    if remote::has_active_connection(&connection_options, cx) {
+        return connect_reusing_pool(connection_options, cx);
+    }
 
-impl remote::RemoteClientDelegate for HeadlessRemoteClientDelegate {
+    workspace.update(cx, |workspace, cx| {
+        workspace.toggle_modal(window, cx, |window, cx| {
+            RemoteConnectionModal::new(&connection_options, Vec::new(), window, cx)
+        });
+        let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "Failed to open remote connection dialog"
+            )));
+        };
+        let prompt = modal.read(cx).prompt.clone();
+        connect(
+            ConnectionIdentifier::setup(),
+            connection_options,
+            prompt,
+            window,
+            cx,
+        )
+    })
+}
+
+/// Creates a [`RemoteClient`] by reusing an existing connection from the
+/// global pool. No interactive UI is shown. This should only be called
+/// when [`remote::has_active_connection`] returns `true`.
+fn connect_reusing_pool(
+    connection_options: RemoteConnectionOptions,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    let delegate: Arc<dyn remote::RemoteClientDelegate> = Arc::new(BackgroundRemoteClientDelegate);
+
+    cx.spawn(async move |cx| {
+        let connection = remote::connect(connection_options, delegate.clone(), cx).await?;
+
+        let (_cancel_guard, cancel_rx) = oneshot::channel::<()>();
+        cx.update(|cx| {
+            RemoteClient::new(
+                ConnectionIdentifier::setup(),
+                connection,
+                cancel_rx,
+                delegate,
+                cx,
+            )
+        })
+        .await
+    })
+}
+
+/// Delegate for remote connections that reuse an existing pooled
+/// connection. Password prompts are not expected (the SSH transport
+/// is already established), but server binary downloads are supported
+/// via [`AutoUpdater`].
+struct BackgroundRemoteClientDelegate;
+
+impl remote::RemoteClientDelegate for BackgroundRemoteClientDelegate {
     fn ask_password(
         &self,
         prompt: String,
@@ -549,8 +614,8 @@ impl remote::RemoteClientDelegate for HeadlessRemoteClientDelegate {
         _cx: &mut AsyncApp,
     ) {
         log::warn!(
-            "Remote connection requires a password but no UI is available \
-             to prompt the user (prompt: {prompt})"
+            "Pooled remote connection unexpectedly requires a password \
+             (prompt: {prompt})"
         );
     }
 
@@ -578,7 +643,7 @@ impl remote::RemoteClientDelegate for HeadlessRemoteClientDelegate {
                     "Downloading remote server binary (version: {}, os: {}, arch: {})",
                     version
                         .as_ref()
-                        .map(|v| format!("{}", v))
+                        .map(|v| format!("{v}"))
                         .unwrap_or("unknown".to_string()),
                     platform.os,
                     platform.arch,

@@ -413,29 +413,7 @@ fn connect_remote(
     window: &mut Window,
     cx: &mut Context<MultiWorkspace>,
 ) -> gpui::Task<anyhow::Result<Option<Entity<remote::RemoteClient>>>> {
-    modal_workspace.update(cx, |workspace, cx| {
-        workspace.toggle_modal(window, cx, |window, cx| {
-            remote_connection::RemoteConnectionModal::new(
-                &connection_options,
-                Vec::new(),
-                window,
-                cx,
-            )
-        });
-        let prompt = workspace
-            .active_modal::<remote_connection::RemoteConnectionModal>(cx)
-            .expect("Modal just created")
-            .read(cx)
-            .prompt
-            .clone();
-        remote_connection::connect(
-            remote::remote_client::ConnectionIdentifier::setup(),
-            connection_options,
-            prompt,
-            window,
-            cx,
-        )
-    })
+    remote_connection::connect_with_modal(&modal_workspace, connection_options, window, cx)
 }
 
 /// The sidebar re-derives its entire entry list from scratch on every

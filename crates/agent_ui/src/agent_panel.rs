@@ -78,8 +78,8 @@ use ui::{
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, OpenMode, OpenResult, PathList,
-    SerializedPathList, ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
+    CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
+    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -3077,25 +3077,21 @@ impl AgentPanel {
                 }
             };
 
-            let app_state = match workspace.upgrade() {
-                Some(workspace) => cx.update(|_, cx| workspace.read(cx).app_state().clone())?,
-                None => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_worktree_creation_error(
-                            "Workspace no longer available".into(),
-                            window,
-                            cx,
-                        );
-                    })?;
-                    return anyhow::Ok(());
-                }
-            };
+            if workspace.upgrade().is_none() {
+                this.update_in(cx, |this, window, cx| {
+                    this.set_worktree_creation_error(
+                        "Workspace no longer available".into(),
+                        window,
+                        cx,
+                    );
+                })?;
+                return anyhow::Ok(());
+            }
 
             let this_for_error = this.clone();
             if let Err(err) = Self::open_worktree_workspace_and_start_thread(
                 this,
                 all_paths,
-                app_state,
                 window_handle,
                 active_file_path,
                 path_remapping,
@@ -3129,7 +3125,6 @@ impl AgentPanel {
     async fn open_worktree_workspace_and_start_thread(
         this: WeakEntity<Self>,
         all_paths: Vec<PathBuf>,
-        app_state: Arc<workspace::AppState>,
         window_handle: Option<gpui::WindowHandle<workspace::MultiWorkspace>>,
         active_file_path: Option<PathBuf>,
         path_remapping: Vec<(PathBuf, PathBuf)>,
@@ -3140,81 +3135,31 @@ impl AgentPanel {
         remote_connection_options: Option<RemoteConnectionOptions>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let (new_window_handle, new_workspace) =
-            if let Some(connection_options) = remote_connection_options {
-                let window_handle = window_handle
-                    .ok_or_else(|| anyhow!("No window handle available for remote workspace"))?;
+        let window_handle = window_handle
+            .ok_or_else(|| anyhow!("No window handle available for workspace creation"))?;
 
-                let delegate: Arc<dyn remote::RemoteClientDelegate> =
-                    Arc::new(remote_connection::HeadlessRemoteClientDelegate);
-                let remote_connection =
-                    remote::connect(connection_options.clone(), delegate.clone(), cx).await?;
+        let workspace_task = window_handle.update(cx, |multi_workspace, window, cx| {
+            let path_list = PathList::new(&all_paths);
+            let active_workspace = multi_workspace.workspace().clone();
 
-                let (_cancel_tx, cancel_rx) = futures::channel::oneshot::channel();
-                let session = cx
-                    .update(|_, cx| {
-                        remote::RemoteClient::new(
-                            remote::remote_client::ConnectionIdentifier::setup(),
-                            remote_connection,
-                            cancel_rx,
-                            delegate,
-                            cx,
-                        )
-                    })?
-                    .await?
-                    .ok_or_else(|| anyhow!("Remote connection was cancelled"))?;
-
-                let new_project = cx.update(|_, cx| {
-                    project::Project::remote(
-                        session,
-                        app_state.client.clone(),
-                        app_state.node_runtime.clone(),
-                        app_state.user_store.clone(),
-                        app_state.languages.clone(),
-                        app_state.fs.clone(),
-                        true,
+            multi_workspace.find_or_create_workspace(
+                path_list,
+                remote_connection_options,
+                None,
+                move |connection_options, window, cx| {
+                    remote_connection::connect_with_modal(
+                        &active_workspace,
+                        connection_options,
+                        window,
                         cx,
                     )
-                })?;
+                },
+                window,
+                cx,
+            )
+        })?;
 
-                workspace::open_remote_project_with_existing_connection(
-                    connection_options,
-                    new_project,
-                    all_paths,
-                    app_state,
-                    window_handle,
-                    None,
-                    cx,
-                )
-                .await?;
-
-                let new_workspace = window_handle.update(cx, |multi_workspace, window, cx| {
-                    let workspace = multi_workspace.workspace().clone();
-                    multi_workspace.add(workspace.clone(), window, cx);
-                    workspace
-                })?;
-
-                (window_handle, new_workspace)
-            } else {
-                let OpenResult {
-                    window: new_window_handle,
-                    workspace: new_workspace,
-                    ..
-                } = cx
-                    .update(|_window, cx| {
-                        Workspace::new_local(
-                            all_paths,
-                            app_state,
-                            window_handle,
-                            None,
-                            None,
-                            OpenMode::Add,
-                            cx,
-                        )
-                    })?
-                    .await?;
-                (new_window_handle, new_workspace)
-            };
+        let new_workspace = workspace_task.await?;
 
         let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
 
@@ -3250,7 +3195,7 @@ impl AgentPanel {
             auto_submit: true,
         };
 
-        new_window_handle.update(cx, |_multi_workspace, window, cx| {
+        window_handle.update(cx, |_multi_workspace, window, cx| {
             new_workspace.update(cx, |workspace, cx| {
                 if has_non_git {
                     let toast_id = workspace::notifications::NotificationId::unique::<AgentPanel>();
@@ -3335,7 +3280,7 @@ impl AgentPanel {
             });
         })?;
 
-        new_window_handle.update(cx, |multi_workspace, window, cx| {
+        window_handle.update(cx, |multi_workspace, window, cx| {
             multi_workspace.activate(new_workspace.clone(), window, cx);
 
             new_workspace.update(cx, |workspace, cx| {
@@ -6898,58 +6843,36 @@ mod tests {
             );
         });
 
-        // The mock infrastructure doesn't fully support creating a second
-        // RemoteClient on the same mock connection, so the connection
-        // attempt will time out. Run until parked to let the task make
-        // progress, then verify it took the remote path (not the local
-        // path). If it had taken the local path, the status would have
-        // cleared and a new local workspace would have been created.
+        // The refactored code uses `find_or_create_workspace`, which
+        // finds the existing remote workspace (matching paths + host)
+        // and reuses it instead of creating a new connection.
         cx.run_until_parked();
 
-        // Verify the remote path was taken: the worktree creation task
-        // should still be in progress (Creating) because the mock
-        // connection handshake hasn't completed, OR it should have
-        // produced an error mentioning the remote connection.
-        // It must NOT have silently created a local workspace.
-        panel.read_with(cx, |panel, _cx| match &panel.worktree_creation_status {
-            Some(WorktreeCreationStatus::Creating) => {
-                // The task is still trying to connect — confirms the
-                // remote branch was taken (the local branch would have
-                // completed synchronously via FakeFs).
-            }
-            Some(WorktreeCreationStatus::Error(msg)) => {
-                // The remote connection failed — that's fine, it confirms
-                // the remote path was attempted.
-                assert!(
-                    msg.contains("connect")
-                        || msg.contains("Remote")
-                        || msg.contains("remote")
-                        || msg.contains("cancelled")
-                        || msg.contains("Failed"),
-                    "error should be about remote connection, got: {msg}"
-                );
-            }
-            None => {
-                // Status cleared means the task completed. Verify a new
-                // workspace was created with a remote project.
-                multi_workspace
-                    .read_with(cx, |multi_workspace, cx| {
-                        assert!(
-                            multi_workspace.workspaces().count() > 1,
-                            "expected a new workspace to have been created"
-                        );
-                        let new_workspace = multi_workspace
-                            .workspaces()
-                            .find(|ws| ws.entity_id() != workspace.entity_id())
-                            .expect("should find the new workspace");
-                        let new_project = new_workspace.read(cx).project().clone();
-                        assert!(
-                            !new_project.read(cx).is_local(),
-                            "the new workspace's project should be remote, not local"
-                        );
-                    })
-                    .unwrap();
-            }
+        // The task should have completed: the existing workspace was
+        // found and reused.
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                panel.worktree_creation_status.is_none(),
+                "worktree creation should have completed, but status is: {:?}",
+                panel.worktree_creation_status
+            );
         });
+
+        // The existing remote workspace was reused — no new workspace
+        // should have been created.
+        multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                let project = workspace.read(cx).project().clone();
+                assert!(
+                    !project.read(cx).is_local(),
+                    "workspace project should still be remote, not local"
+                );
+                assert_eq!(
+                    multi_workspace.workspaces().count(),
+                    1,
+                    "existing remote workspace should be reused, not a new one created"
+                );
+            })
+            .unwrap();
     }
 }
