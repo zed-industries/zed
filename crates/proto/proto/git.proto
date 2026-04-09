@@ -272,6 +272,32 @@ message GitCommitDetails {
   string author_name = 5;
 }
 
+enum GitGraphLogOrder {
+  DATE_ORDER = 0;
+  TOPO_ORDER = 1;
+  AUTHOR_DATE_ORDER = 2;
+  REVERSE_CHRONOLOGICAL = 3;
+}
+
+message GitGraph {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  optional string branch = 4;
+  optional string sha = 5;
+  GitGraphLogOrder log_order = 6;
+}
+
+message GitGraphCommit {
+  string sha = 1;
+  repeated string parents = 2;
+  repeated string ref_names = 3;
+}
+
+message GitGraphResponse {
+  repeated GitGraphCommit commits = 1;
+}
+
 message LoadCommitDiff {
   uint64 project_id = 1;
   reserved 2;

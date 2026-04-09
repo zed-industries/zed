@@ -11,7 +11,8 @@ use collections::{BTreeMap, HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{StreamExt as _, channel::mpsc};
 use git::{
-    repository::repo_path,
+    Oid,
+    repository::{InitialGraphCommitData, LogOrder, LogSource, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
@@ -29,6 +30,7 @@ use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
     DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
+    git_store::CommitDataState,
     lsp_store::{FormatTrigger, LspFormatTarget, SymbolLocation},
     search::{SearchQuery, SearchResult},
 };
@@ -7212,6 +7214,109 @@ async fn test_remote_git_branches(
     });
 
     assert_eq!(host_branch.name(), "totally-new-branch");
+}
+
+#[gpui::test]
+async fn test_remote_git_graph(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree("/project", serde_json::json!({ ".git":{} }))
+        .await;
+    client_a
+        .fs()
+        .insert_branches(Path::new("/project/.git"), &["main"]);
+
+    let head_sha: Oid = "1111111111111111111111111111111111111111".parse().unwrap();
+    let parent_sha: Oid = "2222222222222222222222222222222222222222".parse().unwrap();
+    client_a.fs().set_graph_commits(
+        Path::new("/project/.git"),
+        vec![
+            Arc::new(InitialGraphCommitData {
+                sha: head_sha,
+                parents: std::iter::once(parent_sha).collect(),
+                ref_names: vec!["HEAD -> main".into(), "main".into()],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: parent_sha,
+                parents: std::iter::empty().collect(),
+                ref_names: Vec::new(),
+            }),
+        ],
+    );
+
+    let (project_a, _) = client_a.build_local_project("/project", cx_a).await;
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    executor.run_until_parked();
+
+    let repo_b = cx_b.update(|cx| project_b.read(cx).active_repository(cx).unwrap());
+
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, cx| {
+            let response =
+                repository.graph_data(LogSource::All, LogOrder::DateOrder, 0..usize::MAX, cx);
+            assert!(response.is_loading);
+            assert!(response.commits.is_empty());
+        })
+    });
+
+    executor.run_until_parked();
+
+    let remote_commits = cx_b.update(|cx| {
+        repo_b.update(cx, |repository, cx| {
+            let response =
+                repository.graph_data(LogSource::All, LogOrder::DateOrder, 0..usize::MAX, cx);
+            let commits = response
+                .commits
+                .iter()
+                .map(|commit| commit.sha)
+                .collect::<Vec<_>>();
+            let first_commit_state = repository.fetch_commit_data(head_sha, cx).clone();
+            (commits, first_commit_state)
+        })
+    });
+
+    assert_eq!(remote_commits.0, vec![head_sha, parent_sha]);
+    assert!(matches!(remote_commits.1, CommitDataState::Loading));
+
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, cx| {
+            repository.fetch_commit_data(head_sha, cx);
+        })
+    });
+
+    executor.run_until_parked();
+
+    cx_b.update(|cx| {
+        repo_b.update(cx, |repository, cx| {
+            match repository.fetch_commit_data(head_sha, cx) {
+                CommitDataState::Loaded(commit) => {
+                    assert_eq!(commit.subject.as_ref(), "initial commit");
+                    assert_eq!(commit.sha, head_sha);
+                }
+                CommitDataState::Loading => {
+                    panic!("expected remote git graph commit data to load");
+                }
+            }
+        })
+    });
 }
 
 #[gpui::test]

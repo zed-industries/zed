@@ -63,7 +63,7 @@ use settings::WorktreeId;
 use smol::future::yield_now;
 use std::{
     cmp::Ordering,
-    collections::{BTreeSet, HashSet, VecDeque, hash_map::Entry},
+    collections::{BTreeSet, HashSet, VecDeque},
     future::Future,
     mem,
     ops::Range,
@@ -567,6 +567,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_run_hook);
         client.add_entity_request_handler(Self::handle_reset);
+        client.add_entity_request_handler(Self::handle_graph);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_create_checkpoint);
         client.add_entity_request_handler(Self::handle_restore_checkpoint);
@@ -2654,6 +2655,30 @@ impl GitStore {
         })
     }
 
+    async fn handle_graph(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitGraph>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitGraphResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let log_source = proto_to_log_source(&envelope.payload)?;
+        let log_order = proto_to_log_order(envelope.payload.log_order());
+
+        let commits = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.load_graph_data(log_source, log_order)
+            })
+            .await??;
+
+        Ok(proto::GitGraphResponse {
+            commits: commits
+                .iter()
+                .map(|commit| initial_graph_commit_to_proto(commit))
+                .collect(),
+        })
+    }
+
     async fn handle_create_checkpoint(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitCreateCheckpoint>,
@@ -4724,6 +4749,38 @@ impl Repository {
         self.initial_graph_data.get(&(log_source, log_order))
     }
 
+    pub fn load_graph_data(
+        &mut self,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> oneshot::Receiver<Result<Vec<Arc<InitialGraphCommitData>>>> {
+        let id = self.id;
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    Self::collect_initial_graph_data(backend, log_source, log_order).await
+                }
+                RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
+                    let response = client
+                        .request(proto::GitGraph {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            branch: log_source_branch(&log_source),
+                            sha: log_source_sha(&log_source),
+                            log_order: log_order_to_proto(log_order).into(),
+                        })
+                        .await?;
+
+                    response
+                        .commits
+                        .into_iter()
+                        .map(proto_to_initial_graph_commit)
+                        .collect()
+                }
+            }
+        })
+    }
+
     pub fn search_commits(
         &mut self,
         log_source: LogSource,
@@ -4778,7 +4835,32 @@ impl Repository {
                             .await
                         }
                         Ok(RepositoryState::Remote(_)) => {
-                            Err("Git graph is not supported for collab yet".into())
+                            async {
+                                let request = repository
+                                    .update(cx, |repository, _| {
+                                        repository.load_graph_data(log_source.clone(), log_order)
+                                    })
+                                    .map_err(|error| SharedString::from(error.to_string()))?;
+                                let commits = request
+                                    .await
+                                    .map_err(|_| {
+                                        SharedString::from("Git graph request was cancelled")
+                                    })?
+                                    .map_err(|error| SharedString::from(error.to_string()))?;
+
+                                repository
+                                    .update(cx, |repository, cx| {
+                                        repository.append_initial_graph_commits(
+                                            (log_source.clone(), log_order),
+                                            commits,
+                                            cx,
+                                        );
+                                    })
+                                    .map_err(|error| SharedString::from(error.to_string()))?;
+
+                                Ok(())
+                            }
+                            .await
                         }
                         Err(e) => Err(SharedString::from(e)),
                     };
@@ -4820,6 +4902,50 @@ impl Repository {
         }
     }
 
+    async fn collect_initial_graph_data(
+        backend: Arc<dyn GitRepository>,
+        log_source: LogSource,
+        log_order: LogOrder,
+    ) -> Result<Vec<Arc<InitialGraphCommitData>>> {
+        let (request_tx, request_rx) =
+            smol::channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
+
+        backend
+            .initial_graph_data(log_source, log_order, request_tx)
+            .await?;
+
+        let mut commits = Vec::new();
+        while let Ok(initial_graph_commit_data) = request_rx.recv().await {
+            commits.extend(initial_graph_commit_data);
+        }
+
+        Ok(commits)
+    }
+
+    fn append_initial_graph_commits(
+        &mut self,
+        graph_data_key: (LogSource, LogOrder),
+        initial_graph_commit_data: Vec<Arc<InitialGraphCommitData>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(graph_data) = self.initial_graph_data.get_mut(&graph_data_key) else {
+            debug_panic!("This task should be dropped if data doesn't exist");
+            return;
+        };
+
+        for commit_data in initial_graph_commit_data {
+            graph_data
+                .commit_oid_to_index
+                .insert(commit_data.sha, graph_data.commit_data.len());
+            graph_data.commit_data.push(commit_data);
+        }
+
+        cx.emit(RepositoryEvent::GraphEvent(
+            graph_data_key,
+            GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
+        ));
+    }
+
     async fn local_git_graph_data(
         this: WeakEntity<Self>,
         backend: Arc<dyn GitRepository>,
@@ -4844,28 +4970,11 @@ impl Repository {
 
         while let Ok(initial_graph_commit_data) = request_rx.recv().await {
             this.update(cx, |repository, cx| {
-                let graph_data = repository
-                    .initial_graph_data
-                    .entry(graph_data_key.clone())
-                    .and_modify(|graph_data| {
-                        for commit_data in initial_graph_commit_data {
-                            graph_data
-                                .commit_oid_to_index
-                                .insert(commit_data.sha, graph_data.commit_data.len());
-                            graph_data.commit_data.push(commit_data);
-                        }
-                        cx.emit(RepositoryEvent::GraphEvent(
-                            graph_data_key.clone(),
-                            GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
-                        ));
-                    });
-
-                match &graph_data {
-                    Entry::Occupied(_) => {}
-                    Entry::Vacant(_) => {
-                        debug_panic!("This task should be dropped if data doesn't exist");
-                    }
-                }
+                repository.append_initial_graph_commits(
+                    graph_data_key.clone(),
+                    initial_graph_commit_data,
+                    cx,
+                );
             })
             .ok();
         }
@@ -4899,6 +5008,7 @@ impl Repository {
         self.graph_commit_data_handler = GraphCommitHandlerState::Starting;
 
         let state = self.repository_state.clone();
+        let repository_id = self.id;
         let (result_tx, result_rx) = smol::channel::bounded::<(Oid, GraphCommitData)>(64);
         let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
 
@@ -4930,22 +5040,35 @@ impl Repository {
         let background_executor = cx.background_executor().clone();
 
         cx.background_spawn(async move {
-            let backend = match state.await {
-                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => backend,
-                Ok(RepositoryState::Remote(_)) => {
-                    log::error!("commit_data_reader not supported for remote repositories");
-                    return;
+            enum CommitDataLoader {
+                Local(git::repository::CommitDataReader),
+                Remote {
+                    client: AnyProtoClient,
+                    project_id: ProjectId,
+                    repository_id: RepositoryId,
+                },
+            }
+
+            let loader = match state.await {
+                Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
+                    let reader = match backend.commit_data_reader() {
+                        Ok(reader) => reader,
+                        Err(error) => {
+                            log::error!("failed to create commit data reader: {error:?}");
+                            return;
+                        }
+                    };
+                    CommitDataLoader::Local(reader)
+                }
+                Ok(RepositoryState::Remote(RemoteRepositoryState { project_id, client })) => {
+                    CommitDataLoader::Remote {
+                        client,
+                        project_id,
+                        repository_id,
+                    }
                 }
                 Err(error) => {
                     log::error!("failed to get repository state: {error}");
-                    return;
-                }
-            };
-
-            let reader = match backend.commit_data_reader() {
-                Ok(reader) => reader,
-                Err(error) => {
-                    log::error!("failed to create commit data reader: {error:?}");
                     return;
                 }
             };
@@ -4959,7 +5082,24 @@ impl Repository {
                             break;
                         };
 
-                        match reader.read(sha).await {
+                        let commit_data = match &loader {
+                            CommitDataLoader::Local(reader) => reader.read(sha).await,
+                            CommitDataLoader::Remote {
+                                client,
+                                project_id,
+                                repository_id,
+                            } => client
+                                .request(proto::GitShow {
+                                    project_id: project_id.0,
+                                    repository_id: repository_id.to_proto(),
+                                    commit: sha.to_string(),
+                                })
+                                .await
+                                .map(|commit| proto_to_commit_details(&commit))
+                                .map(|commit| graph_commit_data_from_commit_details(sha, commit)),
+                        };
+
+                        match commit_data {
                             Ok(commit_data) => {
                                 if result_tx.send((sha, commit_data)).await.is_err() {
                                     break;
@@ -7445,6 +7585,23 @@ fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
     }
 }
 
+fn graph_commit_data_from_commit_details(sha: Oid, commit: CommitDetails) -> GraphCommitData {
+    GraphCommitData {
+        sha,
+        parents: Default::default(),
+        author_name: commit.author_name,
+        author_email: commit.author_email,
+        commit_timestamp: commit.commit_timestamp,
+        subject: commit
+            .message
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string()
+            .into(),
+    }
+}
+
 fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
     CommitDetails {
         sha: proto.sha.clone().into(),
@@ -7453,6 +7610,72 @@ fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
         author_email: proto.author_email.clone().into(),
         author_name: proto.author_name.clone().into(),
     }
+}
+
+fn log_order_to_proto(log_order: LogOrder) -> proto::GitGraphLogOrder {
+    match log_order {
+        LogOrder::DateOrder => proto::GitGraphLogOrder::DateOrder,
+        LogOrder::TopoOrder => proto::GitGraphLogOrder::TopoOrder,
+        LogOrder::AuthorDateOrder => proto::GitGraphLogOrder::AuthorDateOrder,
+        LogOrder::ReverseChronological => proto::GitGraphLogOrder::ReverseChronological,
+    }
+}
+
+fn proto_to_log_order(log_order: proto::GitGraphLogOrder) -> LogOrder {
+    match log_order {
+        proto::GitGraphLogOrder::DateOrder => LogOrder::DateOrder,
+        proto::GitGraphLogOrder::TopoOrder => LogOrder::TopoOrder,
+        proto::GitGraphLogOrder::AuthorDateOrder => LogOrder::AuthorDateOrder,
+        proto::GitGraphLogOrder::ReverseChronological => LogOrder::ReverseChronological,
+    }
+}
+
+fn log_source_branch(log_source: &LogSource) -> Option<String> {
+    match log_source {
+        LogSource::Branch(branch) => Some(branch.to_string()),
+        LogSource::All | LogSource::Sha(_) => None,
+    }
+}
+
+fn log_source_sha(log_source: &LogSource) -> Option<String> {
+    match log_source {
+        LogSource::Sha(sha) => Some(sha.to_string()),
+        LogSource::All | LogSource::Branch(_) => None,
+    }
+}
+
+fn proto_to_log_source(request: &proto::GitGraph) -> Result<LogSource> {
+    if let Some(sha) = &request.sha {
+        return Ok(LogSource::Sha(Oid::from_str(sha)?));
+    }
+
+    if let Some(branch) = &request.branch {
+        return Ok(LogSource::Branch(branch.clone().into()));
+    }
+
+    Ok(LogSource::All)
+}
+
+fn initial_graph_commit_to_proto(commit: &InitialGraphCommitData) -> proto::GitGraphCommit {
+    proto::GitGraphCommit {
+        sha: commit.sha.to_string(),
+        parents: commit.parents.iter().map(ToString::to_string).collect(),
+        ref_names: commit.ref_names.iter().map(ToString::to_string).collect(),
+    }
+}
+
+fn proto_to_initial_graph_commit(
+    commit: proto::GitGraphCommit,
+) -> Result<Arc<InitialGraphCommitData>> {
+    Ok(Arc::new(InitialGraphCommitData {
+        sha: Oid::from_str(&commit.sha)?,
+        parents: commit
+            .parents
+            .into_iter()
+            .map(|parent| Oid::from_str(&parent))
+            .collect::<Result<_>>()?,
+        ref_names: commit.ref_names.into_iter().map(Into::into).collect(),
+    }))
 }
 
 /// This snapshot computes the repository state on the foreground thread while
