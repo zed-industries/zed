@@ -248,6 +248,124 @@ pub trait LanguageModel: Send + Sync {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fake_provider::FakeLanguageModel;
+    use futures::StreamExt;
+    use gpui::TestAppContext;
+    use std::sync::Arc;
+
+    async fn collect_text_stream(
+        model: &Arc<FakeLanguageModel>,
+        chunks: &[&str],
+        cx: &AsyncApp,
+    ) -> String {
+        let stream_future =
+            model.stream_completion_text(LanguageModelRequest::default(), cx);
+
+        for chunk in chunks {
+            model.send_last_completion_stream_text_chunk(*chunk);
+        }
+        model.end_last_completion_stream();
+
+        let mut text_stream = stream_future.await.unwrap();
+        let mut result = String::new();
+        while let Some(chunk) = text_stream.stream.next().await {
+            result.push_str(&chunk.unwrap());
+        }
+        result
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_text_strips_think_tags(cx: &mut TestAppContext) {
+        let model = Arc::new(FakeLanguageModel::default());
+        let cx = cx.to_async();
+
+        let result = collect_text_stream(
+            &model,
+            &["<think>internal reasoning</think>Fix the bug"],
+            &cx,
+        )
+        .await;
+
+        assert_eq!(result, "Fix the bug");
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_text_strips_think_tags_split_across_chunks(
+        cx: &mut TestAppContext,
+    ) {
+        let model = Arc::new(FakeLanguageModel::default());
+        let cx = cx.to_async();
+
+        let result = collect_text_stream(
+            &model,
+            &["<think>", "internal reasoning", "</think>", "Fix the bug"],
+            &cx,
+        )
+        .await;
+
+        assert_eq!(result, "Fix the bug");
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_text_passes_through_non_think_text(
+        cx: &mut TestAppContext,
+    ) {
+        let model = Arc::new(FakeLanguageModel::default());
+        let cx = cx.to_async();
+
+        let result = collect_text_stream(&model, &["Fix the bug"], &cx).await;
+
+        assert_eq!(result, "Fix the bug");
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_text_unclosed_think_tag_discards_rest(
+        cx: &mut TestAppContext,
+    ) {
+        let model = Arc::new(FakeLanguageModel::default());
+        let cx = cx.to_async();
+
+        let result =
+            collect_text_stream(&model, &["<think>reasoning with no end tag"], &cx).await;
+
+        assert_eq!(result, "");
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_text_strips_multiple_think_blocks(
+        cx: &mut TestAppContext,
+    ) {
+        let model = Arc::new(FakeLanguageModel::default());
+        let cx = cx.to_async();
+
+        let result = collect_text_stream(
+            &model,
+            &["<think>first</think>Fix<think>second</think> the bug"],
+            &cx,
+        )
+        .await;
+
+        assert_eq!(result, "Fix the bug");
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_text_lone_close_tag_passes_through(
+        cx: &mut TestAppContext,
+    ) {
+        let model = Arc::new(FakeLanguageModel::default());
+        let cx = cx.to_async();
+
+        let result =
+            collect_text_stream(&model, &["before</think>after"], &cx).await;
+
+        assert_eq!(result, "before</think>after");
+    }
+}
+
 impl std::fmt::Debug for dyn LanguageModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("<dyn LanguageModel>")
