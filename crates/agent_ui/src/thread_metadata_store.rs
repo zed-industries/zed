@@ -10,32 +10,37 @@ use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
 use db::{
+    kvp::KeyValueStore,
     sqlez::{
         bindable::Column, domain::Domain, statement::Statement,
         thread_safe_connection::ThreadSafeConnection,
     },
     sqlez_macros::sql,
 };
+use fs::Fs;
 use futures::{FutureExt as _, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
 use remote::RemoteConnectionOptions;
 use ui::{App, Context, SharedString};
 use util::ResultExt as _;
-use workspace::PathList;
+use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
 use crate::DEFAULT_THREAD_TITLE;
 
+const THREAD_REMOTE_CONNECTION_BACKFILL_KEY: &str = "thread-metadata-remote-connection-backfill";
+
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
-    migrate_thread_metadata(cx);
+    let migration_task = migrate_thread_metadata(cx);
+    migrate_thread_remote_connections(cx, migration_task);
 }
 
 /// Migrate existing thread metadata from native agent thread store to the new metadata storage.
 /// We skip migrating threads that do not have a project.
 ///
 /// TODO: Remove this after N weeks of shipping the sidebar
-fn migrate_thread_metadata(cx: &mut App) {
+fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
     let store = ThreadMetadataStore::global(cx);
     let db = store.read(cx).db.clone();
 
@@ -106,7 +111,125 @@ fn migrate_thread_metadata(cx: &mut App) {
         let _ = store.update(cx, |store, cx| store.reload(cx));
         anyhow::Ok(())
     })
+}
+
+fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::Result<()>>) {
+    let store = ThreadMetadataStore::global(cx);
+    let db = store.read(cx).db.clone();
+    let kvp = KeyValueStore::global(cx);
+    let workspace_db = WorkspaceDb::global(cx);
+    let fs = <dyn Fs>::global(cx);
+
+    cx.spawn(async move |_| -> anyhow::Result<()> {
+        migration_task.await?;
+
+        if kvp
+            .read_kvp(THREAD_REMOTE_CONNECTION_BACKFILL_KEY)?
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        let recent_workspaces = workspace_db.recent_workspaces_on_disk(fs.as_ref()).await?;
+        let mut remote_connections_by_path =
+            HashMap::<PathList, Option<RemoteConnectionOptions>>::default();
+
+        for (_, location, path_list, _) in recent_workspaces {
+            if path_list.is_empty() {
+                continue;
+            }
+
+            match location {
+                SerializedWorkspaceLocation::Local => {
+                    remote_connections_by_path.insert(path_list, None);
+                }
+                SerializedWorkspaceLocation::Remote(remote_connection) => {
+                    if let Some(existing_remote_connection) =
+                        remote_connections_by_path.get_mut(&path_list)
+                    {
+                        if existing_remote_connection.as_ref() != Some(&remote_connection) {
+                            *existing_remote_connection = None;
+                        }
+                    } else {
+                        remote_connections_by_path.insert(path_list, Some(remote_connection));
+                    }
+                }
+            }
+        }
+
+        let mut backfilled_count = 0;
+        for metadata in db.list()? {
+            if metadata.remote_connection.is_some() {
+                continue;
+            }
+
+            let remote_connection = match remote_connection_backfill_for_paths(
+                &metadata.folder_paths,
+                &remote_connections_by_path,
+            ) {
+                ThreadRemoteConnectionBackfill::Remote(remote_connection) => {
+                    Some(remote_connection)
+                }
+                ThreadRemoteConnectionBackfill::Unset => None,
+                ThreadRemoteConnectionBackfill::NoMatch => {
+                    match remote_connection_backfill_for_paths(
+                        &metadata.main_worktree_paths,
+                        &remote_connections_by_path,
+                    ) {
+                        ThreadRemoteConnectionBackfill::Remote(remote_connection) => {
+                            Some(remote_connection)
+                        }
+                        ThreadRemoteConnectionBackfill::Unset
+                        | ThreadRemoteConnectionBackfill::NoMatch => None,
+                    }
+                }
+            };
+
+            if let Some(remote_connection) = remote_connection {
+                db.save(ThreadMetadata {
+                    remote_connection: Some(remote_connection),
+                    ..metadata
+                })
+                .await?;
+                backfilled_count += 1;
+            }
+        }
+
+        kvp.write_kvp(
+            THREAD_REMOTE_CONNECTION_BACKFILL_KEY.to_string(),
+            "1".to_string(),
+        )
+        .await?;
+
+        log::info!("Backfilled remote connections for {backfilled_count} thread metadata rows");
+
+        Ok(())
+    })
     .detach_and_log_err(cx);
+}
+
+#[derive(Clone)]
+enum ThreadRemoteConnectionBackfill {
+    NoMatch,
+    Unset,
+    Remote(RemoteConnectionOptions),
+}
+
+fn remote_connection_backfill_for_paths(
+    path_list: &PathList,
+    remote_connections_by_path: &HashMap<PathList, Option<RemoteConnectionOptions>>,
+) -> ThreadRemoteConnectionBackfill {
+    if path_list.is_empty() {
+        return ThreadRemoteConnectionBackfill::NoMatch;
+    }
+
+    match remote_connections_by_path.get(path_list) {
+        Some(Some(remote_connection)) => {
+            ThreadRemoteConnectionBackfill::Remote(remote_connection.clone())
+        }
+        Some(None) => ThreadRemoteConnectionBackfill::Unset,
+        None => ThreadRemoteConnectionBackfill::NoMatch,
+    }
 }
 
 struct GlobalThreadMetadataStore(Entity<ThreadMetadataStore>);
@@ -1418,7 +1541,7 @@ mod tests {
             cx.run_until_parked();
         }
 
-        cx.update(|cx| migrate_thread_metadata(cx));
+        cx.update(|cx| migrate_thread_metadata(cx).detach());
         cx.run_until_parked();
 
         let list = cx.update(|cx| {
@@ -1500,7 +1623,7 @@ mod tests {
         save_task.await.unwrap();
         cx.run_until_parked();
 
-        cx.update(|cx| migrate_thread_metadata(cx));
+        cx.update(|cx| migrate_thread_metadata(cx).detach());
         cx.run_until_parked();
 
         let list = cx.update(|cx| {
@@ -1560,7 +1683,7 @@ mod tests {
             cx.run_until_parked();
         }
 
-        cx.update(|cx| migrate_thread_metadata(cx));
+        cx.update(|cx| migrate_thread_metadata(cx).detach());
         cx.run_until_parked();
 
         let list = cx.update(|cx| {
