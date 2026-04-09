@@ -1448,7 +1448,7 @@ impl GitRepository for RealGitRepository {
                     log::debug!("indexing SHA: {sha}, path {path:?}");
 
                     let output = git
-                        .build_command(&["update-index", "--add", "--cacheinfo", mode, sha])
+                        .build_command(&["update-index", "--add", "--cacheinfo", mode, sha, "--"])
                         .envs(env.iter())
                         .arg(path.as_unix_str())
                         .output()
@@ -1462,7 +1462,7 @@ impl GitRepository for RealGitRepository {
                 } else {
                     log::debug!("removing path {path:?} from the index");
                     let output = git
-                        .build_command(&["update-index", "--force-remove"])
+                        .build_command(&["update-index", "--force-remove", "--"])
                         .envs(env.iter())
                         .arg(path.as_unix_str())
                         .output()
@@ -2100,7 +2100,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = git
-                    .build_command(&["stash", "push", "--quiet", "--include-untracked"])
+                    .build_command(&["stash", "push", "--quiet", "--include-untracked", "--"])
                     .envs(env.iter())
                     .args(paths.iter().map(|p| p.as_unix_str()))
                     .output()
@@ -3048,6 +3048,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("--untracked-files=all"),
         OsString::from("--no-renames"),
         OsString::from("-z"),
+        OsString::from("--"),
     ];
     args.extend(path_prefixes.iter().map(|path_prefix| {
         if path_prefix.is_empty() {

@@ -194,7 +194,7 @@ impl Docker {
 
     async fn pull_image(&self, image: &String) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
-        command.args(&["pull", image]);
+        command.args(&["pull", "--", image]);
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error pulling image: {e}");
