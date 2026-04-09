@@ -662,7 +662,9 @@ impl Asset for ImageAssetLoader {
                                     frames.push(frame);
                                 }
                                 Err(err) => {
-                                    log::debug!("Skipping GIF frame in {source:?} due to decode error: {err}");
+                                    log::debug!(
+                                        "Skipping GIF frame in {source:?} due to decode error: {err}"
+                                    );
                                 }
                             }
                         }
