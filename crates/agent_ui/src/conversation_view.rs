@@ -78,7 +78,7 @@ use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::thread_metadata_store::ThreadMetadataStore;
+
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -352,6 +352,20 @@ impl ConversationView {
             .conversation
             .read(cx)
             .pending_tool_call(id, cx)
+    }
+
+    pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
+        let Some(root_thread) = self.root_thread(cx) else {
+            return false;
+        };
+        let root_id = root_thread.read(cx).id.clone();
+        self.as_connected().is_some_and(|connected| {
+            connected
+                .conversation
+                .read(cx)
+                .pending_tool_call(&root_id, cx)
+                .is_some()
+        })
     }
 
     pub fn root_thread(&self, cx: &App) -> Option<Entity<ThreadView>> {
@@ -1510,24 +1524,30 @@ impl ConversationView {
 
         let agent_telemetry_id = connection.telemetry_id();
 
-        if let Some(login) = connection.terminal_auth_task(&method, cx) {
+        if let Some(login_task) = connection.terminal_auth_task(&method, cx) {
             configuration_view.take();
             pending_auth_method.replace(method.clone());
 
             let project = self.project.clone();
-            let authenticate = Self::spawn_external_agent_login(
-                login,
-                workspace,
-                project,
-                method.clone(),
-                false,
-                window,
-                cx,
-            );
             cx.notify();
             self.auth_task = Some(cx.spawn_in(window, {
                 async move |this, cx| {
-                    let result = authenticate.await;
+                    let result = async {
+                        let login = login_task.await?;
+                        this.update_in(cx, |_this, window, cx| {
+                            Self::spawn_external_agent_login(
+                                login,
+                                workspace,
+                                project,
+                                method.clone(),
+                                false,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await
+                    }
+                    .await;
 
                     match &result {
                         Ok(_) => telemetry::event!(
@@ -2628,22 +2648,6 @@ impl ConversationView {
     pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
         self.as_connected().and_then(|c| c.history.as_ref())
     }
-
-    pub fn delete_history_entry(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
-        let Some(connected) = self.as_connected() else {
-            return;
-        };
-
-        let Some(history) = &connected.history else {
-            return;
-        };
-        let task = history.update(cx, |history, cx| history.delete_session(&session_id, cx));
-        task.detach_and_log_err(cx);
-
-        if let Some(store) = ThreadMetadataStore::try_global(cx) {
-            store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
-        }
-    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -2813,6 +2817,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
 

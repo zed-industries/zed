@@ -1179,6 +1179,39 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn create_archive_checkpoint(&self) -> BoxFuture<'_, Result<(String, String)>> {
+        let executor = self.executor.clone();
+        let fs = self.fs.clone();
+        let checkpoints = self.checkpoints.clone();
+        let repository_dir_path = self.repository_dir_path.parent().unwrap().to_path_buf();
+        async move {
+            executor.simulate_random_delay().await;
+            let staged_oid = git::Oid::random(&mut *executor.rng().lock());
+            let unstaged_oid = git::Oid::random(&mut *executor.rng().lock());
+            let entry = fs.entry(&repository_dir_path)?;
+            checkpoints.lock().insert(staged_oid, entry.clone());
+            checkpoints.lock().insert(unstaged_oid, entry);
+            Ok((staged_oid.to_string(), unstaged_oid.to_string()))
+        }
+        .boxed()
+    }
+
+    fn restore_archive_checkpoint(
+        &self,
+        // The fake filesystem doesn't model a separate index, so only the
+        // unstaged (full working directory) snapshot is restored.
+        _staged_sha: String,
+        unstaged_sha: String,
+    ) -> BoxFuture<'_, Result<()>> {
+        match unstaged_sha.parse() {
+            Ok(commit_sha) => self.restore_checkpoint(GitRepositoryCheckpoint { commit_sha }),
+            Err(error) => async move {
+                Err(anyhow::anyhow!(error).context("failed to parse unstaged SHA as Oid"))
+            }
+            .boxed(),
+        }
+    }
+
     fn compare_checkpoints(
         &self,
         left: GitRepositoryCheckpoint,

@@ -97,6 +97,7 @@ fn model_id_to_selection(model_id: &acp::ModelId) -> LanguageModelSelection {
         model: model.to_owned(),
         enable_thinking: false,
         effort: None,
+        speed: None,
     }
 }
 

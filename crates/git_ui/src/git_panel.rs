@@ -11,6 +11,7 @@ use crate::{
     repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
+use alacritty_terminal::vte::ansi;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -6407,7 +6408,13 @@ fn open_output(
     cx: &mut Context<Workspace>,
 ) {
     let operation = operation.into();
-    let buffer = cx.new(|cx| Buffer::local(output, cx));
+
+    let mut handler = GitOutputHandler::default();
+    let mut processor = ansi::Processor::<ansi::StdSyncHandler>::default();
+    processor.advance(&mut handler, output.as_bytes());
+    let plain_text = handler.output;
+
+    let buffer = cx.new(|cx| Buffer::local(plain_text.as_str(), cx));
     buffer.update(cx, |buffer, cx| {
         buffer.set_capability(language::Capability::ReadOnly, cx);
     });
@@ -6421,6 +6428,32 @@ fn open_output(
     });
 
     workspace.add_item_to_center(Box::new(editor), window, cx);
+}
+
+#[derive(Default)]
+struct GitOutputHandler {
+    output: String,
+    line_start: usize,
+}
+
+impl ansi::Handler for GitOutputHandler {
+    fn input(&mut self, c: char) {
+        self.output.push(c);
+    }
+
+    fn linefeed(&mut self) {
+        self.output.push('\n');
+        self.line_start = self.output.len();
+    }
+
+    fn carriage_return(&mut self) {
+        self.output.truncate(self.line_start);
+    }
+
+    fn put_tab(&mut self, count: u16) {
+        self.output
+            .extend(std::iter::repeat_n('\t', count as usize));
+    }
 }
 
 pub(crate) fn show_error_toast(
@@ -7861,6 +7894,25 @@ mod tests {
         // "Update tracked"
         let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
         assert_eq!(message, Some("Update tracked".to_string()));
+    }
+
+    #[test]
+    fn test_git_output_handler_strips_ansi_codes() {
+        use alacritty_terminal::vte::ansi;
+
+        let cases = [
+            ("no escape codes here\n", "no escape codes here\n"),
+            ("\x1b[31mhello\x1b[0m", "hello"),
+            ("\x1b[1;32mfoo\x1b[0m bar", "foo bar"),
+            ("progress 10%\rprogress 100%\n", "progress 100%\n"),
+        ];
+
+        for (input, expected) in cases {
+            let mut handler = GitOutputHandler::default();
+            let mut processor = ansi::Processor::<ansi::StdSyncHandler>::default();
+            processor.advance(&mut handler, input.as_bytes());
+            assert_eq!(handler.output, expected);
+        }
     }
 
     #[gpui::test]

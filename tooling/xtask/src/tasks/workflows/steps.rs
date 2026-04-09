@@ -213,9 +213,9 @@ pub fn cleanup_cargo_config(platform: Platform) -> Step<Run> {
 
 pub fn clear_target_dir_if_large(platform: Platform) -> Step<Run> {
     match platform {
-        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 250"),
-        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 250"),
-        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 300"),
+        Platform::Windows => named::pwsh("./script/clear-target-dir-if-larger-than.ps1 350 200"),
+        Platform::Linux => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
+        Platform::Mac => named::bash("./script/clear-target-dir-if-larger-than 350 200"),
     }
 }
 
@@ -252,10 +252,6 @@ pub fn setup_sccache(platform: Platform) -> Step<Run> {
         .add_env(("R2_ACCESS_KEY_ID", vars::R2_ACCESS_KEY_ID))
         .add_env(("R2_SECRET_ACCESS_KEY", vars::R2_SECRET_ACCESS_KEY))
         .add_env(("SCCACHE_BUCKET", SCCACHE_R2_BUCKET))
-}
-
-pub fn cargo_build_visual_tests() -> Step<Run> {
-    named::bash("cargo build -p zed --bin zed_visual_test_runner --features visual-tests")
 }
 
 pub fn show_sccache_stats(platform: Platform) -> Step<Run> {

@@ -6021,22 +6021,20 @@ impl Repository {
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let (name, commit, use_existing_branch) = match target {
                         CreateWorktreeTarget::ExistingBranch { branch_name } => {
-                            (branch_name, None, true)
+                            (Some(branch_name), None, true)
                         }
                         CreateWorktreeTarget::NewBranch {
                             branch_name,
-                            base_sha: start_point,
-                        } => (branch_name, start_point, false),
-                        CreateWorktreeTarget::Detached {
-                            base_sha: start_point,
-                        } => (String::new(), start_point, false),
+                            base_sha,
+                        } => (Some(branch_name), base_sha, false),
+                        CreateWorktreeTarget::Detached { base_sha } => (None, base_sha, false),
                     };
 
                     client
                         .request(proto::GitCreateWorktree {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
-                            name,
+                            name: name.unwrap_or_default(),
                             directory: path.to_string_lossy().to_string(),
                             commit,
                             use_existing_branch,
@@ -6126,15 +6124,37 @@ impl Repository {
         })
     }
 
-    pub fn commit_exists(&mut self, sha: String) -> oneshot::Receiver<Result<bool>> {
+    pub fn create_archive_checkpoint(&mut self) -> oneshot::Receiver<Result<(String, String)>> {
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let results = backend.revparse_batch(vec![sha]).await?;
-                    Ok(results.into_iter().next().flatten().is_some())
+                    backend.create_archive_checkpoint().await
                 }
                 RepositoryState::Remote(_) => {
-                    anyhow::bail!("commit_exists is not supported for remote repositories")
+                    anyhow::bail!(
+                        "create_archive_checkpoint is not supported for remote repositories"
+                    )
+                }
+            }
+        })
+    }
+
+    pub fn restore_archive_checkpoint(
+        &mut self,
+        staged_sha: String,
+        unstaged_sha: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend
+                        .restore_archive_checkpoint(staged_sha, unstaged_sha)
+                        .await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!(
+                        "restore_archive_checkpoint is not supported for remote repositories"
+                    )
                 }
             }
         })

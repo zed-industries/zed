@@ -117,7 +117,10 @@ impl<'a> Reporter<'a> {
 
         let pull_request = self.github_client.get_pull_request(pr_number).await?;
 
-        if let Some(approval) = self.check_pull_request_approved(&pull_request).await? {
+        if let Some(approval) = self
+            .check_approving_pull_request_review(&pull_request)
+            .await?
+        {
             return Ok(approval);
         }
 
@@ -197,7 +200,7 @@ impl<'a> Reporter<'a> {
         }
     }
 
-    async fn check_pull_request_approved(
+    async fn check_approving_pull_request_review(
         &self,
         pull_request: &PullRequestData,
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
@@ -214,9 +217,13 @@ impl<'a> Reporter<'a> {
                         .user
                         .as_ref()
                         .is_none_or(|pr_user| pr_user.login != github_login.login)
-                    && review
+                    && (review
                         .state
                         .is_some_and(|state| state == ReviewState::Approved)
+                        || review
+                            .body
+                            .as_deref()
+                            .is_some_and(Self::contains_approving_pattern))
                     && self
                         .github_client
                         .actor_has_repository_write_permission(&GithubLogin::new(
@@ -254,10 +261,10 @@ impl<'a> Reporter<'a> {
                     .user
                     .as_ref()
                     .is_some_and(|pr_author| pr_author.login != comment.user.login)
-                    && comment.body.as_ref().is_some_and(|body| {
-                        body.contains(ZED_ZIPPY_COMMENT_APPROVAL_PATTERN)
-                            || body.contains(ZED_ZIPPY_GROUP_APPROVAL)
-                    })
+                    && comment
+                        .body
+                        .as_deref()
+                        .is_some_and(Self::contains_approving_pattern)
                     && self
                         .github_client
                         .actor_has_repository_write_permission(&GithubLogin::new(
@@ -276,6 +283,10 @@ impl<'a> Reporter<'a> {
         } else {
             Ok(None)
         }
+    }
+
+    fn contains_approving_pattern(body: &str) -> bool {
+        body.contains(ZED_ZIPPY_COMMENT_APPROVAL_PATTERN) || body.contains(ZED_ZIPPY_GROUP_APPROVAL)
     }
 
     pub async fn generate_report(mut self) -> anyhow::Result<Report> {
@@ -397,6 +408,7 @@ mod tests {
                 login: login.to_owned(),
             }),
             state: Some(state),
+            body: None,
         }
     }
 
@@ -650,6 +662,65 @@ mod tests {
     #[tokio::test]
     async fn no_reviews_no_comments_no_coauthors_is_unreviewed() {
         let result = TestScenario::single_commit().run_scenario().await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_zippy_approval_body_is_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Ok(ReviewSuccess::PullRequestReviewed(_))));
+    }
+
+    #[tokio::test]
+    async fn review_with_group_approval_body_is_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-industries/approved"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Ok(ReviewSuccess::PullRequestReviewed(_))));
+    }
+
+    #[tokio::test]
+    async fn review_with_non_approving_body_is_not_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("looks good to me"),
+            ])
+            .with_org_members(vec!["bob"])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_approving_body_from_external_user_is_not_accepted() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("bob", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .run_scenario()
+            .await;
+        assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
+    }
+
+    #[tokio::test]
+    async fn review_with_approving_body_from_pr_author_is_rejected() {
+        let result = TestScenario::single_commit()
+            .with_reviews(vec![
+                review("alice", ReviewState::Other).with_body("@zed-zippy approve"),
+            ])
+            .with_org_members(vec!["alice"])
+            .run_scenario()
+            .await;
         assert!(matches!(result, Err(ReviewFailure::Unreviewed)));
     }
 }

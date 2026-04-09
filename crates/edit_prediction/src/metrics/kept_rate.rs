@@ -1,4 +1,6 @@
-use crate::word_diff::tokenize;
+use crate::metrics::tokenize;
+
+const MAX_DIRTY_LENGTH_DELTA_CHARS: usize = 512;
 
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,19 +27,27 @@ fn dp_index(width: usize, row: usize, column: usize) -> usize {
     row * width + column
 }
 
-/// Return masks over `a` and `b` using one-sided LCS tie-breaking for each
-/// side while sharing a single DP table construction.
-fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
+/// Fill masks over `a` and `b` using one-sided LCS tie-breaking for each side
+/// while sharing a single DP table construction.
+fn fill_lcs_keep_masks(
+    a: &[&str],
+    b: &[&str],
+    mut keep_a: Option<&mut [bool]>,
+    mut keep_b: Option<&mut [bool]>,
+) {
     if a.is_empty() || b.is_empty() {
-        return (vec![false; a.len()], vec![false; b.len()]);
+        return;
     }
 
     if a == b {
-        return (vec![true; a.len()], vec![true; b.len()]);
+        if let Some(keep_a) = keep_a.as_mut() {
+            keep_a.fill(true);
+        }
+        if let Some(keep_b) = keep_b.as_mut() {
+            keep_b.fill(true);
+        }
+        return;
     }
-
-    let mut keep_a = vec![false; a.len()];
-    let mut keep_b = vec![false; b.len()];
 
     let prefix_len = a
         .iter()
@@ -61,22 +71,30 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
     };
 
     for index in 0..prefix_len {
-        keep_a[index] = true;
-        keep_b[index] = true;
+        if let Some(keep_a) = keep_a.as_mut() {
+            keep_a[index] = true;
+        }
+        if let Some(keep_b) = keep_b.as_mut() {
+            keep_b[index] = true;
+        }
     }
 
     for offset in 0..suffix_len {
         let a_index = a.len() - suffix_len + offset;
         let b_index = b.len() - suffix_len + offset;
-        keep_a[a_index] = true;
-        keep_b[b_index] = true;
+        if let Some(keep_a) = keep_a.as_mut() {
+            keep_a[a_index] = true;
+        }
+        if let Some(keep_b) = keep_b.as_mut() {
+            keep_b[b_index] = true;
+        }
     }
 
     let a_mid = &a[prefix_len..a.len() - suffix_len];
     let b_mid = &b[prefix_len..b.len() - suffix_len];
 
     if a_mid.is_empty() || b_mid.is_empty() {
-        return (keep_a, keep_b);
+        return;
     }
 
     let row_count = a_mid.len() + 1;
@@ -97,44 +115,59 @@ fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
         }
     }
 
-    let mut i = a_mid.len();
-    let mut j = b_mid.len();
+    if let Some(keep_a) = keep_a.as_mut() {
+        let mut i = a_mid.len();
+        let mut j = b_mid.len();
 
-    while i > 0 && j > 0 {
-        if a_mid[i - 1] == b_mid[j - 1] {
-            keep_a[prefix_len + i - 1] = true;
-            i -= 1;
-            j -= 1;
-        } else {
-            let up = dp[dp_index(column_count, i - 1, j)];
-            let left = dp[dp_index(column_count, i, j - 1)];
-            if up >= left {
+        while i > 0 && j > 0 {
+            if a_mid[i - 1] == b_mid[j - 1] {
+                keep_a[prefix_len + i - 1] = true;
                 i -= 1;
-            } else {
                 j -= 1;
+            } else {
+                let up = dp[dp_index(column_count, i - 1, j)];
+                let left = dp[dp_index(column_count, i, j - 1)];
+                if up >= left {
+                    i -= 1;
+                } else {
+                    j -= 1;
+                }
             }
         }
     }
 
-    let mut i = a_mid.len();
-    let mut j = b_mid.len();
+    if let Some(keep_b) = keep_b.as_mut() {
+        let mut i = a_mid.len();
+        let mut j = b_mid.len();
 
-    while i > 0 && j > 0 {
-        if a_mid[i - 1] == b_mid[j - 1] {
-            keep_b[prefix_len + j - 1] = true;
-            i -= 1;
-            j -= 1;
-        } else {
-            let up = dp[dp_index(column_count, i - 1, j)];
-            let left = dp[dp_index(column_count, i, j - 1)];
-            if left >= up {
+        while i > 0 && j > 0 {
+            if a_mid[i - 1] == b_mid[j - 1] {
+                keep_b[prefix_len + j - 1] = true;
+                i -= 1;
                 j -= 1;
             } else {
-                i -= 1;
+                let up = dp[dp_index(column_count, i - 1, j)];
+                let left = dp[dp_index(column_count, i, j - 1)];
+                if left >= up {
+                    j -= 1;
+                } else {
+                    i -= 1;
+                }
             }
         }
     }
+}
 
+fn lcs_keep_mask(a: &[&str], b: &[&str]) -> Vec<bool> {
+    let mut keep_a = vec![false; a.len()];
+    fill_lcs_keep_masks(a, b, Some(&mut keep_a), None);
+    keep_a
+}
+
+fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
+    let mut keep_a = vec![false; a.len()];
+    let mut keep_b = vec![false; b.len()];
+    fill_lcs_keep_masks(a, b, Some(&mut keep_a), Some(&mut keep_b));
     (keep_a, keep_b)
 }
 
@@ -155,6 +188,12 @@ fn analyze_masked_tokens<'a>(tokens: &[&'a str], mask: &[bool]) -> (Vec<&'a str>
     (unmasked_tokens, unmasked_chars, masked_chars)
 }
 
+fn should_bail_for_dirty_final(base: &str, predicted: &str, final_text: &str) -> bool {
+    let predicted_delta_chars = predicted.len().abs_diff(base.len());
+    let final_delta_chars = final_text.len().abs_diff(base.len());
+    predicted_delta_chars.abs_diff(final_delta_chars) > MAX_DIRTY_LENGTH_DELTA_CHARS
+}
+
 pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptRateResult {
     if base == predicted && predicted == final_text {
         let predicted_tokens = tokenize(predicted);
@@ -171,11 +210,26 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
         };
     }
 
+    if should_bail_for_dirty_final(base, predicted, final_text) {
+        let predicted_new_chars = predicted.len().abs_diff(base.len());
+        let final_new_chars = final_text.len().abs_diff(base.len());
+        return KeptRateResult {
+            predicted_new_chars,
+            final_new_chars,
+            kept_chars: 0,
+            discarded_chars: predicted_new_chars,
+            context_chars: 0,
+            kept_rate: 0.0,
+            #[cfg(test)]
+            token_annotations: vec![TokenAnnotation::Discarded; tokenize(predicted).len()],
+        };
+    }
+
     let base_tokens = tokenize(base);
     let predicted_tokens = tokenize(predicted);
     let final_tokens = tokenize(final_text);
 
-    let (pred_base_mask, _) = lcs_keep_masks(&predicted_tokens, &base_tokens);
+    let pred_base_mask = lcs_keep_mask(&predicted_tokens, &base_tokens);
     let (pred_final_mask, final_pred_mask) = lcs_keep_masks(&predicted_tokens, &final_tokens);
     let context_mask: Vec<bool> = pred_base_mask
         .iter()
@@ -186,7 +240,7 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
     let (stripped_predicted, predicted_new_chars, context_chars) =
         analyze_masked_tokens(&predicted_tokens, &context_mask);
 
-    let (final_base_mask, _) = lcs_keep_masks(&final_tokens, &base_tokens);
+    let final_base_mask = lcs_keep_mask(&final_tokens, &base_tokens);
     let final_context_mask: Vec<bool> = final_base_mask
         .iter()
         .zip(final_pred_mask.iter())
@@ -196,7 +250,7 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
     let (stripped_final, final_new_chars, _) =
         analyze_masked_tokens(&final_tokens, &final_context_mask);
 
-    let keep_mask = lcs_keep_masks(&stripped_predicted, &stripped_final).0;
+    let keep_mask = lcs_keep_mask(&stripped_predicted, &stripped_final);
 
     let kept_chars: usize = stripped_predicted
         .iter()
@@ -265,8 +319,8 @@ mod test_kept_rate {
         let a = ["x", "a", "x", "b"];
         let b = ["a", "x", "b", "x"];
         let (a_mask, b_mask) = lcs_keep_masks(&a, &b);
-        assert_eq!(a_mask, lcs_keep_masks(&a, &b).0);
-        assert_eq!(b_mask, lcs_keep_masks(&b, &a).0);
+        assert_eq!(a_mask, lcs_keep_mask(&a, &b));
+        assert_eq!(b_mask, lcs_keep_mask(&b, &a));
     }
 
     #[test]
@@ -340,6 +394,21 @@ mod test_kept_rate {
         assert!(result.kept_chars > 0);
         assert!(result.discarded_chars > 0);
         assert!(result.kept_rate > 0.0 && result.kept_rate < 1.0);
+    }
+
+    #[test]
+    fn test_bails_for_dirty_final() {
+        let base = "fn example() {\n    work();\n}\n";
+        let predicted = "fn example() {\n    work();\n    predicted();\n}\n";
+        let final_text = format!(
+            "fn example() {{\n    work();\n    {}\n}}\n",
+            "settled();\n    ".repeat(MAX_DIRTY_LENGTH_DELTA_CHARS / 8 + 64)
+        );
+
+        let result = compute_kept_rate(base, predicted, &final_text);
+        assert_eq!(result.kept_rate, 0.0);
+        assert_eq!(result.kept_chars, 0);
+        assert_eq!(result.discarded_chars, result.predicted_new_chars);
     }
 
     #[test]

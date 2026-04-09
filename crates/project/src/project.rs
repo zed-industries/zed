@@ -360,6 +360,7 @@ pub enum Event {
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
+    WorktreeUpdatedRootRepoCommonDir(WorktreeId),
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -3681,6 +3682,9 @@ impl Project {
             }
             // Listen to the GitStore instead.
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
+            WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(worktree_id) => {
+                cx.emit(Event::WorktreeUpdatedRootRepoCommonDir(*worktree_id));
+            }
         }
     }
 
@@ -4755,6 +4759,44 @@ impl Project {
     ) -> Task<Result<Entity<Worktree>>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.create_worktree(abs_path, visible, cx)
+        })
+    }
+
+    /// Returns a task that resolves when the given worktree's `Entity` is
+    /// fully dropped (all strong references released), not merely when
+    /// `remove_worktree` is called. `remove_worktree` drops the store's
+    /// reference and emits `WorktreeRemoved`, but other code may still
+    /// hold a strong handle — the worktree isn't safe to delete from
+    /// disk until every handle is gone.
+    ///
+    /// We use `observe_release` on the specific entity rather than
+    /// listening for `WorktreeReleased` events because it's simpler at
+    /// the call site (one awaitable task, no subscription / channel /
+    /// ID filtering).
+    pub fn wait_for_worktree_release(
+        &mut self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            return Task::ready(Ok(()));
+        };
+
+        let (released_tx, released_rx) = futures::channel::oneshot::channel();
+        let released_tx = std::sync::Arc::new(Mutex::new(Some(released_tx)));
+        let release_subscription =
+            cx.observe_release(&worktree, move |_project, _released_worktree, _cx| {
+                if let Some(released_tx) = released_tx.lock().take() {
+                    let _ = released_tx.send(());
+                }
+            });
+
+        cx.spawn(async move |_project, _cx| {
+            let _release_subscription = release_subscription;
+            released_rx
+                .await
+                .map_err(|_| anyhow!("worktree release observer dropped before release"))?;
+            Ok(())
         })
     }
 
@@ -6055,6 +6097,7 @@ impl Project {
 /// workspaces by main repos.
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct ProjectGroupKey {
+    /// The paths of the main worktrees for this project group.
     paths: PathList,
     host: Option<RemoteConnectionOptions>,
 }
