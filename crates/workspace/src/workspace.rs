@@ -86,7 +86,7 @@ pub use persistence::{
     WorkspaceDb, delete_unloaded_items,
     model::{
         DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
-        SerializedWorkspaceLocation, SessionWorkspace,
+        SerializedProjectGroupKey, SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces, resolve_worktree_workspaces,
 };
@@ -8717,12 +8717,6 @@ pub async fn restore_multiworkspace(
         active_workspace,
         state,
     } = multi_workspace;
-    let MultiWorkspaceState {
-        sidebar_open,
-        project_group_keys,
-        sidebar_state,
-        ..
-    } = state;
 
     let workspace_result = if active_workspace.paths.is_empty() {
         cx.update(|cx| {
@@ -8750,9 +8744,8 @@ pub async fn restore_multiworkspace(
         Err(err) => {
             log::error!("Failed to restore active workspace: {err:#}");
 
-            // Try each project group's paths as a fallback.
             let mut fallback_handle = None;
-            for key in &project_group_keys {
+            for key in &state.project_group_keys {
                 let key: ProjectGroupKey = key.clone().into();
                 let paths = key.path_list().paths().to_vec();
                 match cx
@@ -8783,20 +8776,47 @@ pub async fn restore_multiworkspace(
         }
     };
 
-    if !project_group_keys.is_empty() {
-        let fs = app_state.fs.clone();
+    apply_restored_multiworkspace_state(window_handle, &state, app_state.fs.clone(), cx).await;
 
+    window_handle
+        .update(cx, |_, window, _cx| {
+            window.activate_window();
+        })
+        .ok();
+
+    Ok(window_handle)
+}
+
+pub async fn apply_restored_multiworkspace_state(
+    window_handle: WindowHandle<MultiWorkspace>,
+    state: &MultiWorkspaceState,
+    fs: Arc<dyn fs::Fs>,
+    cx: &mut AsyncApp,
+) {
+    let MultiWorkspaceState {
+        sidebar_open,
+        project_group_keys,
+        sidebar_state,
+        ..
+    } = state;
+
+    if !project_group_keys.is_empty() {
         // Resolve linked worktree paths to their main repo paths so
         // stale keys from previous sessions get normalized and deduped.
         let mut resolved_keys: Vec<ProjectGroupKey> = Vec::new();
-        for key in project_group_keys.into_iter().map(ProjectGroupKey::from) {
+        for key in project_group_keys
+            .iter()
+            .cloned()
+            .map(ProjectGroupKey::from)
+        {
             if key.path_list().paths().is_empty() {
                 continue;
             }
             let mut resolved_paths = Vec::new();
             for path in key.path_list().paths() {
-                if let Some(common_dir) =
-                    project::discover_root_repo_common_dir(path, fs.as_ref()).await
+                if key.host().is_none()
+                    && let Some(common_dir) =
+                        project::discover_root_repo_common_dir(path, fs.as_ref()).await
                 {
                     let main_path = common_dir.parent().unwrap_or(&common_dir);
                     resolved_paths.push(main_path.to_path_buf());
@@ -8817,7 +8837,7 @@ pub async fn restore_multiworkspace(
             .ok();
     }
 
-    if sidebar_open {
+    if *sidebar_open {
         window_handle
             .update(cx, |multi_workspace, _, cx| {
                 multi_workspace.open_sidebar(cx);
@@ -8829,20 +8849,12 @@ pub async fn restore_multiworkspace(
         window_handle
             .update(cx, |multi_workspace, window, cx| {
                 if let Some(sidebar) = multi_workspace.sidebar() {
-                    sidebar.restore_serialized_state(&sidebar_state, window, cx);
+                    sidebar.restore_serialized_state(sidebar_state, window, cx);
                 }
                 multi_workspace.serialize(cx);
             })
             .ok();
     }
-
-    window_handle
-        .update(cx, |_, window, _cx| {
-            window.activate_window();
-        })
-        .ok();
-
-    Ok(window_handle)
 }
 
 actions!(
@@ -9771,6 +9783,7 @@ pub fn open_remote_project_with_new_connection(
             serialized_workspace,
             app_state,
             window,
+            None,
             cx,
         )
         .await
@@ -9783,6 +9796,7 @@ pub fn open_remote_project_with_existing_connection(
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     window: WindowHandle<MultiWorkspace>,
+    provisional_project_group_key: Option<ProjectGroupKey>,
     cx: &mut AsyncApp,
 ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
     cx.spawn(async move |cx| {
@@ -9796,6 +9810,7 @@ pub fn open_remote_project_with_existing_connection(
             serialized_workspace,
             app_state,
             window,
+            provisional_project_group_key,
             cx,
         )
         .await
@@ -9809,6 +9824,7 @@ async fn open_remote_project_inner(
     serialized_workspace: Option<SerializedWorkspace>,
     app_state: Arc<AppState>,
     window: WindowHandle<MultiWorkspace>,
+    provisional_project_group_key: Option<ProjectGroupKey>,
     cx: &mut AsyncApp,
 ) -> Result<Vec<Option<Box<dyn ItemHandle>>>> {
     let db = cx.update(|cx| WorkspaceDb::global(cx));
@@ -9869,6 +9885,9 @@ async fn open_remote_project_inner(
             workspace
         });
 
+        if let Some(project_group_key) = provisional_project_group_key.clone() {
+            multi_workspace.set_provisional_project_group_key(&new_workspace, project_group_key);
+        }
         multi_workspace.activate(new_workspace.clone(), window, cx);
         new_workspace
     })?;

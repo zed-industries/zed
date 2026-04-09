@@ -54,6 +54,7 @@ pub struct ThreadItem {
     project_paths: Option<Arc<[PathBuf]>>,
     project_name: Option<SharedString>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
+    is_remote: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
@@ -86,6 +87,7 @@ impl ThreadItem {
             project_paths: None,
             project_name: None,
             worktrees: Vec::new(),
+            is_remote: false,
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
@@ -176,6 +178,11 @@ impl ThreadItem {
 
     pub fn worktrees(mut self, worktrees: Vec<ThreadItemWorktreeInfo>) -> Self {
         self.worktrees = worktrees;
+        self
+    }
+
+    pub fn is_remote(mut self, is_remote: bool) -> Self {
+        self.is_remote = is_remote;
         self
     }
 
@@ -443,10 +450,11 @@ impl RenderOnce for ThreadItem {
                         .join("\n")
                         .into();
 
-                    let worktree_tooltip_title = if self.worktrees.len() > 1 {
-                        "Thread Running in Local Git Worktrees"
-                    } else {
-                        "Thread Running in a Local Git Worktree"
+                    let worktree_tooltip_title = match (self.is_remote, self.worktrees.len() > 1) {
+                        (true, true) => "Thread Running in Remote Git Worktrees",
+                        (true, false) => "Thread Running in a Remote Git Worktree",
+                        (false, true) => "Thread Running in Local Git Worktrees",
+                        (false, false) => "Thread Running in a Local Git Worktree",
                     };
 
                     // Deduplicate chips by name — e.g. two paths both named

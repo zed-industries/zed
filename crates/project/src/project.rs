@@ -360,6 +360,7 @@ pub enum Event {
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
+    WorktreeUpdatedRootRepoCommonDir(WorktreeId),
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -3681,6 +3682,9 @@ impl Project {
             }
             // Listen to the GitStore instead.
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
+            WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(worktree_id) => {
+                cx.emit(Event::WorktreeUpdatedRootRepoCommonDir(*worktree_id));
+            }
         }
     }
 
@@ -6093,6 +6097,7 @@ impl Project {
 /// workspaces by main repos.
 #[derive(PartialEq, Eq, Hash, Clone, Debug)]
 pub struct ProjectGroupKey {
+    /// The paths of the main worktrees for this project group.
     paths: PathList,
     host: Option<RemoteConnectionOptions>,
 }

@@ -36,18 +36,17 @@ jobs:
     - id: run-compliance-check
       name: compliance_check::scheduled_compliance_check::run_compliance_check
       run: |
-        echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-        cargo xtask compliance "$LATEST_TAG" --branch main --report-path compliance-report
+        cargo xtask compliance "$LATEST_TAG" --branch main --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: '@actions/upload-artifact compliance-report.md'
+    - name: '@actions/upload-artifact compliance-report-${GITHUB_REF_NAME}.md'
       if: always()
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
-        name: compliance-report.md
-        path: target/compliance-report.md
+        name: compliance-report-${GITHUB_REF_NAME}.md
+        path: compliance-report-${GITHUB_REF_NAME}.md
         if-no-files-found: error
     - name: send_compliance_slack_notification
       if: always()

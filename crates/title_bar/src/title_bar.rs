@@ -5,9 +5,6 @@ mod plan_chip;
 mod title_bar_settings;
 mod update_version;
 
-#[cfg(feature = "stories")]
-mod stories;
-
 use crate::application_menu::{ApplicationMenu, show_menus};
 use crate::plan_chip::PlanChip;
 pub use platform_title_bar::{
@@ -55,9 +52,6 @@ use workspace::{
 use zed_actions::OpenRemote;
 
 pub use onboarding_banner::restore_banner;
-
-#[cfg(feature = "stories")]
-pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;

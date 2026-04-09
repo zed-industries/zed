@@ -2052,6 +2052,7 @@ pub fn open_new_ssh_project_from_project(
             cx,
         )
         .await
+        .map(|_| ())
     })
 }
 
@@ -2405,8 +2406,8 @@ mod tests {
         DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
     };
     use gpui::{
-        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, TestAppContext, UpdateGlobal,
-        VisualTestContext, WindowHandle, actions,
+        Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Modifiers, TestAppContext,
+        UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
     };
     use language::LanguageRegistry;
     use languages::{markdown_lang, rust_lang};
@@ -4086,6 +4087,99 @@ mod tests {
         editor_1.assert_released();
         editor_2.assert_released();
         buffer.assert_released();
+    }
+
+    #[gpui::test]
+    async fn test_editor_zoom_with_scroll_wheel(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/root"), json!({ "file.txt": "hello\nworld\n" }))
+            .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let mouse_position = point(px(250.), px(250.));
+
+        let event_modifiers = {
+            #[cfg(target_os = "macos")]
+            {
+                Modifiers {
+                    platform: true,
+                    ..Modifiers::default()
+                }
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            {
+                Modifiers {
+                    control: true,
+                    ..Modifiers::default()
+                }
+            }
+        };
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/root/file.txt")),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+
+        let initial_font_size =
+            cx.update(|_, cx| ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32());
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: mouse_position,
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(1.))),
+            modifiers: event_modifiers,
+            ..Default::default()
+        });
+
+        let increased_font_size =
+            cx.update(|_, cx| ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32());
+
+        assert!(
+            increased_font_size > initial_font_size,
+            "Editor buffer font-size should have increased from scroll-zoom"
+        );
+
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: mouse_position,
+            delta: gpui::ScrollDelta::Pixels(point(px(0.), px(-1.))),
+            modifiers: event_modifiers,
+            ..Default::default()
+        });
+
+        let decreased_font_size =
+            cx.update(|_, cx| ThemeSettings::get_global(cx).buffer_font_size(cx).as_f32());
+
+        assert!(
+            decreased_font_size < increased_font_size,
+            "Editor buffer font-size should have decreased from scroll-zoom"
+        );
     }
 
     #[gpui::test]

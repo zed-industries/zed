@@ -307,19 +307,19 @@ jobs:
         cache: rust
         path: ~/.rustup
     - id: run-compliance-check
-      name: release::compliance_check::run_compliance_check
+      name: release::run_compliance_check
       run: |
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
       continue-on-error: true
-    - name: '@actions/upload-artifact compliance-report.md'
+    - name: '@actions/upload-artifact compliance-report-${GITHUB_REF_NAME}.md'
       if: always()
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
-        name: compliance-report.md
-        path: target/compliance-report.md
+        name: compliance-report-${GITHUB_REF_NAME}.md
+        path: compliance-report-${GITHUB_REF_NAME}.md
         if-no-files-found: error
     - name: send_compliance_slack_notification
       if: always()
@@ -672,19 +672,20 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - id: run-post-upload-compliance-check
-      name: release::validate_release_assets::run_post_upload_compliance_check
+    - id: run-compliance-check
+      name: release::run_compliance_check
       run: |
-        cargo xtask compliance "$GITHUB_REF_NAME" --report-path compliance-report
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: '@actions/upload-artifact compliance-report.md'
+      continue-on-error: true
+    - name: '@actions/upload-artifact compliance-report-${GITHUB_REF_NAME}.md'
       if: always()
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
-        name: compliance-report.md
-        path: target/compliance-report.md
+        name: compliance-report-${GITHUB_REF_NAME}.md
+        path: compliance-report-${GITHUB_REF_NAME}.md
         if-no-files-found: error
         overwrite: true
     - name: send_compliance_slack_notification
@@ -703,7 +704,7 @@ jobs:
             "$SLACK_WEBHOOK"
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
-        COMPLIANCE_OUTCOME: ${{ steps.run-post-upload-compliance-check.outcome }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
         COMPLIANCE_TAG: ${{ github.ref_name }}
         ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
   auto_release_preview:

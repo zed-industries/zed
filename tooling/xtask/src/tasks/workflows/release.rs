@@ -151,8 +151,8 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
     .add_with(("environment", "production"))
 }
 
-pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report";
-const COMPLIANCE_REPORT_FILE: &str = "target/compliance-report.md";
+pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report-${GITHUB_REF_NAME}.md";
+pub(crate) const COMPLIANCE_STEP_ID: &str = "run-compliance-check";
 const NEEDS_REVIEW_PULLS_URL: &str = "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22";
 
 pub(crate) enum ComplianceContext {
@@ -164,9 +164,8 @@ pub(crate) enum ComplianceContext {
 pub(crate) fn add_compliance_notification_steps(
     job: gh_workflow::Job,
     context: ComplianceContext,
-    compliance_step_id: &str,
 ) -> gh_workflow::Job {
-    let upload_step = upload_artifact(COMPLIANCE_REPORT_FILE)
+    let upload_step = upload_artifact(COMPLIANCE_REPORT_PATH)
         .if_condition(Expression::new("always()"))
         .when(matches!(context, ComplianceContext::Release), |step| {
             step.add_with(("overwrite", true))
@@ -203,7 +202,7 @@ pub(crate) fn add_compliance_notification_steps(
         .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
         .add_env((
             "COMPLIANCE_OUTCOME",
-            format!("${{{{ steps.{compliance_step_id}.outcome }}}}"),
+            format!("${{{{ steps.{COMPLIANCE_STEP_ID}.outcome }}}}"),
         ))
         .add_env((
             "COMPLIANCE_TAG",
@@ -222,18 +221,18 @@ pub(crate) fn add_compliance_notification_steps(
     job.add_step(upload_step).add_step(notification_step)
 }
 
-fn compliance_check() -> NamedJob {
-    fn run_compliance_check() -> Step<Run> {
-        named::bash(formatdoc! {r#"
-            cargo xtask compliance "$GITHUB_REF_NAME" --report-path {COMPLIANCE_REPORT_PATH}
-            "#,
-        })
-        .id("run-compliance-check")
-        .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
-        .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
-        .continue_on_error(true)
-    }
+fn run_compliance_check() -> Step<Run> {
+    named::bash(formatdoc! {r#"
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "{COMPLIANCE_REPORT_PATH}"
+        "#,
+    })
+    .id(COMPLIANCE_STEP_ID)
+    .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
+    .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+    .continue_on_error(true)
+}
 
+fn compliance_check() -> NamedJob {
     let job = release_job(&[])
         .runs_on(runners::LINUX_SMALL)
         .add_step(
@@ -247,7 +246,6 @@ fn compliance_check() -> NamedJob {
     named::job(add_compliance_notification_steps(
         job,
         ComplianceContext::ReleaseNonBlocking,
-        "run-compliance-check",
     ))
 }
 
@@ -273,31 +271,20 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
         "#,
     };
 
-    fn run_post_upload_compliance_check() -> Step<Run> {
-        named::bash(formatdoc! {r#"
-            cargo xtask compliance "$GITHUB_REF_NAME" --report-path {COMPLIANCE_REPORT_PATH}
-            "#,
-        })
-        .id("run-post-upload-compliance-check")
-        .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
-        .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
-    }
-
     let job = dependant_job(deps)
         .runs_on(runners::LINUX_SMALL)
         .add_step(named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)))
         .add_step(
             steps::checkout_repo()
                 .with_full_history()
-                .with_ref("${{ github.ref }}"),
+                .with_ref(Context::github().ref_()),
         )
         .add_step(steps::cache_rust_dependencies_namespace())
-        .add_step(run_post_upload_compliance_check());
+        .add_step(run_compliance_check());
 
     named::job(add_compliance_notification_steps(
         job,
         ComplianceContext::Release,
-        "run-post-upload-compliance-check",
     ))
 }
 
