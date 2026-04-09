@@ -9,7 +9,8 @@ use client::ChannelId;
 use collections::HashMap;
 use editor::Editor;
 use file_icons::FileIcons;
-use fuzzy::{CharBag, PathMatch, PathMatchCandidate, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
@@ -663,15 +664,6 @@ impl Matches {
 
         // For file-vs-file matches, use the existing detailed comparison.
         if let (Some(a_panel), Some(b_panel)) = (a.panel_match(), b.panel_match()) {
-            let a_in_filename = Self::is_filename_match(a_panel);
-            let b_in_filename = Self::is_filename_match(b_panel);
-
-            match (a_in_filename, b_in_filename) {
-                (true, false) => return cmp::Ordering::Greater,
-                (false, true) => return cmp::Ordering::Less,
-                _ => {}
-            }
-
             return a_panel.cmp(b_panel);
         }
 
@@ -691,32 +683,6 @@ impl Matches {
             Match::CreateNew(_) => 0.0,
         }
     }
-
-    /// Determines if the match occurred within the filename rather than in the path
-    fn is_filename_match(panel_match: &ProjectPanelOrdMatch) -> bool {
-        if panel_match.0.positions.is_empty() {
-            return false;
-        }
-
-        if let Some(filename) = panel_match.0.path.file_name() {
-            let path_str = panel_match.0.path.as_unix_str();
-
-            if let Some(filename_pos) = path_str.rfind(filename)
-                && panel_match.0.positions[0] >= filename_pos
-            {
-                let mut prev_position = panel_match.0.positions[0];
-                for p in &panel_match.0.positions[1..] {
-                    if *p != prev_position + 1 {
-                        return false;
-                    }
-                    prev_position = *p;
-                }
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 fn matching_history_items<'a>(
@@ -731,25 +697,16 @@ fn matching_history_items<'a>(
     let history_items_by_worktrees = history_items
         .into_iter()
         .chain(currently_opened)
-        .filter_map(|found_path| {
+        .map(|found_path| {
             let candidate = PathMatchCandidate {
                 is_dir: false, // You can't open directories as project items
                 path: &found_path.project.path,
                 // Only match history items names, otherwise their paths may match too many queries, producing false positives.
                 // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
                 // it would be shown first always, despite the latter being a better match.
-                char_bag: CharBag::from_iter(
-                    found_path
-                        .project
-                        .path
-                        .file_name()?
-                        .to_string()
-                        .to_lowercase()
-                        .chars(),
-                ),
             };
             candidates_paths.insert(&found_path.project, found_path);
-            Some((found_path.project.worktree_id, candidate))
+            (found_path.project.worktree_id, candidate)
         })
         .fold(
             HashMap::default(),
@@ -767,8 +724,9 @@ fn matching_history_items<'a>(
         let worktree_root_name = worktree_name_by_id
             .as_ref()
             .and_then(|w| w.get(&worktree).cloned());
+
         matching_history_paths.extend(
-            fuzzy::match_fixed_path_set(
+            fuzzy_nucleo::match_fixed_path_set(
                 candidates,
                 worktree.to_usize(),
                 worktree_root_name,
@@ -778,6 +736,18 @@ fn matching_history_items<'a>(
                 path_style,
             )
             .into_iter()
+            // filter matches where at least one matched position is in filename portion, to prevent directory matches, nucleo scores them higher as history items are matched against their full path
+            .filter(|path_match| {
+                if let Some(filename) = path_match.path.file_name() {
+                    let filename_start = path_match.path.as_unix_str().len() - filename.len();
+                    path_match
+                        .positions
+                        .iter()
+                        .any(|&pos| pos >= filename_start)
+                } else {
+                    true
+                }
+            })
             .filter_map(|path_match| {
                 candidates_paths
                     .remove_entry(&ProjectPath {
@@ -940,7 +910,7 @@ impl FileFinderDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
         cx.spawn_in(window, async move |picker, cx| {
-            let matches = fuzzy::match_path_sets(
+            let matches = fuzzy_nucleo::match_path_sets(
                 candidate_sets.as_slice(),
                 query.path_query(),
                 &relative_to,
@@ -1452,7 +1422,6 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {

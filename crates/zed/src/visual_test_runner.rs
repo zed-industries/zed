@@ -2527,11 +2527,6 @@ fn run_multi_workspace_sidebar_visual_tests(
     std::fs::create_dir_all(&workspace1_dir)?;
     std::fs::create_dir_all(&workspace2_dir)?;
 
-    // Enable the agent-v2 feature flag so multi-workspace is active
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-v2".to_string()]);
-    });
-
     // Create both projects upfront so we can build both workspaces during
     // window creation, before the MultiWorkspace entity exists.
     // This avoids a re-entrant read panic that occurs when Workspace::new
@@ -2606,7 +2601,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Add worktree to workspace 1 (index 0) so it shows as "private-test-remote"
     let add_worktree1_task = multi_workspace_window
         .update(cx, |multi_workspace, _window, cx| {
-            let workspace1 = &multi_workspace.workspaces()[0];
+            let workspace1 = multi_workspace.workspaces().next().unwrap();
             let project = workspace1.read(cx).project().clone();
             project.update(cx, |project, cx| {
                 project.find_or_create_worktree(&workspace1_dir, true, cx)
@@ -2625,7 +2620,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Add worktree to workspace 2 (index 1) so it shows as "zed"
     let add_worktree2_task = multi_workspace_window
         .update(cx, |multi_workspace, _window, cx| {
-            let workspace2 = &multi_workspace.workspaces()[1];
+            let workspace2 = multi_workspace.workspaces().nth(1).unwrap();
             let project = workspace2.read(cx).project().clone();
             project.update(cx, |project, cx| {
                 project.find_or_create_worktree(&workspace2_dir, true, cx)
@@ -2644,7 +2639,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Switch to workspace 1 so it's highlighted as active (index 0)
     multi_workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            let workspace = multi_workspace.workspaces()[0].clone();
+            let workspace = multi_workspace.workspaces().next().unwrap().clone();
             multi_workspace.activate(workspace, window, cx);
         })
         .context("Failed to activate workspace 1")?;
@@ -2672,7 +2667,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     let save_tasks = multi_workspace_window
         .update(cx, |multi_workspace, _window, cx| {
             let thread_store = agent::ThreadStore::global(cx);
-            let workspaces = multi_workspace.workspaces().to_vec();
+            let workspaces: Vec<_> = multi_workspace.workspaces().cloned().collect();
             let mut tasks = Vec::new();
 
             for (index, workspace) in workspaces.iter().enumerate() {
@@ -3080,12 +3075,7 @@ fn run_start_thread_in_selector_visual_tests(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    use agent_ui::{AgentPanel, StartThreadIn, WorktreeCreationStatus};
-
-    // Enable feature flags so the thread target selector renders
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-v2".to_string()]);
-    });
+    use agent_ui::{AgentPanel, NewWorktreeBranchTarget, StartThreadIn, WorktreeCreationStatus};
 
     // Create a temp directory with a real git repo so "New Worktree" is enabled
     let temp_dir = tempfile::tempdir()?;
@@ -3211,7 +3201,7 @@ edition = "2021"
     // Add the git project as a worktree
     let add_worktree_task = workspace_window
         .update(cx, |multi_workspace, _window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
+            let workspace = multi_workspace.workspaces().next().unwrap();
             let project = workspace.read(cx).project().clone();
             project.update(cx, |project, cx| {
                 project.find_or_create_worktree(&project_path, true, cx)
@@ -3236,7 +3226,7 @@ edition = "2021"
     // Open the project panel
     let (weak_workspace, async_window_cx) = workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
+            let workspace = multi_workspace.workspaces().next().unwrap();
             (workspace.read(cx).weak_handle(), window.to_async(cx))
         })
         .context("Failed to get workspace handle")?;
@@ -3250,7 +3240,7 @@ edition = "2021"
 
     workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
+            let workspace = multi_workspace.workspaces().next().unwrap();
             workspace.update(cx, |workspace, cx| {
                 workspace.add_panel(project_panel, window, cx);
                 workspace.open_panel::<ProjectPanel>(window, cx);
@@ -3263,7 +3253,7 @@ edition = "2021"
     // Open main.rs in the editor
     let open_file_task = workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
+            let workspace = multi_workspace.workspaces().next().unwrap();
             workspace.update(cx, |workspace, cx| {
                 let worktree = workspace.project().read(cx).worktrees(cx).next();
                 if let Some(worktree) = worktree {
@@ -3291,7 +3281,7 @@ edition = "2021"
     // Load the AgentPanel
     let (weak_workspace, async_window_cx) = workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
+            let workspace = multi_workspace.workspaces().next().unwrap();
             (workspace.read(cx).weak_handle(), window.to_async(cx))
         })
         .context("Failed to get workspace handle for agent panel")?;
@@ -3335,7 +3325,7 @@ edition = "2021"
 
     workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
+            let workspace = multi_workspace.workspaces().next().unwrap();
             workspace.update(cx, |workspace, cx| {
                 workspace.add_panel(panel.clone(), window, cx);
                 workspace.open_panel::<AgentPanel>(window, cx);
@@ -3401,7 +3391,13 @@ edition = "2021"
 
     cx.update_window(workspace_window.into(), |_, _window, cx| {
         panel.update(cx, |panel, cx| {
-            panel.set_start_thread_in_for_tests(StartThreadIn::NewWorktree, cx);
+            panel.set_start_thread_in_for_tests(
+                StartThreadIn::NewWorktree {
+                    worktree_name: None,
+                    branch_target: NewWorktreeBranchTarget::default(),
+                },
+                cx,
+            );
         });
     })?;
     cx.run_until_parked();
@@ -3474,7 +3470,13 @@ edition = "2021"
     cx.run_until_parked();
 
     cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.dispatch_action(Box::new(StartThreadIn::NewWorktree), cx);
+        window.dispatch_action(
+            Box::new(StartThreadIn::NewWorktree {
+                worktree_name: None,
+                branch_target: NewWorktreeBranchTarget::default(),
+            }),
+            cx,
+        );
     })?;
     cx.run_until_parked();
 
@@ -3512,7 +3514,7 @@ edition = "2021"
                 .is_none()
         });
         let workspace_count = workspace_window.update(cx, |multi_workspace, _window, _cx| {
-            multi_workspace.workspaces().len()
+            multi_workspace.workspaces().count()
         })?;
         if workspace_count == 2 && status_cleared {
             creation_complete = true;
@@ -3531,7 +3533,7 @@ edition = "2021"
     // error state by injecting the stub server, and shrink the panel so the
     // editor content is visible.
     workspace_window.update(cx, |multi_workspace, window, cx| {
-        let new_workspace = &multi_workspace.workspaces()[1];
+        let new_workspace = multi_workspace.workspaces().nth(1).unwrap();
         new_workspace.update(cx, |workspace, cx| {
             if let Some(new_panel) = workspace.panel::<AgentPanel>(cx) {
                 new_panel.update(cx, |panel, cx| {
@@ -3544,7 +3546,7 @@ edition = "2021"
 
     // Type and send a message so the thread target dropdown disappears.
     let new_panel = workspace_window.update(cx, |multi_workspace, _window, cx| {
-        let new_workspace = &multi_workspace.workspaces()[1];
+        let new_workspace = multi_workspace.workspaces().nth(1).unwrap();
         new_workspace.read(cx).panel::<AgentPanel>(cx)
     })?;
     if let Some(new_panel) = new_panel {
@@ -3585,7 +3587,7 @@ edition = "2021"
 
     workspace_window
         .update(cx, |multi_workspace, _window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
+            let workspace = multi_workspace.workspaces().next().unwrap();
             let project = workspace.read(cx).project().clone();
             project.update(cx, |project, cx| {
                 let worktree_ids: Vec<_> =

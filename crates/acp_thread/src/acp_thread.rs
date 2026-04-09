@@ -1032,6 +1032,7 @@ pub struct AcpThread {
     connection: Rc<dyn AgentConnection>,
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
+    available_commands: Vec<acp::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
@@ -1220,6 +1221,7 @@ impl AcpThread {
             session_id,
             token_usage: None,
             prompt_capabilities,
+            available_commands: Vec::new(),
             _observe_prompt_capabilities: task,
             terminals: HashMap::default(),
             pending_terminal_output: HashMap::default(),
@@ -1237,6 +1239,10 @@ impl AcpThread {
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
         self.prompt_capabilities.clone()
+    }
+
+    pub fn available_commands(&self) -> &[acp::AvailableCommand] {
+        &self.available_commands
     }
 
     pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
@@ -1387,7 +1393,17 @@ impl AcpThread {
     ) -> Result<(), acp::Error> {
         match update {
             acp::SessionUpdate::UserMessageChunk(acp::ContentChunk { content, .. }) => {
-                self.push_user_content_block(None, content, cx);
+                // We optimistically add the full user prompt before calling `prompt`.
+                // Some ACP servers echo user chunks back over updates. Skip the chunk if
+                // it's already present in the current user message to avoid duplicating content.
+                let already_in_user_message = self
+                    .entries
+                    .last()
+                    .and_then(|entry| entry.user_message())
+                    .is_some_and(|message| message.chunks.contains(&content));
+                if !already_in_user_message {
+                    self.push_user_content_block(None, content, cx);
+                }
             }
             acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
                 self.push_assistant_content_block(content, false, cx);
@@ -1419,7 +1435,10 @@ impl AcpThread {
             acp::SessionUpdate::AvailableCommandsUpdate(acp::AvailableCommandsUpdate {
                 available_commands,
                 ..
-            }) => cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands)),
+            }) => {
+                self.available_commands = available_commands.clone();
+                cx.emit(AcpThreadEvent::AvailableCommandsUpdated(available_commands));
+            }
             acp::SessionUpdate::CurrentModeUpdate(acp::CurrentModeUpdate {
                 current_mode_id,
                 ..
@@ -3429,6 +3448,52 @@ mod tests {
 
             "#}
         );
+    }
+
+    #[gpui::test]
+    async fn test_ignore_echoed_user_message_chunks_during_active_turn(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |request, thread, mut cx| {
+                async move {
+                    let prompt = request.prompt.first().cloned().unwrap_or_else(|| "".into());
+
+                    thread.update(&mut cx, |thread, cx| {
+                        thread
+                            .handle_session_update(
+                                acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                                    prompt,
+                                )),
+                                cx,
+                            )
+                            .unwrap();
+                    })?;
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
+            .await
+            .unwrap();
+
+        let output = thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+        assert_eq!(output.matches("Hello from Zed!").count(), 1);
     }
 
     #[gpui::test]

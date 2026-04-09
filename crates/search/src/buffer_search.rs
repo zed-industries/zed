@@ -291,6 +291,7 @@ impl Render for BufferSearchBar {
             regex,
             replacement,
             selection,
+            select_all,
             find_in_results,
         } = self.supported_options(cx);
 
@@ -461,14 +462,16 @@ impl Render for BufferSearchBar {
                         ))
                     });
 
-                el.child(render_action_button(
-                    "buffer-search-nav-button",
-                    IconName::SelectAll,
-                    Default::default(),
-                    "Select All Matches",
-                    &SelectAllMatches,
-                    query_focus,
-                ))
+                el.when(select_all, |el| {
+                    el.child(render_action_button(
+                        "buffer-search-nav-button",
+                        IconName::SelectAll,
+                        Default::default(),
+                        "Select All Matches",
+                        &SelectAllMatches,
+                        query_focus.clone(),
+                    ))
+                })
                 .child(matches_column)
             })
             .when(find_in_results, |el| {
@@ -846,6 +849,7 @@ impl BufferSearchBar {
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_use_autoclose(false);
+            editor.set_use_selection_highlight(false);
             editor
         });
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)

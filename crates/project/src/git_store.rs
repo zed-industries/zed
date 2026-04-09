@@ -32,10 +32,10 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
-        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
-        UpstreamTrackingStatus, Worktree as GitWorktree,
+        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, CreateWorktreeTarget,
+        DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint, GraphCommitData,
+        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
+        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -287,6 +287,7 @@ pub struct RepositorySnapshot {
     pub original_repo_abs_path: Arc<Path>,
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
+    pub branch_list: Arc<[Branch]>,
     pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
     pub merge: MergeDetails,
@@ -428,7 +429,8 @@ pub enum GitGraphEvent {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RepositoryEvent {
     StatusesChanged,
-    BranchChanged,
+    HeadChanged,
+    BranchListChanged,
     StashEntriesChanged,
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
@@ -586,6 +588,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_create_worktree);
         client.add_entity_request_handler(Self::handle_remove_worktree);
         client.add_entity_request_handler(Self::handle_rename_worktree);
+        client.add_entity_request_handler(Self::handle_get_head_sha);
     }
 
     pub fn is_local(&self) -> bool {
@@ -2338,6 +2341,7 @@ impl GitStore {
                     CommitOptions {
                         amend: options.amend,
                         signoff: options.signoff,
+                        allow_empty: options.allow_empty,
                     },
                     askpass,
                     cx,
@@ -2406,10 +2410,21 @@ impl GitStore {
         let directory = PathBuf::from(envelope.payload.directory);
         let name = envelope.payload.name;
         let commit = envelope.payload.commit;
+        let use_existing_branch = envelope.payload.use_existing_branch;
+        let target = if name.is_empty() {
+            CreateWorktreeTarget::Detached { base_sha: commit }
+        } else if use_existing_branch {
+            CreateWorktreeTarget::ExistingBranch { branch_name: name }
+        } else {
+            CreateWorktreeTarget::NewBranch {
+                branch_name: name,
+                base_sha: commit,
+            }
+        };
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.create_worktree(name, directory, commit)
+                repository_handle.create_worktree(target, directory)
             })
             .await??;
 
@@ -2452,6 +2467,21 @@ impl GitStore {
             .await??;
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_get_head_sha(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitGetHeadSha>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitGetHeadShaResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let head_sha = repository_handle
+            .update(&mut cx, |repository_handle, _| repository_handle.head_sha())
+            .await??;
+
+        Ok(proto::GitGetHeadShaResponse { sha: head_sha })
     }
 
     async fn handle_get_branches(
@@ -3686,6 +3716,7 @@ impl RepositorySnapshot {
                 .unwrap_or_else(|| work_directory_abs_path.clone()),
             work_directory_abs_path,
             branch: None,
+            branch_list: Arc::from([]),
             head_commit: None,
             scan_id: 0,
             merge: Default::default(),
@@ -4048,9 +4079,15 @@ impl Repository {
             .shared();
 
         cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
-            RepositoryEvent::BranchChanged => {
+            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
                 if this.scan_id > 1 {
                     this.initial_graph_data.clear();
+                }
+            }
+            RepositoryEvent::StashEntriesChanged => {
+                if this.scan_id > 1 {
+                    this.initial_graph_data
+                        .retain(|(log_source, _), _| *log_source != LogSource::All);
                 }
             }
             _ => {}
@@ -5484,6 +5521,7 @@ impl Repository {
                             options: Some(proto::commit::CommitOptions {
                                 amend: options.amend,
                                 signoff: options.signoff,
+                                allow_empty: options.allow_empty,
                             }),
                             askpass_id,
                         })
@@ -5594,7 +5632,7 @@ impl Repository {
                             log::info!("head branch after scan is {branch:?}");
                             let snapshot = this.update(&mut cx, |this, cx| {
                                 this.snapshot.branch = branch;
-                                cx.emit(RepositoryEvent::BranchChanged);
+                                cx.emit(RepositoryEvent::HeadChanged);
                                 this.snapshot.clone()
                             })?;
                             if let Some(updates_tx) = updates_tx {
@@ -5967,34 +6005,159 @@ impl Repository {
 
     pub fn create_worktree(
         &mut self,
-        branch_name: String,
+        target: CreateWorktreeTarget,
         path: PathBuf,
-        commit: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        self.send_job(
-            Some(format!("git worktree add: {}", branch_name).into()),
-            move |repo, _cx| async move {
-                match repo {
-                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend.create_worktree(branch_name, path, commit).await
-                    }
-                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        client
-                            .request(proto::GitCreateWorktree {
-                                project_id: project_id.0,
-                                repository_id: id.to_proto(),
-                                name: branch_name,
-                                directory: path.to_string_lossy().to_string(),
-                                commit,
-                            })
-                            .await?;
-
-                        Ok(())
-                    }
+        let job_description = match target.branch_name() {
+            Some(branch_name) => format!("git worktree add: {branch_name}"),
+            None => "git worktree add (detached)".to_string(),
+        };
+        self.send_job(Some(job_description.into()), move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.create_worktree(target, path).await
                 }
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let (name, commit, use_existing_branch) = match target {
+                        CreateWorktreeTarget::ExistingBranch { branch_name } => {
+                            (Some(branch_name), None, true)
+                        }
+                        CreateWorktreeTarget::NewBranch {
+                            branch_name,
+                            base_sha,
+                        } => (Some(branch_name), base_sha, false),
+                        CreateWorktreeTarget::Detached { base_sha } => (None, base_sha, false),
+                    };
+
+                    client
+                        .request(proto::GitCreateWorktree {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            name: name.unwrap_or_default(),
+                            directory: path.to_string_lossy().to_string(),
+                            commit,
+                            use_existing_branch,
+                        })
+                        .await?;
+
+                    Ok(())
+                }
+            }
+        })
+    }
+
+    pub fn create_worktree_detached(
+        &mut self,
+        path: PathBuf,
+        commit: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.create_worktree(
+            CreateWorktreeTarget::Detached {
+                base_sha: Some(commit),
             },
+            path,
         )
+    }
+
+    pub fn head_sha(&mut self) -> oneshot::Receiver<Result<Option<String>>> {
+        let id = self.id;
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    Ok(backend.head_sha().await)
+                }
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitGetHeadSha {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+
+                    Ok(response.sha)
+                }
+            }
+        })
+    }
+
+    pub fn update_ref(
+        &mut self,
+        ref_name: String,
+        commit: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.update_ref(ref_name, commit).await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("update_ref is not supported for remote repositories")
+                }
+            }
+        })
+    }
+
+    pub fn delete_ref(&mut self, ref_name: String) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.delete_ref(ref_name).await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("delete_ref is not supported for remote repositories")
+                }
+            }
+        })
+    }
+
+    pub fn repair_worktrees(&mut self) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.repair_worktrees().await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("repair_worktrees is not supported for remote repositories")
+                }
+            }
+        })
+    }
+
+    pub fn create_archive_checkpoint(&mut self) -> oneshot::Receiver<Result<(String, String)>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.create_archive_checkpoint().await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!(
+                        "create_archive_checkpoint is not supported for remote repositories"
+                    )
+                }
+            }
+        })
+    }
+
+    pub fn restore_archive_checkpoint(
+        &mut self,
+        staged_sha: String,
+        unstaged_sha: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend
+                        .restore_archive_checkpoint(staged_sha, unstaged_sha)
+                        .await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!(
+                        "restore_archive_checkpoint is not supported for remote repositories"
+                    )
+                }
+            }
+        })
     }
 
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
@@ -6380,7 +6543,7 @@ impl Repository {
             .as_ref()
             .map(proto_to_commit_details);
         if self.snapshot.branch != new_branch || self.snapshot.head_commit != new_head_commit {
-            cx.emit(RepositoryEvent::BranchChanged)
+            cx.emit(RepositoryEvent::HeadChanged)
         }
         self.snapshot.branch = new_branch;
         self.snapshot.head_commit = new_head_commit;
@@ -7318,7 +7481,8 @@ async fn compute_snapshot(
             }
         })
         .await?;
-    let branch = branches.into_iter().find(|branch| branch.is_head);
+    let branch = branches.iter().find(|branch| branch.is_head).cloned();
+    let branch_list: Arc<[Branch]> = branches.into();
 
     let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
         .into_iter()
@@ -7341,14 +7505,16 @@ async fn compute_snapshot(
         .await?;
 
     let snapshot = this.update(cx, |this, cx| {
-        let branch_changed =
+        let head_changed =
             branch != this.snapshot.branch || head_commit != this.snapshot.head_commit;
+        let branch_list_changed = *branch_list != *this.snapshot.branch_list;
         let worktrees_changed = *linked_worktrees != *this.snapshot.linked_worktrees;
 
         this.snapshot = RepositorySnapshot {
             id,
             work_directory_abs_path,
             branch,
+            branch_list: branch_list.clone(),
             head_commit,
             remote_origin_url,
             remote_upstream_url,
@@ -7357,8 +7523,12 @@ async fn compute_snapshot(
             ..prev_snapshot
         };
 
-        if branch_changed {
-            cx.emit(RepositoryEvent::BranchChanged);
+        if head_changed {
+            cx.emit(RepositoryEvent::HeadChanged);
+        }
+
+        if branch_list_changed {
+            cx.emit(RepositoryEvent::BranchListChanged);
         }
 
         if worktrees_changed {

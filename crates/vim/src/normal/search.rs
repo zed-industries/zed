@@ -245,7 +245,7 @@ impl Vim {
 
             search_bar.set_replacement(None, cx);
             let mut options = SearchOptions::NONE;
-            if action.regex {
+            if action.regex && VimSettings::get_global(cx).use_regex_search {
                 options |= SearchOptions::REGEX;
             }
             if action.backwards {
@@ -1445,5 +1445,67 @@ mod test {
         // was cleared, so dismiss should not restore the cursor.
         // The cursor should be at the match location on line 3 (row 2).
         cx.assert_state("hello world\nfoo bar\nhello ˇagain\n", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_vim_search_respects_search_settings(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.vim.get_or_insert_default().use_regex_search = Some(false);
+            });
+        });
+
+        cx.set_state("ˇcontent", Mode::Normal);
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        // Verify search options are set from settings
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be active")
+        });
+
+        cx.update_entity(search_bar, |bar, _window, _cx| {
+            assert!(
+                !bar.has_search_option(search::SearchOptions::REGEX),
+                "Vim search open without regex mode"
+            );
+        });
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.vim.get_or_insert_default().use_regex_search = Some(true);
+            });
+        });
+
+        cx.simulate_keystrokes("/");
+        cx.run_until_parked();
+
+        let search_bar = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_pane()
+                .read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+                .expect("Buffer search bar should be active")
+        });
+
+        cx.update_entity(search_bar, |bar, _window, _cx| {
+            assert!(
+                bar.has_search_option(search::SearchOptions::REGEX),
+                "Vim search opens with regex mode"
+            );
+        });
     }
 }

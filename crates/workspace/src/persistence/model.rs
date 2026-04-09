@@ -77,6 +77,17 @@ impl From<ProjectGroupKey> for SerializedProjectGroupKey {
     }
 }
 
+impl From<SerializedProjectGroupKey> for ProjectGroupKey {
+    fn from(value: SerializedProjectGroupKey) -> Self {
+        let path_list = PathList::deserialize(&value.path_list);
+        let host = match value.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(opts) => Some(opts),
+        };
+        ProjectGroupKey::new(host, path_list)
+    }
+}
+
 /// Per-window state for a MultiWorkspace, persisted to KVP.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MultiWorkspaceState {
@@ -88,11 +99,11 @@ pub struct MultiWorkspaceState {
 }
 
 /// The serialized state of a single MultiWorkspace window from a previous session:
-/// all workspaces that shared the window, which one was active, and whether the
-/// sidebar was open.
+/// the active workspace to restore plus window-level state (project group keys,
+/// sidebar).
 #[derive(Debug, Clone)]
 pub struct SerializedMultiWorkspace {
-    pub workspaces: Vec<SessionWorkspace>,
+    pub active_workspace: SessionWorkspace,
     pub state: MultiWorkspaceState,
 }
 

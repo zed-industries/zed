@@ -1,3 +1,4 @@
+#[cfg(feature = "predict-edits")]
 pub mod predict_edits_v3;
 
 use std::str::FromStr;
