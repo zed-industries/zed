@@ -16090,7 +16090,6 @@ dependencies = [
  "editor",
  "extension",
  "fs",
- "futures 0.3.32",
  "git",
  "gpui",
  "http_client",
