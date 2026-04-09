@@ -25,6 +25,13 @@ const FILENAMES: &[&str] = &[
     "string_helpers.rs", "test_helpers.rs", "fixtures.json", "schema.sql",
 ];
 
+const QUERY_WORDS: &[&str] = &[
+    "par", "edi", "buf", "set", "mat", "con", "ren", "dis", "sea", "ter",
+    "col", "hov", "out", "rep", "key", "too", "pan", "str", "dia", "com",
+    "executor", "workspace", "settings", "terminal", "breadcrumbs",
+    "git_blame", "fixtures", "schema", "config", "toolbar",
+];
+
 fn generate_candidates(count: usize) -> Vec<fuzzy_nucleo::StringMatchCandidate> {
     (0..count)
         .map(|id| {
@@ -44,6 +51,31 @@ fn to_fuzzy_candidates(
         .collect()
 }
 
+/// Deterministic query generation from QUERY_WORDS using a simple LCG.
+/// Returns `count` single-word queries and `count` two-word queries.
+fn generate_queries(count: usize) -> (Vec<&'static str>, Vec<String>) {
+    let mut state: u64 = 0xDEAD_BEEF;
+    let mut next = || -> usize {
+        // LCG: simple, fast, deterministic
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        (state >> 33) as usize
+    };
+
+    let single: Vec<&str> = (0..count)
+        .map(|_| QUERY_WORDS[next() % QUERY_WORDS.len()])
+        .collect();
+
+    let two_word: Vec<String> = (0..count)
+        .map(|_| {
+            let a = QUERY_WORDS[next() % QUERY_WORDS.len()];
+            let b = QUERY_WORDS[next() % QUERY_WORDS.len()];
+            format!("{a} {b}")
+        })
+        .collect();
+
+    (single, two_word)
+}
+
 fn bench_string_matching(criterion: &mut Criterion) {
     let cancel = AtomicBool::new(false);
 
@@ -52,22 +84,34 @@ fn bench_string_matching(criterion: &mut Criterion) {
     let foreground_executor = gpui::ForegroundExecutor::new(dispatcher);
 
     let sizes = [100, 1000, 10_000];
-    let queries = ["par", "src editor", "fuzzy"];
+    let query_count = 200;
+    let (single_queries, two_word_queries) = generate_queries(query_count);
 
-    for query in queries {
-        let mut group = criterion.benchmark_group(query);
+    for (label, queries) in [
+        ("1-word", single_queries.iter().map(|s| s.as_ref()).collect::<Vec<&str>>()),
+        ("2-word", two_word_queries.iter().map(|s| s.as_str()).collect::<Vec<&str>>()),
+    ] {
+        let mut group = criterion.benchmark_group(label);
         for size in sizes {
             let candidates = generate_candidates(size);
             let fuzzy_candidates = to_fuzzy_candidates(&candidates);
+
+            let mut query_idx = 0usize;
             group.bench_function(BenchmarkId::new("nucleo", size), |b| {
                 b.iter(|| {
+                    let query = queries[query_idx % queries.len()];
+                    query_idx += 1;
                     foreground_executor.block_on(fuzzy_nucleo::match_strings(
                         &candidates, query, false, true, size, &cancel, background_executor.clone(),
                     ))
                 })
             });
+
+            let mut query_idx = 0usize;
             group.bench_function(BenchmarkId::new("fuzzy", size), |b| {
                 b.iter(|| {
+                    let query = queries[query_idx % queries.len()];
+                    query_idx += 1;
                     foreground_executor.block_on(fuzzy::match_strings(
                         &fuzzy_candidates, query, false, true, size, &cancel, background_executor.clone(),
                     ))
@@ -95,6 +139,7 @@ fn generate_nucleo_path_candidates(paths: &'static [&'static str]) -> Vec<fuzzy_
         .map(|path| fuzzy_nucleo::PathMatchCandidate {
             is_dir: false,
             path: RelPath::unix(path).unwrap(),
+            char_bag: CharBag::from(*path),
         })
         .collect()
 }
@@ -112,17 +157,27 @@ fn generate_fuzzy_path_candidates(paths: &'static [&'static str]) -> Vec<fuzzy::
 
 fn bench_path_matching(criterion: &mut Criterion) {
     let sizes = [100, 1000, 10_000];
-    let queries = ["par", "src editor", "executor.rs"];
     let all_path_strings = sizes.map(generate_path_strings);
+    let query_count = 200;
+    let (single_queries, two_word_queries) = generate_queries(query_count);
 
-    for query in queries {
-        let mut group = criterion.benchmark_group(format!("path/{query}"));
+    for (label, queries) in [
+        ("path/1-word", single_queries.iter().map(|s| s.as_ref()).collect::<Vec<&str>>()),
+        ("path/2-word", two_word_queries.iter().map(|s| s.as_str()).collect::<Vec<&str>>()),
+    ] {
+        let mut group = criterion.benchmark_group(label);
         for (size_index, &size) in sizes.iter().enumerate() {
             let path_strings = all_path_strings[size_index];
+
+            let mut query_idx = 0usize;
             group.bench_function(BenchmarkId::new("nucleo", size), |b| {
                 b.iter_batched(
-                    || generate_nucleo_path_candidates(&path_strings),
-                    |candidates| {
+                    || {
+                        let query = queries[query_idx % queries.len()];
+                        query_idx += 1;
+                        (generate_nucleo_path_candidates(path_strings), query)
+                    },
+                    |(candidates, query)| {
                         fuzzy_nucleo::match_fixed_path_set(
                             candidates, 0, None, query, false, size, PathStyle::Posix,
                         )
@@ -130,10 +185,16 @@ fn bench_path_matching(criterion: &mut Criterion) {
                     BatchSize::SmallInput,
                 )
             });
+
+            let mut query_idx = 0usize;
             group.bench_function(BenchmarkId::new("fuzzy", size), |b| {
                 b.iter_batched(
-                    || generate_fuzzy_path_candidates(&path_strings),
-                    |candidates| {
+                    || {
+                        let query = queries[query_idx % queries.len()];
+                        query_idx += 1;
+                        (generate_fuzzy_path_candidates(path_strings), query)
+                    },
+                    |(candidates, query)| {
                         fuzzy::match_fixed_path_set(
                             candidates, 0, None, query, false, size, PathStyle::Posix,
                         )
