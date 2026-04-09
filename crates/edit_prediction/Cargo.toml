@@ -72,10 +72,14 @@ zeta_prompt.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+languages = { workspace = true, features = ["load-grammars"] }
+node_runtime.workspace = true
 clock = { workspace = true, features = ["test-support"] }
 cloud_llm_client = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
@@ -86,3 +90,11 @@ settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 
 zlog.workspace = true
+
+[[bench]]
+name = "kept_rate"
+harness = false
+
+[[bench]]
+name = "ts_error_count"
+harness = false

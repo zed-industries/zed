@@ -115,6 +115,10 @@ impl ReportSummary {
     fn has_errors(&self) -> bool {
         self.errors > 0
     }
+
+    pub fn prs_with_errors(&self) -> usize {
+        self.pull_requests - self.reviewed
+    }
 }
 
 #[derive(Clone, Copy, Debug, Display, PartialEq, Eq, PartialOrd, Ord)]
@@ -330,6 +334,7 @@ mod tests {
                 login: "reviewer".to_owned(),
             }),
             state: Some(ReviewState::Approved),
+            body: None,
         }])
     }
 

@@ -65,7 +65,8 @@ pub struct ExampleState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrompt {
     pub input: String,
-    pub expected_output: String,
+    #[serde(default)]
+    pub expected_output: Option<String>,
     pub rejected_output: Option<String>, // For DPO
     #[serde(default)]
     pub prefill: Option<String>,

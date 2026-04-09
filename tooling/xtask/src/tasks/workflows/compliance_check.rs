@@ -2,7 +2,10 @@ use gh_workflow::{Event, Job, Run, Schedule, Step, Workflow, WorkflowDispatch};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    release::{COMPLIANCE_REPORT_PATH, ComplianceContext, add_compliance_notification_steps},
+    release::{
+        COMPLIANCE_REPORT_PATH, COMPLIANCE_STEP_ID, ComplianceContext,
+        add_compliance_notification_steps,
+    },
     runners,
     steps::{self, CommonJobConditions, named},
     vars::{self, StepOutput},
@@ -37,12 +40,11 @@ fn scheduled_compliance_check() -> steps::NamedJob {
     fn run_compliance_check(tag: &StepOutput) -> Step<Run> {
         named::bash(
             formatdoc! {r#"
-                echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
-                cargo xtask compliance "$LATEST_TAG" --branch main --report-path {COMPLIANCE_REPORT_PATH}
+                cargo xtask compliance "$LATEST_TAG" --branch main --report-path "{COMPLIANCE_REPORT_PATH}"
                 "#,
             }
         )
-        .id("run-compliance-check")
+        .id(COMPLIANCE_STEP_ID)
         .add_env(("LATEST_TAG", tag.to_string()))
         .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
         .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
@@ -61,6 +63,5 @@ fn scheduled_compliance_check() -> steps::NamedJob {
         ComplianceContext::Scheduled {
             tag_source: tag_output,
         },
-        "run-compliance-check",
     ))
 }

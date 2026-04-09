@@ -65,6 +65,7 @@ use project::git_store::{GitStoreEvent, RepositoryEvent};
 use project::project_settings::ProjectSettings;
 use project::{Project, ProjectPath, Worktree, linked_worktree_short_name};
 use prompt_store::{PromptStore, UserPromptId};
+use remote::RemoteConnectionOptions;
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
 use settings::{Settings, update_settings_file};
@@ -77,8 +78,8 @@ use ui::{
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, OpenMode, OpenResult, PathList,
-    SerializedPathList, ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
+    CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
+    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -206,12 +207,13 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
+                            let initial_content = panel.take_active_draft_initial_content(cx);
                             panel.external_thread(
                                 action.agent.clone(),
                                 None,
                                 None,
                                 None,
-                                None,
+                                initial_content,
                                 true,
                                 window,
                                 cx,
@@ -1294,9 +1296,48 @@ impl AgentPanel {
             .unwrap_or(false)
     }
 
+    /// Reset the panel to the uninitialized state, clearing any active
+    /// thread without creating a new draft. Running threads are retained
+    /// in the background. The sidebar suppresses the uninitialized state
+    /// so no "Draft" entry appears.
+    pub fn clear_active_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_active_view(ActiveView::Uninitialized, false, window, cx);
+    }
+
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
         self.reset_start_thread_in_to_default(cx);
-        self.external_thread(None, None, None, None, None, true, window, cx);
+        let initial_content = self.take_active_draft_initial_content(cx);
+        self.external_thread(None, None, None, None, initial_content, true, window, cx);
+    }
+
+    fn take_active_draft_initial_content(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<AgentInitialContent> {
+        self.active_thread_view(cx).and_then(|thread_view| {
+            thread_view.update(cx, |thread_view, cx| {
+                let draft_blocks = thread_view
+                    .thread
+                    .read(cx)
+                    .draft_prompt()
+                    .map(|draft| draft.to_vec())
+                    .filter(|draft| !draft.is_empty());
+
+                let draft_blocks = draft_blocks.or_else(|| {
+                    let text = thread_view.message_editor.read(cx).text(cx);
+                    if text.trim().is_empty() {
+                        None
+                    } else {
+                        Some(vec![acp::ContentBlock::Text(acp::TextContent::new(text))])
+                    }
+                });
+
+                draft_blocks.map(|blocks| AgentInitialContent::ContentBlock {
+                    blocks,
+                    auto_submit: false,
+                })
+            })
+        })
     }
 
     fn new_native_agent_thread_from_summary(
@@ -1821,6 +1862,7 @@ impl AgentPanel {
                                 model,
                                 enable_thinking,
                                 effort,
+                                speed: None,
                             })
                     });
                 }
@@ -1851,6 +1893,14 @@ impl AgentPanel {
             ActiveView::AgentThread { conversation_view } => Some(conversation_view),
             _ => None,
         }
+    }
+
+    pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
+        self.active_conversation_view()
+            .into_iter()
+            .cloned()
+            .chain(self.background_threads.values().cloned())
+            .collect()
     }
 
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
@@ -2393,7 +2443,17 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.external_thread(Some(agent), None, None, None, None, focus, window, cx);
+        let initial_content = self.take_active_draft_initial_content(cx);
+        self.external_thread(
+            Some(agent),
+            None,
+            None,
+            None,
+            initial_content,
+            focus,
+            window,
+            cx,
+        );
     }
 
     pub fn load_agent_thread(
@@ -2882,6 +2942,24 @@ impl AgentPanel {
                 .absolute_path(&project_path, cx)
         });
 
+        let remote_connection_options = self.project.read(cx).remote_connection_options(cx);
+
+        if remote_connection_options.is_some() {
+            let is_disconnected = self
+                .project
+                .read(cx)
+                .remote_client()
+                .is_some_and(|client| client.read(cx).is_disconnected());
+            if is_disconnected {
+                self.set_worktree_creation_error(
+                    "Cannot create worktree: remote connection is not active".into(),
+                    window,
+                    cx,
+                );
+                return;
+            }
+        }
+
         let workspace = self.workspace.clone();
         let window_handle = window
             .window_handle()
@@ -3008,25 +3086,21 @@ impl AgentPanel {
                 }
             };
 
-            let app_state = match workspace.upgrade() {
-                Some(workspace) => cx.update(|_, cx| workspace.read(cx).app_state().clone())?,
-                None => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_worktree_creation_error(
-                            "Workspace no longer available".into(),
-                            window,
-                            cx,
-                        );
-                    })?;
-                    return anyhow::Ok(());
-                }
-            };
+            if workspace.upgrade().is_none() {
+                this.update_in(cx, |this, window, cx| {
+                    this.set_worktree_creation_error(
+                        "Workspace no longer available".into(),
+                        window,
+                        cx,
+                    );
+                })?;
+                return anyhow::Ok(());
+            }
 
             let this_for_error = this.clone();
             if let Err(err) = Self::open_worktree_workspace_and_start_thread(
                 this,
                 all_paths,
-                app_state,
                 window_handle,
                 active_file_path,
                 path_remapping,
@@ -3034,6 +3108,7 @@ impl AgentPanel {
                 has_non_git,
                 content,
                 selected_agent,
+                remote_connection_options,
                 cx,
             )
             .await
@@ -3059,7 +3134,6 @@ impl AgentPanel {
     async fn open_worktree_workspace_and_start_thread(
         this: WeakEntity<Self>,
         all_paths: Vec<PathBuf>,
-        app_state: Arc<workspace::AppState>,
         window_handle: Option<gpui::WindowHandle<workspace::MultiWorkspace>>,
         active_file_path: Option<PathBuf>,
         path_remapping: Vec<(PathBuf, PathBuf)>,
@@ -3067,25 +3141,34 @@ impl AgentPanel {
         has_non_git: bool,
         content: Vec<acp::ContentBlock>,
         selected_agent: Option<Agent>,
+        remote_connection_options: Option<RemoteConnectionOptions>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let OpenResult {
-            window: new_window_handle,
-            workspace: new_workspace,
-            ..
-        } = cx
-            .update(|_window, cx| {
-                Workspace::new_local(
-                    all_paths,
-                    app_state,
-                    window_handle,
-                    None,
-                    None,
-                    OpenMode::Add,
-                    cx,
-                )
-            })?
-            .await?;
+        let window_handle = window_handle
+            .ok_or_else(|| anyhow!("No window handle available for workspace creation"))?;
+
+        let workspace_task = window_handle.update(cx, |multi_workspace, window, cx| {
+            let path_list = PathList::new(&all_paths);
+            let active_workspace = multi_workspace.workspace().clone();
+
+            multi_workspace.find_or_create_workspace(
+                path_list,
+                remote_connection_options,
+                None,
+                move |connection_options, window, cx| {
+                    remote_connection::connect_with_modal(
+                        &active_workspace,
+                        connection_options,
+                        window,
+                        cx,
+                    )
+                },
+                window,
+                cx,
+            )
+        })?;
+
+        let new_workspace = workspace_task.await?;
 
         let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
 
@@ -3121,7 +3204,7 @@ impl AgentPanel {
             auto_submit: true,
         };
 
-        new_window_handle.update(cx, |_multi_workspace, window, cx| {
+        window_handle.update(cx, |_multi_workspace, window, cx| {
             new_workspace.update(cx, |workspace, cx| {
                 if has_non_git {
                     let toast_id = workspace::notifications::NotificationId::unique::<AgentPanel>();
@@ -3206,7 +3289,7 @@ impl AgentPanel {
             });
         })?;
 
-        new_window_handle.update(cx, |multi_workspace, window, cx| {
+        window_handle.update(cx, |multi_workspace, window, cx| {
             multi_workspace.activate(new_workspace.clone(), window, cx);
 
             new_workspace.update(cx, |workspace, cx| {
@@ -4119,9 +4202,20 @@ impl AgentPanel {
             ),
             WorktreeCreationStatus::Error(message) => Some(
                 Callout::new()
-                    .icon(IconName::Warning)
-                    .severity(Severity::Warning)
-                    .title(message.clone())
+                    .icon(IconName::XCircleFilled)
+                    .severity(Severity::Error)
+                    .title("Worktree Creation Error")
+                    .description(message.clone())
+                    .border_position(ui::BorderPosition::Bottom)
+                    .dismiss_action(
+                        IconButton::new("dismiss-worktree-error", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Dismiss"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.worktree_creation_status = None;
+                                cx.notify();
+                            })),
+                    )
                     .into_any_element(),
             ),
         }
@@ -4691,7 +4785,7 @@ mod tests {
             language_model::LanguageModelRegistry::test(cx);
         });
 
-        // --- Create a MultiWorkspace window with two workspaces ---
+        // Create a MultiWorkspace window with two workspaces.
         let fs = FakeFs::new(cx.executor());
         let project_a = Project::test(fs.clone(), [], cx).await;
         let project_b = Project::test(fs, [], cx).await;
@@ -4720,7 +4814,7 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
-        // --- Set up workspace A: with an active thread ---
+        // Set up workspace A: with an active thread.
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
         });
@@ -4746,7 +4840,7 @@ mod tests {
 
         let agent_type_a = panel_a.read_with(cx, |panel, _cx| panel.selected_agent.clone());
 
-        // --- Set up workspace B: ClaudeCode, no active thread ---
+        // Set up workspace B: ClaudeCode, no active thread.
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
         });
@@ -4757,12 +4851,12 @@ mod tests {
             };
         });
 
-        // --- Serialize both panels ---
+        // Serialize both panels.
         panel_a.update(cx, |panel, cx| panel.serialize(cx));
         panel_b.update(cx, |panel, cx| panel.serialize(cx));
         cx.run_until_parked();
 
-        // --- Load fresh panels for each workspace and verify independent state ---
+        // Load fresh panels for each workspace and verify independent state.
         let async_cx = cx.update(|window, cx| window.to_async(cx));
         let loaded_a = AgentPanel::load(workspace_a.downgrade(), async_cx)
             .await
@@ -6575,5 +6669,219 @@ mod tests {
                 "a thread should have been created"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_worktree_creation_for_remote_project(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let app_state = workspace::AppState::test(cx);
+            workspace::init(app_state.clone(), cx);
+            app_state
+        });
+
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        // Set up the remote server side with a git repo.
+        let server_fs = FakeFs::new(server_cx.executor());
+        server_fs
+            .insert_tree(
+                "/project",
+                json!({
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+        server_fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        // Create a mock remote connection.
+        let (opts, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+
+        server_cx.update(remote_server::HeadlessProject::init);
+        let server_executor = server_cx.executor();
+        let _headless = server_cx.new(|cx| {
+            remote_server::HeadlessProject::new(
+                remote_server::HeadlessAppState {
+                    session: server_session,
+                    fs: server_fs.clone(),
+                    http_client: Arc::new(http_client::BlockedHttpClient),
+                    node_runtime: node_runtime::NodeRuntime::unavailable(),
+                    languages: Arc::new(language::LanguageRegistry::new(server_executor.clone())),
+                    extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                    startup_time: Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        // Connect the client side and build a remote project.
+        // Use a separate Client to avoid double-registering proto handlers
+        // (Workspace::test_new creates its own WorkspaceStore from the
+        // project's client).
+        let remote_client = remote::RemoteClient::connect_mock(opts, cx).await;
+        let project = cx.update(|cx| {
+            let project_client = client::Client::new(
+                Arc::new(clock::FakeSystemClock::new()),
+                http_client::FakeHttpClient::with_404_response(),
+                cx,
+            );
+            let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
+            project::Project::remote(
+                remote_client,
+                project_client,
+                node_runtime::NodeRuntime::unavailable(),
+                user_store,
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                false,
+                cx,
+            )
+        });
+
+        // Open the remote path as a worktree in the project.
+        let worktree_path = Path::new("/project");
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(worktree_path, true, cx)
+            })
+            .await
+            .expect("should be able to open remote worktree");
+        cx.run_until_parked();
+
+        // Verify the project is indeed remote.
+        project.read_with(cx, |project, cx| {
+            assert!(!project.is_local(), "project should be remote, not local");
+            assert!(
+                project.remote_connection_options(cx).is_some(),
+                "project should have remote connection options"
+            );
+        });
+
+        // Create the workspace and agent panel.
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        // Register a callback so new workspaces also get an AgentPanel.
+        cx.update(|cx| {
+            cx.observe_new(
+                |workspace: &mut Workspace,
+                 window: Option<&mut Window>,
+                 cx: &mut Context<Workspace>| {
+                    if let Some(window) = window {
+                        let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Open a thread.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Set start_thread_in to LinkedWorktree to bypass git worktree
+        // creation and directly test workspace opening for a known path.
+        let linked_path = PathBuf::from("/project");
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_start_thread_in(
+                &StartThreadIn::LinkedWorktree {
+                    path: linked_path.clone(),
+                    display_name: "project".to_string(),
+                },
+                window,
+                cx,
+            );
+        });
+
+        // Trigger worktree creation.
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from remote test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_requested(
+                content,
+                WorktreeCreationArgs::Linked {
+                    worktree_path: linked_path,
+                },
+                window,
+                cx,
+            );
+        });
+
+        // The refactored code uses `find_or_create_workspace`, which
+        // finds the existing remote workspace (matching paths + host)
+        // and reuses it instead of creating a new connection.
+        cx.run_until_parked();
+
+        // The task should have completed: the existing workspace was
+        // found and reused.
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                panel.worktree_creation_status.is_none(),
+                "worktree creation should have completed, but status is: {:?}",
+                panel.worktree_creation_status
+            );
+        });
+
+        // The existing remote workspace was reused — no new workspace
+        // should have been created.
+        multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                let project = workspace.read(cx).project().clone();
+                assert!(
+                    !project.read(cx).is_local(),
+                    "workspace project should still be remote, not local"
+                );
+                assert_eq!(
+                    multi_workspace.workspaces().count(),
+                    1,
+                    "existing remote workspace should be reused, not a new one created"
+                );
+            })
+            .unwrap();
     }
 }

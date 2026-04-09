@@ -5,7 +5,7 @@ use clap::Parser;
 
 use compliance::{
     checks::Reporter,
-    git::{CommitsFromVersionToHead, GetVersionTags, GitCommand, VersionTag},
+    git::{CommitsFromVersionToVersion, GetVersionTags, GitCommand, VersionTag},
     github::GitHubClient,
     report::ReportReviewSummary,
 };
@@ -28,14 +28,10 @@ impl ComplianceArgs {
         &self.version_tag
     }
 
-    fn version_branch(&self) -> String {
-        self.branch.clone().unwrap_or_else(|| {
-            format!(
-                "v{major}.{minor}.x",
-                major = self.version_tag().version().major,
-                minor = self.version_tag().version().minor
-            )
-        })
+    fn version_head(&self) -> String {
+        self.branch
+            .clone()
+            .unwrap_or_else(|| self.version_tag().to_string())
     }
 }
 
@@ -62,9 +58,9 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
         previous_version.version()
     );
 
-    let commits = GitCommand::run(CommitsFromVersionToHead::new(
+    let commits = GitCommand::run(CommitsFromVersionToVersion::new(
         previous_version,
-        args.version_branch(),
+        args.version_head(),
     ))?;
 
     let Some(range) = commits.range() else {
@@ -92,7 +88,7 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     println!(
         "Applying compliance labels to {} pull requests",
-        summary.pull_requests
+        summary.prs_with_errors()
     );
 
     for report in report.errors() {
@@ -100,16 +96,14 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
             println!("Adding review label to PR {}...", pr_number);
 
             client
-                .add_label_to_pull_request(compliance::github::PR_REVIEW_LABEL, pr_number)
+                .ensure_pull_request_has_label(compliance::github::PR_REVIEW_LABEL, pr_number)
                 .await?;
         }
     }
 
-    let report_path = args.report_path.with_extension("md");
+    report.write_markdown(&args.report_path)?;
 
-    report.write_markdown(&report_path)?;
-
-    println!("Wrote compliance report to {}", report_path.display());
+    println!("Wrote compliance report to {}", args.report_path.display());
 
     match summary.review_summary() {
         ReportReviewSummary::MissingReviews => Err(anyhow::anyhow!(

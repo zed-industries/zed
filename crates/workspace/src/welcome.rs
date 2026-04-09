@@ -445,7 +445,9 @@ impl Render for WelcomePage {
             })
             .collect::<Vec<_>>();
 
-        let second_section = if self.fallback_to_recent_projects && !recent_projects.is_empty() {
+        let showing_recent_projects =
+            self.fallback_to_recent_projects && !recent_projects.is_empty();
+        let second_section = if showing_recent_projects {
             self.render_recent_project_section(recent_projects)
                 .into_any_element()
         } else {
@@ -496,7 +498,7 @@ impl Render for WelcomePage {
                     )
                     .child(first_section.render(Default::default(), &self.focus_handle))
                     .child(second_section)
-                    .when(ai_enabled, |this| {
+                    .when(ai_enabled && !showing_recent_projects, |this| {
                         let agent_tab_index = next_tab_index;
                         next_tab_index += 1;
                         this.child(self.render_agent_card(agent_tab_index, cx))
