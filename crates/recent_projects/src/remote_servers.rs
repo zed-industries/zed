@@ -34,7 +34,8 @@ use settings::{
 use smol::stream::StreamExt as _;
 use std::{
     borrow::Cow,
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
+    time::Duration,
     path::PathBuf,
     rc::Rc,
     sync::{
@@ -70,6 +71,7 @@ pub struct RemoteServerProjects {
     create_new_window: bool,
     dev_container_picker: Option<Entity<Picker<DevContainerPickerDelegate>>>,
     _subscriptions: Vec<Subscription>,
+    _filter_task: Task<()>,
     allow_dismissal: bool,
 }
 
@@ -683,6 +685,7 @@ struct DefaultState {
     add_new_wsl: NavigableEntry,
     servers: Vec<RemoteEntry>,
     filtered_servers: Vec<RemoteEntry>,
+    filter_data: Arc<[ServerFilterData]>,
 }
 
 impl DefaultState {
@@ -768,6 +771,18 @@ impl DefaultState {
         }
 
         let filtered_servers = servers.clone();
+        let filter_data: Arc<[ServerFilterData]> = servers
+            .iter()
+            .map(|entry| ServerFilterData {
+                host: entry.host_name().to_string(),
+                project_paths: match entry {
+                    RemoteEntry::Project { projects, .. } => {
+                        projects.iter().map(|p| p.project.paths.join(", ")).collect()
+                    }
+                    RemoteEntry::SshConfig { .. } => vec![],
+                },
+            })
+            .collect();
         Self {
             scroll_handle: handle,
             add_new_server,
@@ -775,25 +790,71 @@ impl DefaultState {
             add_new_wsl,
             servers,
             filtered_servers,
+            filter_data,
         }
     }
 
-    fn update_filter(&mut self, query: &str) {
+    fn apply_filter_results(&mut self, results: &[FilteredServer]) {
+        self.filtered_servers = results
+            .iter()
+            .filter(|r| r.server_index < self.servers.len())
+            .map(|result| {
+                let mut entry = self.servers[result.server_index].clone();
+                match &mut entry {
+                    RemoteEntry::Project {
+                        projects,
+                        host_positions,
+                        ..
+                    } => {
+                        *host_positions = result.host_positions.clone();
+                        let all_projects = std::mem::take(projects);
+                        *projects = result
+                            .project_matches
+                            .iter()
+                            .filter(|pm| pm.project_index < all_projects.len())
+                            .map(|pm| ProjectEntry {
+                                highlight_positions: pm.path_positions.clone(),
+                                ..all_projects[pm.project_index].clone()
+                            })
+                            .collect();
+                    }
+                    RemoteEntry::SshConfig {
+                        host_positions, ..
+                    } => {
+                        *host_positions = result.host_positions.clone();
+                    }
+                }
+                entry
+            })
+            .collect();
+    }
+
+    fn filter_sync(&mut self, query: &str) {
         if query.is_empty() {
             self.filtered_servers = self.servers.clone();
             return;
         }
-
-        let smart_case = query.chars().any(|c| c.is_uppercase());
-
-        let mut scored: Vec<(RemoteEntry, f64)> = self
-            .servers
-            .iter()
-            .filter_map(|entry| filter_entry(entry, query, smart_case))
-            .collect();
-        scored.sort_by(|a, b| b.1.total_cmp(&a.1));
-        self.filtered_servers = scored.into_iter().map(|(entry, _)| entry).collect();
+        let mut results = compute_filter_results(&self.filter_data, query);
+        results.sort_by(|a, b| b.score.total_cmp(&a.score));
+        self.apply_filter_results(&results);
     }
+}
+
+struct ServerFilterData {
+    host: String,
+    project_paths: Vec<String>,
+}
+
+struct FilteredServer {
+    server_index: usize,
+    host_positions: Vec<usize>,
+    project_matches: Vec<FilteredProject>,
+    score: f64,
+}
+
+struct FilteredProject {
+    project_index: usize,
+    path_positions: Vec<usize>,
 }
 
 fn match_positions(
@@ -802,9 +863,7 @@ fn match_positions(
     smart_case: bool,
 ) -> Option<(Vec<usize>, f64)> {
     let candidates = [StringMatchCandidate::new(0, candidate)];
-    let matches = fuzzy_nucleo::match_strings_sync(
-        &candidates, query, smart_case, false, 1,
-    );
+    let matches = fuzzy_nucleo::match_strings_sync(&candidates, query, smart_case, false, 1);
     let m = matches.into_iter().next()?;
     if m.positions.is_empty() {
         return None;
@@ -812,105 +871,62 @@ fn match_positions(
     Some((m.positions, m.score))
 }
 
-struct ProjectMatch {
-    index: usize,
-    path_positions: Vec<usize>,
-    host_positions: Vec<usize>,
-    score: f64,
-}
+fn compute_filter_results(servers: &[ServerFilterData], query: &str) -> Vec<FilteredServer> {
+    let smart_case = query.chars().any(|c| c.is_uppercase());
 
-fn filter_entry(
-    entry: &RemoteEntry,
-    query: &str,
-    smart_case: bool,
-) -> Option<(RemoteEntry, f64)> {
-    let host = entry.host_name();
-
-    let projects = match entry {
-        RemoteEntry::Project { projects, .. } => projects.as_slice(),
-        RemoteEntry::SshConfig { .. } => &[],
-    };
-
-    if projects.is_empty() {
-        return match_positions(host, query, smart_case).map(
-            |(positions, score)| {
-                let mut result = entry.clone();
-                match &mut result {
-                    RemoteEntry::SshConfig { host_positions, .. } => *host_positions = positions,
-                    RemoteEntry::Project { host_positions, .. } => *host_positions = positions,
-                }
-                (result, score)
-            },
-        );
-    }
-
-    let host_len = host.len();
-    let host_prefix_len = host_len + 1; // "host " separator offset
-    let matched: Vec<ProjectMatch> = projects
+    servers
         .iter()
         .enumerate()
-        .filter_map(|(index, entry)| {
-            let combined = format!("{host} {}", entry.project.paths.join(", "));
-            match_positions(&combined, query, smart_case).map(
-                |(positions, score)| {
-                    let host_positions =
-                        positions.iter().copied().filter(|&p| p < host_len).collect();
+        .filter_map(|(server_index, server)| {
+            if server.project_paths.is_empty() {
+                let (positions, score) = match_positions(&server.host, query, smart_case)?;
+                return Some(FilteredServer {
+                    server_index,
+                    host_positions: positions,
+                    project_matches: vec![],
+                    score,
+                });
+            }
+
+            let host_len = server.host.len();
+            let host_prefix_len = host_len + 1;
+
+            let mut project_matches = Vec::new();
+            let mut all_host_positions = Vec::new();
+            let mut best_score = f64::NEG_INFINITY;
+
+            for (proj_idx, paths) in server.project_paths.iter().enumerate() {
+                let combined = format!("{} {paths}", server.host);
+                if let Some((positions, score)) = match_positions(&combined, query, smart_case) {
+                    all_host_positions
+                        .extend(positions.iter().copied().filter(|&p| p < host_len));
                     let path_positions = positions
                         .into_iter()
                         .filter_map(|p| p.checked_sub(host_prefix_len))
                         .collect();
-                    ProjectMatch {
-                        index,
+                    project_matches.push(FilteredProject {
+                        project_index: proj_idx,
                         path_positions,
-                        host_positions,
-                        score,
-                    }
-                },
-            )
-        })
-        .collect();
+                    });
+                    best_score = best_score.max(score);
+                }
+            }
 
-    if matched.is_empty() {
-        return None;
-    }
+            if project_matches.is_empty() {
+                return None;
+            }
 
-    let best_score = matched
-        .iter()
-        .map(|m| m.score)
-        .fold(f64::NEG_INFINITY, f64::max);
+            all_host_positions.sort_unstable();
+            all_host_positions.dedup();
 
-    let mut all_host_positions: Vec<usize> = matched
-        .iter()
-        .flat_map(|m| m.host_positions.iter().copied())
-        .collect();
-    all_host_positions.sort();
-    all_host_positions.dedup();
-
-    let match_map: HashMap<usize, Vec<usize>> = matched
-        .into_iter()
-        .map(|m| (m.index, m.path_positions))
-        .collect();
-
-    let mut filtered = entry.clone();
-    if let RemoteEntry::Project {
-        ref mut projects,
-        ref mut host_positions,
-        ..
-    } = filtered
-    {
-        *host_positions = all_host_positions;
-        *projects = projects
-            .iter()
-            .enumerate()
-            .filter_map(|(index, entry)| {
-                match_map.get(&index).map(|positions| ProjectEntry {
-                    highlight_positions: positions.clone(),
-                    ..entry.clone()
-                })
+            Some(FilteredServer {
+                server_index,
+                host_positions: all_host_positions,
+                project_matches,
+                score: best_score,
             })
-            .collect();
-    }
-    Some((filtered, best_score))
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -1100,6 +1116,7 @@ impl RemoteServerProjects {
             create_new_window,
             dev_container_picker: None,
             _subscriptions: vec![settings_subscription, filter_subscription],
+            _filter_task: Task::ready(()),
             allow_dismissal: true,
         }
     }
@@ -1509,11 +1526,49 @@ impl RemoteServerProjects {
     }
 
     fn recompute_filter(&mut self, cx: &mut Context<Self>) {
-        if let Mode::Default(state) = &mut self.mode {
-            let query = self.filter_editor.read(cx).text(cx);
-            state.update_filter(query.trim());
+        self.recompute_filter_debounced(
+            Duration::from_millis(RemoteSettings::get_global(cx).filter_debounce_ms),
+            cx,
+        );
+    }
+
+    fn recompute_filter_debounced(
+        &mut self,
+        debounce: Duration,
+        cx: &mut Context<Self>,
+    ) {
+        let Mode::Default(state) = &mut self.mode else {
+            return;
+        };
+        let query = self.filter_editor.read(cx).text(cx);
+        let query = query.trim().to_string();
+
+        if query.is_empty() {
+            state.filtered_servers = state.servers.clone();
+            self._filter_task = Task::ready(());
             cx.notify();
+            return;
         }
+
+        let server_data = Arc::clone(&state.filter_data);
+        let executor = cx.background_executor().clone();
+
+        self._filter_task = cx.spawn(async move |this, cx| {
+            executor.timer(debounce).await;
+
+            let mut results = executor
+                .spawn(async move { compute_filter_results(&server_data, &query) })
+                .await;
+            results.sort_by(|a, b| b.score.total_cmp(&a.score));
+
+            this.update(cx, |this, cx| {
+                if let Mode::Default(state) = &mut this.mode {
+                    state.apply_filter_results(&results);
+                    cx.notify();
+                }
+            })
+            .ok();
+        });
     }
 
     fn render_remote_connection(
@@ -2823,7 +2878,7 @@ impl RemoteServerProjects {
             self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
             if let Mode::Default(new_state) = &mut self.mode {
                 let query = self.filter_editor.read(cx).text(cx);
-                new_state.update_filter(query.trim());
+                new_state.filter_sync(query.trim());
                 state = new_state.clone();
             }
         }
