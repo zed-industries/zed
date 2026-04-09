@@ -3489,3 +3489,111 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
         captured_events
     );
 }
+
+#[gpui::test]
+async fn test_symlinked_dir_removal_cleans_up_routing(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    fs.insert_tree(
+        "/root/project",
+        json!({
+            "real": {
+                "existing.rs": "// existing",
+            },
+        }),
+    )
+    .await;
+
+    fs.create_symlink(
+        Path::new("/root/project/linked"),
+        PathBuf::from("real"),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/project"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("linked")).is_some(),
+            "linked symlink should be visible after initial scan"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("linked/existing.rs")).is_some(),
+            "file under linked symlink should be visible after initial scan"
+        );
+    });
+
+    // Verify that canonical-path events are routed through linked/ before removal.
+    fs.insert_file("/root/project/real/before_removal.rs", "// before".into())
+        .await;
+    fs.emit_fs_event(
+        "/root/project/real/before_removal.rs",
+        Some(fs::PathEventKind::Created),
+    );
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("linked/before_removal.rs")).is_some(),
+            "new file in real/ should appear under linked/ via canonical-path routing"
+        );
+    });
+
+    // FakeFs has no remove-symlink primitive. Using rename to move the symlink
+    // out of the project so the worktree receives a Removed event for "linked".
+    fs.rename(
+        Path::new("/root/project/linked"),
+        Path::new("/root/linked_backup"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("linked")).is_none(),
+            "linked should be absent from the worktree after the symlink is removed"
+        );
+    });
+
+    // Create a new file in real/ and emit a filesystem event via the canonical
+    // path that linked used to resolve to. If remove_path did not clean up
+    // canonical_path_to_symlink, this event could be spuriously routed to
+    // linked/new_after_removal.rs even though linked no longer exists.
+    fs.insert_file(
+        "/root/project/real/new_after_removal.rs",
+        "// new".into(),
+    )
+    .await;
+    fs.emit_fs_event(
+        "/root/project/real/new_after_removal.rs",
+        Some(fs::PathEventKind::Created),
+    );
+
+    tree.flush_fs_events(cx).await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("linked/new_after_removal.rs")).is_none(),
+            "no entry should appear under the removed symlink path: \
+             canonical_path_to_symlink must have been cleaned up by remove_path"
+        );
+    });
+}
