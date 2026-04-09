@@ -288,7 +288,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let custom_highlights = string_match
             .positions
             .iter()
-            .map(|pos| (*pos..label.ceil_char_boundary(pos + 1), highlight_style))
+            .map(|pos| (*pos..label.ceil_char_boundary(pos + 1), highlight_style));
 
         let highlights = gpui::combine_highlights(custom_highlights, syntax_runs);
 
@@ -299,9 +299,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
-                        .child(LabelLike::new().child(
-                            StyledText::new(label).with_default_highlights(&text_style, highlights),
-                        ))
+                        .child(
+                            LabelLike::new().child(
+                                StyledText::new(&label)
+                                    .with_default_highlights(&text_style, highlights),
+                            ),
+                        )
                         .child(
                             h_flex()
                                 .child(Label::new(path).size(LabelSize::Small).color(Color::Muted))
