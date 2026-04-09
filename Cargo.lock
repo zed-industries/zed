@@ -22311,6 +22311,7 @@ dependencies = [
  "tracing",
  "ui",
  "ui_prompt",
+ "unified_palette",
  "url",
  "urlencoding",
  "util",

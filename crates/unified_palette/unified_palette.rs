@@ -10,6 +10,10 @@ use picker::{Picker, PickerDelegate};
 use ui::prelude::*;
 use workspace::ModalView;
 
+pub fn init(cx: &mut App) {
+    cx.observe_new(UnifiedPalette::register).detach();
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaletteMode {
     FileFinder,
@@ -29,15 +33,35 @@ pub struct UnifiedPaletteDelegate {
     workspace: WeakEntity<workspace::Workspace>,
     project: Entity<project::Project>,
     
-    // Sub-pickers (lazy-loaded)
-    file_finder: Option<Entity<file_finder::FileFinder>>,
-    command_palette: Option<Entity<command_palette::CommandPalette>>,
-    project_symbols: Option<project_symbols::ProjectSymbols>,
-    
+    // Match data (instead of storing sub-pickers)
+    matches: Vec<String>,
     selected_index: usize,
 }
 
 impl UnifiedPalette {
+    fn register(
+        workspace: &mut workspace::Workspace,
+        _window: Option<&mut Window>,
+        cx: &mut Context<workspace::Workspace>,
+    ) {
+        workspace.register_action(
+            |workspace, _action: &workspace::ToggleFileFinder, window, cx| {
+                let project = workspace.project().clone();
+                let workspace_handle = cx.entity().downgrade();
+                
+                workspace.toggle_modal(window, cx, move |window, cx| {
+                    let delegate = UnifiedPaletteDelegate::new(workspace_handle.clone(), project, cx);
+                    let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+                    
+                    UnifiedPalette {
+                        picker,
+                        workspace: workspace_handle,
+                    }
+                });
+            },
+        );
+    }
+    
     pub fn new(
         workspace: &mut workspace::Workspace,
         window: &mut Window,
@@ -68,21 +92,36 @@ impl UnifiedPaletteDelegate {
             mode: PaletteMode::FileFinder,
             workspace,
             project,
-            file_finder: None,
-            command_palette: None,
-            project_symbols: None,
+            matches: Vec::new(),
             selected_index: 0,
         }
     }
     
-    fn ensure_file_finder(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if self.file_finder.is_some() {
+    fn search_files(&mut self, query: &str, cx: &mut Context<Picker<Self>>) {
+        if query.is_empty() {
+            self.matches.clear();
             return;
         }
         
-        // TODO: Create FileFinder
-        // Problem: FileFinder::new() is private, need to use workspace.toggle_modal
-        // For now, leave as None
+        // Simple file search - just get file names from project
+        let project = self.project.read(cx);
+        let mut files = Vec::new();
+        
+        for worktree in project.worktrees(cx) {
+            let worktree = worktree.read(cx);
+            for entry in worktree.files(false, 0) {
+                let path_str = format!("{:?}", entry.path).trim_matches('"').to_string();
+                if path_str.to_lowercase().contains(&query.to_lowercase()) {
+                    files.push(path_str);
+                    if files.len() >= 100 {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        self.matches = files;
+        self.selected_index = 0;
     }
 }
 
@@ -90,21 +129,7 @@ impl PickerDelegate for UnifiedPaletteDelegate {
     type ListItem = AnyElement;
 
     fn match_count(&self) -> usize {
-        match self.mode {
-            PaletteMode::FileFinder => {
-                // TODO: Read from file_finder
-                0
-            }
-            PaletteMode::CommandPalette => {
-                // TODO: Read from command_palette
-                0
-            }
-            PaletteMode::ProjectSymbols => {
-                // TODO: Read from project_symbols
-                0
-            }
-            _ => 0,
-        }
+        self.matches.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -126,7 +151,7 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         }
     }
 
-    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, query: String, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
         // Detect mode from prefix
         let (new_mode, stripped_query) = if let Some(detected_mode) = detect_mode_from_query(&query) {
             let stripped = query.chars().skip(1).collect::<String>();
@@ -138,20 +163,25 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         // Switch mode if changed
         if new_mode != self.mode {
             self.mode = new_mode;
+            self.matches.clear();
             cx.notify();
         }
         
-        // Ensure picker exists for current mode
+        // Search based on mode
         match self.mode {
             PaletteMode::FileFinder => {
-                self.ensure_file_finder(window, cx);
-                // TODO: Forward query to file_finder
+                self.search_files(&stripped_query, cx);
+                cx.notify();
             }
             PaletteMode::CommandPalette => {
-                // TODO: Ensure and forward to command_palette
+                // TODO: Search commands
+                self.matches.clear();
+                cx.notify();
             }
             PaletteMode::ProjectSymbols => {
-                // TODO: Ensure and forward to project_symbols
+                // TODO: Search symbols
+                self.matches.clear();
+                cx.notify();
             }
             _ => {}
         }
@@ -168,14 +198,15 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         // Cleanup
     }
 
-    fn render_match(&self, _ix: usize, selected: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<Self::ListItem> {
-        // TODO: Forward to active sub-picker
+    fn render_match(&self, ix: usize, selected: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<Self::ListItem> {
+        let match_text = self.matches.get(ix)?;
+        
         Some(
             div()
                 .px_2()
                 .py_1()
                 .when(selected, |el| el.bg(cx.theme().colors().element_selected))
-                .child("TODO: Render from sub-picker")
+                .child(match_text.clone())
                 .into_any_element()
         )
     }

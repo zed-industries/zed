@@ -85,7 +85,7 @@ impl ModalView for FileFinder {
 }
 
 pub struct FileFinder {
-    picker: Entity<Picker<FileFinderDelegate>>,
+    pub picker: Entity<Picker<FileFinderDelegate>>,
     picker_focus_handle: FocusHandle,
     init_modifiers: Option<Modifiers>,
 }
@@ -185,7 +185,7 @@ impl FileFinder {
         })
     }
 
-    fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -815,7 +815,7 @@ impl FileSearchQuery {
 }
 
 impl FileFinderDelegate {
-    fn new(
+    pub fn new(
         file_finder: WeakEntity<FileFinder>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
