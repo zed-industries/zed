@@ -6,6 +6,7 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
+use std::collections::BTreeMap;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
@@ -29,13 +30,25 @@ use crate::{
     transport::parse_platform,
 };
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub struct DockerConnectionOptions {
     pub name: String,
     pub container_id: String,
     pub remote_user: String,
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
+    pub remote_env: BTreeMap<String, String>,
 }
 
 pub(crate) struct DockerExecConnection {
@@ -499,10 +512,14 @@ impl DockerExecConnection {
         args.push("-u".to_string());
         args.push(self.connection_options.remote_user.clone());
 
+        for (k, v) in self.connection_options.remote_env.iter() {
+            args.push("-e".to_string());
+            args.push(format!("{k}={v}"));
+        }
+
         for (k, v) in env.iter() {
             args.push("-e".to_string());
-            let env_declaration = format!("{}={}", k, v);
-            args.push(env_declaration);
+            args.push(format!("{k}={v}"));
         }
 
         args.push(self.connection_options.container_id.clone());
@@ -632,6 +649,11 @@ impl RemoteConnection for DockerExecConnection {
         };
 
         let mut docker_args = vec!["exec".to_string()];
+
+        for (k, v) in self.connection_options.remote_env.iter() {
+            docker_args.push("-e".to_string());
+            docker_args.push(format!("{k}={v}"));
+        }
         for env_var in ["RUST_LOG", "RUST_BACKTRACE", "ZED_GENERATE_MINIDUMPS"] {
             if let Some(value) = std::env::var(env_var).ok() {
                 docker_args.push("-e".to_string());
@@ -768,9 +790,14 @@ impl RemoteConnection for DockerExecConnection {
             docker_args.push(parsed_working_dir);
         }
 
+        for (k, v) in self.connection_options.remote_env.iter() {
+            docker_args.push("-e".to_string());
+            docker_args.push(format!("{k}={v}"));
+        }
+
         for (k, v) in env.iter() {
             docker_args.push("-e".to_string());
-            docker_args.push(format!("{}={}", k, v));
+            docker_args.push(format!("{k}={v}"));
         }
 
         match interactive {

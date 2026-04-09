@@ -57,6 +57,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
+        should_run_tests.guard(build_visual_tests_binary()),
         should_run_tests.guard(check_wasm()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
@@ -337,6 +338,14 @@ pub fn tests_pass(jobs: &[NamedJob], extra_job_names: &[&str]) -> NamedJob {
 pub(crate) const DETECT_CHANGED_EXTENSIONS_SCRIPT: &str = indoc::indoc! {r#"
     # Detect changed extension directories (excluding extensions/workflows)
     CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
+    # Filter out deleted extensions
+    EXISTING_EXTENSIONS=""
+    for ext in $CHANGED_EXTENSIONS; do
+        if [ -f "$ext/extension.toml" ]; then
+            EXISTING_EXTENSIONS=$(printf '%s\n%s' "$EXISTING_EXTENSIONS" "$ext")
+        fi
+    done
+    CHANGED_EXTENSIONS=$(echo "$EXISTING_EXTENSIONS" | sed '/^$/d')
     if [ -n "$CHANGED_EXTENSIONS" ]; then
         EXTENSIONS_JSON=$(echo "$CHANGED_EXTENSIONS" | jq -R -s -c 'split("\n") | map(select(length > 0))')
     else
@@ -591,6 +600,22 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }
+}
+
+fn build_visual_tests_binary() -> NamedJob {
+    pub fn cargo_build_visual_tests() -> Step<Run> {
+        named::bash("cargo build -p zed --bin zed_visual_test_runner --features visual-tests")
+    }
+
+    named::job(
+        Job::default()
+            .runs_on(runners::MAC_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Mac))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(cargo_build_visual_tests())
+            .add_step(steps::cleanup_cargo_config(Platform::Mac)),
+    )
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {

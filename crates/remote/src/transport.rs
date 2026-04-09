@@ -263,10 +263,6 @@ async fn build_remote_server_from_source(
             rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
         }
     }
-    if build_remote_server.contains("mold") {
-        rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
-    }
-
     if platform.arch.as_str() == std::env::consts::ARCH
         && platform.os.as_str() == std::env::consts::OS
     {

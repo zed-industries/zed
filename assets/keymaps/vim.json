@@ -263,6 +263,7 @@
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPreviousHunk",
       "g c": "vim::PushToggleComments",
+      "g b": "vim::PushToggleBlockComments",
     },
   },
   {
@@ -319,6 +320,7 @@
       "a": ["vim::PushObject", { "around": true }],
       "g shift-r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
+      "g b": "vim::ToggleBlockComments",
       "g q": "vim::Rewrap",
       "g w": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
@@ -337,6 +339,8 @@
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
       "a": "vim::InsertAfter",
+      "o": "vim::InsertLineBelow",
+      "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",
       "u": "vim::Undo",
       "r": "vim::PushReplace",
@@ -790,6 +794,12 @@
     },
   },
   {
+    "context": "vim_operator == gb",
+    "bindings": {
+      "c": "vim::CurrentLine",
+    },
+  },
+  {
     "context": "vim_operator == gR",
     "bindings": {
       "r": "vim::CurrentLine",
@@ -1015,7 +1025,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList",
+    "context": "GitPanel && ChangesList && !GitBranchSelector",
     "use_key_equivalents": true,
     "bindings": {
       "k": "menu::SelectPrevious",
@@ -1060,7 +1070,7 @@
     },
   },
   {
-    "context": "Editor && edit_prediction && edit_prediction_mode == eager",
+    "context": "Editor && edit_prediction && edit_prediction_mode == eager && !showing_completions",
     "bindings": {
       // This is identical to the binding in the base keymap, but the vim bindings above to
       // "vim::Tab" shadow it, so it needs to be bound again.
@@ -1094,6 +1104,7 @@
       "ctrl-e": "markdown::ScrollDown",
       "g g": "markdown::ScrollToTop",
       "shift-g": "markdown::ScrollToBottom",
+      "/": "buffer_search::Deploy",
     },
   },
   {
@@ -1107,10 +1118,24 @@
   },
   {
     "context": "NotebookEditor > Editor && VimControl && vim_mode == normal",
-
     "bindings": {
       "j": "notebook::NotebookMoveDown",
       "k": "notebook::NotebookMoveUp",
+      "escape": "notebook::EnterCommandMode",
+    },
+  },
+  {
+    "context": "NotebookEditor && notebook_mode == command",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
+      "i": "notebook::EnterEditMode",
+      "a": "notebook::EnterEditMode",
+      "enter": "notebook::EnterEditMode",
+      "shift-enter": "notebook::RunAndAdvance",
+      "ctrl-enter": "notebook::Run",
     },
   },
   {

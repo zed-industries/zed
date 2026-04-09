@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -7,6 +8,7 @@ use std::sync::Arc;
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
 use anyhow::{Context as _, Result, anyhow, bail};
 use clap::Parser;
+use cloud_api_types::ExtensionProvides;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{ExtensionManifest, ExtensionSnippets};
 use language::LanguageConfig;
@@ -80,10 +82,7 @@ async fn main() -> Result<()> {
         .context("failed to compile extension")?;
 
     let extension_provides = manifest.provides();
-
-    if extension_provides.is_empty() {
-        bail!("extension does not provide any features");
-    }
+    validate_extension_features(&extension_provides)?;
 
     let grammars = test_grammars(&manifest, &extension_path, &mut wasm_store)?;
     test_languages(&manifest, &extension_path, &grammars)?;
@@ -203,7 +202,7 @@ async fn copy_extension_resources(
             },
         )
         .await
-        .with_context(|| "failed to copy icons")?;
+        .context("failed to copy icons")?;
     }
 
     for (_, agent_entry) in &manifest.agent_servers {
@@ -292,6 +291,22 @@ async fn copy_extension_resources(
                 format!("failed to copy snippets from '{}'", snippets_path.display())
             })?;
         }
+    }
+
+    Ok(())
+}
+
+fn validate_extension_features(provides: &BTreeSet<ExtensionProvides>) -> Result<()> {
+    if provides.is_empty() {
+        bail!("extension does not provide any features");
+    }
+
+    if provides.contains(&ExtensionProvides::Themes) && provides.len() != 1 {
+        bail!("extension must not provide other features along with themes");
+    }
+
+    if provides.contains(&ExtensionProvides::IconThemes) && provides.len() != 1 {
+        bail!("extension must not provide other features along with icon themes");
     }
 
     Ok(())
@@ -398,7 +413,8 @@ async fn test_themes(
 ) -> Result<()> {
     for relative_theme_path in &manifest.themes {
         let theme_path = extension_path.join(relative_theme_path);
-        let theme_family = theme::read_user_theme(&theme_path, fs.clone()).await?;
+        let theme_family =
+            theme_settings::deserialize_user_theme(&fs.load_bytes(&theme_path).await?)?;
         log::info!("loaded theme family {}", theme_family.name);
 
         for theme in &theme_family.themes {

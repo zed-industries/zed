@@ -486,6 +486,10 @@ impl BranchListDelegate {
             let is_remote;
             let result = match &entry {
                 Entry::Branch { branch, .. } => {
+                    if branch.is_head {
+                        return Ok(());
+                    }
+
                     is_remote = branch.is_remote();
                     repo.update(cx, |repo, _| {
                         repo.delete_branch(is_remote, branch.name().to_string())
@@ -881,12 +885,16 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None, None));
 
+        let is_head_branch = entry.as_branch().is_some_and(|branch| branch.is_head);
+
         let entry_icon = match entry {
             Entry::NewUrl { .. } | Entry::NewBranch { .. } | Entry::NewRemoteName { .. } => {
                 IconName::Plus
             }
             Entry::Branch { branch, .. } => {
-                if branch.is_remote() {
+                if is_head_branch {
+                    IconName::Check
+                } else if branch.is_remote() {
                     IconName::Screen
                 } else {
                     IconName::GitBranchAlt
@@ -971,7 +979,11 @@ impl PickerDelegate for BranchListDelegate {
                         .flex_grow()
                         .child(
                             Icon::new(entry_icon)
-                                .color(Color::Muted)
+                                .color(if is_head_branch {
+                                    Color::Accent
+                                } else {
+                                    Color::Muted
+                                })
                                 .size(IconSize::Small),
                         )
                         .child(
@@ -1083,13 +1095,8 @@ impl PickerDelegate for BranchListDelegate {
                         ),
                 )
                 .when(!is_new_items && !is_head_branch, |this| {
-                    this.map(|this| {
-                        if self.selected_index() == ix {
-                            this.end_slot(deleted_branch_icon(ix))
-                        } else {
-                            this.end_hover_slot(deleted_branch_icon(ix))
-                        }
-                    })
+                    this.end_slot(deleted_branch_icon(ix))
+                        .show_end_slot_on_hover()
                 })
                 .when_some(
                     if is_new_items {
@@ -1098,13 +1105,8 @@ impl PickerDelegate for BranchListDelegate {
                         None
                     },
                     |this, create_from_default_button| {
-                        this.map(|this| {
-                            if self.selected_index() == ix {
-                                this.end_slot(create_from_default_button)
-                            } else {
-                                this.end_hover_slot(create_from_default_button)
-                            }
-                        })
+                        this.end_slot(create_from_default_button)
+                            .show_end_slot_on_hover()
                     },
                 ),
         )
@@ -1151,20 +1153,29 @@ impl PickerDelegate for BranchListDelegate {
 
                 let delete_and_select_btns = h_flex()
                     .gap_1()
-                    .child(
-                        Button::new("delete-branch", "Delete")
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &branch_picker::DeleteBranch,
-                                    &focus_handle,
-                                    cx,
-                                )
-                                .map(|kb| kb.size(rems_from_px(12.))),
+                    .when(
+                        !selected_entry
+                            .and_then(|entry| entry.as_branch())
+                            .is_some_and(|branch| branch.is_head),
+                        |this| {
+                            this.child(
+                                Button::new("delete-branch", "Delete")
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &branch_picker::DeleteBranch,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                    )
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(
+                                            branch_picker::DeleteBranch.boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
                             )
-                            .on_click(|_, window, cx| {
-                                window
-                                    .dispatch_action(branch_picker::DeleteBranch.boxed_clone(), cx);
-                            }),
+                        },
                     )
                     .child(
                         Button::new("select_branch", "Select")
@@ -1312,7 +1323,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
     }
@@ -1903,7 +1914,7 @@ mod tests {
         assert_eq!(
             remotes,
             vec![Remote {
-                name: SharedString::from("my_new_remote".to_string())
+                name: SharedString::from("my_new_remote")
             }]
         );
     }

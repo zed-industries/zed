@@ -12,7 +12,7 @@ runs:
   steps:
     - name: Install test runner
       working-directory: ${{ inputs.working-directory }}
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c # nextest
 
     - name: Install Node
       uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

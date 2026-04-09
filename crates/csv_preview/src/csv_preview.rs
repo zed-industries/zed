@@ -9,7 +9,10 @@ use std::{
 };
 
 use crate::table_data_engine::TableDataEngine;
-use ui::{SharedString, TableColumnWidths, TableInteractionState, prelude::*};
+use ui::{
+    AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
+    TableResizeBehavior, prelude::*,
+};
 use workspace::{Item, SplitDirection, Workspace};
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
@@ -52,6 +55,30 @@ pub fn init(cx: &mut App) {
 }
 
 impl CsvPreviewView {
+    pub(crate) fn sync_column_widths(&self, cx: &mut Context<Self>) {
+        // plus 1 for the row identifier column
+        let cols = self.engine.contents.headers.cols() + 1;
+        let line_number_width = self.calculate_row_identifier_column_width();
+
+        let mut widths: Vec<AbsoluteLength> = vec![AbsoluteLength::Pixels(px(150.)); cols];
+        widths[0] = AbsoluteLength::Pixels(px(line_number_width));
+
+        let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
+        resize_behaviors[0] = TableResizeBehavior::None;
+
+        self.column_widths.widths.update(cx, |state, _cx| {
+            if state.cols() != cols {
+                *state = ResizableColumnsState::new(cols, widths, resize_behaviors);
+            } else {
+                state.set_column_configuration(
+                    0,
+                    AbsoluteLength::Pixels(px(line_number_width)),
+                    TableResizeBehavior::None,
+                );
+            }
+        });
+    }
+
     pub fn register(workspace: &mut Workspace) {
         workspace.register_action_renderer(|div, _, _, cx| {
             div.when(cx.has_flag::<TabularDataPreviewFeatureFlag>(), |div| {
@@ -122,8 +149,9 @@ impl CsvPreviewView {
     fn new(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
         let contents = TableLikeContent::default();
         let table_interaction_state = cx.new(|cx| {
-            TableInteractionState::new(cx)
-                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+            TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
+                editor::EditorSettingsScrollbarProxy,
+            >())
         });
 
         cx.new(|cx| {
@@ -131,9 +159,7 @@ impl CsvPreviewView {
                 editor,
                 |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
                     match event {
-                        EditorEvent::Edited { .. }
-                        | EditorEvent::DirtyChanged
-                        | EditorEvent::ExcerptsEdited { .. } => {
+                        EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
                             this.parse_csv_from_active_editor(true, cx);
                         }
                         _ => {}
@@ -179,7 +205,7 @@ impl CsvPreviewView {
 
         // Update list state with filtered row count
         let visible_rows = self.engine.d2d_mapping().visible_row_count();
-        self.list_state = gpui::ListState::new(visible_rows, ListAlignment::Top, px(1.));
+        self.list_state = gpui::ListState::new(visible_rows, ListAlignment::Top, px(100.));
     }
 
     pub fn resolve_active_item_as_csv_editor(
@@ -285,18 +311,19 @@ impl PerformanceMetrics {
 
 /// Holds state of column widths for a table component in CSV preview.
 pub(crate) struct ColumnWidths {
-    pub widths: Entity<TableColumnWidths>,
+    pub widths: Entity<ResizableColumnsState>,
 }
 
 impl ColumnWidths {
     pub(crate) fn new(cx: &mut Context<CsvPreviewView>, cols: usize) -> Self {
         Self {
-            widths: cx.new(|cx| TableColumnWidths::new(cols, cx)),
+            widths: cx.new(|_cx| {
+                ResizableColumnsState::new(
+                    cols,
+                    vec![AbsoluteLength::Pixels(px(150.)); cols],
+                    vec![ui::TableResizeBehavior::Resizable; cols],
+                )
+            }),
         }
-    }
-    /// Replace the current `TableColumnWidths` entity with a new one for the given column count.
-    pub(crate) fn replace(&self, cx: &mut Context<CsvPreviewView>, cols: usize) {
-        self.widths
-            .update(cx, |entity, cx| *entity = TableColumnWidths::new(cols, cx));
     }
 }

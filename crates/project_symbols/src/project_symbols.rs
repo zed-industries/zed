@@ -9,7 +9,8 @@ use picker::{Picker, PickerDelegate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
 use std::{cmp::Reverse, sync::Arc};
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use util::ResultExt;
 use workspace::{
     Workspace,
@@ -139,11 +140,20 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                     );
 
                     editor.update(cx, |editor, cx| {
+                        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
+                            return;
+                        };
+                        let text_anchor = buffer_snapshot.anchor_before(position);
+                        let Some(anchor) = multibuffer_snapshot.anchor_in_buffer(text_anchor)
+                        else {
+                            return;
+                        };
                         editor.change_selections(
                             SelectionEffects::scroll(Autoscroll::center()),
                             window,
                             cx,
-                            |s| s.select_ranges([position..position]),
+                            |s| s.select_ranges([anchor..anchor]),
                         );
                     });
                 })?;
@@ -477,7 +487,7 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
             editor::init(cx);
         });

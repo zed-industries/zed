@@ -1,6 +1,7 @@
 use crate::{
     AnyActiveCall, AppState, CollaboratorId, FollowerState, Pane, ParticipantLocation, Workspace,
     WorkspaceSettings,
+    notifications::DetachAndPromptErr,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
@@ -438,14 +439,19 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
                                 let app_state = self.app_state.clone();
                                 this.cursor_pointer().on_mouse_down(
                                     MouseButton::Left,
-                                    move |_, _, cx| {
+                                    move |_, window, cx| {
                                         crate::join_in_room_project(
                                             leader_project_id,
                                             leader_user_id,
                                             app_state.clone(),
                                             cx,
                                         )
-                                        .detach_and_log_err(cx);
+                                        .detach_and_prompt_err(
+                                            "Failed to join project",
+                                            window,
+                                            cx,
+                                            |error, _, _| Some(format!("{error:#}")),
+                                        );
                                     },
                                 )
                             },

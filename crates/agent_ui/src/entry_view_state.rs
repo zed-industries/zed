@@ -16,7 +16,7 @@ use prompt_store::PromptStore;
 use rope::Point;
 use settings::Settings as _;
 use terminal_view::TerminalView;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{Context, TextSize};
 use workspace::Workspace;
 
@@ -235,6 +235,11 @@ impl EntryViewState {
                 };
                 entry.sync(message);
             }
+            AgentThreadEntry::CompletedPlan(_) => {
+                if !matches!(self.entries.get(index), Some(Entry::CompletedPlan)) {
+                    self.set_entry(index, Entry::CompletedPlan);
+                }
+            }
         };
     }
 
@@ -253,7 +258,9 @@ impl EntryViewState {
     pub fn agent_ui_font_size_changed(&mut self, cx: &mut App) {
         for entry in self.entries.iter() {
             match entry {
-                Entry::UserMessage { .. } | Entry::AssistantMessage { .. } => {}
+                Entry::UserMessage { .. }
+                | Entry::AssistantMessage { .. }
+                | Entry::CompletedPlan => {}
                 Entry::ToolCall(ToolCallEntry { content }) => {
                     for view in content.values() {
                         if let Ok(diff_editor) = view.clone().downcast::<Editor>() {
@@ -320,6 +327,7 @@ pub enum Entry {
     UserMessage(Entity<MessageEditor>),
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
+    CompletedPlan,
 }
 
 impl Entry {
@@ -327,14 +335,14 @@ impl Entry {
         match self {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
-            Self::ToolCall(_) => None,
+            Self::ToolCall(_) | Self::CompletedPlan => None,
         }
     }
 
     pub fn message_editor(&self) -> Option<&Entity<MessageEditor>> {
         match self {
             Self::UserMessage(editor) => Some(editor),
-            Self::AssistantMessage(_) | Self::ToolCall(_) => None,
+            Self::AssistantMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
         }
     }
 
@@ -361,7 +369,7 @@ impl Entry {
     ) -> Option<ScrollHandle> {
         match self {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
-            Self::UserMessage(_) | Self::ToolCall(_) => None,
+            Self::UserMessage(_) | Self::ToolCall(_) | Self::CompletedPlan => None,
         }
     }
 
@@ -376,7 +384,7 @@ impl Entry {
     pub fn has_content(&self) -> bool {
         match self {
             Self::ToolCall(ToolCallEntry { content }) => !content.is_empty(),
-            Self::UserMessage(_) | Self::AssistantMessage(_) => false,
+            Self::UserMessage(_) | Self::AssistantMessage(_) | Self::CompletedPlan => false,
         }
     }
 }
@@ -586,7 +594,7 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
         });
     }

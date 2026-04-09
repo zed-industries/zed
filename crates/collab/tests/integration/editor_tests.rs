@@ -23,7 +23,7 @@ use gpui::{
     VisualTestContext,
 };
 use indoc::indoc;
-use language::{FakeLspAdapter, language_settings::language_settings, rust_lang};
+use language::{FakeLspAdapter, language_settings::LanguageSettings, rust_lang};
 use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
 use multi_buffer::{AnchorRangeExt as _, MultiBufferRow};
 use pretty_assertions::assert_eq;
@@ -4036,6 +4036,8 @@ async fn test_collaborating_with_external_editorconfig(
         .await
         .unwrap();
 
+    project_a.update(cx_a, |project, _| project.languages().add(rust_lang()));
+
     // Open buffer on client A
     let buffer_a = project_a
         .update(cx_a, |p, cx| {
@@ -4048,13 +4050,13 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees external editorconfig settings
     cx_a.read(|cx| {
-        let file = buffer_a.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_a.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
     // Client B joins the project
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    project_b.update(cx_b, |project, _| project.languages().add(rust_lang()));
     let buffer_b = project_b
         .update(cx_b, |p, cx| {
             p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
@@ -4066,8 +4068,7 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client B also sees external editorconfig settings
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_b.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(5));
     });
 
@@ -4086,15 +4087,13 @@ async fn test_collaborating_with_external_editorconfig(
 
     // Verify client A sees updated settings
     cx_a.read(|cx| {
-        let file = buffer_a.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_a.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 
     // Verify client B also sees updated settings
     cx_b.read(|cx| {
-        let file = buffer_b.read(cx).file();
-        let settings = language_settings(Some("Rust".into()), file, cx);
+        let settings = LanguageSettings::for_buffer(&buffer_b.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(9));
     });
 }

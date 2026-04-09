@@ -17,7 +17,8 @@ use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
+use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
+
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectItem, ProjectPath};
@@ -28,7 +29,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::{fmt::Display, ops::Range, sync::Arc};
 use text::{Bias, ToPoint};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement, SharedString, Styled,
     StyledTypography, Window, h_flex, rems,
@@ -137,6 +138,7 @@ pub enum Operator {
     RecordRegister,
     ReplayRegister,
     ToggleComments,
+    ToggleBlockComments,
     ReplaceWithRegister,
     Exchange,
     HelixMatch,
@@ -425,7 +427,7 @@ impl MarksState {
                             name.clone(),
                             buffer
                                 .read(cx)
-                                .summaries_for_anchors::<Point, _>(anchors)
+                                .summaries_for_anchors::<Point, _>(anchors.iter().copied())
                                 .collect(),
                         )
                     })
@@ -491,7 +493,14 @@ impl MarksState {
         {
             let buffer_marks = old_marks
                 .into_iter()
-                .map(|(k, v)| (k, v.into_iter().map(|anchor| anchor.text_anchor).collect()))
+                .map(|(k, v)| {
+                    (
+                        k,
+                        v.into_iter()
+                            .filter_map(|anchor| anchor.raw_text_anchor())
+                            .collect(),
+                    )
+                })
                 .collect();
             self.buffer_marks
                 .insert(buffer.read(cx).remote_id(), buffer_marks);
@@ -568,6 +577,7 @@ impl MarksState {
         anchors: Vec<Anchor>,
         cx: &mut Context<Self>,
     ) {
+        let multibuffer_snapshot = multibuffer.read(cx).snapshot(cx);
         let buffer = multibuffer.read(cx).as_singleton();
         let abs_path = buffer.as_ref().and_then(|b| self.path_for_buffer(b, cx));
 
@@ -601,7 +611,7 @@ impl MarksState {
             name.clone(),
             anchors
                 .into_iter()
-                .map(|anchor| anchor.text_anchor)
+                .filter_map(|anchor| Some(multibuffer_snapshot.anchor_to_buffer_anchor(anchor)?.0))
                 .collect(),
         );
         if !self.watched_buffers.contains_key(&buffer_id) {
@@ -628,12 +638,13 @@ impl MarksState {
                 return Some(Mark::Local(anchors.get(name)?.clone()));
             }
 
-            let (excerpt_id, buffer_id, _) = multi_buffer.read(cx).read(cx).as_singleton()?;
-            if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
+            let multibuffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+            let buffer_snapshot = multibuffer_snapshot.as_singleton()?;
+            if let Some(anchors) = self.buffer_marks.get(&buffer_snapshot.remote_id()) {
                 let text_anchors = anchors.get(name)?;
                 let anchors = text_anchors
                     .iter()
-                    .map(|anchor| Anchor::in_buffer(excerpt_id, *anchor))
+                    .filter_map(|anchor| multibuffer_snapshot.anchor_in_excerpt(*anchor))
                     .collect();
                 return Some(Mark::Local(anchors));
             }
@@ -894,14 +905,13 @@ impl VimGlobals {
                 }
             }
             '%' => editor.and_then(|editor| {
-                let selection = editor
-                    .selections
-                    .newest::<Point>(&editor.display_snapshot(cx));
-                if let Some((_, buffer, _)) = editor
-                    .buffer()
-                    .read(cx)
-                    .excerpt_containing(selection.head(), cx)
-                {
+                let multibuffer = editor.buffer().read(cx);
+                let snapshot = multibuffer.snapshot(cx);
+                let selection = editor.selections.newest_anchor();
+                let buffer = snapshot
+                    .anchor_to_buffer_anchor(selection.head())
+                    .and_then(|(text_anchor, _)| multibuffer.buffer(text_anchor.buffer_id));
+                if let Some(buffer) = buffer {
                     buffer
                         .read(cx)
                         .file()
@@ -1021,6 +1031,7 @@ impl Clone for ReplayableAction {
 pub struct SearchState {
     pub direction: Direction,
     pub count: usize,
+    pub cmd_f_search: bool,
 
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
@@ -1068,6 +1079,7 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::ToggleBlockComments => "gb",
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
@@ -1147,6 +1159,7 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
@@ -1170,6 +1183,7 @@ impl Operator {
             | Operator::Rot13
             | Operator::Rot47
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::ReplaceWithRegister
             | Operator::Rewrap
             | Operator::ShellCommand
@@ -1402,8 +1416,8 @@ impl MarksMatchInfo {
         let mut offset = 0;
         for chunk in chunks {
             line.push_str(chunk.text);
-            if let Some(highlight_style) = chunk.syntax_highlight_id
-                && let Some(highlight) = highlight_style.style(cx.theme().syntax())
+            if let Some(highlight_id) = chunk.syntax_highlight_id
+                && let Some(highlight) = cx.theme().syntax().get(highlight_id).cloned()
             {
                 highlights.push((offset..offset + chunk.text.len(), highlight))
             }
@@ -1494,7 +1508,10 @@ impl PickerDelegate for MarksViewDelegate {
                                     position.row,
                                     snapshot.line_len(MultiBufferRow(position.row)),
                                 ),
-                            true,
+                            LanguageAwareStyling {
+                                tree_sitter: true,
+                                diagnostics: true,
+                            },
                         );
                         matches.push(MarksMatch {
                             name: name.clone(),
@@ -1520,7 +1537,10 @@ impl PickerDelegate for MarksViewDelegate {
                             let chunks = snapshot.chunks(
                                 Point::new(position.row, 0)
                                     ..Point::new(position.row, snapshot.line_len(position.row)),
-                                true,
+                                LanguageAwareStyling {
+                                    tree_sitter: true,
+                                    diagnostics: true,
+                                },
                             );
 
                             matches.push(MarksMatch {

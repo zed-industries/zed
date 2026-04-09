@@ -88,6 +88,8 @@ actions!(
         ConvertToRot47,
         /// Toggles comments for selected lines.
         ToggleComments,
+        /// Toggles block comments for selected lines.
+        ToggleBlockComments,
         /// Shows the current location in the file.
         ShowLocation,
         /// Undoes the last change.
@@ -125,6 +127,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::yank_line);
     Vim::action(editor, cx, Vim::yank_to_end_of_line);
     Vim::action(editor, cx, Vim::toggle_comments);
+    Vim::action(editor, cx, Vim::toggle_block_comments);
     Vim::action(editor, cx, Vim::paste);
     Vim::action(editor, cx, Vim::show_location);
 
@@ -463,6 +466,9 @@ impl Vim {
             Some(Operator::ToggleComments) => {
                 self.toggle_comments_motion(motion, times, forced_motion, window, cx)
             }
+            Some(Operator::ToggleBlockComments) => {
+                self.toggle_block_comments_motion(motion, times, forced_motion, window, cx)
+            }
             Some(Operator::ReplaceWithRegister) => {
                 self.replace_with_register_motion(motion, times, forced_motion, window, cx)
             }
@@ -532,6 +538,9 @@ impl Vim {
                 }
                 Some(Operator::ToggleComments) => {
                     self.toggle_comments_object(object, around, times, window, cx)
+                }
+                Some(Operator::ToggleBlockComments) => {
+                    self.toggle_block_comments_object(object, around, times, window, cx)
                 }
                 Some(Operator::ReplaceWithRegister) => {
                     self.replace_with_register_object(object, around, window, cx)
@@ -731,10 +740,10 @@ impl Vim {
                     .collect::<Vec<_>>();
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_cursors_with(&mut |map, cursor, _| {
-                        let previous_line = map.start_of_relative_buffer_row(cursor, -1);
+                    s.move_with(&mut |map, selection| {
+                        let previous_line = map.start_of_relative_buffer_row(selection.start, -1);
                         let insert_point = motion::end_of_line(map, false, previous_line, 1);
-                        (insert_point, SelectionGoal::None)
+                        selection.collapse_to(insert_point, SelectionGoal::None)
                     });
                 });
             });
@@ -750,14 +759,19 @@ impl Vim {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(cx, |_, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections
                     .into_iter()
-                    .map(|selection| selection.end.row)
+                    .map(|selection| {
+                        if !selection.is_empty() && selection.end.column == 0 {
+                            selection.end.row.saturating_sub(1)
+                        } else {
+                            selection.end.row
+                        }
+                    })
                     .collect();
                 let edits = selection_end_rows
                     .into_iter()
@@ -772,14 +786,17 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.maybe_move_cursors_with(&mut |map, cursor, goal| {
-                        Motion::CurrentLine.move_point(
-                            map,
-                            cursor,
-                            goal,
-                            None,
-                            &text_layout_details,
-                        )
+                    s.move_with(&mut |map, selection| {
+                        let current_line = if !selection.is_empty() && selection.end.column() == 0 {
+                            // If this is an insert after a selection to the end of the line, the
+                            // cursor needs to be bumped back, because it'll be at the start of the
+                            // *next* line.
+                            map.start_of_relative_buffer_row(selection.end, -1)
+                        } else {
+                            selection.end
+                        };
+                        let insert_point = motion::end_of_line(map, false, current_line, 1);
+                        selection.collapse_to(insert_point, SelectionGoal::None)
                     });
                 });
                 editor.edit_with_autoindent(edits, cx);
@@ -924,7 +941,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |vim, editor, cx| {
             let selection = editor.selections.newest_anchor();
-            let Some((buffer, point, _)) = editor
+            let Some((buffer, point)) = editor
                 .buffer()
                 .read(cx)
                 .point_to_buffer_point(selection.head(), cx)
@@ -969,6 +986,38 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 let original_positions = vim.save_selection_starts(editor, cx);
                 editor.toggle_comments(&Default::default(), window, cx);
+                vim.restore_selection_cursors(editor, window, cx, original_positions);
+            });
+        });
+        if self.mode.is_visual() {
+            self.switch_mode(Mode::Normal, true, window, cx)
+        }
+    }
+
+    fn toggle_block_comments(
+        &mut self,
+        _: &ToggleBlockComments,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.record_current_action(cx);
+        self.store_visual_marks(window, cx);
+        let is_visual_line = self.mode == Mode::VisualLine;
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                let original_positions = vim.save_selection_starts(editor, cx);
+                if is_visual_line {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.move_with(&mut |map, selection| {
+                            let start_row = selection.start.to_point(map).row;
+                            let end_row = selection.end.to_point(map).row;
+                            let end_col = map.buffer_snapshot().line_len(MultiBufferRow(end_row));
+                            selection.start = Point::new(start_row, 0).to_display_point(map);
+                            selection.end = Point::new(end_row, end_col).to_display_point(map);
+                        });
+                    });
+                }
+                editor.toggle_block_comments(&Default::default(), window, cx);
                 vim.restore_selection_cursors(editor, window, cx, original_positions);
             });
         });
