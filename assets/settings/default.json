@@ -717,7 +717,7 @@
     // Default width of the project panel.
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Spacing between worktree entries in the project panel. Can be 'comfortable' or 'standard'.
     "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
@@ -792,6 +792,21 @@
     // 3. Show files first, then directories:
     //    "files_first"
     "sort_mode": "directories_first",
+    // Whether to sort file and folder names case-sensitively in the project panel.
+    // This setting can take four values:
+    //
+    // 1. Case-insensitive natural sort with lowercase preferred in ties (default):
+    //    "default"
+    // 2. Uppercase names are grouped before lowercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "upper"
+    // 3. Lowercase names are grouped before uppercase names,
+    //    with case-insensitive natural sort within each group:
+    //    "lower"
+    // 4. Pure Unicode codepoint comparison.
+    //    No case folding, no natural number sorting:
+    //    "unicode"
+    "sort_order": "default",
     // Whether to show error and warning count badges next to file names in the project panel.
     "diagnostic_badges": false,
     // Whether to show the git status indicator next to file names in the project panel.
@@ -819,7 +834,7 @@
     // Default width of the outline panel.
     "default_width": 300,
     // Where to dock the outline panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Whether to show file icons in the outline panel.
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the outline panel.
@@ -871,7 +886,7 @@
     // Whether to show the collaboration panel button in the status bar.
     "button": true,
     // Where to dock the collaboration panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Default width of the collaboration panel.
     "default_width": 240,
   },
@@ -879,7 +894,7 @@
     // Whether to show the git panel button in the status bar.
     "button": true,
     // Where to dock the git panel. Can be 'left' or 'right'.
-    "dock": "left",
+    "dock": "right",
     // Default width of the git panel.
     "default_width": 360,
     // Style of the git status indicator in the panel.
@@ -936,16 +951,6 @@
     // For example: typing `:wave:` gets replaced with `👋`.
     "auto_replace_emoji_shortcode": true,
   },
-  "notification_panel": {
-    // Whether to show the notification panel button in the status bar.
-    "button": true,
-    // Where to dock the notification panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the notification panel.
-    "default_width": 380,
-    // Whether to show a badge on the notification panel icon with the count of unread notifications.
-    "show_count_badge": false,
-  },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
@@ -954,7 +959,7 @@
     // Whether to show the agent panel button in the status bar.
     "button": true,
     // Where to dock the agent panel. Can be 'left', 'right' or 'bottom'.
-    "dock": "right",
+    "dock": "left",
     // Whether the agent panel should use flexible (proportional) sizing.
     //
     // Default: true
@@ -965,6 +970,9 @@
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
+    // Maximum content width when the agent panel is wider than this value.
+    // Content will be centered within the panel.
+    "max_content_width": 850,
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
@@ -1144,6 +1152,11 @@
     //
     // Default: false
     "show_turn_stats": false,
+    // Whether to show the merge conflict indicator in the status bar
+    // that offers to resolve conflicts using the agent.
+    //
+    // Default: true
+    "show_merge_conflict_indicator": true,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -2412,6 +2425,7 @@
     "toggle_relative_line_numbers": false,
     "use_system_clipboard": "always",
     "use_smartcase_find": false,
+    "use_regex_search": true,
     "gdefault": false,
     "highlight_on_yank_duration": 200,
     "custom_digraphs": {},

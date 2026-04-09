@@ -117,7 +117,7 @@ pub trait AgentConnection {
         &self,
         _method: &acp::AuthMethodId,
         _cx: &App,
-    ) -> Option<SpawnInTerminal> {
+    ) -> Option<Task<Result<SpawnInTerminal>>> {
         None
     }
 

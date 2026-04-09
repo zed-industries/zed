@@ -13,3 +13,16 @@ pub use hold_for_default::*;
 pub use mention_crease::*;
 pub use model_selector_components::*;
 pub use undo_reject_toast::*;
+
+/// Returns the appropriate [`DocumentationSide`] for documentation asides
+/// in the agent panel, based on the current dock position.
+pub fn documentation_aside_side(cx: &gpui::App) -> ui::DocumentationSide {
+    use agent_settings::AgentSettings;
+    use settings::Settings;
+    use ui::DocumentationSide;
+
+    match AgentSettings::get_global(cx).dock {
+        settings::DockPosition::Left => DocumentationSide::Right,
+        settings::DockPosition::Bottom | settings::DockPosition::Right => DocumentationSide::Left,
+    }
+}

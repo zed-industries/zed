@@ -275,6 +275,7 @@ dependencies = [
  "nix 0.29.0",
  "project",
  "release_channel",
+ "remote",
  "reqwest_client",
  "serde",
  "serde_json",
@@ -331,6 +332,7 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
+ "clock",
  "cloud_api_types",
  "collections",
  "command_palette_hooks",
@@ -365,6 +367,7 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
+ "node_runtime",
  "notifications",
  "ordered-float 2.10.1",
  "parking_lot",
@@ -377,6 +380,9 @@ dependencies = [
  "proto",
  "rand 0.9.2",
  "release_channel",
+ "remote",
+ "remote_connection",
+ "remote_server",
  "reqwest_client",
  "rope",
  "rules_library",
@@ -573,9 +579,9 @@ checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "annotate-snippets"
-version = "0.12.13"
+version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74fc7650eedcb2fee505aad48491529e408f0e854c2d9f63eb86c1361b9b3f93"
+checksum = "92570a3f9c98e7e84df84b71d0965ac99b1871fcd75a3773a3bd1bad13f64cf7"
 dependencies = [
  "anstyle",
  "memchr",
@@ -638,13 +644,17 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "collections",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
+ "log",
  "schemars",
  "serde",
  "serde_json",
  "strum 0.27.2",
  "thiserror 2.0.18",
+ "tiktoken-rs",
 ]
 
 [[package]]
@@ -684,6 +694,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 dependencies = [
  "derive_arbitrary",
+]
+
+[[package]]
+name = "arc-swap"
+version = "1.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a3a1fd6f75306b68087b831f025c712524bcb19aad54e557b1129cfa0a2b207"
+dependencies = [
+ "rustversion",
 ]
 
 [[package]]
@@ -876,7 +895,7 @@ checksum = "c96bf972d85afc50bf5ab8fe2d54d1586b4e0b46c97c50a0c9e71e2f7bcd812a"
 dependencies = [
  "async-task",
  "concurrent-queue",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "futures-lite 2.6.1",
  "pin-project-lite",
  "slab",
@@ -997,9 +1016,9 @@ dependencies = [
 
 [[package]]
 name = "async-signal"
-version = "0.2.13"
+version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43c070bbf59cd3570b6b2dd54cd772527c7c3620fce8be898406dd3ed6adc64c"
+checksum = "52b5aaafa020cf5053a01f2a60e8ff5dccf550f0f77ec54a4e47285ac2bab485"
 dependencies = [
  "async-io",
  "async-lock 3.4.2",
@@ -1279,10 +1298,13 @@ dependencies = [
 name = "auto_update_ui"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "auto_update",
  "client",
+ "db",
  "editor",
+ "fs",
  "gpui",
  "markdown_preview",
  "release_channel",
@@ -1290,9 +1312,11 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
+ "telemetry",
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -1363,7 +1387,7 @@ dependencies = [
  "aws-smithy-types",
  "aws-types",
  "bytes 1.11.1",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "hex",
  "http 1.4.0",
  "sha1",
@@ -1426,7 +1450,7 @@ dependencies = [
  "aws-types",
  "bytes 1.11.1",
  "bytes-utils",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "http 0.2.12",
  "http 1.4.0",
  "http-body 0.4.6",
@@ -1456,7 +1480,7 @@ dependencies = [
  "aws-smithy-types",
  "aws-types",
  "bytes 1.11.1",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "http 0.2.12",
  "http 1.4.0",
  "http-body-util",
@@ -1482,7 +1506,7 @@ dependencies = [
  "aws-smithy-types",
  "aws-types",
  "bytes 1.11.1",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "http 0.2.12",
  "http 1.4.0",
  "regex-lite",
@@ -1509,7 +1533,7 @@ dependencies = [
  "aws-smithy-xml",
  "aws-types",
  "bytes 1.11.1",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "hex",
  "hmac",
  "http 0.2.12",
@@ -1540,7 +1564,7 @@ dependencies = [
  "aws-smithy-types",
  "aws-types",
  "bytes 1.11.1",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "http 0.2.12",
  "http 1.4.0",
  "regex-lite",
@@ -1564,7 +1588,7 @@ dependencies = [
  "aws-smithy-types",
  "aws-types",
  "bytes 1.11.1",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "http 0.2.12",
  "http 1.4.0",
  "regex-lite",
@@ -1589,7 +1613,7 @@ dependencies = [
  "aws-smithy-types",
  "aws-smithy-xml",
  "aws-types",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "http 0.2.12",
  "http 1.4.0",
  "regex-lite",
@@ -1790,7 +1814,7 @@ dependencies = [
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "bytes 1.11.1",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "http 0.2.12",
  "http 1.4.0",
  "http-body 0.4.6",
@@ -2684,13 +2708,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "cargo-platform"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87a0c0e6148f11f01f32650a2ea02d532b2ad4e81d8bd41e6e565b5adc5e6082"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "cargo_metadata"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd5eb614ed4c27c5d706420e4320fbe3216ab31fa1c33cd8246ac36dae4479ba"
 dependencies = [
  "camino",
- "cargo-platform",
+ "cargo-platform 0.1.9",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "cargo_metadata"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
+dependencies = [
+ "camino",
+ "cargo-platform 0.3.2",
  "semver",
  "serde",
  "serde_json",
@@ -2742,9 +2790,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.58"
+version = "1.2.59"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1e928d4b69e3077709075a938a05ffbedfa53a84c8f766efbf8220bb1ff60e1"
+checksum = "b7a4d3ec6524d28a329fc53654bbadc9bdd7b0431f5d65f1a56ffb28a1ee5283"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -3023,7 +3071,6 @@ dependencies = [
  "http_client",
  "http_client_tls",
  "httparse",
- "language_model",
  "log",
  "objc2-foundation",
  "parking_lot",
@@ -3079,6 +3126,7 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
+ "smol",
  "thiserror 2.0.18",
  "yawc",
 ]
@@ -3324,7 +3372,6 @@ dependencies = [
  "anyhow",
  "call",
  "channel",
- "chrono",
  "client",
  "collections",
  "db",
@@ -3333,7 +3380,6 @@ dependencies = [
  "fuzzy",
  "gpui",
  "livekit_client",
- "log",
  "menu",
  "notifications",
  "picker",
@@ -3348,7 +3394,6 @@ dependencies = [
  "theme",
  "theme_settings",
  "time",
- "time_format",
  "title_bar",
  "ui",
  "util",
@@ -3438,6 +3483,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "compliance"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "derive_more",
+ "futures 0.3.32",
+ "indoc",
+ "itertools 0.14.0",
+ "jsonwebtoken",
+ "octocrab",
+ "regex",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "component"
 version = "0.1.0"
 dependencies = [
@@ -3505,19 +3569,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
 dependencies = [
  "crossbeam-utils",
-]
-
-[[package]]
-name = "console"
-version = "0.15.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "054ccb5b10f9f2cbf51eb355ca1d05c2d279ce1804688d0db74b4733a5aeafd8"
-dependencies = [
- "encode_unicode",
- "libc",
- "once_cell",
- "unicode-width",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5007,20 +5058,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dialoguer"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "658bce805d770f407bc62102fca7c2c64ceef2fbcb2b8bd19d2765ce093980de"
-dependencies = [
- "console",
- "fuzzy-matcher",
- "shell-words",
- "tempfile",
- "thiserror 1.0.69",
- "zeroize",
-]
-
-[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5350,12 +5387,14 @@ dependencies = [
  "buffer_diff",
  "client",
  "clock",
+ "cloud_api_client",
  "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "copilot",
  "copilot_ui",
  "credentials_provider",
+ "criterion",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5369,9 +5408,11 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "languages",
  "log",
  "lsp",
  "menu",
+ "node_runtime",
  "open_ai",
  "parking_lot",
  "postage",
@@ -5415,7 +5456,6 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "collections",
- "criterion",
  "db",
  "debug_adapter_extension",
  "dirs 4.0.0",
@@ -5720,12 +5760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "encode_unicode"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
-
-[[package]]
 name = "encoding_rs"
 version = "0.8.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5829,7 +5863,7 @@ dependencies = [
 name = "env_var"
 version = "0.1.0"
 dependencies = [
- "gpui",
+ "gpui_shared_string",
 ]
 
 [[package]]
@@ -6285,9 +6319,9 @@ dependencies = [
 
 [[package]]
 name = "fastrand"
-version = "2.3.0"
+version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
 name = "fax"
@@ -6381,6 +6415,7 @@ dependencies = [
  "file_icons",
  "futures 0.3.32",
  "fuzzy",
+ "fuzzy_nucleo",
  "gpui",
  "menu",
  "open_path_prompt",
@@ -6534,9 +6569,9 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "font-types"
-version = "0.11.1"
+version = "0.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73829a7b5c91198af28a99159b7ae4afbb252fb906159ff7f189f3a2ceaa3df2"
+checksum = "2d9237c6d82152100c691fb77ea18037b402bcc7257d2c876a4ffac81bc22a1c"
 dependencies = [
  "bytemuck",
 ]
@@ -6860,7 +6895,7 @@ version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f78e10609fe0e0b3f4157ffab1876319b5b0db102a2c60dc4626306dc46b44ad"
 dependencies = [
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "futures-core",
  "futures-io",
  "parking",
@@ -6920,12 +6955,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "fuzzy-matcher"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
+name = "fuzzy_nucleo"
+version = "0.1.0"
 dependencies = [
- "thread_local",
+ "gpui",
+ "nucleo",
+ "util",
 ]
 
 [[package]]
@@ -7557,6 +7592,7 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
+ "alacritty_terminal",
  "anyhow",
  "askpass",
  "buffer_diff",
@@ -7832,11 +7868,13 @@ dependencies = [
  "anyhow",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
+ "log",
  "schemars",
  "serde",
  "serde_json",
- "settings",
  "strum 0.27.2",
+ "tiktoken-rs",
 ]
 
 [[package]]
@@ -7905,6 +7943,7 @@ dependencies = [
  "getrandom 0.3.4",
  "gpui_macros",
  "gpui_platform",
+ "gpui_shared_string",
  "gpui_util",
  "gpui_web",
  "gtk",
@@ -8074,6 +8113,16 @@ dependencies = [
  "gpui_macos",
  "gpui_web",
  "gpui_windows",
+]
+
+[[package]]
+name = "gpui_shared_string"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "gpui_util",
+ "schemars",
+ "serde",
 ]
 
 [[package]]
@@ -8811,11 +8860,25 @@ dependencies = [
  "http 1.4.0",
  "hyper 1.9.0",
  "hyper-util",
+ "log",
  "rustls 0.23.37",
  "rustls-native-certs 0.8.3",
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.4",
+ "tower-service",
+]
+
+[[package]]
+name = "hyper-timeout"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b90d566bffbce6a75bd8b09a05aa8c2cb1fabb6cb348f8840c9e4c90a0d83b0"
+dependencies = [
+ "hyper 1.9.0",
+ "hyper-util",
+ "pin-project-lite",
+ "tokio",
  "tower-service",
 ]
 
@@ -9824,7 +9887,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "gpui",
+ "gpui_shared_string",
  "log",
  "lsp",
  "parking_lot",
@@ -9863,12 +9926,8 @@ dependencies = [
 name = "language_model"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "base64 0.22.1",
- "cloud_api_client",
- "cloud_api_types",
- "cloud_llm_client",
  "collections",
  "credentials_provider",
  "env_var",
@@ -9877,16 +9936,31 @@ dependencies = [
  "http_client",
  "icons",
  "image",
+ "language_model_core",
  "log",
- "open_ai",
- "open_router",
  "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "util",
+]
+
+[[package]]
+name = "language_model_core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cloud_llm_client",
+ "futures 0.3.32",
+ "gpui_shared_string",
+ "http_client",
+ "partial-json-fixer",
  "schemars",
  "serde",
  "serde_json",
  "smol",
+ "strum 0.27.2",
  "thiserror 2.0.18",
- "util",
 ]
 
 [[package]]
@@ -9902,8 +9976,8 @@ dependencies = [
  "base64 0.22.1",
  "bedrock",
  "client",
+ "cloud_api_client",
  "cloud_api_types",
- "cloud_llm_client",
  "collections",
  "component",
  "convert_case 0.8.0",
@@ -9922,6 +9996,7 @@ dependencies = [
  "http_client",
  "language",
  "language_model",
+ "language_models_cloud",
  "lmstudio",
  "log",
  "menu",
@@ -9930,23 +10005,42 @@ dependencies = [
  "open_ai",
  "open_router",
  "opencode",
- "partial-json-fixer",
  "pretty_assertions",
  "release_channel",
  "schemars",
- "semver",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "strum 0.27.2",
- "thiserror 2.0.18",
  "tiktoken-rs",
  "tokio",
  "ui",
  "ui_input",
  "util",
  "vercel",
+ "x_ai",
+]
+
+[[package]]
+name = "language_models_cloud"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "cloud_llm_client",
+ "futures 0.3.32",
+ "google_ai",
+ "gpui",
+ "http_client",
+ "language_model",
+ "open_ai",
+ "schemars",
+ "semver",
+ "serde",
+ "serde_json",
+ "smol",
+ "thiserror 2.0.18",
  "x_ai",
 ]
 
@@ -10238,9 +10332,9 @@ dependencies = [
 
 [[package]]
 name = "libz-sys"
-version = "1.1.25"
+version = "1.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d52f4c29e2a68ac30c9087e1b772dc9f44a2b66ed44edf2266cf2be9b03dafc1"
+checksum = "fc3a226e576f50782b3305c5ccf458698f92798987f551c6a02efe8276721e22"
 dependencies = [
  "cc",
  "libc",
@@ -10446,9 +10540,9 @@ dependencies = [
 
 [[package]]
 name = "lmdb-master-sys"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "864808e0b19fb6dd3b70ba94ee671b82fce17554cf80aeb0a155c65bb08027df"
+checksum = "aaeb9bd22e73bd1babffff614994b341e9b2008de7bb73bf1f7e9154f1978f8b"
 dependencies = [
  "cc",
  "doxygen-rs",
@@ -10551,7 +10645,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=a4f410987660bf560d1e617cb78117c6b6b9f599#a4f410987660bf560d1e617cb78117c6b6b9f599"
+source = "git+https://github.com/zed-industries/lsp-types?rev=c7396459fefc7886b4adfa3b596832405ae1e880#c7396459fefc7886b4adfa3b596832405ae1e880"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -10702,6 +10796,7 @@ dependencies = [
  "language",
  "log",
  "markdown",
+ "project",
  "settings",
  "tempfile",
  "theme_settings",
@@ -11569,6 +11664,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "nucleo"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5262af4c94921c2646c5ac6ff7900c2af9cbb08dc26a797e18130a7019c039d4"
+dependencies = [
+ "nucleo-matcher",
+ "parking_lot",
+ "rayon",
+]
+
+[[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "num"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11990,6 +12106,48 @@ dependencies = [
 ]
 
 [[package]]
+name = "octocrab"
+version = "0.49.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63f6687a23731011d0117f9f4c3cdabaa7b5e42ca671f42b5cc0657c492540e3"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes 1.11.1",
+ "cargo_metadata 0.23.1",
+ "cfg-if",
+ "chrono",
+ "either",
+ "futures 0.3.32",
+ "futures-core",
+ "futures-util",
+ "getrandom 0.2.17",
+ "http 1.4.0",
+ "http-body 1.0.1",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-rustls 0.27.7",
+ "hyper-timeout",
+ "hyper-util",
+ "jsonwebtoken",
+ "once_cell",
+ "percent-encoding",
+ "pin-project",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "serde_urlencoded",
+ "snafu",
+ "tokio",
+ "tower 0.5.3",
+ "tower-http 0.6.8",
+ "url",
+ "web-time",
+]
+
+[[package]]
 name = "ollama"
 version = "0.1.0"
 dependencies = [
@@ -12008,6 +12166,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_api_types",
+ "collections",
  "component",
  "db",
  "documented",
@@ -12101,16 +12261,19 @@ name = "open_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "collections",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
  "log",
+ "pretty_assertions",
  "rand 0.9.2",
  "schemars",
  "serde",
  "serde_json",
- "settings",
  "strum 0.27.2",
  "thiserror 2.0.18",
+ "tiktoken-rs",
 ]
 
 [[package]]
@@ -12142,6 +12305,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.32",
  "http_client",
+ "language_model_core",
  "schemars",
  "serde",
  "serde_json",
@@ -13214,7 +13378,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2cbb1126afed61dd6368748dae63b1ee7dc480191c6262a3b4ff1e29d86a6c5b"
 dependencies = [
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "phf_shared 0.12.1",
 ]
 
@@ -13224,7 +13388,7 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "135ace3a761e564ec88c03a77317a7c6b80bb7f7135ef2544dbe054243b89737"
 dependencies = [
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "phf_shared 0.13.1",
 ]
 
@@ -13358,7 +13522,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c835479a4443ded371d6c535cbfd8d31ad92c5d23ae9770a61bc155e4992a3c1"
 dependencies = [
  "atomic-waker",
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "futures-io",
 ]
 
@@ -13409,7 +13573,6 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "platform_title_bar"
 version = "0.1.0"
 dependencies = [
- "feature_flags",
  "gpui",
  "project",
  "settings",
@@ -13698,7 +13861,7 @@ version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
 dependencies = [
- "toml_edit 0.25.10+spec-1.1.0",
+ "toml_edit 0.25.11+spec-1.1.0",
 ]
 
 [[package]]
@@ -13822,6 +13985,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "fuzzy",
+ "fuzzy_nucleo",
  "git",
  "git2",
  "git_hosting_providers",
@@ -15791,9 +15955,9 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "saa"
-version = "5.5.0"
+version = "5.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16c7f49c9d5caa3bf4b3106900484b447b9253fe99670ceb81cb6cb5027855e1"
+checksum = "bd8d438861332c3b1ac396c77bd9cac620ea1ff347efb63c05a83d8f0a593899"
 
 [[package]]
 name = "safetensors"
@@ -16109,6 +16273,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
 name = "security-framework"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -16171,9 +16344,9 @@ checksum = "b12e76d157a900eb52e81bc6e9f3069344290341720e9178cde2407113ac8d89"
 
 [[package]]
 name = "semver"
-version = "1.0.27"
+version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 dependencies = [
  "serde",
  "serde_core",
@@ -16339,9 +16512,9 @@ dependencies = [
 
 [[package]]
 name = "serial2"
-version = "0.2.34"
+version = "0.2.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1401f562d358cdfdbdf8946e51a7871ede1db68bd0fd99bedc79e400241550"
+checksum = "e66ab7ee258c6456796c6098e1b53a5baa1a5e0637347de59ddb44ee8e20be6e"
 dependencies = [
  "cfg-if",
  "libc",
@@ -16407,6 +16580,7 @@ dependencies = [
  "collections",
  "derive_more",
  "gpui",
+ "language_model_core",
  "log",
  "schemars",
  "serde",
@@ -16478,7 +16652,6 @@ dependencies = [
  "edit_prediction",
  "edit_prediction_ui",
  "editor",
- "feature_flags",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -16627,22 +16800,33 @@ dependencies = [
  "agent_ui",
  "anyhow",
  "chrono",
+ "client",
+ "clock",
  "editor",
- "feature_flags",
+ "extension",
  "fs",
  "git",
  "gpui",
+ "http_client",
+ "language",
  "language_model",
+ "log",
  "menu",
+ "node_runtime",
  "platform_title_bar",
  "pretty_assertions",
  "project",
  "prompt_store",
  "recent_projects",
+ "release_channel",
  "remote",
+ "remote_connection",
+ "remote_server",
+ "semver",
  "serde",
  "serde_json",
  "settings",
+ "smol",
  "theme",
  "theme_settings",
  "ui",
@@ -16830,6 +17014,27 @@ name = "smol_str"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
+
+[[package]]
+name = "snafu"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e84b3f4eacbf3a1ce05eac6763b4d629d60cbc94d632e4092c54ade71f1e1a2"
+dependencies = [
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1c97747dbf44bb1ca44a561ece23508e99cb592e862f22222dcf42f51d1e451"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
 
 [[package]]
 name = "snippet"
@@ -17270,44 +17475,6 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
-
-[[package]]
-name = "story"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "itertools 0.14.0",
- "smallvec",
-]
-
-[[package]]
-name = "storybook"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "ctrlc",
- "dialoguer",
- "editor",
- "fuzzy",
- "gpui",
- "gpui_platform",
- "indoc",
- "language",
- "log",
- "menu",
- "picker",
- "reqwest_client",
- "rust-embed",
- "settings",
- "simplelog",
- "story",
- "strum 0.27.2",
- "theme",
- "theme_settings",
- "title_bar",
- "ui",
-]
 
 [[package]]
 name = "streaming-iterator"
@@ -18134,7 +18301,7 @@ version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
- "fastrand 2.3.0",
+ "fastrand 2.4.1",
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
@@ -18275,7 +18442,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
- "derive_more",
  "gpui",
  "palette",
  "parking_lot",
@@ -18327,12 +18493,15 @@ dependencies = [
 name = "theme_selector"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "fs",
  "fuzzy",
  "gpui",
  "log",
  "picker",
+ "project",
  "serde",
+ "serde_json",
  "settings",
  "telemetry",
  "theme",
@@ -18595,7 +18764,6 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
- "story",
  "telemetry",
  "theme",
  "ui",
@@ -18607,9 +18775,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.50.0"
+version = "1.51.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27ad5e34374e03cfffefc301becb44e9dc3c17584f414349ebe29ed26661822d"
+checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
 dependencies = [
  "bytes 1.11.1",
  "libc",
@@ -18635,9 +18803,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-macros"
-version = "2.6.1"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c55a2eff8b69ce66c84f85e1da1c233edc36ceb85a2058d11b0d6a3c7e7569c"
+checksum = "385a6cb71ab9ab790c5fe8d67f1645e6c450a7ce006a33de03daa956cf70a496"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -18868,9 +19036,9 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
-version = "0.25.10+spec-1.1.0"
+version = "0.25.11+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a82418ca169e235e6c399a84e395ab6debeb3bc90edc959bf0f48647c6a32d1b"
+checksum = "0b59c4d22ed448339746c59b905d24568fcbb3ab65a500494f7b8c3e97739f2b"
 dependencies = [
  "indexmap",
  "toml_datetime 1.1.1+spec-1.1.0",
@@ -18952,8 +19120,10 @@ dependencies = [
  "pin-project-lite",
  "sync_wrapper 1.0.2",
  "tokio",
+ "tokio-util",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -18991,6 +19161,7 @@ dependencies = [
  "tower 0.5.3",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -19555,7 +19726,6 @@ dependencies = [
  "schemars",
  "serde",
  "smallvec",
- "story",
  "strum 0.27.2",
  "theme",
  "ui_macros",
@@ -20853,6 +21023,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
+ "serde",
  "wasm-bindgen",
 ]
 
@@ -20897,6 +21068,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_api_client",
  "cloud_api_types",
  "cloud_llm_client",
  "futures 0.3.32",
@@ -22674,9 +22846,11 @@ name = "x_ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "language_model_core",
  "schemars",
  "serde",
  "strum 0.27.2",
+ "tiktoken-rs",
 ]
 
 [[package]]
@@ -22776,9 +22950,10 @@ dependencies = [
  "annotate-snippets",
  "anyhow",
  "backtrace",
- "cargo_metadata",
+ "cargo_metadata 0.19.2",
  "cargo_toml",
  "clap",
+ "compliance",
  "gh-workflow",
  "indexmap",
  "indoc",
@@ -22788,6 +22963,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "strum 0.27.2",
+ "tokio",
  "toml 0.8.23",
  "toml_edit 0.22.27",
 ]
@@ -22971,7 +23147,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.232.0"
+version = "0.233.0"
 dependencies = [
  "acp_thread",
  "acp_tools",
@@ -23313,7 +23489,7 @@ dependencies = [
 
 [[package]]
 name = "zed_glsl"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -23327,7 +23503,7 @@ dependencies = [
 
 [[package]]
 name = "zed_proto"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "zed_extension_api 0.7.0",
 ]
@@ -23468,6 +23644,7 @@ name = "zeta_prompt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "imara-diff",
  "indoc",
  "serde",
  "strum 0.27.2",
