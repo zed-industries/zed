@@ -1271,7 +1271,7 @@ impl WorkspaceDb {
                     log::debug!("Bookmarks are empty after querying database for them");
                 }
 
-                let mut map: BTreeMap<Arc<Path>, Vec<SerializedBookmark>> = BTreeMap::default();
+                let mut map: BTreeMap<_, Vec<_>> = BTreeMap::default();
 
                 for (path, bookmark) in bookmarks {
                     let path: Arc<Path> = path.into();
