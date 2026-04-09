@@ -53,6 +53,7 @@ feature_flags.workspace = true
 client = { workspace = true, features = ["test-support"] }
 criterion.workspace = true
 editor = { workspace = true, features = ["test-support"] }
+fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 remote_connection = { workspace = true, features = ["test-support"] }

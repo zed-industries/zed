@@ -43,8 +43,8 @@ use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
-    update_settings_file,
+    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortBy, ProjectPanelSortDirection, Settings,
+    SettingsStore, ShowDiagnostics, ShowIndentGuides, update_settings_file,
 };
 use smallvec::SmallVec;
 use std::ops::Neg;
@@ -76,7 +76,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
 };
-use worktree::CreatedEntry;
+use worktree::{CreatedEntry, Snapshot};
 use zed_actions::{
     project_panel::{Toggle, ToggleFocus},
     workspace::OpenWithSystem,
@@ -848,6 +848,12 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.sort_order != new_settings.sort_order {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
+                    if project_panel_settings.sort_by != new_settings.sort_by {
+                        this.update_visible_entries(None, false, false, window, cx);
+                    }
+                    if project_panel_settings.sort_direction != new_settings.sort_direction {
                         this.update_visible_entries(None, false, false, window, cx);
                     }
                     if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
@@ -2494,9 +2500,14 @@ impl ProjectPanel {
                 .map(|entry| entry.to_owned())
                 .collect();
 
-        let sort_mode = ProjectPanelSettings::get_global(cx).sort_mode;
-        let sort_order = ProjectPanelSettings::get_global(cx).sort_order;
-        sort_worktree_entries(&mut siblings, sort_mode, sort_order);
+        let settings = ProjectPanelSettings::get_global(cx);
+        sort_worktree_entries(
+            &mut siblings,
+            settings.sort_mode,
+            settings.sort_order,
+            settings.sort_by,
+            settings.sort_direction,
+        );
         let sibling_entry_index = siblings
             .iter()
             .position(|sibling| sibling.id == latest_entry.id)?;
@@ -3926,6 +3937,8 @@ impl ProjectPanel {
         let hide_gitignore = settings.hide_gitignore;
         let sort_mode = settings.sort_mode;
         let sort_order = settings.sort_order;
+        let sort_by = settings.sort_by;
+        let sort_direction = settings.sort_direction;
         let project = self.project.read(cx);
         let repo_snapshots = project.git_store().read(cx).repo_snapshots(cx);
 
@@ -4157,10 +4170,13 @@ impl ProjectPanel {
                             entry_iter.advance();
                         }
 
-                        par_sort_worktree_entries(
+                        par_sort_visible_worktree_entries(
                             &mut visible_worktree_entries,
+                            &worktree_snapshot,
                             sort_mode,
                             sort_order,
+                            sort_by,
+                            sort_direction,
                         );
                         new_state.visible_entries.push(VisibleEntriesForWorktree {
                             worktree_id,
@@ -7290,20 +7306,304 @@ fn cmp_worktree_entries(
     util::paths::compare_rel_paths_by(a, b, (*mode).into(), (*order).into())
 }
 
+#[inline]
+fn cmp_directories_first(a: &Entry, b: &Entry) -> cmp::Ordering {
+    util::paths::compare_rel_paths_by(
+        (&a.path, a.is_file()),
+        (&b.path, b.is_file()),
+        util::paths::SortMode::DirectoriesFirst,
+        util::paths::SortOrder::Default,
+    )
+}
+
+#[inline]
+fn cmp_mixed(a: &Entry, b: &Entry) -> cmp::Ordering {
+    util::paths::compare_rel_paths_by(
+        (&a.path, a.is_file()),
+        (&b.path, b.is_file()),
+        util::paths::SortMode::Mixed,
+        util::paths::SortOrder::Default,
+    )
+}
+
+#[inline]
+fn cmp_files_first(a: &Entry, b: &Entry) -> cmp::Ordering {
+    util::paths::compare_rel_paths_by(
+        (&a.path, a.is_file()),
+        (&b.path, b.is_file()),
+        util::paths::SortMode::FilesFirst,
+        util::paths::SortOrder::Default,
+    )
+}
+
+#[inline]
+fn cmp_grouping_for_mode(
+    a_is_file: bool,
+    b_is_file: bool,
+    mode: settings::ProjectPanelSortMode,
+) -> cmp::Ordering {
+    match mode {
+        settings::ProjectPanelSortMode::DirectoriesFirst => a_is_file.cmp(&b_is_file),
+        settings::ProjectPanelSortMode::Mixed => cmp::Ordering::Equal,
+        settings::ProjectPanelSortMode::FilesFirst => b_is_file.cmp(&a_is_file),
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SortNode<'a> {
+    component: &'a str,
+    is_file: bool,
+    mtime: Option<std::time::SystemTime>,
+}
+
+#[inline]
+fn cmp_sort_node_names(
+    a: SortNode<'_>,
+    b: SortNode<'_>,
+    mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
+) -> cmp::Ordering {
+    let a_path = RelPath::unix(a.component).expect("valid relative path component");
+    let b_path = RelPath::unix(b.component).expect("valid relative path component");
+    util::paths::compare_rel_paths_by(
+        (a_path, a.is_file),
+        (b_path, b.is_file),
+        mode.into(),
+        order.into(),
+    )
+}
+
+#[inline]
+fn cmp_sort_nodes(
+    a: SortNode<'_>,
+    b: SortNode<'_>,
+    mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
+    sort_by: settings::ProjectPanelSortBy,
+    sort_direction: settings::ProjectPanelSortDirection,
+) -> cmp::Ordering {
+    let grouping = cmp_grouping_for_mode(a.is_file, b.is_file, mode);
+    if !grouping.is_eq() {
+        return grouping;
+    }
+
+    let name_cmp = cmp_sort_node_names(a, b, mode, order);
+    match sort_by {
+        settings::ProjectPanelSortBy::Name => match sort_direction {
+            settings::ProjectPanelSortDirection::Ascending => name_cmp,
+            settings::ProjectPanelSortDirection::Descending => name_cmp.reverse(),
+        },
+        settings::ProjectPanelSortBy::ModifiedTime => match (a.mtime, b.mtime) {
+            (Some(a_mtime), Some(b_mtime)) if a_mtime != b_mtime => {
+                let time_cmp = a_mtime.cmp(&b_mtime);
+                match sort_direction {
+                    settings::ProjectPanelSortDirection::Ascending => time_cmp,
+                    settings::ProjectPanelSortDirection::Descending => time_cmp.reverse(),
+                }
+            }
+            (Some(_), None) => cmp::Ordering::Less,
+            (None, Some(_)) => cmp::Ordering::Greater,
+            _ => name_cmp,
+        },
+    }
+}
+
+#[inline]
+fn sort_node_for_entry(entry: &Entry) -> SortNode<'_> {
+    SortNode {
+        component: entry.path.file_name().unwrap_or(entry.path.as_unix_str()),
+        is_file: entry.is_file(),
+        mtime: entry.mtime.map(|mtime| mtime.timestamp_for_user()),
+    }
+}
+
+#[inline]
+fn sort_node_for_visible_component<'a>(
+    entry: &'a Entry,
+    component: &'a str,
+    is_leaf_component: bool,
+    common_prefix: &RelPathBuf,
+    worktree_snapshot: &Snapshot,
+) -> SortNode<'a> {
+    let mtime = if is_leaf_component {
+        entry.mtime.map(|mtime| mtime.timestamp_for_user())
+    } else {
+        let mut path = common_prefix.clone();
+        let component_path = RelPath::unix(component).expect("valid relative path component");
+        path.push(component_path);
+        worktree_snapshot
+            .entry_for_path(path.as_rel_path())
+            .and_then(|entry| entry.mtime.map(|mtime| mtime.timestamp_for_user()))
+    };
+
+    SortNode {
+        component,
+        is_file: is_leaf_component && entry.is_file(),
+        mtime,
+    }
+}
+
+#[inline]
+fn cmp_with_options(
+    a: &Entry,
+    b: &Entry,
+    mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
+    sort_by: settings::ProjectPanelSortBy,
+    sort_direction: settings::ProjectPanelSortDirection,
+) -> cmp::Ordering {
+    if sort_by == settings::ProjectPanelSortBy::Name
+        && sort_direction == settings::ProjectPanelSortDirection::Ascending
+    {
+        return cmp_worktree_entries(a, b, &mode, &order);
+    }
+
+    cmp_sort_nodes(
+        sort_node_for_entry(a),
+        sort_node_for_entry(b),
+        mode,
+        order,
+        sort_by,
+        sort_direction,
+    )
+}
+
+#[inline]
+fn cmp_visible_entries_with_options(
+    a: &Entry,
+    b: &Entry,
+    worktree_snapshot: &Snapshot,
+    mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
+    sort_by: settings::ProjectPanelSortBy,
+    sort_direction: settings::ProjectPanelSortDirection,
+) -> cmp::Ordering {
+    if sort_by == settings::ProjectPanelSortBy::Name
+        && sort_direction == settings::ProjectPanelSortDirection::Ascending
+    {
+        return cmp_worktree_entries(a, b, &mode, &order);
+    }
+
+    let mut common_prefix = RelPathBuf::new();
+    let mut a_components = a.path.components();
+    let mut b_components = b.path.components();
+
+    loop {
+        match (a_components.next(), b_components.next()) {
+            (Some(a_component), Some(b_component)) if a_component == b_component => {
+                let component_path =
+                    RelPath::unix(a_component).expect("valid relative path component");
+                common_prefix.push(component_path);
+            }
+            (Some(a_component), Some(b_component)) => {
+                let a_is_leaf_component = a_components.rest().is_empty();
+                let b_is_leaf_component = b_components.rest().is_empty();
+
+                return cmp_sort_nodes(
+                    sort_node_for_visible_component(
+                        a,
+                        a_component,
+                        a_is_leaf_component,
+                        &common_prefix,
+                        worktree_snapshot,
+                    ),
+                    sort_node_for_visible_component(
+                        b,
+                        b_component,
+                        b_is_leaf_component,
+                        &common_prefix,
+                        worktree_snapshot,
+                    ),
+                    mode,
+                    order,
+                    sort_by,
+                    sort_direction,
+                );
+            }
+            (Some(_), None) => return cmp::Ordering::Greater,
+            (None, Some(_)) => return cmp::Ordering::Less,
+            (None, None) => return cmp::Ordering::Equal,
+        }
+    }
+}
+
 pub fn sort_worktree_entries(
     entries: &mut [impl AsRef<Entry>],
     mode: settings::ProjectPanelSortMode,
     order: settings::ProjectPanelSortOrder,
+    sort_by: settings::ProjectPanelSortBy,
+    sort_direction: settings::ProjectPanelSortDirection,
 ) {
-    entries.sort_by(|lhs, rhs| cmp_worktree_entries(lhs.as_ref(), rhs.as_ref(), &mode, &order));
+    entries.sort_by(|lhs, rhs| {
+        cmp_with_options(
+            lhs.as_ref(),
+            rhs.as_ref(),
+            mode,
+            order,
+            sort_by,
+            sort_direction,
+        )
+    });
+}
+
+pub fn sort_worktree_entries_with_mode(
+    entries: &mut [impl AsRef<Entry>],
+    mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
+) {
+    sort_worktree_entries(
+        entries,
+        mode,
+        order,
+        ProjectPanelSortBy::Name,
+        ProjectPanelSortDirection::Ascending,
+    );
+}
+
+pub fn par_sort_visible_worktree_entries(
+    entries: &mut Vec<GitEntry>,
+    worktree_snapshot: &Snapshot,
+    mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
+    sort_by: settings::ProjectPanelSortBy,
+    sort_direction: settings::ProjectPanelSortDirection,
+) {
+    entries.par_sort_by(|lhs, rhs| {
+        cmp_visible_entries_with_options(
+            lhs,
+            rhs,
+            worktree_snapshot,
+            mode,
+            order,
+            sort_by,
+            sort_direction,
+        )
+    });
 }
 
 pub fn par_sort_worktree_entries(
     entries: &mut Vec<GitEntry>,
     mode: settings::ProjectPanelSortMode,
     order: settings::ProjectPanelSortOrder,
+    sort_by: settings::ProjectPanelSortBy,
+    sort_direction: settings::ProjectPanelSortDirection,
 ) {
-    entries.par_sort_by(|lhs, rhs| cmp_worktree_entries(lhs, rhs, &mode, &order));
+    entries
+        .par_sort_by(|lhs, rhs| cmp_with_options(lhs, rhs, mode, order, sort_by, sort_direction));
+}
+
+pub fn par_sort_worktree_entries_with_mode(
+    entries: &mut Vec<GitEntry>,
+    mode: settings::ProjectPanelSortMode,
+    order: settings::ProjectPanelSortOrder,
+) {
+    par_sort_worktree_entries(
+        entries,
+        mode,
+        order,
+        ProjectPanelSortBy::Name,
+        ProjectPanelSortDirection::Ascending,
+    );
 }
 
 fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)> {
