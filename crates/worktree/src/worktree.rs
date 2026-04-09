@@ -254,6 +254,10 @@ pub struct LocalSnapshot {
     /// The file handle of the worktree root
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
+    /// Maps each watched canonical path of a symlinked directory to its symlink entry path.
+    /// Used to route filesystem events that are reported via the canonical path back to
+    /// the symlink path in the worktree
+    canonical_path_to_symlink: HashMap<Arc<Path>, Arc<RelPath>>,
 }
 
 struct BackgroundScannerState {
@@ -419,6 +423,7 @@ impl Worktree {
                 global_gitignore: Default::default(),
                 repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
+                canonical_path_to_symlink: Default::default(),
                 snapshot: Snapshot::new(
                     worktree_id,
                     abs_path
@@ -3071,6 +3076,11 @@ impl BackgroundScannerState {
         for entry in removed_entries.cursor::<()>(()) {
             if entry.is_dir() {
                 removed_dir_abs_paths.push(self.snapshot.absolutize(&entry.path));
+                if let Some(canonical_path) = &entry.canonical_path {
+                    self.snapshot
+                        .canonical_path_to_symlink
+                        .remove(canonical_path.as_ref());
+                }
             }
 
             match self.removed_entries.entry(entry.inode) {
@@ -4266,21 +4276,21 @@ impl BackgroundScanner {
                 {
                     path
                 } else {
-                    // Path is outside root - check if it's within a symlinked directory's canonical path
-                    // This handles events from the canonical path of symlinked directories (issue #35173)
-                    let mut found_symlink_match: Option<Cow<RelPath>> = None;
-                    for entry in snapshot.entries(true, 0) {
-                        if let Some(canonical_path) = &entry.canonical_path {
-                            let canonical_sanitized = SanitizedPath::new(canonical_path.as_ref());
-                            if let Ok(suffix) = abs_path.strip_prefix(&canonical_sanitized) {
-                                if let Ok(suffix_rel) = RelPath::new(suffix, PathStyle::local()) {
-                                    let full_path = entry.path.join(&suffix_rel);
-                                    found_symlink_match = Some(Cow::Owned(full_path.as_ref().to_owned()));
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    // Events for a symlinked directory may be reported via the canonical path.
+                    let found_symlink_match =
+                        snapshot
+                            .canonical_path_to_symlink
+                            .iter()
+                            .find_map(|(canonical, symlink_path)| {
+                                let suffix = abs_path
+                                    .strip_prefix(SanitizedPath::new(canonical.as_ref()))
+                                    .ok()?;
+                                let suffix_rel =
+                                    RelPath::new(suffix, PathStyle::local()).ok()?;
+                                Some(Cow::Owned(
+                                    symlink_path.join(&suffix_rel).as_ref().to_owned(),
+                                ))
+                            });
 
                     if let Some(path) = found_symlink_match {
                         path
@@ -4800,21 +4810,16 @@ impl BackgroundScanner {
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
 
-        // Check if the directory is a symlink and watch both the symlink and canonical paths
+        self.watcher.add(job.abs_path.as_ref()).log_err();
+        // Also watch the canonical path; events may be reported via either path
         if let Ok(canonical_path) = self.fs.canonicalize(&job.abs_path).await {
-            let is_symlink = canonical_path != job.abs_path.as_ref();
-
-            if is_symlink {
-                // Watch both the symlink path and the canonical path
-                // Events may come from either path depending on how the file was created
-                self.watcher.add(job.abs_path.as_ref()).log_err();
+            if canonical_path != job.abs_path.as_ref() {
                 self.watcher.add(&canonical_path).log_err();
-            } else {
-                self.watcher.add(job.abs_path.as_ref()).log_err();
+                state
+                    .snapshot
+                    .canonical_path_to_symlink
+                    .insert(canonical_path.into(), job.path.clone());
             }
-        } else {
-            // Not a symlink, watch the path as-is
-            self.watcher.add(job.abs_path.as_ref()).log_err();
         }
 
         for new_job in new_jobs.into_iter().flatten() {

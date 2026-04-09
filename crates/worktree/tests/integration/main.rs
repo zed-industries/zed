@@ -3265,8 +3265,6 @@ async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
-    // Tests that files created in symlinked directories are detected by the file watcher
-    // and show up in the worktree. This reproduces issue #35173.
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
 
@@ -3367,12 +3365,11 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
     // Verify the new file appears in the worktree under the symlinked path
     tree.read_with(cx, |tree, _| {
         let new_file_entry = tree.entry_for_path(rel_path("linked/new_file.rs"));
+        // Issue #35173: events reported via the canonical path should still map back
+        // to the symlinked path in the worktree.
         assert!(
             new_file_entry.is_some(),
-            "new file created in symlinked directory should be visible in worktree.\n\
-             This test reproduces issue #35173: files created in symlinked directories\n\
-             are not detected because the filesystem watcher reports events using the\n\
-             canonical path, but the worktree is watching the symlink path."
+            "new file in symlinked directory not visible in worktree"
         );
 
         if let Some(entry) = new_file_entry {
