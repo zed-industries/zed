@@ -456,9 +456,7 @@ pub fn init(cx: &mut App) {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
         });
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
-            if !workspace.toggle_panel_focus::<ProjectPanel>(window, cx) {
-                workspace.close_panel::<ProjectPanel>(window, cx);
-            }
+            workspace.toggle_panel_visibility::<ProjectPanel>(window, cx);
         });
 
         workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
