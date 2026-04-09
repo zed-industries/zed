@@ -28,8 +28,8 @@ use settings::Settings as _;
 use theme::ActiveTheme;
 use ui::ThreadItem;
 use ui::{
-    Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, WithScrollbar,
-    prelude::*, utils::platform_title_bar_height,
+    CommonAnimationExt, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip,
+    WithScrollbar, prelude::*, utils::platform_title_bar_height,
 };
 use ui_input::ErasedEditor;
 use util::ResultExt;
@@ -131,6 +131,7 @@ pub struct ThreadsArchiveView {
     workspace: WeakEntity<Workspace>,
     agent_connection_store: WeakEntity<AgentConnectionStore>,
     agent_server_store: WeakEntity<AgentServerStore>,
+    restoring: HashSet<acp::SessionId>,
 }
 
 impl ThreadsArchiveView {
@@ -199,6 +200,7 @@ impl ThreadsArchiveView {
             workspace,
             agent_connection_store,
             agent_server_store,
+            restoring: HashSet::default(),
         };
 
         this.update_items(cx);
@@ -211,6 +213,16 @@ impl ThreadsArchiveView {
 
     pub fn clear_selection(&mut self) {
         self.selection = None;
+    }
+
+    pub fn mark_restoring(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        self.restoring.insert(session_id.clone());
+        cx.notify();
+    }
+
+    pub fn clear_restoring(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
+        self.restoring.remove(session_id);
+        cx.notify();
     }
 
     pub fn focus_filter_editor(&self, window: &mut Window, cx: &mut App) {
@@ -323,11 +335,16 @@ impl ThreadsArchiveView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.restoring.contains(&thread.session_id) {
+            return;
+        }
+
         if thread.folder_paths.is_empty() {
             self.show_project_picker_for_thread(thread, window, cx);
             return;
         }
 
+        self.mark_restoring(&thread.session_id, cx);
         self.selection = None;
         self.reset_filter_editor_text(window, cx);
         cx.emit(ThreadsArchiveViewEvent::Unarchive { thread });
@@ -510,7 +527,9 @@ impl ThreadsArchiveView {
                     IconName::Sparkle
                 };
 
-                ThreadItem::new(id, thread.title.clone())
+                let is_restoring = self.restoring.contains(&thread.session_id);
+
+                let base = ThreadItem::new(id, thread.title.clone())
                     .icon(icon)
                     .when_some(icon_from_external_svg, |this, svg| {
                         this.custom_icon_from_external_svg(svg)
@@ -527,8 +546,22 @@ impl ThreadsArchiveView {
                             this.hovered_index = None;
                         }
                         cx.notify();
-                    }))
-                    .action_slot(
+                    }));
+
+                if is_restoring {
+                    base.action_slot(
+                        Icon::new(IconName::LoadCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Muted)
+                            .with_keyed_rotate_animation(
+                                SharedString::from(format!("restoring-spinner-{}", ix)),
+                                2,
+                            ),
+                    )
+                    .tooltip(Tooltip::text("Restoring…"))
+                    .into_any_element()
+                } else {
+                    base.action_slot(
                         IconButton::new("delete-thread", IconName::Trash)
                             .style(ButtonStyle::Filled)
                             .icon_size(IconSize::Small)
@@ -561,6 +594,7 @@ impl ThreadsArchiveView {
                         })
                     })
                     .into_any_element()
+                }
             }
         }
     }
