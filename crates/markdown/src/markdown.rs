@@ -263,7 +263,7 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
-    pending_heading_scroll: Option<SharedString>,
+
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
 }
@@ -433,7 +433,7 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
-            pending_heading_scroll: None,
+
             search_highlights: Vec::new(),
             active_search_highlight: None,
         };
@@ -504,17 +504,8 @@ impl Markdown {
         self.parsed_markdown.heading_slugs.get(slug).copied()
     }
 
-    pub fn scroll_to_heading(&mut self, slug: SharedString) {
-        self.pending_heading_scroll = Some(slug);
-    }
-
-    fn resolve_pending_heading_scroll(&mut self, cx: &mut Context<Self>) {
-        if let Some(source_index) = self
-            .pending_heading_scroll
-            .as_ref()
-            .and_then(|slug| self.heading_source_index_for_slug(slug))
-        {
-            self.pending_heading_scroll = None;
+    pub fn scroll_to_heading(&mut self, slug: &str, cx: &mut Context<Self>) {
+        if let Some(source_index) = self.heading_source_index_for_slug(slug) {
             self.autoscroll_request = Some(source_index);
             cx.refresh_windows();
         }
@@ -1450,8 +1441,7 @@ impl MarkdownElement {
                         && Some(&pressed_link) == rendered_text.link_for_position(event.position)
                     {
                         if let Some(slug) = pressed_link.destination_url.strip_prefix('#')
-                            && let Some(source_index) =
-                                markdown.heading_source_index_for_slug(slug)
+                            && let Some(source_index) = markdown.heading_source_index_for_slug(slug)
                         {
                             markdown.autoscroll_request = Some(source_index);
                             if let Some(on_anchor_click) = on_anchor_click.as_ref() {
@@ -2070,9 +2060,6 @@ impl Element for MarkdownElement {
                 .update(cx, |markdown, _| markdown.clear_code_block_scroll_handles());
         }
         let mut rendered_markdown = builder.build();
-        self.markdown.update(cx, |markdown, cx| {
-            markdown.resolve_pending_heading_scroll(cx);
-        });
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
         (layout_id, rendered_markdown)
@@ -2882,7 +2869,6 @@ impl RenderedText {
             .iter()
             .find(|link| link.source_range.contains(&source_index))
     }
-
 }
 
 #[cfg(test)]

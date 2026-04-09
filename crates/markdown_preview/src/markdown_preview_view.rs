@@ -680,8 +680,8 @@ fn handle_url_click(
         cx.defer(move |cx| {
             if let Some(view) = view.upgrade() {
                 let markdown = view.read(cx).markdown.clone();
-                markdown.update(cx, |markdown, _| {
-                    markdown.scroll_to_heading(slug);
+                markdown.update(cx, |markdown, cx| {
+                    markdown.scroll_to_heading(&slug, cx);
                 });
             }
         });
