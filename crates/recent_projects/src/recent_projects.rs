@@ -105,10 +105,12 @@ pub async fn get_recent_projects(
         .filter(|(_, location, _, _)| matches!(location, SerializedWorkspaceLocation::Local))
         .collect();
 
-    let all_paths: Vec<PathBuf> = filtered
+    let mut all_paths: Vec<PathBuf> = filtered
         .iter()
         .flat_map(|(_, _, path_list, _)| path_list.paths().iter().cloned())
         .collect();
+    all_paths.sort();
+    all_paths.dedup();
     let path_details =
         util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
             project::path_suffix(path, detail)
@@ -183,10 +185,12 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
             .map(|wt| wt.read(cx).id())
     });
 
-    let all_paths: Vec<PathBuf> = visible_worktrees
+    let mut all_paths: Vec<PathBuf> = visible_worktrees
         .iter()
         .map(|wt| wt.read(cx).abs_path().to_path_buf())
         .collect();
+    all_paths.sort();
+    all_paths.dedup();
     let path_details =
         util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
             project::path_suffix(path, detail)

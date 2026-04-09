@@ -883,10 +883,12 @@ impl Sidebar {
 
         let groups: Vec<_> = mw.project_groups(cx).collect();
 
-        let all_paths: Vec<PathBuf> = groups
+        let mut all_paths: Vec<PathBuf> = groups
             .iter()
             .flat_map(|(key, _)| key.path_list().paths().iter().cloned())
             .collect();
+        all_paths.sort();
+        all_paths.dedup();
         let path_details =
             util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
                 project::path_suffix(path, detail)
