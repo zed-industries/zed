@@ -2000,20 +2000,33 @@ impl Element for MarkdownElement {
                             let is_header = builder.table.in_head;
                             let row_index = builder.table.row_index;
                             let col_index = builder.table.col_index;
+                            let alignment = builder.table.alignments.get(col_index).copied();
 
+                            let mut cell_div = div()
+                                .flex()
+                                .flex_col()
+                                .h_full()
+                                .when(col_index > 0, |this| this.border_l_1())
+                                .when(row_index > 0, |this| this.border_t_1())
+                                .border_color(cx.theme().colors().border)
+                                .px_1()
+                                .py_0p5()
+                                .when(is_header, |this| {
+                                    this.bg(cx.theme().colors().title_bar_background)
+                                })
+                                .when(!is_header && row_index % 2 == 1, |this| {
+                                    this.bg(cx.theme().colors().panel_background)
+                                });
+
+                            cell_div = match alignment {
+                                Some(Alignment::Center) => cell_div.items_center(),
+                                Some(Alignment::Right) => cell_div.items_end(),
+                                _ => cell_div,
+                            };
+
+                            builder.push_div(cell_div, range, markdown_end);
                             builder.push_div(
-                                div()
-                                    .when(col_index > 0, |this| this.border_l_1())
-                                    .when(row_index > 0, |this| this.border_t_1())
-                                    .border_color(cx.theme().colors().border)
-                                    .px_1()
-                                    .py_0p5()
-                                    .when(is_header, |this| {
-                                        this.bg(cx.theme().colors().title_bar_background)
-                                    })
-                                    .when(!is_header && row_index % 2 == 1, |this| {
-                                        this.bg(cx.theme().colors().panel_background)
-                                    }),
+                                div().flex().flex_col().flex_1().justify_center(),
                                 range,
                                 markdown_end,
                             );
@@ -2112,6 +2125,7 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::TableCell => {
                         builder.replace_pending_checkbox(self.on_checkbox_toggle.clone());
+                        builder.pop_div();
                         builder.pop_div();
                         builder.table.end_cell();
                     }

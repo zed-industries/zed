@@ -248,11 +248,14 @@ impl MarkdownElement {
                 let mut cell_div = div()
                     .col_span(cell.col_span.min(max_span) as u16)
                     .row_span(cell.row_span.min(total_rows - row_index) as u16)
+                    .flex()
+                    .flex_col()
                     .when(column_index > 0, |this| this.border_l_1())
                     .when(row_index > 0, |this| this.border_t_1())
                     .border_color(cx.theme().colors().border)
                     .px_2()
                     .py_1()
+                    .h_full()
                     .when(cell.is_header, |this| {
                         this.bg(cx.theme().colors().title_bar_background)
                     })
@@ -267,6 +270,11 @@ impl MarkdownElement {
                 };
 
                 builder.push_div(cell_div, &table.source_range, markdown_end);
+                builder.push_div(
+                    div().flex().flex_col().flex_1().justify_center(),
+                    &table.source_range,
+                    markdown_end,
+                );
                 self.render_html_paragraph(
                     &cell.children,
                     source_allocator,
@@ -274,6 +282,7 @@ impl MarkdownElement {
                     cx,
                     markdown_end,
                 );
+                builder.pop_div();
                 builder.pop_div();
 
                 for row_offset in 0..cell.row_span {
