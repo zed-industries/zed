@@ -3388,3 +3388,119 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
         captured_events
     );
 }
+
+#[gpui::test]
+async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    // Create a project with a real directory and a symlink to it inside the same project.
+    fs.insert_tree(
+        "/root/project",
+        json!({
+            "real": {
+                "existing.rs": "// existing",
+            },
+        }),
+    )
+    .await;
+
+    // Create a symlink from project/linked to project/real (both inside the project root).
+    fs.create_symlink(
+        Path::new("/root/project/linked"),
+        PathBuf::from("real"),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        Path::new("/root/project"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Both the real directory and the symlinked directory should be scanned and visible.
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("real")).is_some(),
+            "real directory should be visible"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("real/existing.rs")).is_some(),
+            "file in real directory should be visible"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("linked")).is_some(),
+            "symlinked directory should be visible"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("linked/existing.rs")).is_some(),
+            "file via symlinked directory should be visible"
+        );
+        let linked_entry = tree.entry_for_path(rel_path("linked")).unwrap();
+        assert!(
+            !linked_entry.is_external,
+            "symlink pointing inside project should not be marked external"
+        );
+    });
+
+    // Set up event tracking.
+    let events = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |_, cx| {
+        let events = events.clone();
+        cx.subscribe(&tree, move |_, _, event, _| {
+            if let Event::UpdatedEntries(update) = event {
+                events.lock().extend(
+                    update
+                        .iter()
+                        .map(|(path, _, change)| (path.clone(), *change)),
+                );
+            }
+        })
+        .detach();
+    });
+
+    // Create a new file in the real (canonical) directory.
+    fs.insert_file("/root/project/real/new_file.rs", "// new".into())
+        .await;
+
+    // Emit a filesystem event via the canonical path, as a real OS watcher would do.
+    fs.emit_fs_event(
+        "/root/project/real/new_file.rs",
+        Some(fs::PathEventKind::Created),
+    );
+
+    tree.flush_fs_events(cx).await;
+
+    // The new file must appear under both the real path and the symlink path.
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("real/new_file.rs")).is_some(),
+            "new file should be visible under real path"
+        );
+        assert!(
+            tree.entry_for_path(rel_path("linked/new_file.rs")).is_some(),
+            "new file should be visible under symlinked path"
+        );
+    });
+
+    // Verify that an update event was emitted for the symlink-aliased path.
+    let captured_events = events.lock().clone();
+    assert!(
+        captured_events.iter().any(|(path, change)| {
+            path.as_ref() == rel_path("linked/new_file.rs")
+                && matches!(change, PathChange::Added | PathChange::AddedOrUpdated)
+        }),
+        "should have received an event for linked/new_file.rs. Events: {:#?}",
+        captured_events
+    );
+}

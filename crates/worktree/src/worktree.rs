@@ -4365,6 +4365,59 @@ impl BackgroundScanner {
             }
         }
 
+        // For symlinks inside the project root, filesystem events are reported via the
+        // canonical (real) path, so they are routed to the canonical entry (e.g. `real/file.rs`).
+        // But the worktree may also have entries under the symlink path (e.g. `linked/file.rs`).
+        // Reload those aliased entries too so both views stay in sync.
+        {
+            let snapshot = self.state.lock().await.snapshot.clone();
+            let mut extra_relative_paths: Vec<EventRoot> = Vec::new();
+            let mut extra_events: Vec<PathEvent> = Vec::new();
+            for (event, event_root) in events.iter().zip(relative_paths.iter()) {
+                let abs_path = SanitizedPath::new(&event.path);
+                for (canonical, symlink_path) in &snapshot.canonical_path_to_symlink {
+                    let Ok(suffix) =
+                        abs_path.strip_prefix(&SanitizedPath::new(canonical.as_ref()))
+                    else {
+                        continue;
+                    };
+                    let Ok(suffix_rel) = RelPath::new(suffix, PathStyle::local()) else {
+                        continue;
+                    };
+                    let alias_path = symlink_path.join(&suffix_rel);
+                    // Skip if the alias is the same as the primary relative path.
+                    // This happens when the event was already routed via the symlink
+                    // lookup in the else-branch above (symlink outside the project root).
+                    if alias_path == event_root.path {
+                        continue;
+                    }
+                    // Skip if the parent directory is not loaded.
+                    let parent_is_loaded = alias_path.parent().is_none_or(|parent| {
+                        snapshot
+                            .entry_for_path(parent)
+                            .is_some_and(|e| e.kind == EntryKind::Dir)
+                    });
+                    if !parent_is_loaded {
+                        continue;
+                    }
+                    if self.settings.is_path_excluded(&alias_path) {
+                        continue;
+                    }
+                    let alias_abs = root_path.join(alias_path.as_std_path());
+                    extra_relative_paths.push(EventRoot {
+                        path: alias_path,
+                        was_rescanned: event_root.was_rescanned,
+                    });
+                    extra_events.push(PathEvent {
+                        path: alias_abs,
+                        kind: event.kind,
+                    });
+                }
+            }
+            relative_paths.extend(extra_relative_paths);
+            events.extend(extra_events);
+        }
+
         if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
             return;
         }
