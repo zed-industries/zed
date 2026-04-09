@@ -753,19 +753,26 @@ impl Sidebar {
         let host = project_group_key.host();
         let provisional_key = Some(project_group_key.clone());
         let active_workspace = multi_workspace.read(cx).workspace().clone();
+        let modal_workspace = active_workspace.clone();
 
-        multi_workspace
-            .update(cx, |this, cx| {
-                this.find_or_create_workspace(
-                    path_list,
-                    host,
-                    provisional_key,
-                    |options, window, cx| connect_remote(active_workspace, options, window, cx),
-                    window,
-                    cx,
-                )
-            })
-            .detach_and_log_err(cx);
+        let task = multi_workspace.update(cx, |this, cx| {
+            this.find_or_create_workspace(
+                path_list,
+                host,
+                provisional_key,
+                |options, window, cx| connect_remote(active_workspace, options, window, cx),
+                window,
+                cx,
+            )
+        });
+
+        cx.spawn_in(window, async move |_this, cx| {
+            let result = task.await;
+            remote_connection::dismiss_connection_modal(&modal_workspace, cx);
+            result?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     /// Rebuilds the sidebar contents from current workspace and thread state.
@@ -2292,6 +2299,7 @@ impl Sidebar {
         let host = project_group_key.host();
         let provisional_key = Some(project_group_key.clone());
         let active_workspace = multi_workspace.read(cx).workspace().clone();
+        let modal_workspace = active_workspace.clone();
 
         let open_task = multi_workspace.update(cx, |this, cx| {
             this.find_or_create_workspace(
@@ -2306,6 +2314,9 @@ impl Sidebar {
 
         cx.spawn_in(window, async move |this, cx| {
             let result = open_task.await;
+            // Dismiss the modal as soon as the open attempt completes so
+            // failures or cancellations do not leave a stale connection modal behind.
+            remote_connection::dismiss_connection_modal(&modal_workspace, cx);
 
             if result.is_err() || is_remote {
                 this.update(cx, |this, _cx| {

@@ -3190,28 +3190,33 @@ impl AgentPanel {
         let window_handle = window_handle
             .ok_or_else(|| anyhow!("No window handle available for workspace creation"))?;
 
-        let workspace_task = window_handle.update(cx, |multi_workspace, window, cx| {
-            let path_list = PathList::new(&all_paths);
-            let active_workspace = multi_workspace.workspace().clone();
+        let (workspace_task, modal_workspace) =
+            window_handle.update(cx, |multi_workspace, window, cx| {
+                let path_list = PathList::new(&all_paths);
+                let active_workspace = multi_workspace.workspace().clone();
+                let modal_workspace = active_workspace.clone();
 
-            multi_workspace.find_or_create_workspace(
-                path_list,
-                remote_connection_options,
-                None,
-                move |connection_options, window, cx| {
-                    remote_connection::connect_with_modal(
-                        &active_workspace,
-                        connection_options,
-                        window,
-                        cx,
-                    )
-                },
-                window,
-                cx,
-            )
-        })?;
+                let task = multi_workspace.find_or_create_workspace(
+                    path_list,
+                    remote_connection_options,
+                    None,
+                    move |connection_options, window, cx| {
+                        remote_connection::connect_with_modal(
+                            &active_workspace,
+                            connection_options,
+                            window,
+                            cx,
+                        )
+                    },
+                    window,
+                    cx,
+                );
+                (task, modal_workspace)
+            })?;
 
-        let new_workspace = workspace_task.await?;
+        let result = workspace_task.await;
+        remote_connection::dismiss_connection_modal(&modal_workspace, cx);
+        let new_workspace = result?;
 
         let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
 
