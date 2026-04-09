@@ -663,6 +663,14 @@ impl RemoteEntry {
         }
     }
 
+    fn host_positions(&self) -> &[usize] {
+        match self {
+            Self::Project { host_positions, .. } | Self::SshConfig { host_positions, .. } => {
+                host_positions
+            }
+        }
+    }
+
     fn connection(&self) -> Cow<'_, Connection> {
         match self {
             Self::Project { connection, .. } => Cow::Borrowed(connection),
@@ -988,6 +996,57 @@ mod filter_tests {
         let results = compute_filter_results(&servers, "alpha");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].server_index, 0);
+    }
+
+    #[test]
+    fn test_position_mapping_splits_host_and_path() {
+        let servers = [server("dev", &["/src/app"])];
+        let results = compute_filter_results(&servers, "dev app");
+
+        assert_eq!(results.len(), 1);
+        let result = &results[0];
+        let host = &servers[result.server_index].host;
+        let path = &servers[result.server_index].project_paths[0];
+
+        assert!(
+            result.host_positions.iter().all(|&p| p < host.len()),
+            "host positions {:?} must be within host {:?} (len {})",
+            result.host_positions,
+            host,
+            host.len(),
+        );
+
+        assert_eq!(result.project_matches.len(), 1);
+        let proj = &result.project_matches[0];
+        assert_eq!(proj.project_index, 0);
+        assert!(
+            proj.path_positions.iter().all(|&p| p < path.len()),
+            "path positions {:?} must be within path {:?} (len {})",
+            proj.path_positions,
+            path,
+            path.len(),
+        );
+
+        // "dev" should highlight characters in the host
+        assert!(!result.host_positions.is_empty(), "query 'dev' should match host 'dev'");
+        // "app" should highlight characters in the path
+        assert!(!proj.path_positions.is_empty(), "query 'app' should match path '/src/app'");
+    }
+
+    #[test]
+    fn test_position_mapping_host_only_server() {
+        let servers = [server("myhost", &[])];
+        let results = compute_filter_results(&servers, "myh");
+
+        assert_eq!(results.len(), 1);
+        let host = &servers[0].host;
+        assert!(
+            results[0].host_positions.iter().all(|&p| p < host.len()),
+            "host positions {:?} out of bounds for {:?}",
+            results[0].host_positions,
+            host,
+        );
+        assert!(results[0].project_matches.is_empty());
     }
 }
 
@@ -1642,10 +1701,7 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let connection = remote_server.connection().into_owned();
-        let host_positions = match &remote_server {
-            RemoteEntry::Project { host_positions, .. } => host_positions.clone(),
-            RemoteEntry::SshConfig { host_positions, .. } => host_positions.clone(),
-        };
+        let host_positions = remote_server.host_positions().to_vec();
 
         let (main_label, aux_label, is_wsl) = match &connection {
             Connection::Ssh(connection) => {
