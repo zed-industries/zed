@@ -1630,6 +1630,7 @@ impl SearchableItem for Editor {
                 regex: true,
                 replacement: false,
                 selection: false,
+                select_all: true,
                 find_in_results: true,
             }
         } else {
@@ -1639,6 +1640,7 @@ impl SearchableItem for Editor {
                 regex: true,
                 replacement: true,
                 selection: true,
+                select_all: true,
                 find_in_results: false,
             }
         }

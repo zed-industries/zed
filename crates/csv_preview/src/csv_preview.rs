@@ -10,8 +10,8 @@ use std::{
 
 use crate::table_data_engine::TableDataEngine;
 use ui::{
-    AbsoluteLength, DefiniteLength, RedistributableColumnsState, SharedString,
-    TableInteractionState, TableResizeBehavior, prelude::*,
+    AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
+    TableResizeBehavior, prelude::*,
 };
 use workspace::{Item, SplitDirection, Workspace};
 
@@ -56,27 +56,25 @@ pub fn init(cx: &mut App) {
 
 impl CsvPreviewView {
     pub(crate) fn sync_column_widths(&self, cx: &mut Context<Self>) {
-        // plus 1 for the rows column
+        // plus 1 for the row identifier column
         let cols = self.engine.contents.headers.cols() + 1;
-        let remaining_col_number = cols.saturating_sub(1);
-        let fraction = if remaining_col_number > 0 {
-            1. / remaining_col_number as f32
-        } else {
-            1.
-        };
-        let mut widths = vec![DefiniteLength::Fraction(fraction); cols];
         let line_number_width = self.calculate_row_identifier_column_width();
-        widths[0] = DefiniteLength::Absolute(AbsoluteLength::Pixels(line_number_width.into()));
+
+        let mut widths: Vec<AbsoluteLength> = vec![AbsoluteLength::Pixels(px(150.)); cols];
+        widths[0] = AbsoluteLength::Pixels(px(line_number_width));
 
         let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
         resize_behaviors[0] = TableResizeBehavior::None;
 
         self.column_widths.widths.update(cx, |state, _cx| {
-            if state.cols() != cols
-                || state.initial_widths().as_slice() != widths.as_slice()
-                || state.resize_behavior().as_slice() != resize_behaviors.as_slice()
-            {
-                *state = RedistributableColumnsState::new(cols, widths, resize_behaviors);
+            if state.cols() != cols {
+                *state = ResizableColumnsState::new(cols, widths, resize_behaviors);
+            } else {
+                state.set_column_configuration(
+                    0,
+                    AbsoluteLength::Pixels(px(line_number_width)),
+                    TableResizeBehavior::None,
+                );
             }
         });
     }
@@ -207,7 +205,7 @@ impl CsvPreviewView {
 
         // Update list state with filtered row count
         let visible_rows = self.engine.d2d_mapping().visible_row_count();
-        self.list_state = gpui::ListState::new(visible_rows, ListAlignment::Top, px(1.));
+        self.list_state = gpui::ListState::new(visible_rows, ListAlignment::Top, px(100.));
     }
 
     pub fn resolve_active_item_as_csv_editor(
@@ -313,16 +311,16 @@ impl PerformanceMetrics {
 
 /// Holds state of column widths for a table component in CSV preview.
 pub(crate) struct ColumnWidths {
-    pub widths: Entity<RedistributableColumnsState>,
+    pub widths: Entity<ResizableColumnsState>,
 }
 
 impl ColumnWidths {
     pub(crate) fn new(cx: &mut Context<CsvPreviewView>, cols: usize) -> Self {
         Self {
             widths: cx.new(|_cx| {
-                RedistributableColumnsState::new(
+                ResizableColumnsState::new(
                     cols,
-                    vec![ui::DefiniteLength::Fraction(1.0 / cols as f32); cols],
+                    vec![AbsoluteLength::Pixels(px(150.)); cols],
                     vec![ui::TableResizeBehavior::Resizable; cols],
                 )
             }),

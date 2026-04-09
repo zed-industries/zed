@@ -91,6 +91,7 @@ pub enum WorktreeStoreEvent {
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories(WorktreeId, UpdatedGitRepositoriesSet),
     WorktreeDeletedEntry(WorktreeId, ProjectEntryId),
+    WorktreeUpdatedRootRepoCommonDir(WorktreeId),
 }
 
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
@@ -712,6 +713,7 @@ impl WorktreeStore {
                         root_name,
                         visible,
                         abs_path: response.canonicalized_path,
+                        root_repo_common_dir: response.root_repo_common_dir,
                     },
                     client,
                     path_style,
@@ -812,7 +814,11 @@ impl WorktreeStore {
                     // The worktree root itself has been deleted (for single-file worktrees)
                     // The worktree will be removed via the observe_release callback
                 }
-                worktree::Event::UpdatedRootRepoCommonDir => {}
+                worktree::Event::UpdatedRootRepoCommonDir => {
+                    cx.emit(WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(
+                        worktree_id,
+                    ));
+                }
             }
         })
         .detach();
@@ -848,6 +854,21 @@ impl WorktreeStore {
         });
         self.update_initial_scan_state(cx);
         self.send_project_updates(cx);
+    }
+
+    pub fn worktree_for_main_worktree_path(
+        &self,
+        path: &Path,
+        cx: &App,
+    ) -> Option<Entity<Worktree>> {
+        self.visible_worktrees(cx).find(|worktree| {
+            let worktree = worktree.read(cx);
+            if let Some(common_dir) = worktree.root_repo_common_dir() {
+                common_dir.parent() == Some(path)
+            } else {
+                worktree.abs_path().as_ref() == path
+            }
+        })
     }
 
     pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
@@ -1034,6 +1055,9 @@ impl WorktreeStore {
                     root_name: worktree.root_name_str().to_owned(),
                     visible: worktree.is_visible(),
                     abs_path: worktree.abs_path().to_string_lossy().into_owned(),
+                    root_repo_common_dir: worktree
+                        .root_repo_common_dir()
+                        .map(|p| p.to_string_lossy().into_owned()),
                 }
             })
             .collect()

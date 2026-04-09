@@ -382,7 +382,7 @@ impl AgentRegistryPage {
             self.install_button(agent, install_status, supports_current_platform, cx);
 
         let repository_button = agent.repository().map(|repository| {
-            let repository_for_tooltip: SharedString = repository.to_string().into();
+            let repository_for_tooltip = repository.clone();
             let repository_for_click = repository.to_string();
 
             IconButton::new(

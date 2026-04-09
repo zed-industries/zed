@@ -486,6 +486,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelEntrySpacing>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelSortMode>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelSortOrder>(render_dropdown)
         .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
         .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
@@ -3753,7 +3754,6 @@ fn all_projects(
                 .flat_map(|multi_workspace| {
                     multi_workspace
                         .workspaces()
-                        .iter()
                         .map(|workspace| workspace.read(cx).project().clone())
                         .collect::<Vec<_>>()
                 }),

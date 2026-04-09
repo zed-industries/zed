@@ -403,6 +403,7 @@ message Commit {
   message CommitOptions {
     bool amend = 1;
     bool signoff = 2;
+    bool allow_empty = 3;
   }
 }
 
@@ -567,6 +568,15 @@ message GitGetWorktrees {
   uint64 repository_id = 2;
 }
 
+message GitGetHeadSha {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitGetHeadShaResponse {
+  optional string sha = 1;
+}
+
 message GitWorktreesResponse {
   repeated Worktree worktrees = 1;
 }
@@ -584,6 +594,7 @@ message GitCreateWorktree {
   string name = 3;
   string directory = 4;
   optional string commit = 5;
+  bool use_existing_branch = 6;
 }
 
 message GitCreateCheckpoint {

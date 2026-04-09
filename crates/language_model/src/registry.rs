@@ -1,6 +1,6 @@
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderState,
+    LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
 };
 use collections::{BTreeMap, HashSet};
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
@@ -101,7 +101,7 @@ impl ConfiguredModel {
     }
 
     pub fn is_provided_by_zed(&self) -> bool {
-        self.provider.id() == crate::provider::ZED_CLOUD_PROVIDER_ID
+        self.provider.id() == ZED_CLOUD_PROVIDER_ID
     }
 }
 

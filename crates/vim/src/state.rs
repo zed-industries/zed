@@ -17,7 +17,7 @@ use gpui::{
     Action, App, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, DismissEvent, Entity,
     EntityId, Global, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
 };
-use language::{Buffer, BufferEvent, BufferId, Chunk, Point};
+use language::{Buffer, BufferEvent, BufferId, Chunk, LanguageAwareStyling, Point};
 
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
@@ -138,6 +138,7 @@ pub enum Operator {
     RecordRegister,
     ReplayRegister,
     ToggleComments,
+    ToggleBlockComments,
     ReplaceWithRegister,
     Exchange,
     HelixMatch,
@@ -1078,6 +1079,7 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::ToggleBlockComments => "gb",
             Operator::HelixMatch => "helix_m",
             Operator::HelixNext { .. } => "helix_next",
             Operator::HelixPrevious { .. } => "helix_previous",
@@ -1157,6 +1159,7 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::HelixMatch
             | Operator::HelixNext { .. }
             | Operator::HelixPrevious { .. } => false,
@@ -1180,6 +1183,7 @@ impl Operator {
             | Operator::Rot13
             | Operator::Rot47
             | Operator::ToggleComments
+            | Operator::ToggleBlockComments
             | Operator::ReplaceWithRegister
             | Operator::Rewrap
             | Operator::ShellCommand
@@ -1504,7 +1508,10 @@ impl PickerDelegate for MarksViewDelegate {
                                     position.row,
                                     snapshot.line_len(MultiBufferRow(position.row)),
                                 ),
-                            true,
+                            LanguageAwareStyling {
+                                tree_sitter: true,
+                                diagnostics: true,
+                            },
                         );
                         matches.push(MarksMatch {
                             name: name.clone(),
@@ -1530,7 +1537,10 @@ impl PickerDelegate for MarksViewDelegate {
                             let chunks = snapshot.chunks(
                                 Point::new(position.row, 0)
                                     ..Point::new(position.row, snapshot.line_len(position.row)),
-                                true,
+                                LanguageAwareStyling {
+                                    tree_sitter: true,
+                                    diagnostics: true,
+                                },
                             );
 
                             matches.push(MarksMatch {
