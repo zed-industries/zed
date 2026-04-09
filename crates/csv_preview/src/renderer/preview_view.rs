@@ -5,7 +5,7 @@ use ui::{div, prelude::*};
 use crate::{CsvPreviewView, settings::FontType};
 
 impl Render for CsvPreviewView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
         self.performance_metrics.rendered_indices.clear();
@@ -15,6 +15,7 @@ impl Render for CsvPreviewView {
             .p_4()
             .bg(theme.colors().editor_background)
             .track_focus(&self.focus_handle)
+            .child(self.render_settings_panel(window, cx))
             .child({
                 if self.engine.contents.number_of_cols == 0 {
                     div()
