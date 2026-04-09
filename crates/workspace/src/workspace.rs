@@ -5479,6 +5479,11 @@ impl Workspace {
                 cx.emit(Event::ItemRemoved {
                     item_id: item.item_id(),
                 });
+                if self.should_close_window_after_last_item_closed(cx) {
+                    cx.defer_in(window, |_, window, _| {
+                        window.remove_window();
+                    });
+                }
             }
             pane::Event::Focus => {
                 window.invalidate_character_coordinates();
@@ -6915,6 +6920,30 @@ impl Workspace {
 
     fn has_any_items_open(&self, cx: &App) -> bool {
         self.panes.iter().any(|pane| pane.read(cx).items_len() > 0)
+    }
+
+    fn has_project_open(&self, cx: &App) -> bool {
+        self.visible_worktrees(cx)
+            .any(|worktree| !worktree.read(cx).is_single_file())
+    }
+
+    fn should_close_window_after_last_item_closed(&self, cx: &App) -> bool {
+        let settings = WorkspaceSettings::get_global(cx);
+        if !settings.on_last_tab_closed_if_no_project
+            || self.has_any_items_open(cx)
+            || self.has_project_open(cx)
+        {
+            return false;
+        }
+
+        match self.multi_workspace() {
+            Some(multi_workspace) => multi_workspace
+                .read_with(cx, |multi_workspace, _| {
+                    multi_workspace.workspaces().count() == 1
+                })
+                .unwrap_or(false),
+            None => true,
+        }
     }
 
     fn workspace_location(&self, cx: &App) -> WorkspaceLocation {
@@ -15325,6 +15354,166 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_close_window_after_last_tab_closed_in_workspace_without_project(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        set_on_last_tab_closed_if_no_project(cx, true);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(
+                Box::new(cx.new(TestItem::new)),
+                true,
+                true,
+                None,
+                window,
+                cx,
+            );
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&pane::CloseActiveItem::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 0);
+    }
+
+    #[gpui::test]
+    async fn test_close_window_after_last_tab_closed_in_single_file_workspace(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        set_on_last_tab_closed_if_no_project(cx, true);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "file.txt": "" }))
+            .await;
+
+        let project = Project::test(fs, [path!("/root/file.txt").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(
+                Box::new(cx.new(TestItem::new)),
+                true,
+                true,
+                None,
+                window,
+                cx,
+            );
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&pane::CloseActiveItem::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 0);
+    }
+
+    #[gpui::test]
+    async fn test_close_window_after_last_tab_closed_keeps_project_workspace_open(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        set_on_last_tab_closed_if_no_project(cx, true);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "file.txt": "" })).await;
+
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(
+                Box::new(cx.new(TestItem::new)),
+                true,
+                true,
+                None,
+                window,
+                cx,
+            );
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&pane::CloseActiveItem::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items_len(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_close_window_after_last_tab_closed_keeps_multi_workspace_window_open(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        set_on_last_tab_closed_if_no_project(cx, true);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "file.txt": "" })).await;
+
+        let scratch_project = Project::test(fs.clone(), None, cx).await;
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(scratch_project, window, cx));
+        let scratch_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.open_sidebar(cx);
+            multi_workspace.test_add_workspace(project, window, cx);
+            multi_workspace.activate(scratch_workspace.clone(), window, cx);
+        });
+
+        let pane = scratch_workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        pane.update_in(cx, |pane, window, cx| {
+            pane.add_item(
+                Box::new(cx.new(TestItem::new)),
+                true,
+                true,
+                None,
+                window,
+                cx,
+            );
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(&pane::CloseActiveItem::default(), window, cx)
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(cx.read(|cx| cx.windows().len()), 1);
+        multi_workspace.read_with(cx, |multi_workspace, _| {
+            assert_eq!(multi_workspace.workspaces().count(), 2);
+        });
+    }
+
+    #[gpui::test]
     async fn test_panel_zoom_preserved_across_workspace_switch(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -15538,6 +15727,14 @@ mod tests {
             }
         });
         item
+    }
+
+    fn set_on_last_tab_closed_if_no_project(cx: &mut TestAppContext, enabled: bool) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.on_last_tab_closed_if_no_project = Some(enabled);
+            });
+        });
     }
 
     #[gpui::test]

@@ -3105,6 +3105,20 @@ Or to set a `socks5` proxy:
 
 If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` environment variable. This accepts a comma-separated list of hostnames, host suffixes, IPv4/IPv6 addresses or blocks that should not use the proxy. For example if your environment included `NO_PROXY="google.com, 192.168.1.0/24"` all hosts in `192.168.1.*`, `google.com` and `*.google.com` would bypass the proxy. See [reqwest NoProxy docs](https://docs.rs/reqwest/latest/reqwest/struct.NoProxy.html#method.from_string) for more.
 
+## When Last Tab Closed If No Project
+
+- Description: Whether closing the last tab should also close the window when no project is open.
+- Setting: `on_last_tab_closed_if_no_project`
+- Default: `false`
+
+**Options**
+
+```json [settings]
+{
+  "on_last_tab_closed_if_no_project": true
+}
+```
+
 ## On Last Window Closed
 
 - Description: What to do when the last window is closed

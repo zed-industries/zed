@@ -176,6 +176,8 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // Whether closing the last tab should also close the window when no project is open.
+  "on_last_tab_closed_if_no_project": false,
   // What to do when the last window is closed.
   // May take 2 values:
   //  1. Use the current platform's convention
