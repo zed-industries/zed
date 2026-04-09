@@ -246,6 +246,7 @@ impl MessageContent {
             Self::Plain(text) => {
                 let text_part = MessagePart::Text {
                     text: std::mem::take(text),
+                    cache_control: None,
                 };
                 *self = Self::Multipart(vec![text_part, part]);
             }
@@ -256,10 +257,16 @@ impl MessageContent {
 
 impl From<Vec<MessagePart>> for MessageContent {
     fn from(parts: Vec<MessagePart>) -> Self {
-        if parts.len() == 1
-            && let MessagePart::Text { text } = &parts[0]
-        {
-            return Self::Plain(text.clone());
+        // Only collapse to Plain when there is no cache_control — a Plain string
+        // cannot carry cache_control metadata, so we must stay as Multipart.
+        if parts.len() == 1 {
+            if let MessagePart::Text {
+                text,
+                cache_control: None,
+            } = &parts[0]
+            {
+                return Self::Plain(text.clone());
+            }
         }
         Self::Multipart(parts)
     }
@@ -282,7 +289,7 @@ impl MessageContent {
         match self {
             Self::Plain(text) => Some(text),
             Self::Multipart(parts) if parts.len() == 1 => {
-                if let MessagePart::Text { text } = &parts[0] {
+                if let MessagePart::Text { text, .. } = &parts[0] {
                     Some(text)
                 } else {
                     None
@@ -298,7 +305,7 @@ impl MessageContent {
             Self::Multipart(parts) => parts
                 .iter()
                 .filter_map(|part| {
-                    if let MessagePart::Text { text } = part {
+                    if let MessagePart::Text { text, .. } = part {
                         Some(text.as_str())
                     } else {
                         None
@@ -310,15 +317,33 @@ impl MessageContent {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheControlType {
+    Ephemeral,
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+pub struct CacheControl {
+    #[serde(rename = "type")]
+    pub cache_type: CacheControlType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessagePart {
     Text {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     #[serde(rename = "image_url")]
     Image {
         image_url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
 }
 
@@ -370,10 +395,20 @@ pub struct FunctionChunk {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct PromptTokensDetails {
+    #[serde(default)]
+    pub cached_tokens: u64,
+    #[serde(default)]
+    pub cache_write_tokens: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
