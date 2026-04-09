@@ -12459,11 +12459,12 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        Editor, MultiBuffer, SelectionEffects,
+        Autoscroll, Editor, MultiBuffer, SelectionEffects,
         display_map::{BlockPlacement, BlockProperties},
         editor_tests::{init_test, update_test_language_settings},
+        test::editor_test_context::EditorTestContext,
     };
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{Modifiers, MouseButton, MouseMoveEvent, TestAppContext, VisualTestContext};
     use language::{Buffer, language_settings, tree_sitter_python};
     use log::info;
     use rand::{RngCore, rngs::StdRng};
@@ -13561,6 +13562,87 @@ mod tests {
             assert_eq!(out[2].color, text_color);
             assert_eq!(out[3].color, adjusted_bg1);
         }
+    }
+
+    #[gpui::test]
+    async fn test_mouse_drag_preserves_pending_sticky_header_autoscroll(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        let line_height = cx.update_editor(|editor, window, cx| {
+            editor
+                .style(cx)
+                .text
+                .line_height_in_pixels(window.rem_size())
+        });
+
+        let buffer = indoc::indoc! {"
+                ˇfn foo() {
+                    let abc = 123;
+                }
+                struct Bar;
+                impl Bar {
+                    fn new() -> Self {
+                        Self
+                    }
+                }
+                fn baz() {
+                }
+            "};
+        cx.set_state(&buffer);
+
+        let text_origin_x = cx.update_editor(|editor, _, _| {
+            editor
+                .last_position_map
+                .as_ref()
+                .unwrap()
+                .text_hitbox
+                .bounds
+                .origin
+                .x
+        });
+
+        cx.update_editor(|editor, window, cx| {
+            editor.scroll(gpui::Point { x: 0., y: 5.5 }, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        let mouse_drag_position = gpui::Point {
+            x: text_origin_x,
+            y: 2.25 * line_height,
+        };
+        cx.update_editor(|editor, window, cx| {
+            let position_map = editor.last_position_map.as_ref().unwrap().clone();
+            let anchor = editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .display_point_to_anchor(DisplayPoint::new(DisplayRow(5), 0), Bias::Left);
+
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::top_relative(1)),
+                window,
+                cx,
+                |selections| {
+                    selections.clear_disjoint();
+                    selections
+                        .set_pending_anchor_range(anchor..anchor, crate::SelectMode::Character);
+                },
+            );
+            assert!(editor.has_autoscroll_request());
+
+            EditorElement::mouse_dragged(
+                editor,
+                &MouseMoveEvent {
+                    position: mouse_drag_position,
+                    modifiers: Modifiers::none(),
+                    pressed_button: Some(MouseButton::Left),
+                },
+                &position_map,
+                window,
+                cx,
+            );
+            assert!(editor.has_autoscroll_request());
+        });
     }
 
     #[test]
