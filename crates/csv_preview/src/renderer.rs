@@ -1,3 +1,4 @@
+mod performance_metrics_overlay;
 mod preview_view;
 mod render_table;
 mod row_identifiers;

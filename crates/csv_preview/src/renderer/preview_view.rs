@@ -47,5 +47,8 @@ impl Render for CsvPreviewView {
             .w_full()
             .h_full()
             .child(table_with_settings)
+            .when(self.settings.show_perf_metrics_overlay, |div| {
+                div.child(self.render_performance_metrics_overlay(cx))
+            })
     }
 }
