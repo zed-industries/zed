@@ -536,15 +536,18 @@ impl Markdown {
 
     fn footnote_definition_content_start(&self, label: &SharedString) -> Option<usize> {
         let mut inside_target_def = false;
-        self.parsed_markdown.events.iter().find_map(|(range, event)| {
-            if inside_target_def && matches!(event, MarkdownEvent::Text) {
-                return Some(range.start);
-            }
-            if let MarkdownEvent::Start(MarkdownTag::FootnoteDefinition(def_label)) = event {
-                inside_target_def = *def_label == *label;
-            }
-            None
-        })
+        self.parsed_markdown
+            .events
+            .iter()
+            .find_map(|(range, event)| {
+                if inside_target_def && matches!(event, MarkdownEvent::Text) {
+                    return Some(range.start);
+                }
+                if let MarkdownEvent::Start(MarkdownTag::FootnoteDefinition(def_label)) = event {
+                    inside_target_def = *def_label == *label;
+                }
+                None
+            })
     }
 
     pub fn set_active_root_for_source_index(
@@ -1355,7 +1358,9 @@ impl MarkdownElement {
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
-                        if let Some(footnote_ref) = rendered_text.footnote_ref_for_position(event.position) {
+                        if let Some(footnote_ref) =
+                            rendered_text.footnote_ref_for_position(event.position)
+                        {
                             markdown.pressed_footnote_ref = Some(footnote_ref.clone());
                         } else if let Some(link) = rendered_text.link_for_position(event.position) {
                             markdown.pressed_link = Some(link.clone());
@@ -1435,10 +1440,13 @@ impl MarkdownElement {
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
-                    let is_hovering_link = rendered_text.link_for_position(event.position).is_some();
-                    let is_hovering_footnote_ref = rendered_text.footnote_ref_for_position(event.position).is_some();
-                    let is_hovering_clickable = hitbox.is_hovered(window)
-                        && (is_hovering_link || is_hovering_footnote_ref);
+                    let is_hovering_link =
+                        rendered_text.link_for_position(event.position).is_some();
+                    let is_hovering_footnote_ref = rendered_text
+                        .footnote_ref_for_position(event.position)
+                        .is_some();
+                    let is_hovering_clickable =
+                        hitbox.is_hovered(window) && (is_hovering_link || is_hovering_footnote_ref);
                     if is_hovering_clickable != was_hovering_clickable {
                         cx.notify();
                     }
@@ -1453,8 +1461,8 @@ impl MarkdownElement {
                         && Some(&pressed_footnote_ref)
                             == rendered_text.footnote_ref_for_position(event.position)
                     {
-                        if let Some(source_index) = markdown
-                            .footnote_definition_content_start(&pressed_footnote_ref.label)
+                        if let Some(source_index) =
+                            markdown.footnote_definition_content_start(&pressed_footnote_ref.label)
                         {
                             markdown.autoscroll_request = Some(source_index);
                             cx.notify();
@@ -1874,9 +1882,7 @@ impl Element for MarkdownElement {
                                     .items_start()
                                     .gap_2()
                                     .child(
-                                        div()
-                                            .text_size(rems(0.85))
-                                            .child(format!("{}.", label)),
+                                        div().text_size(rems(0.85)).child(format!("{}.", label)),
                                     ),
                                 range,
                                 markdown_end,
@@ -2944,10 +2950,7 @@ impl RenderedText {
             .find(|link| link.source_range.contains(&source_index))
     }
 
-    fn footnote_ref_for_position(
-        &self,
-        position: Point<Pixels>,
-    ) -> Option<&RenderedFootnoteRef> {
+    fn footnote_ref_for_position(&self, position: Point<Pixels>) -> Option<&RenderedFootnoteRef> {
         let source_index = self.source_index_for_position(position).ok()?;
         self.footnote_refs
             .iter()
