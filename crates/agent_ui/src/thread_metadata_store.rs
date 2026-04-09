@@ -718,8 +718,8 @@ impl ThreadMetadataStore {
 
                 let agent_id = thread_ref.connection().agent_id();
 
+                let project = thread_ref.project().read(cx);
                 let folder_paths = {
-                    let project = thread_ref.project().read(cx);
                     let paths: Vec<Arc<Path>> = project
                         .visible_worktrees(cx)
                         .map(|worktree| worktree.read(cx).abs_path())
@@ -727,12 +727,9 @@ impl ThreadMetadataStore {
                     PathList::new(&paths)
                 };
 
-                let main_worktree_paths = thread_ref
-                    .project()
-                    .read(cx)
-                    .project_group_key(cx)
-                    .path_list()
-                    .clone();
+                let project_group_key = project.project_group_key(cx);
+                let main_worktree_paths = project_group_key.path_list().clone();
+                let remote_connection = project_group_key.host();
 
                 // Threads without a folder path (e.g. started in an empty
                 // window) are archived by default so they don't get lost,
@@ -750,7 +747,7 @@ impl ThreadMetadataStore {
                     updated_at,
                     folder_paths,
                     main_worktree_paths,
-                    remote_connection: None,
+                    remote_connection,
                     archived,
                 };
 
@@ -1109,7 +1106,6 @@ mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
     use project::Project;
-    use remote::{RemoteConnectionOptions, WslConnectionOptions};
     use std::path::Path;
     use std::rc::Rc;
 
