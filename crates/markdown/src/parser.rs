@@ -81,6 +81,8 @@ impl ParseState {
     }
 }
 
+const MAX_DUPLICATE_HEADING_SLUGS: usize = 128;
+
 fn build_heading_slugs(
     source: &str,
     events: &[(Range<usize>, MarkdownEvent)],
@@ -103,13 +105,26 @@ fn build_heading_slugs(
                     let source_offset = heading_source_start.unwrap_or(range.start);
                     let base_slug = generate_heading_slug(&heading_text);
                     let count = slug_counts.entry(base_slug.clone()).or_insert(0);
-                    let slug = if *count == 0 {
-                        base_slug
+                    let mut slug = if *count == 0 {
+                        base_slug.clone()
                     } else {
                         format!("{base_slug}-{count}")
                     };
                     *count += 1;
-                    slugs.insert(SharedString::from(slug), source_offset);
+                    while slugs.contains_key(slug.as_str()) {
+                        if *slug_counts.get(&base_slug).unwrap_or(&0)
+                            >= MAX_DUPLICATE_HEADING_SLUGS
+                        {
+                            slug.clear();
+                            break;
+                        }
+                        let count = slug_counts.entry(base_slug.clone()).or_insert(0);
+                        slug = format!("{base_slug}-{count}");
+                        *count += 1;
+                    }
+                    if !slug.is_empty() {
+                        slugs.insert(SharedString::from(slug), source_offset);
+                    }
                     inside_heading = false;
                 }
             }
@@ -1210,6 +1225,19 @@ mod tests {
         let second = parsed.heading_slugs.get("duplicate-1").copied();
         assert!(first.is_some());
         assert!(second.is_some());
-        assert!(first.unwrap() < second.unwrap());
+        assert!(first.expect("first slug missing") < second.expect("second slug missing"));
+    }
+
+    #[test]
+    fn test_heading_slug_collision_with_dedup_suffix() {
+        let parsed = parse_markdown_with_options(
+            "# Foo\n\n## Foo\n\n## Foo 1",
+            false,
+            true,
+        );
+        assert_eq!(parsed.heading_slugs.len(), 3);
+        assert!(parsed.heading_slugs.contains_key("foo"));
+        assert!(parsed.heading_slugs.contains_key("foo-1"));
+        assert!(parsed.heading_slugs.contains_key("foo-1-1"));
     }
 }

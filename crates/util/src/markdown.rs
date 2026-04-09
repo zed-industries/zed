@@ -16,10 +16,28 @@ pub fn generate_heading_slug(text: &str) -> String {
         .collect()
 }
 
+/// Returns true if the URL starts with a URI scheme (RFC 3986 §3.1).
+fn has_uri_scheme(url: &str) -> bool {
+    let mut chars = url.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    for c in chars {
+        if c == ':' {
+            return true;
+        }
+        if !(c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.') {
+            return false;
+        }
+    }
+    false
+}
+
 /// Splits a relative URL into its path and `#fragment` parts.
 /// Absolute URLs are returned as-is with no fragment.
 pub fn split_local_url_fragment(url: &str) -> (&str, Option<&str>) {
-    if url.contains("://") || url.starts_with("mailto:") || url.starts_with("tel:") {
+    if has_uri_scheme(url) {
         return (url, None);
     }
     match url.find('#') {
@@ -337,6 +355,22 @@ mod tests {
         assert_eq!(
             split_local_url_fragment("../other.md#section"),
             ("../other.md", Some("section"))
+        );
+        assert_eq!(
+            split_local_url_fragment("urn:example:animal#section"),
+            ("urn:example:animal#section", None)
+        );
+        assert_eq!(
+            split_local_url_fragment("news:comp.infosystems#frag"),
+            ("news:comp.infosystems#frag", None)
+        );
+        assert_eq!(
+            split_local_url_fragment("data:text/html,hello#frag"),
+            ("data:text/html,hello#frag", None)
+        );
+        assert_eq!(
+            split_local_url_fragment("123:not-a-scheme#frag"),
+            ("123:not-a-scheme", Some("frag"))
         );
     }
 

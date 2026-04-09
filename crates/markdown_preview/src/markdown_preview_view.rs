@@ -679,36 +679,36 @@ fn handle_url_click(
     let path_part = path_part.to_string();
     let fragment = fragment.map(|f| f.to_string());
 
-    if let Some(fragment) = fragment {
-        let view = view.clone();
-        let slug = SharedString::from(fragment);
-        window.defer(cx, move |window, cx| {
-            if let Some(view) = view.upgrade() {
-                let markdown = view.read(cx).markdown.clone();
-                let active_editor = view
-                    .read(cx)
-                    .active_editor
-                    .as_ref()
-                    .map(|state| state.editor.clone());
+    if path_part.is_empty() {
+        if let Some(fragment) = fragment {
+            let view = view.clone();
+            let slug = SharedString::from(fragment);
+            window.defer(cx, move |window, cx| {
+                if let Some(view) = view.upgrade() {
+                    let markdown = view.read(cx).markdown.clone();
+                    let active_editor = view
+                        .read(cx)
+                        .active_editor
+                        .as_ref()
+                        .map(|state| state.editor.clone());
 
-                let source_index =
-                    markdown.update(cx, |markdown, cx| markdown.scroll_to_heading(&slug, cx));
+                    let source_index =
+                        markdown.update(cx, |markdown, cx| markdown.scroll_to_heading(&slug, cx));
 
-                if let Some(source_index) = source_index {
-                    if let Some(editor) = active_editor {
-                        MarkdownPreviewView::move_cursor_to_source_index(
-                            &editor,
-                            source_index,
-                            window,
-                            cx,
-                        );
+                    if let Some(source_index) = source_index {
+                        if let Some(editor) = active_editor {
+                            MarkdownPreviewView::move_cursor_to_source_index(
+                                &editor,
+                                source_index,
+                                window,
+                                cx,
+                            );
+                        }
                     }
                 }
-            }
-        });
-    }
-
-    if !path_part.is_empty() {
+            });
+        }
+    } else {
         open_preview_url(
             SharedString::from(path_part),
             base_directory,
