@@ -3274,7 +3274,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_scan_section() -> [SettingsPageItem; 5] {
+    fn file_scan_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("File Scan"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3318,6 +3318,25 @@ fn search_and_files_page() -> SettingsPage {
                     }
                     .unimplemented(),
                 ),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Scan Symbolic Links",
+                description: "When to scan content of linked directories",
+                field: Box::new(SettingField {
+                    json_path: Some("scan_symlinks"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project
+                            .worktree
+                            .scan_symlinks
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.project.worktree.scan_symlinks = value;
+                    },
+                }),
                 metadata: None,
                 files: USER,
             }),
