@@ -72,9 +72,10 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
     CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
-    File as _, Language, LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate,
-    LspInstaller, ManifestDelegate, ManifestName, ModelineSettings, OffsetUtf16, Patch, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16, Toolchain, Transaction, Unclipped,
+    File as _, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LocalFile,
+    LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate, ManifestName, ModelineSettings,
+    OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
+    Toolchain, Transaction, Unclipped,
     language_settings::{
         AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
     },
@@ -4429,7 +4430,8 @@ impl LspStore {
             WorktreeStoreEvent::WorktreeReleased(..)
             | WorktreeStoreEvent::WorktreeOrderChanged
             | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
-            | WorktreeStoreEvent::WorktreeDeletedEntry(..) => {}
+            | WorktreeStoreEvent::WorktreeDeletedEntry(..)
+            | WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(..) => {}
         }
     }
 
@@ -13527,7 +13529,13 @@ fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completio
     }
 
     let mut offset = 0;
-    for chunk in snapshot.chunks(word_range.clone(), true) {
+    for chunk in snapshot.chunks(
+        word_range.clone(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: true,
+        },
+    ) {
         let end_offset = offset + chunk.text.len();
         if let Some(highlight_id) = chunk.syntax_highlight_id {
             completion

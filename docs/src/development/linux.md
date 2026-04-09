@@ -21,33 +21,6 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
 
   If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
-### Linkers {#linker}
-
-On Linux, Rust's default linker is [LLVM's `lld`](https://blog.rust-lang.org/2025/09/18/Rust-1.90.0/). Alternative linkers, especially [Wild](https://github.com/davidlattimore/wild) and [Mold](https://github.com/rui314/mold), can improve clean and incremental build times.
-
-Zed currently uses Mold in CI because it is more mature. For local development, Wild is recommended because it is typically 5-20% faster than Mold.
-
-These linkers can be installed with `script/install-mold` and `script/install-wild`.
-
-To use Wild as your default, add these lines to your `~/.cargo/config.toml`:
-
-```toml
-[target.x86_64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=--ld-path=wild"]
-
-[target.aarch64-unknown-linux-gnu]
-linker = "clang"
-rustflags = ["-C", "link-arg=--ld-path=wild"]
-```
-
-To use Mold as your default:
-
-```toml
-[target.'cfg(target_os = "linux")']
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
-```
-
 ## Building from source
 
 Once the dependencies are installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).

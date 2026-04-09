@@ -627,6 +627,67 @@ async fn test_realfs_symlink_loop_metadata(executor: BackgroundExecutor) {
 }
 
 #[gpui::test]
+async fn test_fake_fs_trash_file(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "file_a.txt": "File A",
+            "file_b.txt": "File B",
+        }),
+    )
+    .await;
+
+    let root_path = PathBuf::from(path!("/root"));
+    let path = path!("/root/file_a.txt").as_ref();
+    let trashed_entry = fs
+        .trash_file(path)
+        .await
+        .expect("should be able to trash {path:?}");
+
+    assert_eq!(trashed_entry.name, "file_a.txt");
+    assert_eq!(trashed_entry.original_parent, root_path);
+    assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_b.txt"))]);
+
+    let trash_entries = fs.trash_entries();
+    assert_eq!(trash_entries.len(), 1);
+    assert_eq!(trash_entries[0].name, "file_a.txt");
+    assert_eq!(trash_entries[0].original_parent, root_path);
+}
+
+#[gpui::test]
+async fn test_fake_fs_trash_dir(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "file_a.txt": "File A",
+                "file_b.txt": "File B",
+            },
+            "file_c.txt": "File C",
+        }),
+    )
+    .await;
+
+    let root_path = PathBuf::from(path!("/root"));
+    let path = path!("/root/src").as_ref();
+    let trashed_entry = fs
+        .trash_dir(path)
+        .await
+        .expect("should be able to trash {path:?}");
+
+    assert_eq!(trashed_entry.name, "src");
+    assert_eq!(trashed_entry.original_parent, root_path);
+    assert_eq!(fs.files(), vec![PathBuf::from(path!("/root/file_c.txt"))]);
+
+    let trash_entries = fs.trash_entries();
+    assert_eq!(trash_entries.len(), 1);
+    assert_eq!(trash_entries[0].name, "src");
+    assert_eq!(trash_entries[0].original_parent, root_path);
+}
+
+#[gpui::test]
 #[ignore = "stress test; run explicitly when needed"]
 async fn test_realfs_watch_stress_reports_missed_paths(
     executor: BackgroundExecutor,
