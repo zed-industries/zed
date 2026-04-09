@@ -571,7 +571,7 @@ encoding_rs = "0.8"
 exec = "0.3.1"
 fancy-regex = "0.17.0"
 fork = "0.4.0"
-futures = "0.3"
+futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
