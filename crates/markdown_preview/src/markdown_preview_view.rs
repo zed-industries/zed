@@ -46,8 +46,6 @@ pub struct MarkdownPreviewView {
     image_cache: Entity<RetainAllImageCache>,
     base_directory: Option<PathBuf>,
     pending_update_task: Option<Task<Result<()>>>,
-    pending_scroll_to_heading: Option<SharedString>,
-    pending_heading_editor_scroll: Option<SharedString>,
     mode: MarkdownPreviewMode,
 }
 
@@ -241,8 +239,6 @@ impl MarkdownPreviewView {
                 image_cache: RetainAllImageCache::new(cx),
                 base_directory: None,
                 pending_update_task: None,
-                pending_scroll_to_heading: None,
-                pending_heading_editor_scroll: None,
                 mode,
             };
 
@@ -622,14 +618,7 @@ impl MarkdownPreviewView {
             let workspace = self.workspace.clone();
             let base_directory = self.base_directory.clone();
             move |url, window, cx| {
-                handle_url_click(
-                    url,
-                    &view,
-                    base_directory.clone(),
-                    &workspace,
-                    window,
-                    cx,
-                );
+                handle_url_click(url, &view, base_directory.clone(), &workspace, window, cx);
             }
         });
 
@@ -685,13 +674,16 @@ fn handle_url_click(
     let path_part = path_part.to_string();
     let fragment = fragment.map(|f| f.to_string());
 
-    if let Some(fragment) = fragment
-        && let Some(view) = view.upgrade()
-    {
-        view.update(cx, |this, _| {
-            let slug = SharedString::from(fragment);
-            this.pending_scroll_to_heading = Some(slug.clone());
-            this.pending_heading_editor_scroll = Some(slug);
+    if let Some(fragment) = fragment {
+        let view = view.clone();
+        let slug = SharedString::from(fragment);
+        cx.defer(move |cx| {
+            if let Some(view) = view.upgrade() {
+                let markdown = view.read(cx).markdown.clone();
+                markdown.update(cx, |markdown, _| {
+                    markdown.scroll_to_heading(slug);
+                });
+            }
         });
     }
 
@@ -741,7 +733,14 @@ fn split_url_fragment(url: &str) -> (&str, Option<&str>) {
         Some(pos) => {
             let path = &url[..pos];
             let fragment = &url[pos + 1..];
-            (path, if fragment.is_empty() { None } else { Some(fragment) })
+            (
+                path,
+                if fragment.is_empty() {
+                    None
+                } else {
+                    Some(fragment)
+                },
+            )
         }
         None => (url, None),
     }
@@ -861,20 +860,6 @@ impl Item for MarkdownPreviewView {
 
 impl Render for MarkdownPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(slug) = self.pending_scroll_to_heading.take() {
-            self.markdown.update(cx, |markdown, _| {
-                markdown.scroll_to_heading(slug);
-            });
-        }
-        if let Some(slug) = self.pending_heading_editor_scroll.as_ref() {
-            let source_index = self.markdown.read(cx).heading_source_index_for_slug(slug);
-            if let Some(source_index) = source_index {
-                self.pending_heading_editor_scroll = None;
-                if let Some(state) = &self.active_editor {
-                    Self::move_cursor_to_source_index(&state.editor, source_index, window, cx);
-                }
-            }
-        }
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
@@ -1152,5 +1137,4 @@ mod tests {
         );
         assert_eq!(split_url_fragment("#"), ("", None));
     }
-
 }
