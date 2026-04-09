@@ -183,7 +183,7 @@ fn path_match_helper<'a>(
             let length_penalty = candidate_buf.len() as f64 * LENGTH_PENALTY;
             let filename_bonus = get_filename_match_bonus(&candidate_buf, atoms, matcher);
             let adjusted_score = total_score as f64 + filename_bonus - length_penalty;
-            let mut positions: Vec<usize> = candidate_buf
+            let positions: Vec<usize> = candidate_buf
                 .char_indices()
                 .enumerate()
                 .filter_map(|(char_offset, (byte_offset, _))| {
@@ -193,7 +193,6 @@ fn path_match_helper<'a>(
                         .then_some(byte_offset)
                 })
                 .collect();
-            positions.sort_unstable();
 
             results.push(PathMatch {
                 score: adjusted_score,
