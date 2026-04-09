@@ -26,10 +26,10 @@ use picker::{
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
-use ui::ThreadItem;
+use ui::{AgentThreadStatus, ThreadItem};
 use ui::{
-    CommonAnimationExt, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip,
-    WithScrollbar, prelude::*, utils::platform_title_bar_height,
+    Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, WithScrollbar,
+    prelude::*, utils::platform_title_bar_height,
 };
 use ui_input::ErasedEditor;
 use util::ResultExt;
@@ -113,6 +113,7 @@ fn fuzzy_match_positions(query: &str, text: &str) -> Option<Vec<usize>> {
 pub enum ThreadsArchiveViewEvent {
     Close,
     Unarchive { thread: ThreadMetadata },
+    CancelRestore { session_id: acp::SessionId },
 }
 
 impl EventEmitter<ThreadsArchiveViewEvent> for ThreadsArchiveView {}
@@ -549,17 +550,26 @@ impl ThreadsArchiveView {
                     }));
 
                 if is_restoring {
-                    base.action_slot(
-                        Icon::new(IconName::LoadCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_keyed_rotate_animation(
-                                SharedString::from(format!("restoring-spinner-{}", ix)),
-                                2,
-                            ),
-                    )
-                    .tooltip(Tooltip::text("Restoring…"))
-                    .into_any_element()
+                    base.status(AgentThreadStatus::Running)
+                        .action_slot(
+                            IconButton::new("cancel-restore", IconName::Close)
+                                .style(ButtonStyle::Filled)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Cancel Restore"))
+                                .on_click({
+                                    let session_id = thread.session_id.clone();
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.clear_restoring(&session_id, cx);
+                                        cx.emit(ThreadsArchiveViewEvent::CancelRestore {
+                                            session_id: session_id.clone(),
+                                        });
+                                        cx.stop_propagation();
+                                    })
+                                }),
+                        )
+                        .tooltip(Tooltip::text("Restoring\u{2026}"))
+                        .into_any_element()
                 } else {
                     base.action_slot(
                         IconButton::new("delete-thread", IconName::Trash)
