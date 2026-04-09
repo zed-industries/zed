@@ -42,6 +42,7 @@ pub struct MarkdownPreviewView {
     base_directory: Option<PathBuf>,
     pending_update_task: Option<Task<Result<()>>>,
     pending_scroll_to_heading: Option<SharedString>,
+    pending_heading_editor_scroll: Option<SharedString>,
     mode: MarkdownPreviewMode,
 }
 
@@ -236,6 +237,7 @@ impl MarkdownPreviewView {
                 base_directory: None,
                 pending_update_task: None,
                 pending_scroll_to_heading: None,
+                pending_heading_editor_scroll: None,
                 mode,
             };
 
@@ -681,7 +683,9 @@ fn handle_url_click(
         && let Some(view) = view.upgrade()
     {
         view.update(cx, |this, _| {
-            this.pending_scroll_to_heading = Some(fragment.into());
+            let slug = SharedString::from(fragment);
+            this.pending_scroll_to_heading = Some(slug.clone());
+            this.pending_heading_editor_scroll = Some(slug);
         });
     }
 
@@ -842,6 +846,15 @@ impl Render for MarkdownPreviewView {
             self.markdown.update(cx, |markdown, _| {
                 markdown.scroll_to_heading(slug);
             });
+        }
+        if let Some(slug) = self.pending_heading_editor_scroll.as_ref() {
+            let source_index = self.markdown.read(cx).heading_source_index_for_slug(slug);
+            if let Some(source_index) = source_index {
+                self.pending_heading_editor_scroll = None;
+                if let Some(state) = &self.active_editor {
+                    Self::move_cursor_to_source_index(&state.editor, source_index, window, cx);
+                }
+            }
         }
         div()
             .image_cache(self.image_cache.clone())
