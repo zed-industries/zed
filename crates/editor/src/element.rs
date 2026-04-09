@@ -397,6 +397,7 @@ impl EditorElement {
             editor.find_previous_match(action, window, cx).log_err();
         });
         register_action(editor, window, Editor::toggle_comments);
+        register_action(editor, window, Editor::toggle_block_comments);
         register_action(editor, window, Editor::select_larger_syntax_node);
         register_action(editor, window, Editor::select_smaller_syntax_node);
         register_action(editor, window, Editor::select_next_syntax_node);

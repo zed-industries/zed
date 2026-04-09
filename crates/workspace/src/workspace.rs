@@ -3322,6 +3322,18 @@ impl Workspace {
         state.task.clone().unwrap()
     }
 
+    /// Prompts the user to save or discard each dirty item, returning
+    /// `true` if they confirmed (saved/discarded everything) or `false`
+    /// if they cancelled. Used before removing worktree roots during
+    /// thread archival.
+    pub fn prompt_to_save_or_discard_dirty_items(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<bool>> {
+        self.save_all_internal(SaveIntent::Close, window, cx)
+    }
+
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
@@ -8778,6 +8790,9 @@ pub async fn restore_multiworkspace(
         // stale keys from previous sessions get normalized and deduped.
         let mut resolved_keys: Vec<ProjectGroupKey> = Vec::new();
         for key in project_group_keys.into_iter().map(ProjectGroupKey::from) {
+            if key.path_list().paths().is_empty() {
+                continue;
+            }
             let mut resolved_paths = Vec::new();
             for path in key.path_list().paths() {
                 if let Some(common_dir) =

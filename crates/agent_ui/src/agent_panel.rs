@@ -1862,6 +1862,7 @@ impl AgentPanel {
                                 model,
                                 enable_thinking,
                                 effort,
+                                speed: None,
                             })
                     });
                 }
@@ -1892,6 +1893,14 @@ impl AgentPanel {
             ActiveView::AgentThread { conversation_view } => Some(conversation_view),
             _ => None,
         }
+    }
+
+    pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
+        self.active_conversation_view()
+            .into_iter()
+            .cloned()
+            .chain(self.background_threads.values().cloned())
+            .collect()
     }
 
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
@@ -4776,7 +4785,7 @@ mod tests {
             language_model::LanguageModelRegistry::test(cx);
         });
 
-        // --- Create a MultiWorkspace window with two workspaces ---
+        // Create a MultiWorkspace window with two workspaces.
         let fs = FakeFs::new(cx.executor());
         let project_a = Project::test(fs.clone(), [], cx).await;
         let project_b = Project::test(fs, [], cx).await;
@@ -4805,7 +4814,7 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
-        // --- Set up workspace A: with an active thread ---
+        // Set up workspace A: with an active thread.
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
         });
@@ -4831,7 +4840,7 @@ mod tests {
 
         let agent_type_a = panel_a.read_with(cx, |panel, _cx| panel.selected_agent.clone());
 
-        // --- Set up workspace B: ClaudeCode, no active thread ---
+        // Set up workspace B: ClaudeCode, no active thread.
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
         });
@@ -4842,12 +4851,12 @@ mod tests {
             };
         });
 
-        // --- Serialize both panels ---
+        // Serialize both panels.
         panel_a.update(cx, |panel, cx| panel.serialize(cx));
         panel_b.update(cx, |panel, cx| panel.serialize(cx));
         cx.run_until_parked();
 
-        // --- Load fresh panels for each workspace and verify independent state ---
+        // Load fresh panels for each workspace and verify independent state.
         let async_cx = cx.update(|window, cx| window.to_async(cx));
         let loaded_a = AgentPanel::load(workspace_a.downgrade(), async_cx)
             .await

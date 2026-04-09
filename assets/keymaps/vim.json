@@ -263,6 +263,7 @@
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPreviousHunk",
       "g c": "vim::PushToggleComments",
+      "g b": "vim::PushToggleBlockComments",
     },
   },
   {
@@ -319,6 +320,7 @@
       "a": ["vim::PushObject", { "around": true }],
       "g shift-r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
+      "g b": "vim::ToggleBlockComments",
       "g q": "vim::Rewrap",
       "g w": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
@@ -787,6 +789,12 @@
   },
   {
     "context": "vim_operator == gc",
+    "bindings": {
+      "c": "vim::CurrentLine",
+    },
+  },
+  {
+    "context": "vim_operator == gb",
     "bindings": {
       "c": "vim::CurrentLine",
     },

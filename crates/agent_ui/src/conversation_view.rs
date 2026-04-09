@@ -354,6 +354,20 @@ impl ConversationView {
             .pending_tool_call(id, cx)
     }
 
+    pub fn root_thread_has_pending_tool_call(&self, cx: &App) -> bool {
+        let Some(root_thread) = self.root_thread(cx) else {
+            return false;
+        };
+        let root_id = root_thread.read(cx).id.clone();
+        self.as_connected().is_some_and(|connected| {
+            connected
+                .conversation
+                .read(cx)
+                .pending_tool_call(&root_id, cx)
+                .is_some()
+        })
+    }
+
     pub fn root_thread(&self, cx: &App) -> Option<Entity<ThreadView>> {
         match &self.server_state {
             ServerState::Connected(connected) => {
@@ -1510,24 +1524,30 @@ impl ConversationView {
 
         let agent_telemetry_id = connection.telemetry_id();
 
-        if let Some(login) = connection.terminal_auth_task(&method, cx) {
+        if let Some(login_task) = connection.terminal_auth_task(&method, cx) {
             configuration_view.take();
             pending_auth_method.replace(method.clone());
 
             let project = self.project.clone();
-            let authenticate = Self::spawn_external_agent_login(
-                login,
-                workspace,
-                project,
-                method.clone(),
-                false,
-                window,
-                cx,
-            );
             cx.notify();
             self.auth_task = Some(cx.spawn_in(window, {
                 async move |this, cx| {
-                    let result = authenticate.await;
+                    let result = async {
+                        let login = login_task.await?;
+                        this.update_in(cx, |_this, window, cx| {
+                            Self::spawn_external_agent_login(
+                                login,
+                                workspace,
+                                project,
+                                method.clone(),
+                                false,
+                                window,
+                                cx,
+                            )
+                        })?
+                        .await
+                    }
+                    .await;
 
                     match &result {
                         Ok(_) => telemetry::event!(
@@ -2643,6 +2663,13 @@ impl ConversationView {
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
             store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
         }
+
+        let session_id = session_id.clone();
+        cx.spawn(async move |_this, cx| {
+            crate::thread_worktree_archive::cleanup_thread_archived_worktrees(&session_id, cx)
+                .await;
+        })
+        .detach();
     }
 }
 

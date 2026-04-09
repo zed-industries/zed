@@ -2827,6 +2827,82 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
     );
 }
 
+#[gpui::test]
+async fn test_linked_worktree_git_file_event_does_not_panic(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // Regression test: in a linked worktree, `.git` is a file (containing
+    // "gitdir: ..."), not a directory. When the background scanner receives
+    // a filesystem event for a path inside the main repo's `.git` directory
+    // (which it watches via the commondir), the ancestor-walking code in
+    // `process_events` calls `is_git_dir` on each ancestor. If `is_git_dir`
+    // treats `.git` files the same as `.git` directories, it incorrectly
+    // identifies the gitfile as a git dir, adds it to `dot_git_abs_paths`,
+    // and `update_git_repositories` panics because the path is outside the
+    // worktree root.
+    init_test(cx);
+
+    use git::repository::Worktree as GitWorktree;
+
+    let fs = FakeFs::new(executor);
+
+    fs.insert_tree(
+        path!("/main_repo"),
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/main_repo/.git")),
+        false,
+        GitWorktree {
+            path: PathBuf::from(path!("/linked_worktree")),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    fs.write(
+        path!("/linked_worktree/file.txt").as_ref(),
+        "content".as_bytes(),
+    )
+    .await
+    .unwrap();
+
+    let tree = Worktree::local(
+        path!("/linked_worktree").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    // Trigger a filesystem event inside the main repo's .git directory
+    // (which the linked worktree scanner watches via the commondir). This
+    // uses the sentinel-file helper to ensure the event goes through the
+    // real watcher path, exactly as it would in production.
+    tree.flush_fs_events_in_root_git_repository(cx).await;
+
+    // The worktree should still be intact.
+    tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot().root_repo_common_dir().map(|p| p.as_ref()),
+            Some(Path::new(path!("/main_repo/.git"))),
+        );
+    });
+}
+
 fn init_test(cx: &mut gpui::TestAppContext) {
     zlog::init_test();
 

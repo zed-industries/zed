@@ -157,6 +157,7 @@ const NEEDS_REVIEW_PULLS_URL: &str = "https://github.com/zed-industries/zed/pull
 
 pub(crate) enum ComplianceContext {
     Release,
+    ReleaseNonBlocking,
     Scheduled { tag_source: StepOutput },
 }
 
@@ -165,11 +166,16 @@ pub(crate) fn add_compliance_notification_steps(
     context: ComplianceContext,
     compliance_step_id: &str,
 ) -> gh_workflow::Job {
-    let upload_step =
-        upload_artifact(COMPLIANCE_REPORT_FILE).if_condition(Expression::new("always()"));
+    let upload_step = upload_artifact(COMPLIANCE_REPORT_FILE)
+        .if_condition(Expression::new("always()"))
+        .when(matches!(context, ComplianceContext::Release), |step| {
+            step.add_with(("overwrite", true))
+        });
 
     let (success_prefix, failure_prefix) = match context {
-        ComplianceContext::Release => ("✅ Compliance check passed", "❌ Compliance check failed"),
+        ComplianceContext::Release | ComplianceContext::ReleaseNonBlocking => {
+            ("✅ Compliance check passed", "❌ Compliance check failed")
+        }
         ComplianceContext::Scheduled { .. } => (
             "✅ Scheduled compliance check passed",
             "⚠️ Scheduled compliance check failed",
@@ -177,18 +183,13 @@ pub(crate) fn add_compliance_notification_steps(
     };
 
     let script = formatdoc! {r#"
-        REPORT_CONTENT=""
-        if [ -f "{COMPLIANCE_REPORT_FILE}" ]; then
-            REPORT_CONTENT=$(cat "{COMPLIANCE_REPORT_FILE}")
-        fi
-
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
             STATUS="{success_prefix} for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
         else
             STATUS="{failure_prefix} for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "{NEEDS_REVIEW_PULLS_URL}")
         fi
-
-        MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s\n\n%s" "$STATUS" "$ARTIFACT_URL" "{NEEDS_REVIEW_PULLS_URL}" "$REPORT_CONTENT")
 
         curl -X POST -H 'Content-type: application/json' \
             --data "$(jq -n --arg text "$MESSAGE" '{{"text": $text}}')" \
@@ -207,7 +208,9 @@ pub(crate) fn add_compliance_notification_steps(
         .add_env((
             "COMPLIANCE_TAG",
             match context {
-                ComplianceContext::Release => Context::github().ref_name().to_string(),
+                ComplianceContext::Release | ComplianceContext::ReleaseNonBlocking => {
+                    Context::github().ref_name().to_string()
+                }
                 ComplianceContext::Scheduled { tag_source } => tag_source.to_string(),
             },
         ))
@@ -228,6 +231,7 @@ fn compliance_check() -> NamedJob {
         .id("run-compliance-check")
         .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
         .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+        .continue_on_error(true)
     }
 
     let job = release_job(&[])
@@ -242,7 +246,7 @@ fn compliance_check() -> NamedJob {
 
     named::job(add_compliance_notification_steps(
         job,
-        ComplianceContext::Release,
+        ComplianceContext::ReleaseNonBlocking,
         "run-compliance-check",
     ))
 }
