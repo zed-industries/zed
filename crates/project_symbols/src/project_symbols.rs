@@ -288,14 +288,7 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         let custom_highlights = string_match
             .positions
             .iter()
-            .filter_map(|position| {
-                label.get(*position..).and_then(|suffix| {
-                    suffix.chars().next().map(|character| {
-                        (*position..*position + character.len_utf8(), highlight_style)
-                    })
-                })
-            })
-            .collect::<Vec<_>>();
+            .map(|pos| (*pos..label.ceil_char_boundary(pos + 1), highlight_style))
 
         let highlights = gpui::combine_highlights(custom_highlights, syntax_runs);
 
