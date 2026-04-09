@@ -916,6 +916,20 @@ pub trait GitRepository: Send + Sync {
     /// Resets to a previously-created checkpoint.
     fn restore_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<'_, Result<()>>;
 
+    /// Creates two detached commits capturing the current staged and unstaged
+    /// state without moving any branch. Returns (staged_sha, unstaged_sha).
+    fn create_archive_checkpoint(&self) -> BoxFuture<'_, Result<(String, String)>>;
+
+    /// Restores the working directory and index from archive checkpoint SHAs.
+    /// Assumes HEAD is already at the correct commit (original_commit_hash).
+    /// Restores the index to match staged_sha's tree, and the working
+    /// directory to match unstaged_sha's tree.
+    fn restore_archive_checkpoint(
+        &self,
+        staged_sha: String,
+        unstaged_sha: String,
+    ) -> BoxFuture<'_, Result<()>>;
+
     /// Compares two checkpoints, returning true if they are equal
     fn compare_checkpoints(
         &self,
@@ -958,8 +972,6 @@ pub trait GitRepository: Send + Sync {
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>>;
-
-    fn stage_all_including_untracked(&self) -> BoxFuture<'_, Result<()>>;
 
     fn set_trusted(&self, trusted: bool);
     fn is_trusted(&self) -> bool;
@@ -2271,18 +2283,6 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stage_all_including_untracked(&self) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> =
-                    vec!["--no-optional-locks".into(), "add".into(), "-A".into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
-    }
-
     fn push(
         &self,
         branch_name: String,
@@ -2615,6 +2615,90 @@ impl GitRepository for RealGitRepository {
                 //     git.run(&["clean", "-d", "--force"]).await
                 // })
                 // .await?;
+
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn create_archive_checkpoint(&self) -> BoxFuture<'_, Result<(String, String)>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let mut git = git_binary?.envs(checkpoint_author_envs());
+
+                let head_sha = git
+                    .run(&["rev-parse", "HEAD"])
+                    .await
+                    .context("failed to read HEAD")?;
+
+                // Capture the staged state: write-tree reads the current index
+                let staged_tree = git
+                    .run(&["write-tree"])
+                    .await
+                    .context("failed to write staged tree")?;
+                let staged_sha = git
+                    .run(&[
+                        "commit-tree",
+                        &staged_tree,
+                        "-p",
+                        &head_sha,
+                        "-m",
+                        "WIP staged",
+                    ])
+                    .await
+                    .context("failed to create staged commit")?;
+
+                // Capture the full state (staged + unstaged + untracked) using
+                // a temporary index so we don't disturb the real one.
+                let unstaged_sha = git
+                    .with_temp_index(async |git| {
+                        git.run(&["add", "--all"]).await?;
+                        let full_tree = git.run(&["write-tree"]).await?;
+                        let sha = git
+                            .run(&[
+                                "commit-tree",
+                                &full_tree,
+                                "-p",
+                                &staged_sha,
+                                "-m",
+                                "WIP unstaged",
+                            ])
+                            .await?;
+                        Ok(sha)
+                    })
+                    .await
+                    .context("failed to create unstaged commit")?;
+
+                Ok((staged_sha, unstaged_sha))
+            })
+            .boxed()
+    }
+
+    fn restore_archive_checkpoint(
+        &self,
+        staged_sha: String,
+        unstaged_sha: String,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let git = git_binary?;
+
+                // First, set the index AND working tree to match the unstaged
+                // tree. --reset -u computes a tree-level diff between the
+                // current index and unstaged_sha's tree and applies additions,
+                // modifications, and deletions to the working directory.
+                git.run(&["read-tree", "--reset", "-u", &unstaged_sha])
+                    .await
+                    .context("failed to restore working directory from unstaged commit")?;
+
+                // Then replace just the index with the staged tree. Without -u
+                // this doesn't touch the working directory, so the result is:
+                // working tree = unstaged state, index = staged state.
+                git.run(&["read-tree", &staged_sha])
+                    .await
+                    .context("failed to restore index from staged commit")?;
 
                 Ok(())
             })

@@ -2792,28 +2792,24 @@ impl Sidebar {
         cancel_rx: smol::channel::Receiver<()>,
         cx: &mut gpui::AsyncApp,
     ) -> anyhow::Result<ArchiveWorktreeOutcome> {
-        let mut completed_persists: Vec<(
-            thread_worktree_archive::PersistOutcome,
-            thread_worktree_archive::RootPlan,
-        )> = Vec::new();
+        let mut completed_persists: Vec<(i64, thread_worktree_archive::RootPlan)> = Vec::new();
 
         for root in &roots {
             if cancel_rx.is_closed() {
-                for (outcome, completed_root) in completed_persists.iter().rev() {
-                    thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
+                for &(id, ref completed_root) in completed_persists.iter().rev() {
+                    thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
                 }
                 return Ok(ArchiveWorktreeOutcome::Cancelled);
             }
 
             if root.worktree_repo.is_some() {
                 match thread_worktree_archive::persist_worktree_state(root, cx).await {
-                    Ok(outcome) => {
-                        completed_persists.push((outcome, root.clone()));
+                    Ok(id) => {
+                        completed_persists.push((id, root.clone()));
                     }
                     Err(error) => {
-                        for (outcome, completed_root) in completed_persists.iter().rev() {
-                            thread_worktree_archive::rollback_persist(outcome, completed_root, cx)
-                                .await;
+                        for &(id, ref completed_root) in completed_persists.iter().rev() {
+                            thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
                         }
                         return Err(error);
                     }
@@ -2821,22 +2817,21 @@ impl Sidebar {
             }
 
             if cancel_rx.is_closed() {
-                for (outcome, completed_root) in completed_persists.iter().rev() {
-                    thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
+                for &(id, ref completed_root) in completed_persists.iter().rev() {
+                    thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
                 }
                 return Ok(ArchiveWorktreeOutcome::Cancelled);
             }
 
             if let Err(error) = thread_worktree_archive::remove_root(root.clone(), cx).await {
-                if let Some((outcome, completed_root)) = completed_persists.last() {
+                if let Some(&(id, ref completed_root)) = completed_persists.last() {
                     if completed_root.root_path == root.root_path {
-                        thread_worktree_archive::rollback_persist(outcome, completed_root, cx)
-                            .await;
+                        thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
                         completed_persists.pop();
                     }
                 }
-                for (outcome, completed_root) in completed_persists.iter().rev() {
-                    thread_worktree_archive::rollback_persist(outcome, completed_root, cx).await;
+                for &(id, ref completed_root) in completed_persists.iter().rev() {
+                    thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
                 }
                 return Err(error);
             }

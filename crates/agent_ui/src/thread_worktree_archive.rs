@@ -5,7 +5,6 @@ use std::{
 
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
-use git::repository::{AskPassDelegate, CommitOptions, ResetMode};
 use gpui::{App, AsyncApp, Entity, Task};
 use project::{
     LocalProjectFlags, Project, WorktreeId,
@@ -70,17 +69,6 @@ pub struct AffectedProject {
 
 fn archived_worktree_ref_name(id: i64) -> String {
     format!("refs/archived-worktrees/{}", id)
-}
-
-/// The result of a successful [`persist_worktree_state`] call.
-///
-/// Carries exactly the information needed to roll back the persist via
-/// [`rollback_persist`]: the DB row ID (to delete the record and the
-/// corresponding `refs/archived-worktrees/<id>` git ref) and the staged
-/// commit hash (to `git reset` back past both WIP commits).
-pub struct PersistOutcome {
-    pub archived_worktree_id: i64,
-    pub staged_commit_hash: String,
 }
 
 /// Builds a [`RootPlan`] for archiving the git worktree at `path`.
@@ -254,8 +242,12 @@ async fn remove_root_after_worktree_removal(
     }
 
     let (repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx).await?;
+    // force=true is required because the working directory is still dirty
+    // — persist_worktree_state captures state into detached commits without
+    // modifying the real index or working tree, so git refuses to delete
+    // the worktree without --force.
     let receiver = repo.update(cx, |repo: &mut Repository, _cx| {
-        repo.remove_worktree(root.root_path.clone(), false)
+        repo.remove_worktree(root.root_path.clone(), true)
     });
     let result = receiver
         .await
@@ -363,128 +355,38 @@ async fn rollback_root(root: &RootPlan, cx: &mut AsyncApp) {
 
 /// Saves the worktree's full git state so it can be restored later.
 ///
-/// This is a multi-step operation:
-/// 1. Records the original HEAD SHA.
-/// 2. Creates WIP commit #1 ("staged") capturing the current index.
-/// 3. Stages everything including untracked files, then creates WIP commit
-///    #2 ("unstaged") capturing the full working directory.
-/// 4. Creates a DB record (`ArchivedGitWorktree`) with all the SHAs, the
-///    branch name, and both paths.
-/// 5. Links every thread that references this worktree to the DB record.
-/// 6. Creates a git ref (`refs/archived-worktrees/<id>`) on the main repo
-///    pointing at the unstaged commit, preventing git from
-///    garbage-collecting the WIP commits after the worktree is deleted.
+/// This creates two detached commits (via [`create_archive_checkpoint`] on
+/// the `GitRepository` trait) that capture the staged and unstaged state
+/// without moving any branch ref. The commits are:
+///   - "WIP staged": a tree matching the current index, parented on HEAD
+///   - "WIP unstaged": a tree with all files (including untracked),
+///     parented on the staged commit
 ///
-/// Each step has rollback logic: if step N fails, steps 1..N-1 are undone.
-/// On success, returns a [`PersistOutcome`] that can be passed to
-/// [`rollback_persist`] if a later step in the archival pipeline fails.
-pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Result<PersistOutcome> {
+/// After creating the commits, this function:
+///   1. Records the commit SHAs, branch name, and paths in a DB record.
+///   2. Links every thread referencing this worktree to that record.
+///   3. Creates a git ref on the main repo to prevent GC of the commits.
+///
+/// On success, returns the archived worktree DB row ID for rollback.
+pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Result<i64> {
     let (worktree_repo, _temp_worktree_project) = match &root.worktree_repo {
         Some(worktree_repo) => (worktree_repo.clone(), None),
         None => find_or_create_repository(&root.root_path, cx).await?,
     };
 
-    // Read original HEAD SHA before creating any WIP commits
     let original_commit_hash = worktree_repo
         .update(cx, |repo, _cx| repo.head_sha())
         .await
         .map_err(|_| anyhow!("head_sha canceled"))?
         .context("failed to read original HEAD SHA")?
-        .context("HEAD SHA is None before WIP commits")?;
+        .context("HEAD SHA is None")?;
 
-    // Create WIP commit #1 (staged state)
-    let askpass = AskPassDelegate::new(cx, |_, _, _| {});
-    let commit_rx = worktree_repo.update(cx, |repo, cx| {
-        repo.commit(
-            "WIP staged".into(),
-            None,
-            CommitOptions {
-                allow_empty: true,
-                ..Default::default()
-            },
-            askpass,
-            cx,
-        )
-    });
-    commit_rx
+    // Create two detached WIP commits without moving the branch.
+    let checkpoint_rx = worktree_repo.update(cx, |repo, _cx| repo.create_archive_checkpoint());
+    let (staged_commit_hash, unstaged_commit_hash) = checkpoint_rx
         .await
-        .map_err(|_| anyhow!("WIP staged commit canceled"))??;
-
-    // Read SHA after staged commit
-    let staged_sha_result = worktree_repo
-        .update(cx, |repo, _cx| repo.head_sha())
-        .await
-        .map_err(|_| anyhow!("head_sha canceled"))
-        .and_then(|r| r.context("failed to read HEAD SHA after staged commit"))
-        .and_then(|opt| opt.context("HEAD SHA is None after staged commit"));
-    let staged_commit_hash = match staged_sha_result {
-        Ok(sha) => sha,
-        Err(error) => {
-            let rx = worktree_repo.update(cx, |repo, cx| {
-                repo.reset("HEAD~1".to_string(), ResetMode::Mixed, cx)
-            });
-            rx.await.ok().and_then(|r| r.log_err());
-            return Err(error);
-        }
-    };
-
-    // Stage all files including untracked
-    let stage_rx = worktree_repo.update(cx, |repo, _cx| repo.stage_all_including_untracked());
-    if let Err(error) = stage_rx
-        .await
-        .map_err(|_| anyhow!("stage all canceled"))
-        .and_then(|inner| inner)
-    {
-        let rx = worktree_repo.update(cx, |repo, cx| {
-            repo.reset("HEAD~1".to_string(), ResetMode::Mixed, cx)
-        });
-        rx.await.ok().and_then(|r| r.log_err());
-        return Err(error.context("failed to stage all files including untracked"));
-    }
-
-    // Create WIP commit #2 (unstaged/untracked state)
-    let askpass = AskPassDelegate::new(cx, |_, _, _| {});
-    let commit_rx = worktree_repo.update(cx, |repo, cx| {
-        repo.commit(
-            "WIP unstaged".into(),
-            None,
-            CommitOptions {
-                allow_empty: true,
-                ..Default::default()
-            },
-            askpass,
-            cx,
-        )
-    });
-    if let Err(error) = commit_rx
-        .await
-        .map_err(|_| anyhow!("WIP unstaged commit canceled"))
-        .and_then(|inner| inner)
-    {
-        let rx = worktree_repo.update(cx, |repo, cx| {
-            repo.reset("HEAD~1".to_string(), ResetMode::Mixed, cx)
-        });
-        rx.await.ok().and_then(|r| r.log_err());
-        return Err(error);
-    }
-
-    // Read HEAD SHA after WIP commits
-    let head_sha_result = worktree_repo
-        .update(cx, |repo, _cx| repo.head_sha())
-        .await
-        .map_err(|_| anyhow!("head_sha canceled"))
-        .and_then(|r| r.context("failed to read HEAD SHA after WIP commits"))
-        .and_then(|opt| opt.context("HEAD SHA is None after WIP commits"));
-    let unstaged_commit_hash = match head_sha_result {
-        Ok(sha) => sha,
-        Err(error) => {
-            let rx = worktree_repo.update(cx, |repo, cx| {
-                repo.reset(format!("{}~1", staged_commit_hash), ResetMode::Mixed, cx)
-            });
-            rx.await.ok().and_then(|r| r.log_err());
-            return Err(error);
-        }
-    };
+        .map_err(|_| anyhow!("create_archive_checkpoint canceled"))?
+        .context("failed to create archive checkpoint")?;
 
     // Create DB record
     let store = cx.update(|cx| ThreadMetadataStore::global(cx));
@@ -516,10 +418,6 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
     let archived_worktree_id = match db_result {
         Ok(id) => id,
         Err(error) => {
-            let rx = worktree_repo.update(cx, |repo, cx| {
-                repo.reset(format!("{}~1", staged_commit_hash), ResetMode::Mixed, cx)
-            });
-            rx.await.ok().and_then(|r| r.log_err());
             return Err(error);
         }
     };
@@ -557,76 +455,45 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
                 .await
             {
                 log::error!(
-                    "Failed to delete archived worktree DB record during link rollback: {delete_error:#}"
+                    "Failed to delete archived worktree DB record during link rollback: \
+                     {delete_error:#}"
                 );
             }
-            let rx = worktree_repo.update(cx, |repo, cx| {
-                repo.reset(format!("{}~1", staged_commit_hash), ResetMode::Mixed, cx)
-            });
-            rx.await.ok().and_then(|r| r.log_err());
             return Err(error.context("failed to link thread to archived worktree"));
         }
     }
 
-    // Create git ref on main repo (non-fatal)
+    // Create git ref on main repo to prevent GC of the detached commits.
+    // This is fatal: without the ref, git gc will eventually collect the
+    // WIP commits and a later restore will silently fail.
     let ref_name = archived_worktree_ref_name(archived_worktree_id);
-    let main_repo_result = find_or_create_repository(&root.main_repo_path, cx).await;
-    match main_repo_result {
-        Ok((main_repo, _temp_project)) => {
-            let rx = main_repo.update(cx, |repo, _cx| {
-                repo.update_ref(ref_name.clone(), unstaged_commit_hash.clone())
-            });
-            if let Err(error) = rx
-                .await
-                .map_err(|_| anyhow!("update_ref canceled"))
-                .and_then(|r| r)
-            {
-                log::warn!(
-                    "Failed to create ref {} on main repo (non-fatal): {error}",
-                    ref_name
-                );
-            }
-            // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
-            drop(_temp_project);
-        }
-        Err(error) => {
-            log::warn!(
-                "Could not find main repo to create ref {} (non-fatal): {error}",
-                ref_name
-            );
-        }
-    }
+    let (main_repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx)
+        .await
+        .context("could not open main repo to create archive ref")?;
+    let rx = main_repo.update(cx, |repo, _cx| {
+        repo.update_ref(ref_name.clone(), unstaged_commit_hash.clone())
+    });
+    rx.await
+        .map_err(|_| anyhow!("update_ref canceled"))
+        .and_then(|r| r)
+        .with_context(|| format!("failed to create ref {ref_name} on main repo"))?;
+    drop(_temp_project);
 
-    Ok(PersistOutcome {
-        archived_worktree_id,
-        staged_commit_hash,
-    })
+    Ok(archived_worktree_id)
 }
 
-/// Undoes a successful [`persist_worktree_state`] by resetting the WIP
-/// commits, deleting the git ref on the main repo, and removing the DB
-/// record.
-pub async fn rollback_persist(outcome: &PersistOutcome, root: &RootPlan, cx: &mut AsyncApp) {
-    // Undo WIP commits on the worktree repo
-    if let Some(worktree_repo) = &root.worktree_repo {
-        let rx = worktree_repo.update(cx, |repo, cx| {
-            repo.reset(
-                format!("{}~1", outcome.staged_commit_hash),
-                ResetMode::Mixed,
-                cx,
-            )
-        });
-        rx.await.ok().and_then(|r| r.log_err());
-    }
-
+/// Undoes a successful [`persist_worktree_state`] by deleting the git ref
+/// on the main repo and removing the DB record. Since the WIP commits are
+/// detached (they don't move any branch), no git reset is needed — the
+/// commits will be garbage-collected once the ref is removed.
+pub async fn rollback_persist(archived_worktree_id: i64, root: &RootPlan, cx: &mut AsyncApp) {
     // Delete the git ref on main repo
     if let Ok((main_repo, _temp_project)) =
         find_or_create_repository(&root.main_repo_path, cx).await
     {
-        let ref_name = archived_worktree_ref_name(outcome.archived_worktree_id);
+        let ref_name = archived_worktree_ref_name(archived_worktree_id);
         let rx = main_repo.update(cx, |repo, _cx| repo.delete_ref(ref_name));
         rx.await.ok().and_then(|r| r.log_err());
-        // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
         drop(_temp_project);
     }
 
@@ -634,7 +501,7 @@ pub async fn rollback_persist(outcome: &PersistOutcome, root: &RootPlan, cx: &mu
     let store = cx.update(|cx| ThreadMetadataStore::global(cx));
     if let Err(error) = store
         .read_with(cx, |store, cx| {
-            store.delete_archived_worktree(outcome.archived_worktree_id, cx)
+            store.delete_archived_worktree(archived_worktree_id, cx)
         })
         .await
     {
@@ -644,181 +511,110 @@ pub async fn rollback_persist(outcome: &PersistOutcome, root: &RootPlan, cx: &mu
 
 /// Restores a previously archived worktree back to disk from its DB record.
 ///
-/// Re-creates the git worktree (or adopts an existing directory), resets
-/// past the two WIP commits to recover the original working directory
-/// state, verifies HEAD matches the expected commit, and restores the
-/// original branch if one was recorded.
+/// Creates the git worktree at the original commit (the branch never moved
+/// during archival since WIP commits are detached), switches to the branch,
+/// then uses [`restore_archive_checkpoint`] to reconstruct the staged/
+/// unstaged state from the WIP commit trees.
 pub async fn restore_worktree_via_git(
     row: &ArchivedGitWorktree,
     cx: &mut AsyncApp,
 ) -> Result<PathBuf> {
     let (main_repo, _temp_project) = find_or_create_repository(&row.main_repo_path, cx).await?;
 
-    // Check if worktree path already exists on disk
     let worktree_path = &row.worktree_path;
     let app_state = current_app_state(cx).context("no app state available")?;
     let already_exists = app_state.fs.metadata(worktree_path).await?.is_some();
 
-    if already_exists {
+    let created_new_worktree = if already_exists {
         let is_git_worktree =
             resolve_git_worktree_to_main_repo(app_state.fs.as_ref(), worktree_path)
                 .await
                 .is_some();
 
-        if is_git_worktree {
-            // Already a git worktree — another thread on the same worktree
-            // already restored it. Reuse as-is.
-            return Ok(worktree_path.clone());
+        if !is_git_worktree {
+            let rx = main_repo.update(cx, |repo, _cx| repo.repair_worktrees());
+            rx.await
+                .map_err(|_| anyhow!("worktree repair was canceled"))?
+                .context("failed to repair worktrees")?;
         }
-
-        // Path exists but isn't a git worktree. Ask git to adopt it.
-        let rx = main_repo.update(cx, |repo, _cx| repo.repair_worktrees());
-        rx.await
-            .map_err(|_| anyhow!("worktree repair was canceled"))?
-            .context("failed to repair worktrees")?;
+        false
     } else {
-        // Create detached worktree at the unstaged commit
+        // Create worktree at the original commit — the branch still points
+        // here because archival used detached commits.
         let rx = main_repo.update(cx, |repo, _cx| {
-            repo.create_worktree_detached(worktree_path.clone(), row.unstaged_commit_hash.clone())
+            repo.create_worktree_detached(worktree_path.clone(), row.original_commit_hash.clone())
         });
         rx.await
             .map_err(|_| anyhow!("worktree creation was canceled"))?
             .context("failed to create worktree")?;
-    }
+        true
+    };
 
-    // Get the worktree's repo entity
-    let (wt_repo, _temp_wt_project) = find_or_create_repository(worktree_path, cx).await?;
-
-    // Reset past the WIP commits to recover original state
-    let mixed_reset_ok = {
-        let rx = wt_repo.update(cx, |repo, cx| {
-            repo.reset(row.staged_commit_hash.clone(), ResetMode::Mixed, cx)
-        });
-        match rx.await {
-            Ok(Ok(())) => true,
-            Ok(Err(error)) => {
-                log::error!("Mixed reset to staged commit failed: {error:#}");
-                false
-            }
-            Err(_) => {
-                log::error!("Mixed reset to staged commit was canceled");
-                false
-            }
+    let (wt_repo, _temp_wt_project) = match find_or_create_repository(worktree_path, cx).await {
+        Ok(result) => result,
+        Err(error) => {
+            remove_new_worktree_on_error(created_new_worktree, &main_repo, worktree_path, cx).await;
+            return Err(error);
         }
     };
 
-    let soft_reset_ok = if mixed_reset_ok {
-        let rx = wt_repo.update(cx, |repo, cx| {
-            repo.reset(row.original_commit_hash.clone(), ResetMode::Soft, cx)
-        });
-        match rx.await {
-            Ok(Ok(())) => true,
-            Ok(Err(error)) => {
-                log::error!("Soft reset to original commit failed: {error:#}");
-                false
-            }
-            Err(_) => {
-                log::error!("Soft reset to original commit was canceled");
-                false
-            }
-        }
-    } else {
-        false
-    };
-
-    // If either WIP reset failed, fall back to a mixed reset directly to
-    // original_commit_hash so we at least land on the right commit.
-    if !mixed_reset_ok || !soft_reset_ok {
-        log::warn!(
-            "WIP reset(s) failed (mixed_ok={mixed_reset_ok}, soft_ok={soft_reset_ok}); \
-             falling back to mixed reset to original commit {}",
-            row.original_commit_hash
-        );
-        let rx = wt_repo.update(cx, |repo, cx| {
-            repo.reset(row.original_commit_hash.clone(), ResetMode::Mixed, cx)
-        });
-        match rx.await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => {
-                return Err(error.context(format!(
-                    "fallback reset to original commit {} also failed",
-                    row.original_commit_hash
-                )));
-            }
-            Err(_) => {
-                return Err(anyhow!(
-                    "fallback reset to original commit {} was canceled",
-                    row.original_commit_hash
-                ));
-            }
-        }
-    }
-
-    // Verify HEAD is at original_commit_hash
-    let current_head = wt_repo
-        .update(cx, |repo, _cx| repo.head_sha())
-        .await
-        .map_err(|_| anyhow!("post-restore head_sha was canceled"))?
-        .context("failed to read HEAD after restore")?
-        .context("HEAD is None after restore")?;
-
-    if current_head != row.original_commit_hash {
-        anyhow::bail!(
-            "After restore, HEAD is at {current_head} but expected {}. \
-             The worktree may be in an inconsistent state.",
-            row.original_commit_hash
-        );
-    }
-
-    // Restore the branch
+    // Switch to the branch. Since the branch was never moved during
+    // archival (WIP commits are detached), it still points at
+    // original_commit_hash, so this is essentially a no-op for HEAD.
     if let Some(branch_name) = &row.branch_name {
-        // Check if the branch exists and points at original_commit_hash.
-        // If it does, switch to it. If not, create a new branch there.
         let rx = wt_repo.update(cx, |repo, _cx| repo.change_branch(branch_name.clone()));
-        if matches!(rx.await, Ok(Ok(()))) {
-            // Verify the branch actually points at original_commit_hash after switching
-            let head_after_switch = wt_repo
-                .update(cx, |repo, _cx| repo.head_sha())
-                .await
-                .ok()
-                .and_then(|r| r.ok())
-                .flatten();
-
-            if head_after_switch.as_deref() != Some(&row.original_commit_hash) {
-                // Branch exists but doesn't point at the right commit.
-                // Switch back to detached HEAD at original_commit_hash.
-                log::warn!(
-                    "Branch '{}' exists but points at {:?}, not {}. Creating fresh branch.",
-                    branch_name,
-                    head_after_switch,
-                    row.original_commit_hash
-                );
-                let rx = wt_repo.update(cx, |repo, cx| {
-                    repo.reset(row.original_commit_hash.clone(), ResetMode::Mixed, cx)
-                });
-                rx.await.ok().and_then(|r| r.log_err());
-                // Delete the old branch and create fresh
-                let rx = wt_repo.update(cx, |repo, _cx| {
-                    repo.create_branch(branch_name.clone(), None)
-                });
-                rx.await.ok().and_then(|r| r.log_err());
-            }
-        } else {
-            // Branch doesn't exist or can't be switched to — create it.
+        if let Err(checkout_error) = rx.await.map_err(|e| anyhow!("{e}")).and_then(|r| r) {
+            log::debug!(
+                "change_branch('{}') failed: {checkout_error:#}, trying create_branch",
+                branch_name
+            );
             let rx = wt_repo.update(cx, |repo, _cx| {
                 repo.create_branch(branch_name.clone(), None)
             });
-            if let Ok(Err(error)) | Err(error) = rx.await.map_err(|e| anyhow::anyhow!("{e}")) {
+            if let Ok(Err(error)) | Err(error) = rx.await.map_err(|e| anyhow!("{e}")) {
                 log::warn!(
                     "Could not create branch '{}': {error} — \
-                     restored worktree is in detached HEAD state.",
+                     restored worktree will be in detached HEAD state.",
                     branch_name
                 );
             }
         }
     }
 
+    // Restore the staged/unstaged state from the WIP commit trees.
+    // read-tree --reset -u applies the unstaged tree (including deletions)
+    // to the working directory, then a bare read-tree sets the index to
+    // the staged tree without touching the working directory.
+    let restore_rx = wt_repo.update(cx, |repo, _cx| {
+        repo.restore_archive_checkpoint(
+            row.staged_commit_hash.clone(),
+            row.unstaged_commit_hash.clone(),
+        )
+    });
+    if let Err(error) = restore_rx
+        .await
+        .map_err(|_| anyhow!("restore_archive_checkpoint canceled"))
+        .and_then(|r| r)
+    {
+        remove_new_worktree_on_error(created_new_worktree, &main_repo, worktree_path, cx).await;
+        return Err(error.context("failed to restore archive checkpoint"));
+    }
+
     Ok(worktree_path.clone())
+}
+
+async fn remove_new_worktree_on_error(
+    created_new_worktree: bool,
+    main_repo: &Entity<Repository>,
+    worktree_path: &PathBuf,
+    cx: &mut AsyncApp,
+) {
+    if created_new_worktree {
+        let rx = main_repo.update(cx, |repo, _cx| {
+            repo.remove_worktree(worktree_path.clone(), true)
+        });
+        rx.await.ok().and_then(|r| r.log_err());
+    }
 }
 
 /// Deletes the git ref and DB records for a single archived worktree.
