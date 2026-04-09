@@ -101,7 +101,7 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> PathBuf {
 }
 
 /// Commit data needed for the git graph visualization.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct GraphCommitData {
     pub sha: Oid,
     /// Most commits have a single parent, so we use a SmallVec to avoid allocations.

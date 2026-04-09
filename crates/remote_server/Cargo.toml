@@ -102,6 +102,9 @@ theme_settings.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
+git_graph = { workspace = true, features = ["test-support"] }
+rand.workspace = true
+prompt_store.workspace = true
 unindent.workspace = true
 serde_json.workspace = true
 zlog.workspace = true
