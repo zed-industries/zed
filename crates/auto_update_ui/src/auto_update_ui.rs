@@ -16,7 +16,7 @@ use smol::io::AsyncReadExt;
 use ui::{AnnouncementToast, ListBulletItem, ParallelAgentsIllustration, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{
-    ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, Workspace,
     notifications::{
         ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, show_app_notification,
         simple_message_notification::MessageNotification,
@@ -192,9 +192,6 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                 None
             } else {
                 let fs = <dyn Fs>::global(cx);
-                let already_agent_layout =
-                    matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
-
                 Some(AnnouncementContent {
                     heading: "Introducing Parallel Agents".into(),
                     description: "Run multiple agent threads simultaneously across projects."
@@ -207,10 +204,14 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                     primary_action_label: "Try Now".into(),
                     primary_action_url: None,
                     primary_action_callback: Some(Arc::new(move |window, cx| {
+                        let already_agent_layout =
+                            matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
+
                         if !already_agent_layout {
                             AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
                         }
-                        window.dispatch_action(Box::new(ToggleWorkspaceSidebar), cx);
+
+                        window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
                         window.dispatch_action(Box::new(zed_actions::assistant::ToggleFocus), cx);
                     })),
                     on_dismiss: Some(Arc::new(|cx| {
@@ -284,12 +285,11 @@ impl Render for AnnouncementToastNotification {
             }))
             .secondary_on_click(cx.listener({
                 let url = self.content.secondary_action_url.clone();
-                move |this, _, _window, cx| {
+                move |_, _, _window, cx| {
                     telemetry::event!("Parallel Agent Announcement Secondary Click");
                     if let Some(url) = &url {
                         cx.open_url(url);
                     }
-                    this.dismiss(cx);
                 }
             }))
             .dismiss_on_click(cx.listener(|this, _, _window, cx| {
