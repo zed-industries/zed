@@ -1,12 +1,12 @@
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
+
+use collections::{HashMap, HashSet};
 use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
     Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
-use std::{collections::BTreeMap, ops::Range, sync::Arc};
-
-use collections::HashSet;
 
 use crate::{html, path_range::PathWithRange};
 
@@ -37,6 +37,7 @@ pub(crate) struct ParsedMarkdownData {
     pub language_paths: HashSet<Arc<str>>,
     pub root_block_starts: Vec<usize>,
     pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub heading_slugs: HashMap<SharedString, usize>,
 }
 
 impl ParseState {
@@ -78,6 +79,73 @@ impl ParseState {
             }
         }
     }
+
+}
+
+fn generate_heading_slug(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter_map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                Some(c.to_lowercase().next().unwrap_or(c))
+            } else if c == ' ' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn build_heading_slugs(
+    source: &str,
+    events: &[(Range<usize>, MarkdownEvent)],
+) -> HashMap<SharedString, usize> {
+    let mut slugs = HashMap::default();
+    let mut slug_counts: HashMap<String, usize> = HashMap::default();
+    let mut inside_heading = false;
+    let mut heading_text = String::new();
+    let mut heading_source_start: Option<usize> = None;
+
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::Heading { .. }) => {
+                inside_heading = true;
+                heading_text.clear();
+                heading_source_start = None;
+            }
+            MarkdownEvent::End(MarkdownTagEnd::Heading(_)) => {
+                if inside_heading {
+                    let source_offset = heading_source_start.unwrap_or(range.start);
+                    let base_slug = generate_heading_slug(&heading_text);
+                    let count = slug_counts.entry(base_slug.clone()).or_insert(0);
+                    let slug = if *count == 0 {
+                        base_slug
+                    } else {
+                        format!("{base_slug}-{count}")
+                    };
+                    *count += 1;
+                    slugs.insert(SharedString::from(slug), source_offset);
+                    inside_heading = false;
+                }
+            }
+            MarkdownEvent::Text | MarkdownEvent::Code if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(&source[range.clone()]);
+            }
+            MarkdownEvent::SubstitutedText(substituted) if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(substituted);
+            }
+            _ => {}
+        }
+    }
+
+    slugs
 }
 
 pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> ParsedMarkdownData {
@@ -440,12 +508,15 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
         }
     }
 
+    let heading_slugs = build_heading_slugs(text, &state.events);
+
     ParsedMarkdownData {
         events: state.events,
         language_names,
         language_paths,
         root_block_starts: state.root_block_starts,
         html_blocks,
+        heading_slugs,
     }
 }
 
@@ -1105,5 +1176,61 @@ mod tests {
                 (0..55, RootEnd(0)),
             ]
         );
+    }
+
+    #[test]
+    fn test_generate_heading_slug() {
+        assert_eq!(generate_heading_slug("Hello World"), "hello-world");
+        assert_eq!(generate_heading_slug("Hello  World"), "hello--world");
+        assert_eq!(generate_heading_slug("Hello-World"), "hello-world");
+        assert_eq!(
+            generate_heading_slug("Some **bold** text"),
+            "some-bold-text"
+        );
+        assert_eq!(generate_heading_slug("Let's try with Ü"), "lets-try-with-ü");
+        assert_eq!(
+            generate_heading_slug("heading with 123 numbers"),
+            "heading-with-123-numbers"
+        );
+        assert_eq!(
+            generate_heading_slug("What about (parens)?"),
+            "what-about-parens"
+        );
+        assert_eq!(generate_heading_slug("  leading spaces  "), "leading-spaces");
+    }
+
+    #[test]
+    fn test_heading_slugs() {
+        let parsed = parse_markdown_with_options(
+            "# Hello World\n\n## Code `block`\n\n### Third Level\n\n#### Fourth Level\n\n## Hello World",
+            false,
+        );
+        assert_eq!(parsed.heading_slugs.len(), 5);
+        assert!(parsed.heading_slugs.contains_key("hello-world"));
+        assert!(parsed.heading_slugs.contains_key("code-block"));
+        assert!(parsed.heading_slugs.contains_key("third-level"));
+        assert!(parsed.heading_slugs.contains_key("fourth-level"));
+        assert!(parsed.heading_slugs.contains_key("hello-world-1"));
+    }
+
+    #[test]
+    fn test_heading_source_index_for_slug() {
+        let parsed = parse_markdown_with_options(
+            "# First\n\nSome text\n\n## Second\n\nMore text",
+            false,
+        );
+        assert!(parsed.heading_slugs.get("first").is_some());
+        assert!(parsed.heading_slugs.get("second").is_some());
+        assert!(parsed.heading_slugs.get("nonexistent").is_none());
+
+        let parsed = parse_markdown_with_options(
+            "# Duplicate\n\nText\n\n## Duplicate\n\nMore text",
+            false,
+        );
+        let first = parsed.heading_slugs.get("duplicate").copied();
+        let second = parsed.heading_slugs.get("duplicate-1").copied();
+        assert!(first.is_some());
+        assert!(second.is_some());
+        assert!(first.unwrap() < second.unwrap());
     }
 }

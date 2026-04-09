@@ -261,7 +261,6 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
-    heading_slugs: Vec<(SharedString, usize)>,
     pending_heading_scroll: Option<SharedString>,
 }
 
@@ -430,7 +429,6 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
-            heading_slugs: Vec::new(),
             pending_heading_scroll: None,
         };
         this.parse(cx);
@@ -497,21 +495,14 @@ impl Markdown {
     }
 
     pub fn heading_source_index_for_slug(&self, slug: &str) -> Option<usize> {
-        self.heading_slugs
-            .iter()
-            .find(|(s, _)| s.as_ref() == slug)
-            .map(|(_, index)| *index)
+        self.parsed_markdown.heading_slugs.get(slug).copied()
     }
 
     pub fn scroll_to_heading(&mut self, slug: SharedString) {
         self.pending_heading_scroll = Some(slug);
     }
 
-    fn sync_headings(&mut self, headings: &[RenderedHeading], cx: &mut Context<Self>) {
-        self.heading_slugs = headings
-            .iter()
-            .map(|h| (h.slug.clone(), h.source_range.start))
-            .collect();
+    fn resolve_pending_heading_scroll(&mut self, cx: &mut Context<Self>) {
         if let Some(source_index) = self
             .pending_heading_scroll
             .as_ref()
@@ -672,6 +663,7 @@ impl Markdown {
                         root_block_starts: Arc::default(),
                         html_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
+                        heading_slugs: HashMap::default(),
                     },
                     Default::default(),
                 );
@@ -683,6 +675,7 @@ impl Markdown {
             let paths = parsed.language_paths;
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
+            let heading_slugs = parsed.heading_slugs;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -749,6 +742,7 @@ impl Markdown {
                     root_block_starts: Arc::from(root_block_starts),
                     html_blocks,
                     mermaid_diagrams,
+                    heading_slugs,
                 },
                 images_by_source_offset,
             )
@@ -872,6 +866,7 @@ pub struct ParsedMarkdown {
     pub root_block_starts: Arc<[usize]>,
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
+    pub heading_slugs: HashMap<SharedString, usize>,
 }
 
 impl ParsedMarkdown {
@@ -1333,7 +1328,7 @@ impl MarkdownElement {
                     {
                         if let Some(slug) = pressed_link.destination_url.strip_prefix('#')
                             && let Some(source_index) =
-                                rendered_text.heading_source_index_for_slug(slug)
+                                markdown.heading_source_index_for_slug(slug)
                         {
                             markdown.autoscroll_request = Some(source_index);
                             if let Some(on_anchor_click) = on_anchor_click.as_ref() {
@@ -1538,7 +1533,6 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Heading { level, .. } => {
                             self.push_markdown_heading(&mut builder, *level, range, markdown_end);
-                            builder.current_heading_text = Some(String::new());
                         }
                         MarkdownTag::BlockQuote => {
                             self.push_markdown_block_quote(&mut builder, range, markdown_end);
@@ -1793,7 +1787,6 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::Heading(_) => {
-                        builder.finalize_heading(range);
                         self.pop_markdown_heading(&mut builder);
                     }
                     MarkdownTagEnd::BlockQuote(_kind) => {
@@ -1949,7 +1942,7 @@ impl Element for MarkdownElement {
         }
         let mut rendered_markdown = builder.build();
         self.markdown.update(cx, |markdown, cx| {
-            markdown.sync_headings(&rendered_markdown.text.headings, cx);
+            markdown.resolve_pending_heading_scroll(cx);
         });
         let child_layout_id = rendered_markdown.element.request_layout(window, cx);
         let layout_id = window.request_layout(gpui::Style::default(), [child_layout_id], cx);
@@ -2179,10 +2172,6 @@ struct MarkdownElementBuilder {
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
-    rendered_headings: Vec<RenderedHeading>,
-    heading_slug_counts: HashMap<String, usize>,
-    current_heading_text: Option<String>,
-    current_heading_range: Option<Range<usize>>,
     current_source_index: usize,
     html_comment: bool,
     base_text_style: TextStyle,
@@ -2219,10 +2208,6 @@ impl MarkdownElementBuilder {
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
-            rendered_headings: Vec::new(),
-            heading_slug_counts: HashMap::default(),
-            current_heading_text: None,
-            current_heading_range: None,
             current_source_index: 0,
             html_comment: false,
             base_text_style,
@@ -2376,34 +2361,7 @@ impl MarkdownElementBuilder {
         });
     }
 
-    fn finalize_heading(&mut self, fallback_range: &Range<usize>) {
-        let Some(heading_text) = self.current_heading_text.take() else {
-            return;
-        };
-        let heading_range = self.current_heading_range.take().unwrap_or(fallback_range.clone());
-        let base_slug = generate_heading_slug(&heading_text);
-
-        let count = self.heading_slug_counts.entry(base_slug.clone()).or_insert(0);
-        let slug = if *count == 0 {
-            base_slug
-        } else {
-            format!("{base_slug}-{count}")
-        };
-        *count += 1;
-
-        self.rendered_headings.push(RenderedHeading {
-            source_range: heading_range,
-            slug: slug.into(),
-        });
-    }
-
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
-        if let Some(heading_text) = &mut self.current_heading_text {
-            if heading_text.is_empty() {
-                self.current_heading_range = Some(source_range.clone());
-            }
-            heading_text.push_str(text);
-        }
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
             source_index: source_range.start,
@@ -2520,7 +2478,6 @@ impl MarkdownElementBuilder {
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
-                headings: self.rendered_headings.into(),
             },
         }
     }
@@ -2635,34 +2592,12 @@ pub struct RenderedMarkdown {
 struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
-    headings: Rc<[RenderedHeading]>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
     destination_url: SharedString,
-}
-
-fn generate_heading_slug(text: &str) -> String {
-    text.trim()
-        .chars()
-        .filter_map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                Some(c.to_lowercase().next().unwrap_or(c))
-            } else if c == ' ' {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct RenderedHeading {
-    source_range: Range<usize>,
-    slug: SharedString,
 }
 
 impl RenderedText {
@@ -2818,12 +2753,6 @@ impl RenderedText {
             .find(|link| link.source_range.contains(&source_index))
     }
 
-    fn heading_source_index_for_slug(&self, slug: &str) -> Option<usize> {
-        self.headings
-            .iter()
-            .find(|heading| heading.slug.as_ref() == slug)
-            .map(|heading| heading.source_range.start)
-    }
 }
 
 #[cfg(test)]
@@ -3373,61 +3302,6 @@ mod tests {
         let diagnostic = "    | { a: string }";
         assert!(has_code_block(diagnostic));
         assert!(!has_code_block(&Markdown::escape(diagnostic)));
-    }
-
-    #[test]
-    fn test_generate_heading_slug() {
-        assert_eq!(generate_heading_slug("Hello World"), "hello-world");
-        assert_eq!(generate_heading_slug("Hello  World"), "hello--world");
-        assert_eq!(generate_heading_slug("Hello-World"), "hello-world");
-        assert_eq!(
-            generate_heading_slug("Some **bold** text"),
-            "some-bold-text"
-        );
-        assert_eq!(generate_heading_slug("Let's try with Ü"), "lets-try-with-ü");
-        assert_eq!(
-            generate_heading_slug("heading with 123 numbers"),
-            "heading-with-123-numbers"
-        );
-        assert_eq!(
-            generate_heading_slug("What about (parens)?"),
-            "what-about-parens"
-        );
-        assert_eq!(generate_heading_slug("  leading spaces  "), "leading-spaces");
-    }
-
-    #[gpui::test]
-    fn test_rendered_heading_slugs(cx: &mut TestAppContext) {
-        let rendered = render_markdown(
-            "# Hello World\n\n## Code `block`\n\n### Third Level\n\n#### Fourth Level\n\n## Hello World",
-            cx,
-        );
-        let slugs: Vec<&str> = rendered.headings.iter().map(|h| h.slug.as_ref()).collect();
-        assert_eq!(
-            slugs,
-            vec![
-                "hello-world",
-                "code-block",
-                "third-level",
-                "fourth-level",
-                "hello-world-1",
-            ]
-        );
-    }
-
-    #[gpui::test]
-    fn test_heading_source_index_for_slug(cx: &mut TestAppContext) {
-        let rendered = render_markdown("# First\n\nSome text\n\n## Second\n\nMore text", cx);
-        assert!(rendered.heading_source_index_for_slug("first").is_some());
-        assert!(rendered.heading_source_index_for_slug("second").is_some());
-        assert!(rendered.heading_source_index_for_slug("nonexistent").is_none());
-
-        let rendered = render_markdown("# Duplicate\n\nText\n\n## Duplicate\n\nMore text", cx);
-        let first = rendered.heading_source_index_for_slug("duplicate");
-        let second = rendered.heading_source_index_for_slug("duplicate-1");
-        assert!(first.is_some());
-        assert!(second.is_some());
-        assert!(first.unwrap() < second.unwrap());
     }
 
     #[track_caller]
