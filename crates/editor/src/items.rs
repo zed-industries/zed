@@ -1931,8 +1931,7 @@ impl SearchableItem for Editor {
                                                 let end = search_buffer.anchor_before(
                                                     search_range.start + match_range.end,
                                                 );
-                                                buffer
-                                                    .buffer_anchor_range_to_anchor_range(start..end)
+                                                buffer.anchor_range_in_buffer(start..end)
                                             }
                                         })
                                         .collect::<Vec<_>>();

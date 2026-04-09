@@ -5258,6 +5258,16 @@ impl MultiBufferSnapshot {
         Some(Anchor::in_buffer(path_key_index, anchor))
     }
 
+    /// Lifts a buffer anchor range to a multibuffer anchor range without checking against excerpt boundaries. Returns `None` if there are no excerpts for the buffer.
+    pub fn anchor_range_in_buffer(&self, range: Range<text::Anchor>) -> Option<Range<Anchor>> {
+        if range.start.buffer_id != range.end.buffer_id {
+            return None;
+        }
+
+        let path_key_index = self.path_key_index_for_buffer(range.start.buffer_id)?;
+        Some(Anchor::range_in_buffer(path_key_index, range))
+    }
+
     /// Creates a multibuffer anchor for the given buffer anchor, if it is contained in any excerpt.
     pub fn anchor_in_excerpt(&self, text_anchor: text::Anchor) -> Option<Anchor> {
         let excerpts = {
