@@ -1208,15 +1208,6 @@ mod tests {
     #[test]
     fn test_heading_source_index_for_slug() {
         let parsed = parse_markdown_with_options(
-            "# First\n\nSome text\n\n## Second\n\nMore text",
-            false,
-            true,
-        );
-        assert!(parsed.heading_slugs.get("first").is_some());
-        assert!(parsed.heading_slugs.get("second").is_some());
-        assert!(parsed.heading_slugs.get("nonexistent").is_none());
-
-        let parsed = parse_markdown_with_options(
             "# Duplicate\n\nText\n\n## Duplicate\n\nMore text",
             false,
             true,

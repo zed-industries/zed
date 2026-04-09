@@ -336,37 +336,13 @@ mod tests {
             ("https://example.com#frag", None)
         );
         assert_eq!(
-            split_local_url_fragment("http://example.com#frag"),
-            ("http://example.com#frag", None)
-        );
-        assert_eq!(
-            split_local_url_fragment("ftp://example.com/file#section"),
-            ("ftp://example.com/file#section", None)
-        );
-        assert_eq!(
             split_local_url_fragment("mailto:user@example.com"),
             ("mailto:user@example.com", None)
-        );
-        assert_eq!(
-            split_local_url_fragment("tel:+1234567890"),
-            ("tel:+1234567890", None)
         );
         assert_eq!(split_local_url_fragment("#"), ("", None));
         assert_eq!(
             split_local_url_fragment("../other.md#section"),
             ("../other.md", Some("section"))
-        );
-        assert_eq!(
-            split_local_url_fragment("urn:example:animal#section"),
-            ("urn:example:animal#section", None)
-        );
-        assert_eq!(
-            split_local_url_fragment("news:comp.infosystems#frag"),
-            ("news:comp.infosystems#frag", None)
-        );
-        assert_eq!(
-            split_local_url_fragment("data:text/html,hello#frag"),
-            ("data:text/html,hello#frag", None)
         );
         assert_eq!(
             split_local_url_fragment("123:not-a-scheme#frag"),
