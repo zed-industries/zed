@@ -3076,10 +3076,19 @@ impl BackgroundScannerState {
         for entry in removed_entries.cursor::<()>(()) {
             if entry.is_dir() {
                 removed_dir_abs_paths.push(self.snapshot.absolutize(&entry.path));
+                // For symlink directory entries, the parent scan sets canonical_path to
+                // the same value used as the map key, so we can remove in O(1). The root
+                // entry never has canonical_path set even when the root dir is itself a
+                // symlink, so in that case fall back to a linear search by value to avoid
+                // leaking the map entry.
                 if let Some(canonical_path) = &entry.canonical_path {
                     self.snapshot
                         .canonical_path_to_symlink
                         .remove(canonical_path.as_ref());
+                } else {
+                    self.snapshot
+                        .canonical_path_to_symlink
+                        .retain(|_, symlink_path| symlink_path != &entry.path);
                 }
             }
 
