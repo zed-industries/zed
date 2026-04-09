@@ -1532,13 +1532,17 @@ impl GitStore {
             } else if let UpdatedGitRepository {
                 new_work_directory_abs_path: Some(work_directory_abs_path),
                 dot_git_abs_path: Some(dot_git_abs_path),
-                repository_dir_abs_path: Some(_repository_dir_abs_path),
+                repository_dir_abs_path: Some(repository_dir_abs_path),
                 common_dir_abs_path: Some(common_dir_abs_path),
                 ..
             } = update
             {
-                let original_repo_abs_path: Arc<Path> =
-                    git::repository::original_repo_path_from_common_dir(common_dir_abs_path).into();
+                let original_repo_abs_path: Arc<Path> = git::repository::original_repo_path(
+                    work_directory_abs_path,
+                    common_dir_abs_path,
+                    repository_dir_abs_path,
+                )
+                .into();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
                 let is_trusted = TrustedWorktrees::try_get_global(cx)
                     .map(|trusted_worktrees| {
@@ -3711,6 +3715,8 @@ impl RepositorySnapshot {
     ///
     /// For example, if you had both `~/code/zed` and `~/code/worktrees/zed-2`,
     /// then `~/code/zed` is the main worktree and `~/code/worktrees/zed-2` is a linked worktree.
+    ///
+    /// Submodules also return `true` here, since they are not linked worktrees.
     pub fn is_main_worktree(&self) -> bool {
         self.work_directory_abs_path == self.original_repo_abs_path
     }
@@ -3718,7 +3724,7 @@ impl RepositorySnapshot {
     /// Returns true if this repository is a linked worktree, that is, one that
     /// was created from another worktree.
     ///
-    /// This is by definition the opposite of [`Self::is_main_worktree`].
+    /// Returns `false` for both the main worktree and submodules.
     pub fn is_linked_worktree(&self) -> bool {
         !self.is_main_worktree()
     }
@@ -4699,12 +4705,11 @@ impl Repository {
                                 .commit_oid_to_index
                                 .insert(commit_data.sha, graph_data.commit_data.len());
                             graph_data.commit_data.push(commit_data);
-
-                            cx.emit(RepositoryEvent::GraphEvent(
-                                graph_data_key.clone(),
-                                GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
-                            ));
                         }
+                        cx.emit(RepositoryEvent::GraphEvent(
+                            graph_data_key.clone(),
+                            GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
+                        ));
                     });
 
                 match &graph_data {
@@ -7054,6 +7059,7 @@ fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
             .map(|s| s.to_string())
             .unwrap_or_default(),
         sha: worktree.sha.to_string(),
+        is_main: worktree.is_main,
     }
 }
 
@@ -7062,6 +7068,7 @@ fn proto_to_worktree(proto: &proto::Worktree) -> git::repository::Worktree {
         path: PathBuf::from(proto.path.clone()),
         ref_name: Some(SharedString::from(&proto.ref_name)),
         sha: proto.sha.clone().into(),
+        is_main: proto.is_main,
     }
 }
 

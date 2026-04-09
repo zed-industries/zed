@@ -54,7 +54,6 @@ pub async fn apply_diff(
 
     let mut included_files: HashMap<String, Entity<Buffer>> = HashMap::default();
 
-    let ranges = [Anchor::MIN..Anchor::MAX];
     let mut diff = DiffParser::new(diff_str);
     let mut current_file = None;
     let mut edits: Vec<(std::ops::Range<Anchor>, Arc<str>)> = vec![];
@@ -115,7 +114,7 @@ pub async fn apply_diff(
                     edits.extend(resolve_hunk_edits_in_buffer(
                         hunk,
                         buffer,
-                        ranges.as_slice(),
+                        &[Anchor::min_max_range_for_buffer(buffer.remote_id())],
                         status,
                     )?);
                     anyhow::Ok(())

@@ -971,6 +971,9 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE remote_connections ADD COLUMN use_podman BOOLEAN;
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN remote_env TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1500,6 +1503,7 @@ impl WorkspaceDb {
         let mut name = None;
         let mut container_id = None;
         let mut use_podman = None;
+        let mut remote_env = None;
         match options {
             RemoteConnectionOptions::Ssh(options) => {
                 kind = RemoteConnectionKind::Ssh;
@@ -1518,6 +1522,7 @@ impl WorkspaceDb {
                 name = Some(options.name);
                 use_podman = Some(options.use_podman);
                 user = Some(options.remote_user);
+                remote_env = serde_json::to_string(&options.remote_env).ok();
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => {
@@ -1536,6 +1541,7 @@ impl WorkspaceDb {
             name,
             container_id,
             use_podman,
+            remote_env,
         )
     }
 
@@ -1549,6 +1555,7 @@ impl WorkspaceDb {
         name: Option<String>,
         container_id: Option<String>,
         use_podman: Option<bool>,
+        remote_env: Option<String>,
     ) -> Result<RemoteConnectionId> {
         if let Some(id) = this.select_row_bound(sql!(
             SELECT id
@@ -1582,8 +1589,9 @@ impl WorkspaceDb {
                     distro,
                     name,
                     container_id,
-                    use_podman
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    use_podman,
+                    remote_env
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                 RETURNING id
             ))?((
                 kind.serialize(),
@@ -1594,6 +1602,7 @@ impl WorkspaceDb {
                 name,
                 container_id,
                 use_podman,
+                remote_env,
             ))?
             .context("failed to insert remote project")?;
             Ok(RemoteConnectionId(id))
@@ -1695,13 +1704,13 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro, container_id, name, use_podman
+                id, kind, host, port, user, distro, container_id, name, use_podman, remote_env
             FROM
                 remote_connections
         ))?()?
         .into_iter()
         .filter_map(
-            |(id, kind, host, port, user, distro, container_id, name, use_podman)| {
+            |(id, kind, host, port, user, distro, container_id, name, use_podman, remote_env)| {
                 Some((
                     RemoteConnectionId(id),
                     Self::remote_connection_from_row(
@@ -1713,6 +1722,7 @@ impl WorkspaceDb {
                         container_id,
                         name,
                         use_podman,
+                        remote_env,
                     )?,
                 ))
             },
@@ -1724,9 +1734,9 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro, container_id, name, use_podman) =
+        let (kind, host, port, user, distro, container_id, name, use_podman, remote_env) =
             self.select_row_bound(sql!(
-                SELECT kind, host, port, user, distro, container_id, name, use_podman
+                SELECT kind, host, port, user, distro, container_id, name, use_podman, remote_env
                 FROM remote_connections
                 WHERE id = ?
             ))?(id.0)?
@@ -1740,6 +1750,7 @@ impl WorkspaceDb {
             container_id,
             name,
             use_podman,
+            remote_env,
         )
         .context("invalid remote_connection row")
     }
@@ -1753,6 +1764,7 @@ impl WorkspaceDb {
         container_id: Option<String>,
         name: Option<String>,
         use_podman: Option<bool>,
+        remote_env: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -1766,12 +1778,15 @@ impl WorkspaceDb {
                 ..Default::default()
             })),
             RemoteConnectionKind::Docker => {
+                let remote_env: BTreeMap<String, String> =
+                    serde_json::from_str(&remote_env?).ok()?;
                 Some(RemoteConnectionOptions::Docker(DockerConnectionOptions {
                     container_id: container_id?,
                     name: name?,
                     remote_user: user?,
                     upload_binary_over_docker_exec: false,
                     use_podman: use_podman?,
+                    remote_env,
                 }))
             }
         }
@@ -2523,7 +2538,7 @@ mod tests {
         let workspace2 = multi_workspace.update_in(cx, |mw, window, cx| {
             let workspace = cx.new(|cx| crate::Workspace::test_new(project2.clone(), window, cx));
             workspace.update(cx, |ws, _cx| ws.set_random_database_id());
-            mw.activate(workspace.clone(), cx);
+            mw.activate(workspace.clone(), window, cx);
             workspace
         });
 
@@ -2541,7 +2556,8 @@ mod tests {
 
         // --- Remove the second workspace (index 1) ---
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.remove_workspace(1, window, cx);
+            let ws = mw.workspaces()[1].clone();
+            mw.remove(&ws, window, cx);
         });
 
         cx.run_until_parked();
@@ -3978,6 +3994,7 @@ mod tests {
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(2)),
                 sidebar_open: true,
+                sidebar_state: None,
             },
         )
         .await;
@@ -3988,6 +4005,7 @@ mod tests {
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(3)),
                 sidebar_open: false,
+                sidebar_state: None,
             },
         )
         .await;
@@ -4193,7 +4211,7 @@ mod tests {
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(workspace2_db_id)
             });
-            mw.activate(workspace.clone(), cx);
+            mw.activate(workspace.clone(), window, cx);
         });
 
         // Save a full workspace row to the DB directly.
@@ -4221,7 +4239,8 @@ mod tests {
 
         // Remove workspace at index 1 (the second workspace).
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.remove_workspace(1, window, cx);
+            let ws = mw.workspaces()[1].clone();
+            mw.remove(&ws, window, cx);
         });
 
         cx.run_until_parked();
@@ -4291,7 +4310,7 @@ mod tests {
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(ws2_id)
             });
-            mw.activate(workspace.clone(), cx);
+            mw.activate(workspace.clone(), window, cx);
         });
 
         let session_id = "test-zombie-session";
@@ -4331,7 +4350,8 @@ mod tests {
 
         // Remove workspace2 (index 1).
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.remove_workspace(1, window, cx);
+            let ws = mw.workspaces()[1].clone();
+            mw.remove(&ws, window, cx);
         });
 
         cx.run_until_parked();
@@ -4390,7 +4410,7 @@ mod tests {
             workspace.update(cx, |ws: &mut crate::Workspace, _cx| {
                 ws.set_database_id(workspace2_db_id)
             });
-            mw.activate(workspace.clone(), cx);
+            mw.activate(workspace.clone(), window, cx);
         });
 
         // Save a full workspace row to the DB directly and let it settle.
@@ -4414,7 +4434,8 @@ mod tests {
 
         // Remove workspace2 — this pushes a task to pending_removal_tasks.
         multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.remove_workspace(1, window, cx);
+            let ws = mw.workspaces()[1].clone();
+            mw.remove(&ws, window, cx);
         });
 
         // Simulate the quit handler pattern: collect flush tasks + pending

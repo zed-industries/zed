@@ -808,6 +808,10 @@ impl WorktreeStore {
                 worktree::Event::DeletedEntry(id) => {
                     cx.emit(WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, *id))
                 }
+                worktree::Event::Deleted => {
+                    // The worktree root itself has been deleted (for single-file worktrees)
+                    // The worktree will be removed via the observe_release callback
+                }
             }
         })
         .detach();

@@ -14,10 +14,12 @@ use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandl
 use serde_json::json;
 use settings::{SettingsStore, WorktreeId};
 use std::{
+    cell::Cell,
     env,
     fmt::Write,
     mem,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 use util::{
@@ -3104,4 +3106,68 @@ async fn test_refresh_entries_for_paths_creates_ancestors(cx: &mut TestAppContex
             "All ancestors should be created when refreshing a deeply nested path"
         );
     });
+}
+
+#[gpui::test]
+async fn test_single_file_worktree_deleted(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+
+    fs.insert_tree(
+        "/root",
+        json!({
+            "test.txt": "content",
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root/test.txt"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.is_single_file(), "Should be a single-file worktree");
+        assert_eq!(tree.abs_path().as_ref(), Path::new("/root/test.txt"));
+    });
+
+    // Delete the file
+    fs.remove_file(Path::new("/root/test.txt"), Default::default())
+        .await
+        .unwrap();
+
+    // Subscribe to worktree events
+    let deleted_event_received = Rc::new(Cell::new(false));
+    let _subscription = cx.update({
+        let deleted_event_received = deleted_event_received.clone();
+        |cx| {
+            cx.subscribe(&tree, move |_, event, _| {
+                if matches!(event, Event::Deleted) {
+                    deleted_event_received.set(true);
+                }
+            })
+        }
+    });
+
+    // Trigger filesystem events - the scanner should detect the file is gone immediately
+    // and emit a Deleted event
+    cx.background_executor.run_until_parked();
+    cx.background_executor
+        .advance_clock(std::time::Duration::from_secs(1));
+    cx.background_executor.run_until_parked();
+
+    assert!(
+        deleted_event_received.get(),
+        "Should receive Deleted event when single-file worktree root is deleted"
+    );
 }

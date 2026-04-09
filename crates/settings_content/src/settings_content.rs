@@ -65,7 +65,8 @@ macro_rules! settings_overrides {
         }
     }
 }
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::hash::Hash;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
@@ -481,22 +482,6 @@ pub enum DockPosition {
     Left,
     Bottom,
     Right,
-}
-
-/// Settings for slash commands.
-#[with_fallible_options]
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct SlashCommandSettings {
-    /// Settings for the `/cargo-workspace` slash command.
-    pub cargo_workspace: Option<CargoWorkspaceCommandSettings>,
-}
-
-/// Settings for the `/cargo-workspace` slash command.
-#[with_fallible_options]
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
-pub struct CargoWorkspaceCommandSettings {
-    /// Whether `/cargo-workspace` is enabled.
-    pub enabled: Option<bool>,
 }
 
 /// Configuration of voice calls in Zed.
@@ -1039,6 +1024,8 @@ pub struct DevContainerConnection {
     pub remote_user: String,
     pub container_id: String,
     pub use_podman: bool,
+    pub extension_ids: Vec<String>,
+    pub remote_env: BTreeMap<String, String>,
 }
 
 #[with_fallible_options]

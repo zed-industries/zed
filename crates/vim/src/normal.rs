@@ -932,7 +932,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(cx, |vim, editor, cx| {
             let selection = editor.selections.newest_anchor();
-            let Some((buffer, point, _)) = editor
+            let Some((buffer, point)) = editor
                 .buffer()
                 .read(cx)
                 .point_to_buffer_point(selection.head(), cx)

@@ -1,12 +1,12 @@
+use crate::diagnostics::{DiagnosticsOptions, codeblock_fence_for_path, collect_diagnostics};
 use acp_thread::{MentionUri, selection_name};
 use agent::{ThreadStore, outline};
 use agent_client_protocol as acp;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_slash_commands::{codeblock_fence_for_path, collect_diagnostics_output};
 use collections::{HashMap, HashSet};
 use editor::{
-    Anchor, Editor, EditorSnapshot, ExcerptId, FoldPlaceholder, ToOffset,
+    Anchor, Editor, EditorSnapshot, FoldPlaceholder, ToOffset,
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
     scroll::Autoscroll,
 };
@@ -131,9 +131,6 @@ impl MentionSet {
             MentionUri::Fetch { url } => self.confirm_mention_for_fetch(url, http_client, cx),
             MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
-            MentionUri::TextThread { .. } => {
-                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
-            }
             MentionUri::File { abs_path } => {
                 self.confirm_mention_for_file(abs_path, supports_images, cx)
             }
@@ -207,10 +204,9 @@ impl MentionSet {
         };
 
         let snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
-        let Some(start_anchor) = snapshot.buffer_snapshot().as_singleton_anchor(start) else {
+        let Some(start_anchor) = snapshot.buffer_snapshot().anchor_in_excerpt(start) else {
             return Task::ready(());
         };
-        let excerpt_id = start_anchor.excerpt_id;
         let end_anchor = snapshot.buffer_snapshot().anchor_before(
             start_anchor.to_offset(&snapshot.buffer_snapshot()) + content_len + 1usize,
         );
@@ -237,7 +233,6 @@ impl MentionSet {
                 })
                 .shared();
             insert_crease_for_mention(
-                excerpt_id,
                 start,
                 content_len,
                 mention_uri.name().into(),
@@ -252,7 +247,6 @@ impl MentionSet {
             )
         } else {
             insert_crease_for_mention(
-                excerpt_id,
                 start,
                 content_len,
                 crease_text,
@@ -276,9 +270,6 @@ impl MentionSet {
             }
             MentionUri::Directory { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::Thread { id, .. } => self.confirm_mention_for_thread(id, cx),
-            MentionUri::TextThread { .. } => {
-                Task::ready(Err(anyhow!("Text thread mentions are no longer supported")))
-            }
             MentionUri::File { abs_path } => {
                 self.confirm_mention_for_file(abs_path, supports_images, cx)
             }
@@ -474,7 +465,7 @@ impl MentionSet {
         };
 
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
-        let Some(start) = snapshot.as_singleton_anchor(source_range.start) else {
+        let Some(start) = snapshot.anchor_in_excerpt(source_range.start) else {
             return;
         };
 
@@ -589,9 +580,9 @@ impl MentionSet {
             return Task::ready(Err(anyhow!("project not found")));
         };
 
-        let diagnostics_task = collect_diagnostics_output(
+        let diagnostics_task = collect_diagnostics(
             project,
-            assistant_slash_commands::Options {
+            DiagnosticsOptions {
                 include_errors,
                 include_warnings,
                 path_matcher: None,
@@ -599,9 +590,8 @@ impl MentionSet {
             cx,
         );
         cx.spawn(async move |_, _| {
-            let output = diagnostics_task.await?;
-            let content = output
-                .map(|output| output.text)
+            let content = diagnostics_task
+                .await?
                 .unwrap_or_else(|| "No diagnostics found.".into());
             Ok(Mention::Text {
                 content,
@@ -752,19 +742,17 @@ pub(crate) async fn insert_images_as_context(
     let replacement_text = MentionUri::PastedImage.as_link().to_string();
 
     for (image, name) in images {
-        let Some((excerpt_id, text_anchor, multibuffer_anchor)) = editor
+        let Some((text_anchor, multibuffer_anchor)) = editor
             .update_in(cx, |editor, window, cx| {
                 let snapshot = editor.snapshot(window, cx);
-                let (excerpt_id, _, buffer_snapshot) =
-                    snapshot.buffer_snapshot().as_singleton().unwrap();
-
-                let cursor_anchor = editor.selections.newest_anchor().start.text_anchor;
-                let text_anchor = cursor_anchor.bias_left(&buffer_snapshot);
-                let multibuffer_anchor = snapshot
+                let (cursor_anchor, buffer_snapshot) = snapshot
                     .buffer_snapshot()
-                    .anchor_in_excerpt(excerpt_id, text_anchor);
+                    .anchor_to_buffer_anchor(editor.selections.newest_anchor().start)
+                    .unwrap();
+                let text_anchor = cursor_anchor.bias_left(buffer_snapshot);
+                let multibuffer_anchor = snapshot.buffer_snapshot().anchor_in_excerpt(text_anchor);
                 editor.insert(&format!("{replacement_text} "), window, cx);
-                (excerpt_id, text_anchor, multibuffer_anchor)
+                (text_anchor, multibuffer_anchor)
             })
             .ok()
         else {
@@ -782,7 +770,6 @@ pub(crate) async fn insert_images_as_context(
         let image = Arc::new(image);
         let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
             insert_crease_for_mention(
-                excerpt_id,
                 text_anchor,
                 content_len,
                 name.clone(),
@@ -916,7 +903,6 @@ pub(crate) fn paste_images_as_context(
 }
 
 pub(crate) fn insert_crease_for_mention(
-    excerpt_id: ExcerptId,
     anchor: text::Anchor,
     content_len: usize,
     crease_label: SharedString,
@@ -934,7 +920,7 @@ pub(crate) fn insert_crease_for_mention(
     let crease_id = editor.update(cx, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
 
-        let start = snapshot.anchor_in_excerpt(excerpt_id, anchor)?;
+        let start = snapshot.anchor_in_excerpt(anchor)?;
 
         let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);

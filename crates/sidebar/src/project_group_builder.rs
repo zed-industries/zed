@@ -255,6 +255,7 @@ mod tests {
                 path: std::path::PathBuf::from("/wt/feature-a"),
                 ref_name: Some("refs/heads/feature-a".into()),
                 sha: "abc".into(),
+                is_main: false,
             });
         })
         .expect("git state should be set");

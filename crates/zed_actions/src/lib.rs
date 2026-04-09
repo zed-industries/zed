@@ -85,8 +85,6 @@ pub enum ExtensionCategoryFilter {
     LanguageServers,
     ContextServers,
     AgentServers,
-    SlashCommands,
-    IndexedDocsProviders,
     Snippets,
     DebugAdapters,
 }
@@ -452,8 +450,6 @@ pub mod agent {
             OpenOnboardingModal,
             /// Opens the ACP onboarding modal.
             OpenAcpOnboardingModal,
-            /// Opens the Claude Agent onboarding modal.
-            OpenClaudeAgentOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
@@ -525,14 +521,6 @@ pub mod assistant {
             Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus
-        ]
-    );
-
-    actions!(
-        assistant,
-        [
-            /// Shows the assistant configuration panel.
-            ShowConfiguration
         ]
     );
 

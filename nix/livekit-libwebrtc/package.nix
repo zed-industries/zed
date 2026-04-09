@@ -81,6 +81,15 @@ stdenv.mkDerivation {
   pname = "livekit-libwebrtc";
   version = "137-unstable-2025-11-24";
 
+  # libwebrtc loads libEGL/libGL at runtime via dlopen() in the Wayland
+  # screencast path, so they are not visible as ordinary DT_NEEDED edges.
+  # Keep an explicit rpath so the shared object can resolve them at runtime.
+  NIX_LDFLAGS = lib.optionalString stdenv.hostPlatform.isLinux
+    "-rpath ${lib.makeLibraryPath [ libGL ]}";
+
+  # Prevent fixup from stripping the rpath above as "unused".
+  dontPatchELF = stdenv.hostPlatform.isLinux;
+
   gclientDeps = gclient2nix.importGclientDeps ./sources.json;
   sourceRoot = "src";
 

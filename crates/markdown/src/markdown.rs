@@ -270,10 +270,16 @@ pub struct MarkdownOptions {
     pub render_mermaid_diagrams: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CopyButtonVisibility {
+    Hidden,
+    AlwaysVisible,
+    VisibleOnHover,
+}
+
 pub enum CodeBlockRenderer {
     Default {
-        copy_button: bool,
-        copy_button_on_hover: bool,
+        copy_button_visibility: CopyButtonVisibility,
         border: bool,
     },
     Custom {
@@ -826,8 +832,7 @@ impl MarkdownElement {
             markdown,
             style,
             code_block_renderer: CodeBlockRenderer::Default {
-                copy_button: true,
-                copy_button_on_hover: false,
+                copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
                 border: false,
             },
             on_url_click: None,
@@ -1610,22 +1615,17 @@ impl Element for MarkdownElement {
 
                             let column_count = alignments.len();
                             builder.push_div(
-                                div().flex().flex_col().items_start(),
-                                range,
-                                markdown_end,
-                            );
-                            builder.push_div(
                                 div()
                                     .id(("table", range.start))
-                                    .min_w_0()
                                     .grid()
                                     .grid_cols(column_count as u16)
                                     .when(self.style.table_columns_min_size, |this| {
                                         this.grid_cols_min_content(column_count as u16)
                                     })
                                     .when(!self.style.table_columns_min_size, |this| {
-                                        this.grid_cols_max_content(column_count as u16)
+                                        this.grid_cols(column_count as u16)
                                     })
+                                    .w_full()
                                     .mb_2()
                                     .border(px(1.5))
                                     .border_color(cx.theme().colors().border)
@@ -1691,38 +1691,10 @@ impl Element for MarkdownElement {
                         builder.pop_text_style();
 
                         if let CodeBlockRenderer::Default {
-                            copy_button: true, ..
-                        } = &self.code_block_renderer
-                        {
-                            builder.modify_current_div(|el| {
-                                let content_range = parser::extract_code_block_content_range(
-                                    &parsed_markdown.source()[range.clone()],
-                                );
-                                let content_range = content_range.start + range.start
-                                    ..content_range.end + range.start;
-
-                                let code = parsed_markdown.source()[content_range].to_string();
-                                let codeblock = render_copy_code_block_button(
-                                    range.end,
-                                    code,
-                                    self.markdown.clone(),
-                                );
-                                el.child(
-                                    h_flex()
-                                        .w_4()
-                                        .absolute()
-                                        .top_1p5()
-                                        .right_1p5()
-                                        .justify_end()
-                                        .child(codeblock),
-                                )
-                            });
-                        }
-
-                        if let CodeBlockRenderer::Default {
-                            copy_button_on_hover: true,
+                            copy_button_visibility,
                             ..
                         } = &self.code_block_renderer
+                            && *copy_button_visibility != CopyButtonVisibility::Hidden
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
@@ -1741,10 +1713,17 @@ impl Element for MarkdownElement {
                                     h_flex()
                                         .w_4()
                                         .absolute()
-                                        .top_0()
-                                        .right_0()
                                         .justify_end()
-                                        .visible_on_hover("code_block")
+                                        .when_else(
+                                            *copy_button_visibility
+                                                == CopyButtonVisibility::VisibleOnHover,
+                                            |this| {
+                                                this.top_0()
+                                                    .right_0()
+                                                    .visible_on_hover("code_block")
+                                            },
+                                            |this| this.top_1p5().right_1p5(),
+                                        )
                                         .child(codeblock),
                                 )
                             });
@@ -1770,7 +1749,6 @@ impl Element for MarkdownElement {
                         }
                     }
                     MarkdownTagEnd::Table => {
-                        builder.pop_div();
                         builder.pop_div();
                         builder.table.end();
                     }
@@ -2778,8 +2756,7 @@ mod tests {
             |_window, _cx| {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
-                        copy_button: false,
-                        copy_button_on_hover: false,
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )

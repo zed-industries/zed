@@ -295,9 +295,6 @@ impl UserMessage {
                         MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }
-                        MentionUri::TextThread { .. } => {
-                            write!(&mut thread_context, "\n{}\n", content).ok();
-                        }
                         MentionUri::Rule { .. } => {
                             write!(
                                 &mut rules_context,
@@ -1802,14 +1799,6 @@ impl Thread {
             ..Default::default()
         }));
         cx.notify();
-    }
-
-    #[cfg(feature = "eval")]
-    pub fn proceed(
-        &mut self,
-        cx: &mut Context<Self>,
-    ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.run_turn(cx)
     }
 
     fn run_turn(

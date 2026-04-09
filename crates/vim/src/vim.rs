@@ -432,8 +432,12 @@ pub fn init(cx: &mut App) {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
             let Some(vim) = vim else { return };
-            vim.entity.update(cx, |_, cx| {
-                cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+            vim.entity.update(cx, |vim, cx| {
+                if !vim.search.cmd_f_search {
+                    cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+                } else {
+                    cx.propagate()
+                }
             })
         });
         workspace.register_action(|_, _: &GoToTab, window, cx| {
@@ -449,7 +453,10 @@ pub fn init(cx: &mut App) {
                 );
             } else {
                 // If no count is provided, go to the next tab.
-                window.dispatch_action(workspace::pane::ActivateNextItem.boxed_clone(), cx);
+                window.dispatch_action(
+                    workspace::pane::ActivateNextItem::default().boxed_clone(),
+                    cx,
+                );
             }
         });
 
@@ -473,7 +480,10 @@ pub fn init(cx: &mut App) {
                 }
             } else {
                 // No count provided, go to the previous tab.
-                window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
+                window.dispatch_action(
+                    workspace::pane::ActivatePreviousItem::default().boxed_clone(),
+                    cx,
+                );
             }
         });
     })
@@ -2080,7 +2090,7 @@ impl Vim {
         VimEditorSettingsState {
             cursor_shape: self.cursor_shape(cx),
             clip_at_line_ends: self.clip_at_line_ends(),
-            collapse_matches: !HelixModeSetting::get_global(cx).0,
+            collapse_matches: !HelixModeSetting::get_global(cx).0 && !self.search.cmd_f_search,
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),

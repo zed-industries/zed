@@ -575,6 +575,7 @@ message Worktree {
   string path = 1;
   string ref_name = 2;
   string sha = 3;
+  bool is_main = 4;
 }
 
 message GitCreateWorktree {

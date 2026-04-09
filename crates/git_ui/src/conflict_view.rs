@@ -2,7 +2,7 @@ use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
-    Editor, EditorEvent, ExcerptId, MultiBuffer, RowHighlightOptions,
+    Editor, EditorEvent, MultiBuffer, RowHighlightOptions,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
@@ -67,62 +67,22 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
 
     let buffers = buffer.read(cx).all_buffers();
     for buffer in buffers {
-        buffer_added(editor, buffer, cx);
+        buffer_ranges_updated(editor, buffer, cx);
     }
 
     cx.subscribe(&cx.entity(), |editor, _, event, cx| match event {
-        EditorEvent::ExcerptsAdded { buffer, .. } => buffer_added(editor, buffer.clone(), cx),
-        EditorEvent::ExcerptsExpanded { ids } => {
-            let multibuffer = editor.buffer().read(cx).snapshot(cx);
-            for excerpt_id in ids {
-                let Some(buffer) = multibuffer.buffer_for_excerpt(*excerpt_id) else {
-                    continue;
-                };
-                let addon = editor.addon::<ConflictAddon>().unwrap();
-                let Some(conflict_set) = addon.conflict_set(buffer.remote_id()).clone() else {
-                    return;
-                };
-                excerpt_for_buffer_updated(editor, conflict_set, cx);
-            }
+        EditorEvent::BufferRangesUpdated { buffer, .. } => {
+            buffer_ranges_updated(editor, buffer.clone(), cx)
         }
-        EditorEvent::ExcerptsRemoved {
-            removed_buffer_ids, ..
-        } => buffers_removed(editor, removed_buffer_ids, cx),
+        EditorEvent::BuffersRemoved { removed_buffer_ids } => {
+            buffers_removed(editor, removed_buffer_ids, cx)
+        }
         _ => {}
     })
     .detach();
 }
 
-fn excerpt_for_buffer_updated(
-    editor: &mut Editor,
-    conflict_set: Entity<ConflictSet>,
-    cx: &mut Context<Editor>,
-) {
-    let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
-    let buffer_id = conflict_set.read(cx).snapshot().buffer_id;
-    let Some(buffer_conflicts) = editor
-        .addon_mut::<ConflictAddon>()
-        .unwrap()
-        .buffers
-        .get(&buffer_id)
-    else {
-        return;
-    };
-    let addon_conflicts_len = buffer_conflicts.block_ids.len();
-    conflicts_updated(
-        editor,
-        conflict_set,
-        &ConflictSetUpdate {
-            buffer_range: None,
-            old_range: 0..addon_conflicts_len,
-            new_range: 0..conflicts_len,
-        },
-        cx,
-    );
-}
-
-#[ztracing::instrument(skip_all)]
-fn buffer_added(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
+fn buffer_ranges_updated(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
     let Some(project) = editor.project() else {
         return;
     };
@@ -188,14 +148,6 @@ fn conflicts_updated(
     let conflict_set = conflict_set.read(cx).snapshot();
     let multibuffer = editor.buffer().read(cx);
     let snapshot = multibuffer.snapshot(cx);
-    let excerpts = multibuffer.excerpts_for_buffer(buffer_id, cx);
-    let Some(buffer_snapshot) = excerpts
-        .first()
-        .and_then(|(excerpt_id, _, _)| snapshot.buffer_for_excerpt(*excerpt_id))
-    else {
-        return;
-    };
-
     let old_range = maybe!({
         let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
         let buffer_conflicts = conflict_addon.buffers.get(&buffer_id)?;
@@ -230,23 +182,7 @@ fn conflicts_updated(
         let mut removed_highlighted_ranges = Vec::new();
         let mut removed_block_ids = HashSet::default();
         for (conflict_range, block_id) in old_conflicts {
-            let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
-                let precedes_start = range
-                    .context
-                    .start
-                    .cmp(&conflict_range.start, buffer_snapshot)
-                    .is_le();
-                let follows_end = range
-                    .context
-                    .end
-                    .cmp(&conflict_range.start, buffer_snapshot)
-                    .is_ge();
-                precedes_start && follows_end
-            }) else {
-                continue;
-            };
-            let excerpt_id = *excerpt_id;
-            let Some(range) = snapshot.anchor_range_in_excerpt(excerpt_id, conflict_range) else {
+            let Some(range) = snapshot.buffer_anchor_range_to_anchor_range(conflict_range) else {
                 continue;
             };
             removed_highlighted_ranges.push(range.clone());
@@ -272,26 +208,9 @@ fn conflicts_updated(
     let new_conflicts = &conflict_set.conflicts[event.new_range.clone()];
     let mut blocks = Vec::new();
     for conflict in new_conflicts {
-        let Some((excerpt_id, _, _)) = excerpts.iter().find(|(_, _, range)| {
-            let precedes_start = range
-                .context
-                .start
-                .cmp(&conflict.range.start, buffer_snapshot)
-                .is_le();
-            let follows_end = range
-                .context
-                .end
-                .cmp(&conflict.range.start, buffer_snapshot)
-                .is_ge();
-            precedes_start && follows_end
-        }) else {
-            continue;
-        };
-        let excerpt_id = *excerpt_id;
+        update_conflict_highlighting(editor, conflict, &snapshot, cx);
 
-        update_conflict_highlighting(editor, conflict, &snapshot, excerpt_id, cx);
-
-        let Some(anchor) = snapshot.anchor_in_excerpt(excerpt_id, conflict.range.start) else {
+        let Some(anchor) = snapshot.anchor_in_excerpt(conflict.range.start) else {
             continue;
         };
 
@@ -302,7 +221,7 @@ fn conflicts_updated(
             style: BlockStyle::Sticky,
             render: Arc::new({
                 let conflict = conflict.clone();
-                move |cx| render_conflict_buttons(&conflict, excerpt_id, editor_handle.clone(), cx)
+                move |cx| render_conflict_buttons(&conflict, editor_handle.clone(), cx)
             }),
             priority: 0,
         })
@@ -328,14 +247,13 @@ fn update_conflict_highlighting(
     editor: &mut Editor,
     conflict: &ConflictRegion,
     buffer: &editor::MultiBufferSnapshot,
-    excerpt_id: editor::ExcerptId,
     cx: &mut Context<Editor>,
 ) -> Option<()> {
     log::debug!("update conflict highlighting for {conflict:?}");
 
-    let outer = buffer.anchor_range_in_excerpt(excerpt_id, conflict.range.clone())?;
-    let ours = buffer.anchor_range_in_excerpt(excerpt_id, conflict.ours.clone())?;
-    let theirs = buffer.anchor_range_in_excerpt(excerpt_id, conflict.theirs.clone())?;
+    let outer = buffer.buffer_anchor_range_to_anchor_range(conflict.range.clone())?;
+    let ours = buffer.buffer_anchor_range_to_anchor_range(conflict.ours.clone())?;
+    let theirs = buffer.buffer_anchor_range_to_anchor_range(conflict.theirs.clone())?;
 
     let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
@@ -373,7 +291,6 @@ fn update_conflict_highlighting(
 
 fn render_conflict_buttons(
     conflict: &ConflictRegion,
-    excerpt_id: ExcerptId,
     editor: WeakEntity<Editor>,
     cx: &mut BlockContext,
 ) -> AnyElement {
@@ -395,7 +312,6 @@ fn render_conflict_buttons(
                     move |_, window, cx| {
                         resolve_conflict(
                             editor.clone(),
-                            excerpt_id,
                             conflict.clone(),
                             vec![ours.clone()],
                             window,
@@ -415,7 +331,6 @@ fn render_conflict_buttons(
                     move |_, window, cx| {
                         resolve_conflict(
                             editor.clone(),
-                            excerpt_id,
                             conflict.clone(),
                             vec![theirs.clone()],
                             window,
@@ -436,7 +351,6 @@ fn render_conflict_buttons(
                     move |_, window, cx| {
                         resolve_conflict(
                             editor.clone(),
-                            excerpt_id,
                             conflict.clone(),
                             vec![ours.clone(), theirs.clone()],
                             window,
@@ -461,7 +375,7 @@ fn render_conflict_buttons(
                             let content = editor
                                 .update(cx, |editor, cx| {
                                     let multibuffer = editor.buffer().read(cx);
-                                    let buffer_id = conflict.ours.end.buffer_id?;
+                                    let buffer_id = conflict.ours.end.buffer_id;
                                     let buffer = multibuffer.buffer(buffer_id)?;
                                     let buffer_read = buffer.read(cx);
                                     let snapshot = buffer_read.snapshot();
@@ -589,7 +503,6 @@ pub(crate) fn register_conflict_notification(
 
 pub(crate) fn resolve_conflict(
     editor: WeakEntity<Editor>,
-    excerpt_id: ExcerptId,
     resolved_conflict: ConflictRegion,
     ranges: Vec<Range<Anchor>>,
     window: &mut Window,
@@ -601,7 +514,7 @@ pub(crate) fn resolve_conflict(
                 let workspace = editor.workspace()?;
                 let project = editor.project()?.clone();
                 let multibuffer = editor.buffer().clone();
-                let buffer_id = resolved_conflict.ours.end.buffer_id?;
+                let buffer_id = resolved_conflict.ours.end.buffer_id;
                 let buffer = multibuffer.read(cx).buffer(buffer_id)?;
                 resolved_conflict.resolve(buffer.clone(), &ranges, cx);
                 let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
@@ -620,7 +533,7 @@ pub(crate) fn resolve_conflict(
                     .ok()?;
                 let &(_, block_id) = &state.block_ids[ix];
                 let range =
-                    snapshot.anchor_range_in_excerpt(excerpt_id, resolved_conflict.range)?;
+                    snapshot.buffer_anchor_range_to_anchor_range(resolved_conflict.range)?;
 
                 editor.remove_gutter_highlights::<ConflictsOuter>(vec![range.clone()], cx);
 

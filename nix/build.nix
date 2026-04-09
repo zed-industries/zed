@@ -77,6 +77,7 @@ let
     builtins.elem firstComp topLevelIncludes;
 
   craneLib = crane.overrideToolchain rustToolchain;
+  gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
     let
       zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
@@ -178,8 +179,8 @@ let
         libva
         libxkbcommon
         wayland
+        gpu-lib
         libglvnd
-        vulkan-loader
         xorg.libX11
         xorg.libxcb
         libdrm
@@ -236,8 +237,7 @@ let
         # about them that's special is that they're manually dlopened at runtime
         NIX_LDFLAGS = lib.optionalString stdenv'.hostPlatform.isLinux "-rpath ${
           lib.makeLibraryPath [
-            libglvnd
-            vulkan-loader
+            gpu-lib
             wayland
             libva
           ]
@@ -246,7 +246,7 @@ let
         NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
       };
 
-      # prevent nix from removing the "unused" wayland rpaths
+      # prevent nix from removing the "unused" wayland/gpu-lib rpaths
       dontPatchELF = stdenv'.hostPlatform.isLinux;
 
       # TODO: try craneLib.cargoNextest separate output

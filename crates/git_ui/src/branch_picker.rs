@@ -1087,13 +1087,8 @@ impl PickerDelegate for BranchListDelegate {
                         ),
                 )
                 .when(!is_new_items && !is_head_branch, |this| {
-                    this.map(|this| {
-                        if self.selected_index() == ix {
-                            this.end_slot(deleted_branch_icon(ix))
-                        } else {
-                            this.end_hover_slot(deleted_branch_icon(ix))
-                        }
-                    })
+                    this.end_slot(deleted_branch_icon(ix))
+                        .show_end_slot_on_hover()
                 })
                 .when_some(
                     if is_new_items {
@@ -1102,13 +1097,8 @@ impl PickerDelegate for BranchListDelegate {
                         None
                     },
                     |this, create_from_default_button| {
-                        this.map(|this| {
-                            if self.selected_index() == ix {
-                                this.end_slot(create_from_default_button)
-                            } else {
-                                this.end_hover_slot(create_from_default_button)
-                            }
-                        })
+                        this.end_slot(create_from_default_button)
+                            .show_end_slot_on_hover()
                     },
                 ),
         )

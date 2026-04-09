@@ -247,6 +247,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2026_03_16::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2026_03_16,
         ),
+        MigrationType::Json(migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum),
     ];
     run_migrations(text, migrations)
 }
@@ -2391,6 +2392,132 @@ mod tests {
                     "profiles": {
                         "dev": {
                             "relative_line_numbers": "disabled"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_make_play_sound_when_agent_done_an_enum() {
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{ }"#.unindent(),
+            None,
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": true
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "agent": {
+                        "play_sound_when_agent_done": "always"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": false
+                }
+            }"#
+            .unindent(),
+            Some(
+                &r#"{
+                    "agent": {
+                        "play_sound_when_agent_done": "never"
+                    }
+                }"#
+                .unindent(),
+            ),
+        );
+
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"{
+                "agent": {
+                    "play_sound_when_agent_done": "when_hidden"
+                }
+            }"#
+            .unindent(),
+            None,
+        );
+
+        // Platform key: settings nested inside "macos" should be migrated
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"
+            {
+                "macos": {
+                    "agent": {
+                        "play_sound_when_agent_done": true
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "macos": {
+                        "agent": {
+                            "play_sound_when_agent_done": "always"
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+
+        // Profile: settings nested inside profiles should be migrated
+        assert_migrate_with_migrations(
+            &[MigrationType::Json(
+                migrations::m_2026_03_30::make_play_sound_when_agent_done_an_enum,
+            )],
+            &r#"
+            {
+                "profiles": {
+                    "work": {
+                        "agent": {
+                            "play_sound_when_agent_done": false
+                        }
+                    }
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "profiles": {
+                        "work": {
+                            "agent": {
+                                "play_sound_when_agent_done": "never"
+                            }
                         }
                     }
                 }

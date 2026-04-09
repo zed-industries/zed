@@ -237,7 +237,8 @@ impl Editor {
                 let Some(mb_anchor) = self
                     .buffer()
                     .read(cx)
-                    .buffer_anchor_to_anchor(&buffer, anchor, cx)
+                    .snapshot(cx)
+                    .anchor_in_excerpt(anchor)
                 else {
                     return Task::ready(Ok(Navigated::No));
                 };
@@ -324,16 +325,13 @@ pub fn show_link_definition(
         return;
     }
 
-    let trigger_anchor = trigger_point.anchor();
-    let anchor = snapshot.buffer_snapshot().anchor_before(*trigger_anchor);
-    let Some(buffer) = editor.buffer().read(cx).buffer_for_anchor(anchor, cx) else {
+    let anchor = trigger_point.anchor().bias_left(snapshot.buffer_snapshot());
+    let Some((anchor, _)) = snapshot.buffer_snapshot().anchor_to_buffer_anchor(anchor) else {
         return;
     };
-    let Anchor {
-        excerpt_id,
-        text_anchor,
-        ..
-    } = anchor;
+    let Some(buffer) = editor.buffer.read(cx).buffer(anchor.buffer_id) else {
+        return;
+    };
     let same_kind = hovered_link_state.preferred_kind == preferred_kind
         || hovered_link_state
             .links
@@ -363,39 +361,39 @@ pub fn show_link_definition(
         async move {
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
-                    if let Some((url_range, url)) = find_url(&buffer, text_anchor, cx.clone()) {
+                    if let Some((url_range, url)) = find_url(&buffer, anchor, cx.clone()) {
                         this.read_with(cx, |_, _| {
                             let range = maybe!({
                                 let range =
-                                    snapshot.anchor_range_in_excerpt(excerpt_id, url_range)?;
+                                    snapshot.buffer_anchor_range_to_anchor_range(url_range)?;
                                 Some(RangeInEditor::Text(range))
                             });
                             (range, vec![HoverLink::Url(url)])
                         })
                         .ok()
                     } else if let Some((filename_range, filename)) =
-                        find_file(&buffer, project.clone(), text_anchor, cx).await
+                        find_file(&buffer, project.clone(), anchor, cx).await
                     {
                         let range = maybe!({
                             let range =
-                                snapshot.anchor_range_in_excerpt(excerpt_id, filename_range)?;
+                                snapshot.buffer_anchor_range_to_anchor_range(filename_range)?;
                             Some(RangeInEditor::Text(range))
                         });
 
                         Some((range, vec![HoverLink::File(filename)]))
                     } else if let Some(provider) = provider {
                         let task = cx.update(|_, cx| {
-                            provider.definitions(&buffer, text_anchor, preferred_kind, cx)
+                            provider.definitions(&buffer, anchor, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
                             task.await.ok().flatten().map(|definition_result| {
                                 (
                                     definition_result.iter().find_map(|link| {
                                         link.origin.as_ref().and_then(|origin| {
-                                            let range = snapshot.anchor_range_in_excerpt(
-                                                excerpt_id,
-                                                origin.range.clone(),
-                                            )?;
+                                            let range = snapshot
+                                                .buffer_anchor_range_to_anchor_range(
+                                                    origin.range.clone(),
+                                                )?;
                                             Some(RangeInEditor::Text(range))
                                         })
                                     }),
@@ -1602,7 +1600,11 @@ mod tests {
             cx.set_state(input);
 
             let (position, snapshot) = cx.editor(|editor, _, cx| {
-                let positions = editor.selections.newest_anchor().head().text_anchor;
+                let positions = editor
+                    .selections
+                    .newest_anchor()
+                    .head()
+                    .expect_text_anchor();
                 let snapshot = editor
                     .buffer()
                     .clone()

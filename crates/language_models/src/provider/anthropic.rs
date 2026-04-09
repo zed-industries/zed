@@ -1,3 +1,5 @@
+pub mod telemetry;
+
 use anthropic::{
     ANTHROPIC_API_URL, AnthropicError, AnthropicModelMode, ContentDelta, CountTokensRequest, Event,
     ResponseContent, ToolResultContent, ToolResultPart, Usage,
@@ -8,7 +10,8 @@ use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
+    ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
@@ -28,8 +31,8 @@ use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
 pub use settings::AnthropicAvailableModel as AvailableModel;
 
-const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
-const PROVIDER_NAME: LanguageModelProviderName = language_model::ANTHROPIC_PROVIDER_NAME;
+const PROVIDER_ID: LanguageModelProviderId = ANTHROPIC_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = ANTHROPIC_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {

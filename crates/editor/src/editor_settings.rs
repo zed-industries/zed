@@ -10,7 +10,7 @@ pub use settings::{
     ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
-use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
+use ui::scrollbars::ShowScrollbar;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
@@ -60,6 +60,7 @@ pub struct EditorSettings {
     pub completion_menu_scrollbar: ShowScrollbar,
     pub completion_detail_alignment: CompletionDetailAlignment,
     pub diff_view_style: DiffViewStyle,
+    pub minimum_split_diff_width: f32,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -183,12 +184,6 @@ impl EditorSettings {
     }
 }
 
-impl ScrollbarVisibility for EditorSettings {
-    fn visibility(&self, _cx: &App) -> ShowScrollbar {
-        self.scrollbar.show
-    }
-}
-
 impl Settings for EditorSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let editor = content.editor.clone();
@@ -217,7 +212,7 @@ impl Settings for EditorSettings {
                 code_actions: toolbar.code_actions.unwrap(),
             },
             scrollbar: Scrollbar {
-                show: scrollbar.show.map(Into::into).unwrap(),
+                show: scrollbar.show.map(ui_scrollbar_settings_from_raw).unwrap(),
                 git_diff: scrollbar.git_diff.unwrap()
                     && content
                         .git
@@ -294,9 +289,33 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap().0,
-            completion_menu_scrollbar: editor.completion_menu_scrollbar.map(Into::into).unwrap(),
+            completion_menu_scrollbar: editor
+                .completion_menu_scrollbar
+                .map(ui_scrollbar_settings_from_raw)
+                .unwrap(),
             completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
             diff_view_style: editor.diff_view_style.unwrap(),
+            minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
         }
+    }
+}
+
+#[derive(Default)]
+pub struct EditorSettingsScrollbarProxy;
+
+impl ui::scrollbars::ScrollbarVisibility for EditorSettingsScrollbarProxy {
+    fn visibility(&self, cx: &App) -> ShowScrollbar {
+        EditorSettings::get_global(cx).scrollbar.show
+    }
+}
+
+pub fn ui_scrollbar_settings_from_raw(
+    value: settings::ShowScrollbar,
+) -> ui::scrollbars::ShowScrollbar {
+    match value {
+        settings::ShowScrollbar::Auto => ShowScrollbar::Auto,
+        settings::ShowScrollbar::System => ShowScrollbar::System,
+        settings::ShowScrollbar::Always => ShowScrollbar::Always,
+        settings::ShowScrollbar::Never => ShowScrollbar::Never,
     }
 }

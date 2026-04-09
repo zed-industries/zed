@@ -148,9 +148,9 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
+            .visible_buffers(cx)
+            .into_iter()
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter_map(|editor_buffer| {
                 let editor_buffer_id = editor_buffer.read(cx).remote_id();
@@ -1214,11 +1214,19 @@ mod tests {
         );
 
         // Get the excerpt id for the TOML excerpt and expand it down by 2 lines.
-        let toml_excerpt_id =
-            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).excerpt_ids()[0]);
+        let toml_anchor = editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_in_excerpt(text::Anchor::min_for_buffer(
+                    toml_buffer.read(cx).remote_id(),
+                ))
+                .unwrap()
+        });
         editor.update_in(cx, |editor, _, cx| {
             editor.buffer().update(cx, |buffer, cx| {
-                buffer.expand_excerpts([toml_excerpt_id], 2, ExpandExcerptDirection::Down, cx);
+                buffer.expand_excerpts([toml_anchor], 2, ExpandExcerptDirection::Down, cx);
             });
         });
 

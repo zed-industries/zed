@@ -1,5 +1,6 @@
 use editor::{
     Anchor, Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, RowExt, ToOffset,
+    ToPoint as _,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
     movement::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
@@ -11,6 +12,7 @@ use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{f64, ops::Range};
+
 use workspace::searchable::Direction;
 
 use crate::{
@@ -2340,39 +2342,19 @@ fn start_of_next_sentence(
 
 fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -> DisplayPoint {
     let point = map.display_point_to_point(display_point, Bias::Left);
-    let Some(mut excerpt) = map.buffer_snapshot().excerpt_containing(point..point) else {
+    let snapshot = map.buffer_snapshot();
+    let Some((buffer_snapshot, _)) = snapshot.point_to_buffer_point(point) else {
         return display_point;
     };
-    let offset = excerpt.buffer().point_to_offset(
-        excerpt
-            .buffer()
-            .clip_point(Point::new((line - 1) as u32, point.column), Bias::Left),
-    );
-    let buffer_range = excerpt.buffer_range();
-    if offset >= buffer_range.start.0 && offset <= buffer_range.end.0 {
-        let point = map
-            .buffer_snapshot()
-            .offset_to_point(excerpt.map_offset_from_buffer(BufferOffset(offset)));
-        return map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
-    }
-    for (excerpt, buffer, range) in map.buffer_snapshot().excerpts() {
-        let excerpt_range = language::ToOffset::to_offset(&range.context.start, buffer)
-            ..language::ToOffset::to_offset(&range.context.end, buffer);
-        if offset >= excerpt_range.start && offset <= excerpt_range.end {
-            let text_anchor = buffer.anchor_after(offset);
-            let anchor = Anchor::in_buffer(excerpt, text_anchor);
-            return anchor.to_display_point(map);
-        } else if offset <= excerpt_range.start {
-            let anchor = Anchor::in_buffer(excerpt, range.context.start);
-            return anchor.to_display_point(map);
-        }
-    }
+
+    let Some(anchor) = snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(
+        buffer_snapshot.clip_point(Point::new((line - 1) as u32, point.column), Bias::Left),
+    )) else {
+        return display_point;
+    };
 
     map.clip_point(
-        map.point_to_display_point(
-            map.buffer_snapshot().clip_point(point, Bias::Left),
-            Bias::Left,
-        ),
+        map.point_to_display_point(anchor.to_point(snapshot), Bias::Left),
         Bias::Left,
     )
 }

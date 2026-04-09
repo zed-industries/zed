@@ -64,6 +64,8 @@ pub struct SessionWorkspace {
 pub struct MultiWorkspaceState {
     pub active_workspace_id: Option<WorkspaceId>,
     pub sidebar_open: bool,
+    #[serde(default)]
+    pub sidebar_state: Option<String>,
 }
 
 /// The serialized state of a single MultiWorkspace window from a previous session:

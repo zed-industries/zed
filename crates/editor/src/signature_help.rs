@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::BufferSnapshot;
 
-use markdown::{Markdown, MarkdownElement};
+use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use multi_buffer::{Anchor, MultiBufferOffset, ToOffset};
 use settings::Settings;
 use std::ops::Range;
@@ -408,9 +408,8 @@ impl SignatureHelpPopover {
                                         hover_markdown_style(window, cx),
                                     )
                                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
+                                        copy_button_visibility: CopyButtonVisibility::Hidden,
                                         border: false,
-                                        copy_button_on_hover: false,
                                     })
                                     .on_url_click(open_markdown_url),
                                 )
@@ -421,9 +420,8 @@ impl SignatureHelpPopover {
                             .child(
                                 MarkdownElement::new(description, hover_markdown_style(window, cx))
                                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                                        copy_button: false,
+                                        copy_button_visibility: CopyButtonVisibility::Hidden,
                                         border: false,
-                                        copy_button_on_hover: false,
                                     })
                                     .on_url_click(open_markdown_url),
                             )

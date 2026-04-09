@@ -3,10 +3,11 @@ pub mod terminal_element;
 pub mod terminal_panel;
 mod terminal_path_like_target;
 pub mod terminal_scrollbar;
-mod terminal_slash_command;
 
-use assistant_slash_command::SlashCommandRegistry;
-use editor::{Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager};
+use editor::{
+    Editor, EditorSettings, actions::SelectAll, blink_manager::BlinkManager,
+    ui_scrollbar_settings_from_raw,
+};
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
     FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
@@ -44,11 +45,10 @@ use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
 use terminal_path_like_target::{hover_path_like_target, open_path_like_target};
 use terminal_scrollbar::TerminalScrollHandle;
-use terminal_slash_command::TerminalSlashCommand;
 use ui::{
     ContextMenu, Divider, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
     prelude::*,
-    scrollbars::{self, GlobalSetting, ScrollbarVisibility},
+    scrollbars::{self, ScrollbarVisibility},
 };
 use util::ResultExt;
 use workspace::{
@@ -98,7 +98,6 @@ actions!(
 pub struct RenameTerminal;
 
 pub fn init(cx: &mut App) {
-    assistant_slash_command::init(cx);
     terminal_panel::init(cx);
 
     register_serializable_item::<TerminalView>(cx);
@@ -107,7 +106,6 @@ pub fn init(cx: &mut App) {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
-    SlashCommandRegistry::global(cx).register_command(TerminalSlashCommand, true);
 }
 
 pub struct BlockProperties {
@@ -754,7 +752,14 @@ impl TerminalView {
     }
 
     pub fn should_show_cursor(&self, focused: bool, cx: &mut Context<Self>) -> bool {
-        // Always show cursor when not focused or in special modes
+        // Hide cursor when in embedded mode and not focused (read-only output like Agent panel)
+        if let TerminalMode::Embedded { .. } = &self.mode {
+            if !focused {
+                return false;
+            }
+        }
+
+        // For Standalone mode: always show cursor when not focused or in special modes
         if !focused
             || self
                 .terminal
@@ -1114,20 +1119,15 @@ fn regex_search_for_query(query: &SearchQuery) -> Option<RegexSearch> {
     }
 }
 
+#[derive(Default)]
 struct TerminalScrollbarSettingsWrapper;
-
-impl GlobalSetting for TerminalScrollbarSettingsWrapper {
-    fn get_value(_cx: &App) -> &Self {
-        &Self
-    }
-}
 
 impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
     fn visibility(&self, cx: &App) -> scrollbars::ShowScrollbar {
         TerminalSettings::get_global(cx)
             .scrollbar
             .show
-            .map(Into::into)
+            .map(ui_scrollbar_settings_from_raw)
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
 }
@@ -1350,9 +1350,16 @@ impl Item for TerminalView {
             None => (IconName::Terminal, Color::Muted, None),
         };
 
+        let self_handle = self.self_handle.clone();
         h_flex()
             .gap_1()
             .group("term-tab-icon")
+            .track_focus(&self.focus_handle)
+            .on_action(move |action: &RenameTerminal, window, cx| {
+                self_handle
+                    .update(cx, |this, cx| this.rename_terminal(action, window, cx))
+                    .ok();
+            })
             .child(
                 h_flex()
                     .group("term-tab-icon")

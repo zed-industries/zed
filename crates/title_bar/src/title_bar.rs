@@ -155,7 +155,7 @@ pub struct TitleBar {
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
     application_menu: Option<Entity<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
-    banner: Entity<OnboardingBanner>,
+    banner: Option<Entity<OnboardingBanner>>,
     update_version: Entity<UpdateVersion>,
     screen_share_popover_handle: PopoverMenuHandle<ContextMenu>,
     _diagnostics_subscription: Option<gpui::Subscription>,
@@ -246,7 +246,9 @@ impl Render for TitleBar {
         children.push(self.render_collaborator_list(window, cx).into_any_element());
 
         if title_bar_settings.show_onboarding_banner {
-            children.push(self.banner.clone().into_any_element())
+            if let Some(banner) = &self.banner {
+                children.push(banner.clone().into_any_element())
+            }
         }
 
         let status = self.client.status();
@@ -385,19 +387,6 @@ impl TitleBar {
             }));
         }
 
-        let banner = cx.new(|cx| {
-            OnboardingBanner::new(
-                "ACP Claude Code Onboarding",
-                IconName::AiClaude,
-                "Claude Agent",
-                Some("Introducing:".into()),
-                zed_actions::agent::OpenClaudeAgentOnboardingModal.boxed_clone(),
-                cx,
-            )
-            // When updating this to a non-AI feature release, remove this line.
-            .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
-        });
-
         let update_version = cx.new(|cx| UpdateVersion::new(cx));
         let platform_titlebar = cx.new(|cx| {
             let mut titlebar = PlatformTitleBar::new(id, cx);
@@ -416,7 +405,7 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
-            banner,
+            banner: None,
             update_version,
             screen_share_popover_handle: PopoverMenuHandle::default(),
             _diagnostics_subscription: None,

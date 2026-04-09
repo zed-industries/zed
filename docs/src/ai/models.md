@@ -96,7 +96,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 
 > Context window limits for hosted Gemini 3.1 Pro/3 Pro/Flash may increase in future releases.
 
-Each Agent thread and text thread in Zed maintains its own context window.
+Each Agent thread in Zed maintains its own context window.
 The more prompts, attached files, and responses included in a session, the larger the context window grows.
 
 Start a new thread for each distinct task to keep context focused.

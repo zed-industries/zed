@@ -211,9 +211,13 @@ pub struct RelatedExcerpt {
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
-    special_tokens_for_format(format)
-        .iter()
-        .any(|token| input.cursor_excerpt.contains(token))
+    special_tokens_for_format(format).iter().any(|token| {
+        if let Some(line_token) = token.strip_suffix('\n') {
+            input.cursor_excerpt.lines().any(|line| line == line_token)
+        } else {
+            input.cursor_excerpt.contains(token)
+        }
+    })
 }
 
 pub fn format_zeta_prompt(input: &ZetaPromptInput, format: ZetaFormat) -> Option<String> {
@@ -5286,5 +5290,16 @@ mod tests {
 
         assert_eq!(apply_edit(excerpt, &output1), apply_edit(excerpt, &output2));
         assert_eq!(apply_edit(excerpt, &output1), "new content\n");
+    }
+
+    #[test]
+    fn test_special_tokens_not_triggered_by_comment_separator() {
+        // Regression test for https://github.com/zed-industries/zed/issues/52489
+        let excerpt = "fn main() {\n    // =======\n    println!(\"hello\");\n}\n";
+        let input = make_input(excerpt, 0..excerpt.len(), 0, vec![], vec![]);
+        assert!(
+            !prompt_input_contains_special_tokens(&input, ZetaFormat::V0131GitMergeMarkersPrefix),
+            "comment containing ======= should not trigger special token detection"
+        );
     }
 }

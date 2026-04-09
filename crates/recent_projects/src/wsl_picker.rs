@@ -245,14 +245,16 @@ impl WslOpenModal {
             true => secondary,
             false => !secondary,
         };
-        let replace_window = match replace_current_window {
-            true => window.window_handle().downcast::<MultiWorkspace>(),
-            false => None,
+        let open_mode = if replace_current_window {
+            workspace::OpenMode::Replace
+        } else {
+            workspace::OpenMode::NewWindow
         };
 
         let paths = self.paths.clone();
         let open_options = workspace::OpenOptions {
-            replace_window,
+            requesting_window: window.window_handle().downcast::<MultiWorkspace>(),
+            open_mode,
             ..Default::default()
         };
 

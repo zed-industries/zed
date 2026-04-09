@@ -7,7 +7,7 @@ use gpui::{
 use indoc::indoc;
 use language::EditPredictionsMode;
 use language::{Buffer, CodeLabel};
-use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot, ToPoint};
+use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use project::{Completion, CompletionResponse, CompletionSource};
 use std::{
     ops::Range,
@@ -1242,15 +1242,14 @@ struct FakeCompletionMenuProvider;
 impl CompletionProvider for FakeCompletionMenuProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
-        _buffer: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         _buffer_position: text::Anchor,
         _trigger: CompletionContext,
         _window: &mut Window,
-        _cx: &mut Context<crate::Editor>,
+        cx: &mut Context<crate::Editor>,
     ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
         let completion = Completion {
-            replace_range: text::Anchor::MIN..text::Anchor::MAX,
+            replace_range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
             new_text: "fake_completion".to_string(),
             label: CodeLabel::plain("fake_completion".to_string(), None),
             documentation: None,

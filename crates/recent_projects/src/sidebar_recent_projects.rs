@@ -17,8 +17,8 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    MultiWorkspace, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace, WorkspaceDb,
-    WorkspaceId, notifications::DetachAndPromptErr,
+    MultiWorkspace, OpenMode, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace,
+    WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
 };
 
 use crate::{highlights_for_path, icon_for_remote_connection, open_remote_project};
@@ -272,7 +272,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace.open_project(paths, window, cx)
+                                multi_workspace.open_project(paths, OpenMode::Activate, window, cx)
                             })
                             .log_err()
                         {
@@ -287,7 +287,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     let app_state = workspace.app_state().clone();
                     let replace_window = window.window_handle().downcast::<MultiWorkspace>();
                     let open_options = OpenOptions {
-                        replace_window,
+                        requesting_window: replace_window,
                         ..Default::default()
                     };
                     if let RemoteConnectionOptions::Ssh(connection) = &mut connection {

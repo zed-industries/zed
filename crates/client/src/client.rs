@@ -2141,11 +2141,13 @@ mod tests {
             project_id: 1,
             committer_name: None,
             committer_email: None,
+            features: Vec::new(),
         });
         server.send(proto::JoinProject {
             project_id: 2,
             committer_name: None,
             committer_email: None,
+            features: Vec::new(),
         });
         done_rx1.recv().await.unwrap();
         done_rx2.recv().await.unwrap();

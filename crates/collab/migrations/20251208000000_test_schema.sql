@@ -332,7 +332,8 @@ CREATE TABLE public.projects (
     room_id integer,
     host_connection_id integer,
     host_connection_server_id integer,
-    windows_paths boolean DEFAULT false
+    windows_paths boolean DEFAULT false,
+    features text NOT NULL DEFAULT ''
 );
 
 CREATE SEQUENCE public.projects_id_seq

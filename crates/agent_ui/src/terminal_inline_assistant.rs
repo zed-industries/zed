@@ -17,7 +17,10 @@ use gpui::{App, Entity, Focusable, Global, Subscription, Task, UpdateGlobal, Wea
 use language::Buffer;
 use language_model::{
     CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role, report_anthropic_event,
+    LanguageModelRequestMessage, Role,
+};
+use language_models::provider::anthropic::telemetry::{
+    AnthropicCompletionType, AnthropicEventData, AnthropicEventType, report_anthropic_event,
 };
 use project::Project;
 use prompt_store::{PromptBuilder, PromptStore};
@@ -312,13 +315,13 @@ impl TerminalInlineAssistant {
                     (
                         "rejected",
                         "Assistant Response Rejected",
-                        language_model::AnthropicEventType::Reject,
+                        AnthropicEventType::Reject,
                     )
                 } else {
                     (
                         "accepted",
                         "Assistant Response Accepted",
-                        language_model::AnthropicEventType::Accept,
+                        AnthropicEventType::Accept,
                     )
                 };
 
@@ -335,8 +338,8 @@ impl TerminalInlineAssistant {
 
                 report_anthropic_event(
                     &model,
-                    language_model::AnthropicEventData {
-                        completion_type: language_model::AnthropicCompletionType::Terminal,
+                    AnthropicEventData {
+                        completion_type: AnthropicCompletionType::Terminal,
                         event: anthropic_event_type,
                         language_name: None,
                         message_id,

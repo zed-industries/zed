@@ -1474,7 +1474,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn multibuffer_section() -> [SettingsPageItem; 6] {
+    fn multibuffer_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Multibuffer"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1549,6 +1549,21 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.diff_view_style.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.diff_view_style = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Minimum Split Diff Width",
+                description: "The minimum width (in columns) at which the split diff view is used. When the editor is narrower, the diff view automatically switches to unified mode. Set to 0 to disable.",
+                field: Box::new(SettingField {
+                    json_path: Some("minimum_split_diff_width"),
+                    pick: |settings_content| {
+                        settings_content.editor.minimum_split_diff_width.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.minimum_split_diff_width = value;
                     },
                 }),
                 metadata: None,
@@ -7263,7 +7278,7 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Play Sound When Agent Done",
-                description: "Whether to play a sound when the agent has either completed its response, or needs user input.",
+                description: "When to play a sound when the agent has either completed its response, or needs user input.",
                 field: Box::new(SettingField {
                     json_path: Some("agent.play_sound_when_agent_done"),
                     pick: |settings_content| {
@@ -7318,6 +7333,28 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .agent
                             .get_or_insert_default()
                             .expand_terminal_card = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Thinking Display",
+                description: "How thinking blocks should be displayed by default. 'Auto' fully expands during streaming, then auto-collapses when done. 'Preview' auto-expands with a height constraint during streaming. 'Always Expanded' shows full content. 'Always Collapsed' keeps them collapsed.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.thinking_display"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .thinking_display
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .thinking_display = value;
                     },
                 }),
                 metadata: None,
@@ -7433,61 +7470,33 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 2] {
-        [
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Display Mode",
-                description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
-                field: Box::new(SettingField {
-                    json_path: Some("edit_prediction.display_mode"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .as_ref()?
-                            .mode
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .get_or_insert_default()
-                            .mode = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+    fn edit_prediction_display_sub_section() -> [SettingsPageItem; 1] {
+        [SettingsPageItem::SettingItem(SettingItem {
+            title: "Display Mode",
+            description: "When to show edit predictions previews in buffer. The eager mode displays them inline, while the subtle mode displays them only when holding a modifier key.",
+            field: Box::new(SettingField {
+                json_path: Some("edit_prediction.display_mode"),
+                pick: |settings_content| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .mode
+                        .as_ref()
+                },
+                write: |settings_content, value| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .mode = value;
+                },
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Display In Text Threads",
-                description: "Whether edit predictions are enabled when editing text threads in the agent panel.",
-                field: Box::new(SettingField {
-                    json_path: Some("edit_prediction.in_text_threads"),
-                    pick: |settings_content| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .as_ref()?
-                            .enabled_in_text_threads
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .project
-                            .all_languages
-                            .edit_predictions
-                            .get_or_insert_default()
-                            .enabled_in_text_threads = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
+            metadata: None,
+            files: USER,
+        })]
     }
 
     SettingsPage {

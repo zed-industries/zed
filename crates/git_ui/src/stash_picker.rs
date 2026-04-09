@@ -501,16 +501,39 @@ impl PickerDelegate for StashListDelegate {
                     .size(LabelSize::Small),
             );
 
-        let focus_handle = self.focus_handle.clone();
+        let view_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("view-stash", ix), IconName::Eye)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("View Stash", &ShowStashItem, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.delegate.show_stash_at(ix, window, cx);
+                }))
+        };
 
-        let drop_button = |entry_ix: usize| {
-            IconButton::new(("drop-stash", entry_ix), IconName::Trash)
+        let pop_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("pop-stash", ix), IconName::MaximizeAlt)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("Pop Stash", &menu::SecondaryConfirm, &focus_handle, cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                })
+        };
+
+        let drop_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("drop-stash", ix), IconName::Trash)
                 .icon_size(IconSize::Small)
                 .tooltip(move |_, cx| {
                     Tooltip::for_action_in("Drop Stash", &DropStashItem, &focus_handle, cx)
                 })
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.delegate.drop_stash_at(entry_ix, window, cx);
+                    this.delegate.drop_stash_at(ix, window, cx);
                 }))
         };
 
@@ -530,17 +553,14 @@ impl PickerDelegate for StashListDelegate {
                         )
                         .child(div().w_full().child(stash_label).child(branch_info)),
                 )
-                .tooltip(Tooltip::text(format!(
-                    "stash@{{{}}}",
-                    entry_match.entry.index
-                )))
-                .map(|this| {
-                    if selected {
-                        this.end_slot(drop_button(ix))
-                    } else {
-                        this.end_hover_slot(drop_button(ix))
-                    }
-                }),
+                .end_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .child(view_button)
+                        .child(pop_button)
+                        .child(drop_button),
+                )
+                .show_end_slot_on_hover(),
         )
     }
 
@@ -549,6 +569,10 @@ impl PickerDelegate for StashListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        if self.matches.is_empty() {
+            return None;
+        }
+
         let focus_handle = self.focus_handle.clone();
 
         Some(

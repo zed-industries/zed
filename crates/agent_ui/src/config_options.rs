@@ -650,7 +650,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                                 .end_slot(div().pr_2().when(is_selected, |this| {
                                     this.child(Icon::new(IconName::Check).color(Color::Accent))
                                 }))
-                                .end_hover_slot(div().pr_1p5().child({
+                                .end_slot_on_hover(div().pr_1p5().child({
                                     let (icon, color, tooltip) = if is_favorite {
                                         (IconName::StarFilled, Color::Accent, "Unfavorite")
                                     } else {

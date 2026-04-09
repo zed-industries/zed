@@ -10,7 +10,8 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolUseId, MessageContent, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
+    RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use menu;
 use open_ai::responses::{
@@ -35,8 +36,8 @@ use util::ResultExt;
 
 use crate::provider::util::{fix_streamed_json, parse_tool_arguments};
 
-const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
-const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
+const PROVIDER_ID: LanguageModelProviderId = OPEN_AI_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = OPEN_AI_PROVIDER_NAME;
 
 const API_KEY_ENV_VAR_NAME: &str = "OPENAI_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);

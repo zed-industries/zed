@@ -1771,7 +1771,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             DiagnosticSet::from_sorted_entries(
                 vec![DiagnosticEntry {
                     diagnostic: Default::default(),
-                    range: Anchor::MIN..Anchor::MAX,
+                    range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
                 }],
                 &buffer.snapshot(),
             ),
@@ -8525,9 +8525,10 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     unstaged_diff.update(cx, |unstaged_diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
         assert_hunks(
-            unstaged_diff
-                .snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            unstaged_diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &unstaged_diff.base_text(cx).text(),
             &[(
@@ -8616,8 +8617,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &diff.base_text_string(cx).unwrap(),
             &[
@@ -8658,8 +8661,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_1.update(cx, |diff, cx| {
         let snapshot = buffer_1.read(cx).snapshot();
         assert_hunks(
-            diff.snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &diff.base_text(cx).text(),
             &[(
@@ -8688,8 +8693,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &diff.base_text_string(cx).unwrap(),
             &[(
@@ -8710,8 +8717,10 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     diff_2.update(cx, |diff, cx| {
         let snapshot = buffer_2.read(cx).snapshot();
         assert_hunks(
-            diff.snapshot(cx)
-                .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            diff.snapshot(cx).hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(snapshot.remote_id()),
+                &snapshot,
+            ),
             &snapshot,
             &diff.base_text_string(cx).unwrap(),
             &[(
@@ -11496,6 +11505,14 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             repo.read(cx).work_directory_abs_path,
             Path::new(path!("/project/some-worktree")).into(),
         );
+        pretty_assertions::assert_eq!(
+            repo.read(cx).original_repo_abs_path,
+            Path::new(path!("/project")).into(),
+        );
+        assert!(
+            repo.read(cx).linked_worktree_path().is_some(),
+            "linked worktree should be detected as a linked worktree"
+        );
         let barrier = repo.update(cx, |repo, _| repo.barrier());
         (repo.clone(), barrier)
     });
@@ -11540,6 +11557,14 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         pretty_assertions::assert_eq!(
             repo.read(cx).work_directory_abs_path,
             Path::new(path!("/project/subdir/some-submodule")).into(),
+        );
+        pretty_assertions::assert_eq!(
+            repo.read(cx).original_repo_abs_path,
+            Path::new(path!("/project/subdir/some-submodule")).into(),
+        );
+        assert!(
+            repo.read(cx).linked_worktree_path().is_none(),
+            "submodule should not be detected as a linked worktree"
         );
         let barrier = repo.update(cx, |repo, _| repo.barrier());
         (repo.clone(), barrier)
