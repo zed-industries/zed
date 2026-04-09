@@ -21,6 +21,7 @@ use project::search::SearchQuery;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
+use util::markdown::split_local_url_fragment;
 use util::normalize_path;
 use workspace::item::{Item, ItemBufferKind, ItemHandle};
 use workspace::searchable::{
@@ -218,6 +219,7 @@ impl MarkdownPreviewView {
                     MarkdownOptions {
                         parse_html: true,
                         render_mermaid_diagrams: true,
+                        parse_heading_slugs: true,
                         ..Default::default()
                     },
                     cx,
@@ -614,22 +616,25 @@ impl MarkdownPreviewView {
             }
         })
         .on_url_click({
-            let view = cx.entity().downgrade();
+            let view_handle = cx.entity().downgrade();
             let workspace = self.workspace.clone();
             let base_directory = self.base_directory.clone();
             move |url, window, cx| {
-                handle_url_click(url, &view, base_directory.clone(), &workspace, window, cx);
+                handle_url_click(
+                    url,
+                    &view_handle,
+                    base_directory.clone(),
+                    &workspace,
+                    window,
+                    cx,
+                );
             }
         });
 
         if let Some(active_editor) = active_editor {
-            let editor_for_anchor = active_editor.clone();
             let editor_for_checkbox = active_editor.clone();
             let view_handle = cx.entity().downgrade();
             markdown_element = markdown_element
-                .on_anchor_click(move |source_index, window, cx| {
-                    Self::move_cursor_to_source_index(&editor_for_anchor, source_index, window, cx);
-                })
                 .on_source_click(move |source_index, click_count, window, cx| {
                     if click_count == 2 {
                         Self::move_cursor_to_source_index(&active_editor, source_index, window, cx);
@@ -670,30 +675,48 @@ fn handle_url_click(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let (path_part, fragment) = split_url_fragment(url.as_ref());
+    let (path_part, fragment) = split_local_url_fragment(url.as_ref());
     let path_part = path_part.to_string();
     let fragment = fragment.map(|f| f.to_string());
 
     if let Some(fragment) = fragment {
         let view = view.clone();
         let slug = SharedString::from(fragment);
-        cx.defer(move |cx| {
+        window.defer(cx, move |window, cx| {
             if let Some(view) = view.upgrade() {
                 let markdown = view.read(cx).markdown.clone();
-                markdown.update(cx, |markdown, cx| {
-                    markdown.scroll_to_heading(&slug, cx);
-                });
+                let active_editor = view
+                    .read(cx)
+                    .active_editor
+                    .as_ref()
+                    .map(|state| state.editor.clone());
+
+                let source_index =
+                    markdown.update(cx, |markdown, cx| markdown.scroll_to_heading(&slug, cx));
+
+                if let Some(source_index) = source_index {
+                    if let Some(editor) = active_editor {
+                        MarkdownPreviewView::move_cursor_to_source_index(
+                            &editor,
+                            source_index,
+                            window,
+                            cx,
+                        );
+                    }
+                }
             }
         });
     }
 
-    open_preview_url(
-        SharedString::from(path_part),
-        base_directory,
-        workspace,
-        window,
-        cx,
-    );
+    if !path_part.is_empty() {
+        open_preview_url(
+            SharedString::from(path_part),
+            base_directory,
+            workspace,
+            window,
+            cx,
+        );
+    }
 }
 
 fn open_preview_url(
@@ -723,27 +746,6 @@ fn open_preview_url(
     }
 
     cx.open_url(url.as_ref());
-}
-
-fn split_url_fragment(url: &str) -> (&str, Option<&str>) {
-    if url.starts_with("http://") || url.starts_with("https://") {
-        return (url, None);
-    }
-    match url.find('#') {
-        Some(pos) => {
-            let path = &url[..pos];
-            let fragment = &url[pos + 1..];
-            (
-                path,
-                if fragment.is_empty() {
-                    None
-                } else {
-                    Some(fragment)
-                },
-            )
-        }
-        None => (url, None),
-    }
 }
 
 fn resolve_preview_path(url: &str, base_directory: Option<&Path>) -> Option<PathBuf> {
@@ -1032,7 +1034,6 @@ mod tests {
     use tempfile::TempDir;
 
     use super::resolve_preview_path;
-    use super::split_url_fragment;
 
     #[test]
     fn resolves_relative_preview_paths() -> Result<()> {
@@ -1121,20 +1122,5 @@ mod tests {
     fn does_not_treat_web_links_as_preview_paths() {
         assert_eq!(resolve_preview_path("https://zed.dev", None), None);
         assert_eq!(resolve_preview_path("http://example.com", None), None);
-    }
-
-    #[test]
-    fn test_split_url_fragment() {
-        assert_eq!(split_url_fragment("#heading"), ("", Some("heading")));
-        assert_eq!(
-            split_url_fragment("./file.md#heading"),
-            ("./file.md", Some("heading"))
-        );
-        assert_eq!(split_url_fragment("./file.md"), ("./file.md", None));
-        assert_eq!(
-            split_url_fragment("https://example.com#frag"),
-            ("https://example.com#frag", None)
-        );
-        assert_eq!(split_url_fragment("#"), ("", None));
     }
 }

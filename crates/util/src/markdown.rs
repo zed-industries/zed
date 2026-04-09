@@ -1,5 +1,44 @@
 use std::fmt::{Display, Formatter};
 
+/// Generates a URL-friendly slug from heading text (e.g. "Hello World" → "hello-world").
+pub fn generate_heading_slug(text: &str) -> String {
+    text.trim()
+        .chars()
+        .filter_map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                Some(c.to_lowercase().next().unwrap_or(c))
+            } else if c == ' ' {
+                Some('-')
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Splits a relative URL into its path and `#fragment` parts.
+/// Absolute URLs are returned as-is with no fragment.
+pub fn split_local_url_fragment(url: &str) -> (&str, Option<&str>) {
+    if url.contains("://") || url.starts_with("mailto:") || url.starts_with("tel:") {
+        return (url, None);
+    }
+    match url.find('#') {
+        Some(pos) => {
+            let path = &url[..pos];
+            let fragment = &url[pos + 1..];
+            (
+                path,
+                if fragment.is_empty() {
+                    None
+                } else {
+                    Some(fragment)
+                },
+            )
+        }
+        None => (url, None),
+    }
+}
+
 /// Indicates that the wrapped `String` is markdown text.
 #[derive(Debug, Clone)]
 pub struct MarkdownString(pub String);
@@ -263,6 +302,65 @@ mod tests {
             count_max_consecutive_chars("```a``b`", '`'),
             3,
             "it can't be downgraded later"
+        );
+    }
+
+    #[test]
+    fn test_split_local_url_fragment() {
+        assert_eq!(split_local_url_fragment("#heading"), ("", Some("heading")));
+        assert_eq!(
+            split_local_url_fragment("./file.md#heading"),
+            ("./file.md", Some("heading"))
+        );
+        assert_eq!(split_local_url_fragment("./file.md"), ("./file.md", None));
+        assert_eq!(
+            split_local_url_fragment("https://example.com#frag"),
+            ("https://example.com#frag", None)
+        );
+        assert_eq!(
+            split_local_url_fragment("http://example.com#frag"),
+            ("http://example.com#frag", None)
+        );
+        assert_eq!(
+            split_local_url_fragment("ftp://example.com/file#section"),
+            ("ftp://example.com/file#section", None)
+        );
+        assert_eq!(
+            split_local_url_fragment("mailto:user@example.com"),
+            ("mailto:user@example.com", None)
+        );
+        assert_eq!(
+            split_local_url_fragment("tel:+1234567890"),
+            ("tel:+1234567890", None)
+        );
+        assert_eq!(split_local_url_fragment("#"), ("", None));
+        assert_eq!(
+            split_local_url_fragment("../other.md#section"),
+            ("../other.md", Some("section"))
+        );
+    }
+
+    #[test]
+    fn test_generate_heading_slug() {
+        assert_eq!(generate_heading_slug("Hello World"), "hello-world");
+        assert_eq!(generate_heading_slug("Hello  World"), "hello--world");
+        assert_eq!(generate_heading_slug("Hello-World"), "hello-world");
+        assert_eq!(
+            generate_heading_slug("Some **bold** text"),
+            "some-bold-text"
+        );
+        assert_eq!(generate_heading_slug("Let's try with Ü"), "lets-try-with-ü");
+        assert_eq!(
+            generate_heading_slug("heading with 123 numbers"),
+            "heading-with-123-numbers"
+        );
+        assert_eq!(
+            generate_heading_slug("What about (parens)?"),
+            "what-about-parens"
+        );
+        assert_eq!(
+            generate_heading_slug("  leading spaces  "),
+            "leading-spaces"
         );
     }
 }

@@ -263,7 +263,6 @@ pub struct Markdown {
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_selected_text: Option<String>,
-
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
 }
@@ -273,6 +272,7 @@ pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
+    pub parse_heading_slugs: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -433,7 +433,6 @@ impl Markdown {
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_selected_text: None,
-
             search_highlights: Vec::new(),
             active_search_highlight: None,
         };
@@ -500,14 +499,13 @@ impl Markdown {
         self.pending_parse.is_some()
     }
 
-    pub fn heading_source_index_for_slug(&self, slug: &str) -> Option<usize> {
-        self.parsed_markdown.heading_slugs.get(slug).copied()
-    }
-
-    pub fn scroll_to_heading(&mut self, slug: &str, cx: &mut Context<Self>) {
-        if let Some(source_index) = self.heading_source_index_for_slug(slug) {
+    pub fn scroll_to_heading(&mut self, slug: &str, cx: &mut Context<Self>) -> Option<usize> {
+        if let Some(source_index) = self.parsed_markdown.heading_slugs.get(slug).copied() {
             self.autoscroll_request = Some(source_index);
-            cx.refresh_windows();
+            cx.notify();
+            Some(source_index)
+        } else {
+            None
         }
     }
 
@@ -682,6 +680,7 @@ impl Markdown {
         let should_parse_links_only = self.options.parse_links_only;
         let should_parse_html = self.options.parse_html;
         let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
+        let should_parse_heading_slugs = self.options.parse_heading_slugs;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
 
@@ -702,7 +701,8 @@ impl Markdown {
                 );
             }
 
-            let parsed = parse_markdown_with_options(&source, should_parse_html);
+            let parsed =
+                parse_markdown_with_options(&source, should_parse_html, should_parse_heading_slugs);
             let events = parsed.events;
             let language_names = parsed.language_names;
             let paths = parsed.language_paths;
@@ -941,7 +941,6 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
-    on_anchor_click: Option<Box<dyn Fn(usize, &mut Window, &mut App)>>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
@@ -959,7 +958,6 @@ impl MarkdownElement {
                 border: false,
             },
             on_url_click: None,
-            on_anchor_click: None,
             on_source_click: None,
             on_checkbox_toggle: None,
             image_resolver: None,
@@ -999,14 +997,6 @@ impl MarkdownElement {
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_url_click = Some(Box::new(handler));
-        self
-    }
-
-    pub fn on_anchor_click(
-        mut self,
-        handler: impl Fn(usize, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_anchor_click = Some(Box::new(handler));
         self
     }
 
@@ -1325,7 +1315,6 @@ impl MarkdownElement {
         }
 
         let on_open_url = self.on_url_click.take();
-        let on_anchor_click = self.on_anchor_click.take();
         let on_source_click = self.on_source_click.take();
 
         self.on_mouse_event(window, cx, {
@@ -1440,15 +1429,7 @@ impl MarkdownElement {
                     if let Some(pressed_link) = markdown.pressed_link.take()
                         && Some(&pressed_link) == rendered_text.link_for_position(event.position)
                     {
-                        if let Some(slug) = pressed_link.destination_url.strip_prefix('#')
-                            && let Some(source_index) = markdown.heading_source_index_for_slug(slug)
-                        {
-                            markdown.autoscroll_request = Some(source_index);
-                            if let Some(on_anchor_click) = on_anchor_click.as_ref() {
-                                on_anchor_click(source_index, window, cx);
-                            }
-                            cx.notify();
-                        } else if let Some(open_url) = on_open_url.as_ref() {
+                        if let Some(open_url) = on_open_url.as_ref() {
                             open_url(pressed_link.destination_url, window, cx);
                         } else {
                             cx.open_url(&pressed_link.destination_url);
@@ -3156,7 +3137,7 @@ mod tests {
     #[test]
     fn test_table_checkbox_detection() {
         let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false).events;
+        let events = crate::parser::parse_markdown_with_options(md, false, false).events;
 
         let mut in_table = false;
         let mut cell_texts: Vec<String> = Vec::new();
@@ -3374,7 +3355,7 @@ mod tests {
     }
 
     fn has_code_block(markdown: &str) -> bool {
-        let parsed_data = parse_markdown_with_options(markdown, false);
+        let parsed_data = parse_markdown_with_options(markdown, false, false);
         parsed_data
             .events
             .iter()

@@ -1,12 +1,12 @@
-use std::{collections::BTreeMap, ops::Range, sync::Arc};
-
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
     Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
+use std::{ops::Range, sync::Arc};
+use util::markdown::generate_heading_slug;
 
 use crate::{html, path_range::PathWithRange};
 
@@ -79,22 +79,6 @@ impl ParseState {
             }
         }
     }
-
-}
-
-fn generate_heading_slug(text: &str) -> String {
-    text.trim()
-        .chars()
-        .filter_map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                Some(c.to_lowercase().next().unwrap_or(c))
-            } else if c == ' ' {
-                Some('-')
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 fn build_heading_slugs(
@@ -148,7 +132,11 @@ fn build_heading_slugs(
     slugs
 }
 
-pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> ParsedMarkdownData {
+pub(crate) fn parse_markdown_with_options(
+    text: &str,
+    parse_html: bool,
+    parse_heading_slugs: bool,
+) -> ParsedMarkdownData {
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
@@ -508,7 +496,11 @@ pub(crate) fn parse_markdown_with_options(text: &str, parse_html: bool) -> Parse
         }
     }
 
-    let heading_slugs = build_heading_slugs(text, &state.events);
+    let heading_slugs = if parse_heading_slugs {
+        build_heading_slugs(text, &state.events)
+    } else {
+        HashMap::default()
+    };
 
     ParsedMarkdownData {
         events: state.events,
@@ -768,7 +760,7 @@ mod tests {
     #[test]
     fn test_html_comments() {
         assert_eq!(
-            parse_markdown_with_options("  <!--\nrdoc-file=string.c\n-->\nReturns", false),
+            parse_markdown_with_options("  <!--\nrdoc-file=string.c\n-->\nReturns", false, false),
             ParsedMarkdownData {
                 events: vec![
                     (2..30, RootStart),
@@ -796,7 +788,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "&nbsp;&nbsp; https://some.url some \\`&#9658;\\` text",
-                false
+                false,
+                false,
             ),
             ParsedMarkdownData {
                 events: vec![
@@ -835,7 +828,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "You can use the [GitHub Search API](https://docs.github.com/en",
-                false
+                false,
+                false,
             )
             .events,
             vec![
@@ -868,7 +862,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "-- --- ... \"double quoted\" 'single quoted' ----------",
-                false
+                false,
+                false,
             ),
             ParsedMarkdownData {
                 events: vec![
@@ -901,7 +896,7 @@ mod tests {
     #[test]
     fn test_code_block_metadata() {
         assert_eq!(
-            parse_markdown_with_options("```rust\nfn main() {\n let a = 1;\n}\n```", false),
+            parse_markdown_with_options("```rust\nfn main() {\n let a = 1;\n}\n```", false, false),
             ParsedMarkdownData {
                 events: vec![
                     (0..37, RootStart),
@@ -929,7 +924,7 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_markdown_with_options("    fn main() {}", false),
+            parse_markdown_with_options("    fn main() {}", false, false),
             ParsedMarkdownData {
                 events: vec![
                     (4..16, RootStart),
@@ -954,7 +949,7 @@ mod tests {
     }
 
     fn assert_code_block_does_not_emit_links(markdown: &str) {
-        let parsed = parse_markdown_with_options(markdown, false);
+        let parsed = parse_markdown_with_options(markdown, false, false);
         let mut code_block_depth = 0;
         let mut code_block_count = 0;
         let mut saw_text_inside_code_block = false;
@@ -1008,7 +1003,7 @@ mod tests {
     #[test]
     fn test_metadata_blocks_do_not_affect_root_blocks() {
         assert_eq!(
-            parse_markdown_with_options("+++\ntitle = \"Example\"\n+++\n\nParagraph", false),
+            parse_markdown_with_options("+++\ntitle = \"Example\"\n+++\n\nParagraph", false, false),
             ParsedMarkdownData {
                 events: vec![
                     (27..36, RootStart),
@@ -1030,7 +1025,7 @@ mod tests {
 |------|---------|
 | [x]  | Fix bug |
 | [ ]  | Add feature |";
-        let parsed = parse_markdown_with_options(markdown, false);
+        let parsed = parse_markdown_with_options(markdown, false, false);
 
         let mut in_table = false;
         let mut saw_task_list_marker = false;
@@ -1109,7 +1104,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "https:/\\/example.com is equivalent to https://example&#46;com!",
-                false
+                false,
+                false,
             )
             .events,
             vec![
@@ -1150,7 +1146,8 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "Visit https://example.com/cat\\/é&#8205;☕ for coffee!",
-                false
+                false,
+                false,
             )
             .events,
             [
@@ -1179,31 +1176,11 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_heading_slug() {
-        assert_eq!(generate_heading_slug("Hello World"), "hello-world");
-        assert_eq!(generate_heading_slug("Hello  World"), "hello--world");
-        assert_eq!(generate_heading_slug("Hello-World"), "hello-world");
-        assert_eq!(
-            generate_heading_slug("Some **bold** text"),
-            "some-bold-text"
-        );
-        assert_eq!(generate_heading_slug("Let's try with Ü"), "lets-try-with-ü");
-        assert_eq!(
-            generate_heading_slug("heading with 123 numbers"),
-            "heading-with-123-numbers"
-        );
-        assert_eq!(
-            generate_heading_slug("What about (parens)?"),
-            "what-about-parens"
-        );
-        assert_eq!(generate_heading_slug("  leading spaces  "), "leading-spaces");
-    }
-
-    #[test]
     fn test_heading_slugs() {
         let parsed = parse_markdown_with_options(
             "# Hello World\n\n## Code `block`\n\n### Third Level\n\n#### Fourth Level\n\n## Hello World",
             false,
+            true,
         );
         assert_eq!(parsed.heading_slugs.len(), 5);
         assert!(parsed.heading_slugs.contains_key("hello-world"));
@@ -1218,6 +1195,7 @@ mod tests {
         let parsed = parse_markdown_with_options(
             "# First\n\nSome text\n\n## Second\n\nMore text",
             false,
+            true,
         );
         assert!(parsed.heading_slugs.get("first").is_some());
         assert!(parsed.heading_slugs.get("second").is_some());
@@ -1226,6 +1204,7 @@ mod tests {
         let parsed = parse_markdown_with_options(
             "# Duplicate\n\nText\n\n## Duplicate\n\nMore text",
             false,
+            true,
         );
         let first = parsed.heading_slugs.get("duplicate").copied();
         let second = parsed.heading_slugs.get("duplicate-1").copied();
