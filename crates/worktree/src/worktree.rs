@@ -4298,7 +4298,7 @@ impl BackgroundScanner {
                                     .ok()?;
                                 let suffix_rel =
                                     RelPath::new(suffix, PathStyle::local()).ok()?;
-                                Some(symlink_path.join(&suffix_rel).as_ref().to_owned().into_arc())
+                                Some(symlink_path.join(&suffix_rel))
                             });
 
                     if let Some(path) = found_symlink_match {
