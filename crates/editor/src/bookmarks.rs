@@ -135,17 +135,16 @@ impl Editor {
         cx: &mut Context<Workspace>,
     ) {
         let bookmark_store = workspace.project().read(cx).bookmark_store();
-
-        let resolve_task = bookmark_store.update(cx, |store, cx| store.resolve_all(cx));
-
         cx.spawn_in(window, async move |workspace, cx| {
-            resolve_task.await.log_err();
+            let Some(locations) = BookmarkStore::all_bookmark_locations(bookmark_store, cx)
+                .await
+                .log_err()
+            else {
+                return;
+            };
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let bookmark_store = workspace.project().read(cx).bookmark_store();
-                    let locations = bookmark_store.read(cx).all_bookmark_locations(cx);
-
                     Editor::open_locations_in_multibuffer(
                         workspace,
                         locations,

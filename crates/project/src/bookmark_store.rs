@@ -1,13 +1,11 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    ops::Range,
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, ops::Range, path::Path, sync::Arc};
 
 use anyhow::Result;
-use gpui::{App, Context, Entity, Subscription, Task};
+use futures::{StreamExt, TryFutureExt, TryStreamExt, stream::FuturesUnordered};
+use gpui::{App, AppContext, Context, Entity, Subscription, Task};
+use itertools::Itertools;
 use language::{Buffer, BufferEvent};
+use std::collections::HashMap;
 use text::{BufferSnapshot, Point};
 
 use crate::{ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
@@ -70,6 +68,13 @@ impl BookmarkEntry {
         match self {
             BookmarkEntry::Loaded(buffer_bookmarks) => buffer_bookmarks.bookmarks.is_empty(),
             BookmarkEntry::Unloaded(rows) => rows.is_empty(),
+        }
+    }
+
+    fn loaded(&self) -> Option<&BufferBookmarks> {
+        match self {
+            BookmarkEntry::Loaded(buffer_bookmarks) => Some(buffer_bookmarks),
+            BookmarkEntry::Unloaded(_) => None,
         }
     }
 }
@@ -152,81 +157,6 @@ impl BookmarkStore {
             self.bookmarks
                 .insert(abs_path.clone(), BookmarkEntry::Loaded(buffer_bookmarks));
         }
-    }
-
-    /// Opens buffers for all unloaded bookmark entries and resolves them to anchors. This is used to show all bookmarks in a large multi-buffer.
-    pub fn resolve_all(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let unloaded_paths: Vec<Arc<Path>> = self
-            .bookmarks
-            .iter()
-            .filter_map(|(path, entry)| match entry {
-                BookmarkEntry::Unloaded(_) => Some(path.clone()),
-                BookmarkEntry::Loaded(_) => None,
-            })
-            .collect();
-
-        if unloaded_paths.is_empty() {
-            return Task::ready(Ok(()));
-        }
-
-        let worktree_store = self.worktree_store.downgrade();
-        let buffer_store = self.buffer_store.downgrade();
-
-        cx.spawn(async move |this, cx| {
-            let open_tasks: Vec<_> = unloaded_paths
-                .into_iter()
-                .map(|path| {
-                    let worktree_store = worktree_store.clone();
-                    let buffer_store = buffer_store.clone();
-                    let mut cx = cx.clone();
-                    async move {
-                        let result: Result<Entity<Buffer>> = async {
-                            let (worktree, relative_path) = worktree_store
-                                .update(&mut cx, |worktree_store, cx| {
-                                    worktree_store.find_or_create_worktree(&path, false, cx)
-                                })?
-                                .await?;
-
-                            let buffer = buffer_store
-                                .update(&mut cx, |buffer_store, cx| {
-                                    let project_path = ProjectPath {
-                                        worktree_id: worktree.read(cx).id(),
-                                        path: relative_path,
-                                    };
-                                    buffer_store.open_buffer(project_path, cx)
-                                })?
-                                .await?;
-
-                            Ok(buffer)
-                        }
-                        .await;
-
-                        (path, result)
-                    }
-                })
-                .collect();
-
-            let results = futures::future::join_all(open_tasks).await;
-
-            this.update(cx, |this, cx| {
-                for (path, result) in results {
-                    match result {
-                        Ok(buffer) => {
-                            this.resolve_anchors_if_needed(&path, &buffer, cx);
-                        }
-                        Err(error) => {
-                            log::warn!(
-                                "Could not open buffer for bookmarked path {}: {error}",
-                                path.display()
-                            );
-                        }
-                    }
-                }
-                cx.notify();
-            })?;
-
-            Ok(())
-        })
     }
 
     pub fn abs_path_from_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<Arc<Path>> {
@@ -403,31 +333,112 @@ impl BookmarkStore {
             .collect()
     }
 
-    pub fn all_bookmark_locations(&self, cx: &App) -> HashMap<Entity<Buffer>, Vec<Range<Point>>> {
-        let mut locations: HashMap<Entity<Buffer>, Vec<Range<Point>>> = HashMap::default();
+    pub async fn all_bookmark_locations(
+        this: Entity<BookmarkStore>,
+        cx: &mut (impl AppContext + Clone),
+    ) -> Result<HashMap<Entity<Buffer>, Vec<Range<Point>>>> {
+        Self::resolve_all(&this, cx).await?;
 
-        for (_, entry) in &self.bookmarks {
-            let BookmarkEntry::Loaded(buffer_bookmarks) = entry else {
-                continue;
-            };
-            let buffer = buffer_bookmarks.buffer().clone();
-            let snapshot = buffer.read(cx).snapshot();
-            let ranges: Vec<Range<Point>> = buffer_bookmarks
-                .bookmarks()
+        cx.read_entity(&this, |this, cx| {
+            let mut locations: HashMap<_, Vec<_>> = HashMap::new();
+            for bookmarks in this.bookmarks.values().filter_map(BookmarkEntry::loaded) {
+                let snapshot = cx.read_entity(bookmarks.buffer(), |b, _| b.snapshot());
+                let ranges: Vec<Range<Point>> = bookmarks
+                    .bookmarks()
+                    .iter()
+                    .map(|anchor| {
+                        let row = snapshot.summary_for_anchor::<Point>(&anchor.anchor()).row;
+                        Point::row_range(row..row)
+                    })
+                    .collect();
+
+                locations
+                    .entry(bookmarks.buffer().clone())
+                    .or_default()
+                    .extend(ranges);
+            }
+
+            Ok(locations)
+        })
+    }
+
+    /// Opens buffers for all unloaded bookmark entries and resolves them to anchors. This is used to show all bookmarks in a large multi-buffer.
+    async fn resolve_all(this: &Entity<Self>, cx: &mut (impl AppContext + Clone)) -> Result<()> {
+        let unloaded_paths: Vec<Arc<Path>> = cx.read_entity(&this, |this, _| {
+            this.bookmarks
                 .iter()
-                .map(|anchor| {
-                    let row = snapshot.summary_for_anchor::<Point>(&anchor.anchor()).row;
-                    Point::row_range(row..row)
+                .filter_map(|(path, entry)| match entry {
+                    BookmarkEntry::Unloaded(_) => Some(path.clone()),
+                    BookmarkEntry::Loaded(_) => None,
                 })
-                .collect();
-            locations.entry(buffer).or_default().extend(ranges);
+                .collect_vec()
+        });
+
+        if unloaded_paths.is_empty() {
+            return Ok(());
         }
 
-        locations
+        let worktree_store = cx.read_entity(&this, |this, _| this.worktree_store.clone());
+        let buffer_store = cx.read_entity(&this, |this, _| this.buffer_store.clone());
+
+        let open_tasks: FuturesUnordered<_> = unloaded_paths
+            .iter()
+            .map(|path| {
+                open_path(path, &worktree_store, &buffer_store, cx.clone())
+                    .map_err(move |e| (path, e))
+                    .map_ok(move |b| (path, b))
+            })
+            .collect();
+
+        let opened: Vec<_> = open_tasks
+            .inspect_err(|(path, error)| {
+                log::warn!(
+                    "Could not open buffer for bookmarked path {}: {error}",
+                    path.display()
+                )
+            })
+            .filter_map(|res| async move { res.ok() })
+            .collect()
+            .await;
+
+        cx.update_entity(&this, |this, cx| {
+            for (path, buffer) in opened {
+                this.resolve_anchors_if_needed(&path, &buffer, cx);
+            }
+            cx.notify();
+        });
+
+        Ok(())
     }
 
     pub fn clear_bookmarks(&mut self, cx: &mut Context<Self>) {
         self.bookmarks.clear();
         cx.notify();
     }
+}
+
+async fn open_path(
+    path: &Path,
+    worktree_store: &Entity<WorktreeStore>,
+    buffer_store: &Entity<BufferStore>,
+    mut cx: impl AppContext,
+) -> Result<Entity<Buffer>> {
+    let (worktree, worktree_path) = cx
+        .update_entity(&worktree_store, |worktree_store, cx| {
+            worktree_store.find_or_create_worktree(path, false, cx)
+        })
+        .await?;
+
+    let project_path = ProjectPath {
+        worktree_id: cx.read_entity(&worktree, |worktree, _| worktree.id()),
+        path: worktree_path,
+    };
+
+    let buffer = cx
+        .update_entity(&buffer_store, |buffer_store, cx| {
+            buffer_store.open_buffer(project_path, cx)
+        })
+        .await?;
+
+    Ok(buffer)
 }
