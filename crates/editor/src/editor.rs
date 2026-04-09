@@ -3765,11 +3765,6 @@ impl Editor {
 
             hide_hover(self, cx);
 
-            if old_cursor_position.to_display_point(&display_map).row()
-                != new_cursor_position.to_display_point(&display_map).row()
-            {
-                self.available_code_actions.take();
-            }
             self.refresh_code_actions(window, cx);
             self.refresh_document_highlights(cx);
             refresh_linked_ranges(self, window, cx);
