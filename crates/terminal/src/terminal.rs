@@ -405,6 +405,8 @@ impl TerminalBuilder {
             mouse_down_hyperlink: None,
             #[cfg(windows)]
             shell_program: None,
+            #[cfg(windows)]
+            osc_cwd: None,
             activation_script: Vec::new(),
             template: CopyTemplate {
                 shell: Shell::System,
@@ -639,6 +641,8 @@ impl TerminalBuilder {
                 mouse_down_hyperlink: None,
                 #[cfg(windows)]
                 shell_program,
+                #[cfg(windows)]
+                osc_cwd: None,
                 activation_script: activation_script.clone(),
                 template: CopyTemplate {
                     shell,
@@ -659,7 +663,34 @@ impl TerminalBuilder {
                 input_log: Vec::new(),
             };
 
-            if !activation_script.is_empty() && no_task {
+            // On Windows with PowerShell, inject a prompt function that reports
+            // the current working directory via OSC 2 (set window title).
+            // PowerShell doesn't update the native Win32 CWD in the PEB, so
+            // sysinfo can't read it. This is similar to how VSCode handles it.
+            #[cfg(windows)]
+            if no_task
+                && matches!(
+                    shell_kind,
+                    util::shell::ShellKind::PowerShell | util::shell::ShellKind::Pwsh
+                )
+            {
+                // Wrap the existing prompt function to also emit an OSC 2 title
+                // sequence with the current directory. This preserves any
+                // user-defined prompt while adding CWD reporting.
+                let osc_prompt = concat!(
+                    "$__zed_original_prompt = if (Test-Path Function:\\prompt) { Get-Content Function:\\prompt } else { '\"PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) \"' }; ",
+                    "function prompt { ",
+                    "$loc = $executionContext.SessionState.Path.CurrentLocation.Path; ",
+                    "$Host.UI.Write(\"`e]2;$loc`a\"); ",
+                    "Invoke-Expression $__zed_original_prompt ",
+                    "}",
+                );
+                terminal.write_to_pty(osc_prompt.as_bytes());
+                terminal.write_to_pty(b"\x0d");
+            }
+
+            let has_activation_script = !activation_script.is_empty();
+            if has_activation_script && no_task {
                 for activation_script in activation_script {
                     terminal.write_to_pty(activation_script.into_bytes());
                     // Simulate enter key press
@@ -677,6 +708,19 @@ impl TerminalBuilder {
                 // can proceed with clearing the screen.
                 terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
                 // Simulate enter key press
+                terminal.write_to_pty(b"\x0d");
+            }
+
+            // Clear the screen after shell integration setup on Windows
+            #[cfg(windows)]
+            if no_task
+                && matches!(
+                    shell_kind,
+                    util::shell::ShellKind::PowerShell | util::shell::ShellKind::Pwsh
+                )
+                && !has_activation_script
+            {
+                terminal.write_to_pty(shell_kind.clear_screen_command().as_bytes());
                 terminal.write_to_pty(b"\x0d");
             }
 
@@ -875,6 +919,11 @@ pub struct Terminal {
     mouse_down_hyperlink: Option<(String, bool, Match)>,
     #[cfg(windows)]
     shell_program: Option<String>,
+    /// CWD reported by shell integration via OSC 2 escape sequences.
+    /// On Windows, sysinfo can't reliably read the CWD from the process,
+    /// so this is the primary source of truth for the working directory.
+    #[cfg(windows)]
+    osc_cwd: Option<PathBuf>,
     template: CopyTemplate,
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
@@ -947,6 +996,15 @@ impl Terminal {
                         .unwrap_or(false)
                     {
                         return;
+                    }
+
+                    // On Windows, our injected PowerShell prompt sends the CWD
+                    // as the window title via OSC 2. Store it separately so
+                    // sysinfo polling can't overwrite it.
+                    let path = std::path::Path::new(&title);
+                    if path.is_absolute() {
+                        self.osc_cwd = Some(path.to_path_buf());
+                        cx.emit(Event::TitleChanged);
                     }
                 }
 
@@ -2122,6 +2180,13 @@ impl Terminal {
     /// This does *not* return the working directory of the shell that runs on the
     /// remote host, in case Zed is connected to a remote host.
     fn client_side_working_directory(&self) -> Option<PathBuf> {
+        // On Windows, prefer the CWD reported via OSC 2 shell integration,
+        // since sysinfo can't reliably read the CWD from PowerShell processes.
+        #[cfg(windows)]
+        if let Some(cwd) = &self.osc_cwd {
+            return Some(cwd.clone());
+        }
+
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => info
                 .current
@@ -2152,8 +2217,13 @@ impl Terminal {
                         .read()
                         .as_ref()
                         .map(|fpi| {
-                            let process_file = fpi
-                                .cwd
+                            // On Windows, prefer the CWD from OSC shell integration.
+                            #[cfg(windows)]
+                            let cwd = self.osc_cwd.as_deref().unwrap_or(&fpi.cwd);
+                            #[cfg(not(windows))]
+                            let cwd = &fpi.cwd;
+
+                            let process_file = cwd
                                 .file_name()
                                 .map(|name| name.to_string_lossy().into_owned())
                                 .unwrap_or_default();
