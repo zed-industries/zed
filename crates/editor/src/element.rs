@@ -3135,14 +3135,8 @@ impl EditorElement {
 
     fn layout_bookmarks(
         &self,
-        line_height: Pixels,
-        range: Range<DisplayRow>,
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        snapshot: &EditorSnapshot,
+        gutter: &GutterArgs<'_>,
         bookmarks: HashSet<DisplayRow>,
-        row_infos: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -3154,15 +3148,8 @@ impl EditorElement {
             bookmarks
                 .into_iter()
                 .filter_map(|display_row| {
-                    Self::layout_gutter_item(
-                        row_infos,
-                        gutter_dimensions,
-                        gutter_hitbox,
-                        scroll_position,
-                        line_height,
+                    gutter.layout_gutter_item(
                         display_row,
-                        range.clone(),
-                        snapshot,
                         |_| editor.render_bookmark().into_any_element(),
                         window,
                         cx,
@@ -3174,14 +3161,8 @@ impl EditorElement {
 
     fn layout_breakpoints(
         &self,
-        line_height: Pixels,
-        range: Range<DisplayRow>,
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        snapshot: &EditorSnapshot,
+        gutter: &GutterArgs,
         breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
-        row_infos: &[RowInfo],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -3193,15 +3174,8 @@ impl EditorElement {
             breakpoints
                 .into_iter()
                 .filter_map(|(display_row, (text_anchor, bp, state))| {
-                    Self::layout_gutter_item(
-                        row_infos,
-                        gutter_dimensions,
-                        gutter_hitbox,
-                        scroll_position,
-                        line_height,
+                    gutter.layout_gutter_item(
                         display_row,
-                        range.clone(),
-                        snapshot,
                         |cx| {
                             editor
                                 .render_breakpoint(text_anchor, display_row, &bp, state, cx)
@@ -3213,53 +3187,6 @@ impl EditorElement {
                 })
                 .collect_vec()
         })
-    }
-
-    fn layout_gutter_item(
-        row_infos: &[RowInfo],
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        scroll_position: gpui::Point<ScrollOffset>,
-        line_height: Pixels,
-        display_row: DisplayRow,
-        range: Range<DisplayRow>,
-        snapshot: &EditorSnapshot,
-        render_item: impl Fn(&mut Context<'_, Editor>) -> AnyElement,
-        window: &mut Window,
-        cx: &mut Context<'_, Editor>,
-    ) -> Option<AnyElement> {
-        if row_infos
-            .get((display_row.0.saturating_sub(range.start.0)) as usize)
-            .is_some_and(|row_info| {
-                row_info.expand_info.is_some()
-                    || row_info
-                        .diff_status
-                        .is_some_and(|status| status.is_deleted())
-            })
-        {
-            return None;
-        }
-
-        if range.start > display_row || range.end < display_row {
-            return None;
-        }
-
-        let row = MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(snapshot).row);
-        if snapshot.is_line_folded(row) {
-            return None;
-        }
-
-        let button = prepaint_gutter_button(
-            render_item(cx),
-            display_row,
-            line_height,
-            gutter_dimensions,
-            scroll_position,
-            gutter_hitbox,
-            window,
-            cx,
-        );
-        Some(button)
     }
 
     fn should_render_diff_review_button(
@@ -3311,13 +3238,7 @@ impl EditorElement {
     #[allow(clippy::too_many_arguments)]
     fn layout_run_indicators(
         &self,
-        line_height: Pixels,
-        range: Range<DisplayRow>,
-        row_infos: &[RowInfo],
-        scroll_position: gpui::Point<ScrollOffset>,
-        gutter_dimensions: &GutterDimensions,
-        gutter_hitbox: &Hitbox,
-        snapshot: &EditorSnapshot,
+        gutter: &GutterArgs,
         breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
         cx: &mut App,
@@ -3325,6 +3246,13 @@ impl EditorElement {
         if self.split_side == Some(SplitSide::Left) {
             return Vec::new();
         }
+
+        let GutterArgs {
+            range,
+            snapshot,
+            row_infos,
+            ..
+        } = gutter;
 
         self.editor.update(cx, |editor, cx| {
             let active_task_indicator_row =
@@ -3406,13 +3334,9 @@ impl EditorElement {
                         cx,
                     );
 
-                    let button = prepaint_gutter_button(
+                    let button = gutter.prepaint_gutter_button(
                         button.into_any_element(),
                         display_row,
-                        line_height,
-                        gutter_dimensions,
-                        scroll_position,
-                        gutter_hitbox,
                         window,
                         cx,
                     );
@@ -8014,6 +7938,89 @@ impl EditorElement {
     }
 }
 
+struct GutterArgs<'a> {
+    line_height: Pixels,
+    range: Range<DisplayRow>,
+    scroll_position: gpui::Point<ScrollOffset>,
+    gutter_dimensions: &'a GutterDimensions,
+    gutter_hitbox: &'a Hitbox,
+    snapshot: &'a EditorSnapshot,
+    row_infos: &'a [RowInfo],
+}
+
+impl GutterArgs<'_> {
+    fn layout_gutter_item(
+        &self,
+        display_row: DisplayRow,
+        render_item: impl Fn(&mut Context<'_, Editor>) -> AnyElement,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) -> Option<AnyElement> {
+        if self
+            .row_infos
+            .get((display_row.0.saturating_sub(self.range.start.0)) as usize)
+            .is_some_and(|row_info| {
+                row_info.expand_info.is_some()
+                    || row_info
+                        .diff_status
+                        .is_some_and(|status| status.is_deleted())
+            })
+        {
+            return None;
+        }
+
+        if self.range.start > display_row || self.range.end < display_row {
+            return None;
+        }
+
+        let row = MultiBufferRow(
+            DisplayPoint::new(display_row, 0)
+                .to_point(self.snapshot)
+                .row,
+        );
+        if self.snapshot.is_line_folded(row) {
+            return None;
+        }
+
+        let button = self.prepaint_gutter_button(render_item(cx), display_row, window, cx);
+        Some(button)
+    }
+
+    fn prepaint_gutter_button(
+        &self,
+        mut button: AnyElement,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let available_space = size(
+            AvailableSpace::MinContent,
+            AvailableSpace::Definite(self.line_height),
+        );
+        let indicator_size = button.layout_as_root(available_space, window, cx);
+        let git_gutter_width = EditorElement::gutter_strip_width(self.line_height)
+            + self
+                .gutter_dimensions
+                .git_blame_entries_width
+                .unwrap_or_default();
+
+        let x = git_gutter_width + px(2.);
+
+        let mut y = Pixels::from(
+            (row.as_f64() - self.scroll_position.y) * ScrollPixelOffset::from(self.line_height),
+        );
+        y += (self.line_height - indicator_size.height) / 2.;
+
+        button.prepaint_as_root(
+            self.gutter_hitbox.origin + point(x, y),
+            available_space,
+            window,
+            cx,
+        );
+        button
+    }
+}
+
 pub fn render_breadcrumb_text(
     mut segments: Vec<HighlightedText>,
     breadcrumb_font: Option<Font>,
@@ -8689,41 +8696,6 @@ pub(crate) fn render_buffer_header(
                 menu.context(menu_context)
             })
         })
-}
-
-fn prepaint_gutter_button(
-    mut button: AnyElement,
-    row: DisplayRow,
-    line_height: Pixels,
-    gutter_dimensions: &GutterDimensions,
-    scroll_position: gpui::Point<ScrollOffset>,
-    gutter_hitbox: &Hitbox,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let available_space = size(
-        AvailableSpace::MinContent,
-        AvailableSpace::Definite(line_height),
-    );
-    let indicator_size = button.layout_as_root(available_space, window, cx);
-    let git_gutter_width = EditorElement::gutter_strip_width(line_height)
-        + gutter_dimensions
-            .git_blame_entries_width
-            .unwrap_or_default();
-
-    let x = git_gutter_width + px(2.);
-
-    let mut y =
-        Pixels::from((row.as_f64() - scroll_position.y) * ScrollPixelOffset::from(line_height));
-    y += (line_height - indicator_size.height) / 2.;
-
-    button.prepaint_as_root(
-        gutter_hitbox.origin + point(x, y),
-        available_space,
-        window,
-        cx,
-    );
-    button
 }
 
 fn render_inline_blame_entry(
@@ -10181,6 +10153,7 @@ impl Element for EditorElement {
                         }
                     }
 
+                    // TODO gutter?
                     let line_numbers = self.layout_line_numbers(
                         Some(&gutter_hitbox),
                         gutter_dimensions,
@@ -10803,19 +10776,17 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let gutter = GutterArgs {
+                        line_height,
+                        range: start_row..end_row,
+                        scroll_position,
+                        gutter_dimensions: &gutter_dimensions,
+                        gutter_hitbox: &gutter_hitbox,
+                        snapshot: &snapshot,
+                        row_infos: &row_infos,
+                    };
                     let test_indicators = if gutter_settings.runnables {
-                        self.layout_run_indicators(
-                            line_height,
-                            start_row..end_row,
-                            &row_infos,
-                            scroll_position,
-                            &gutter_dimensions,
-                            &gutter_hitbox,
-                            &snapshot,
-                            &mut breakpoint_rows,
-                            window,
-                            cx,
-                        )
+                        self.layout_run_indicators(&gutter, &mut breakpoint_rows, window, cx)
                     } else {
                         Vec::new()
                     };
@@ -10823,18 +10794,7 @@ impl Element for EditorElement {
                     let show_bookmarks =
                         snapshot.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
                     let bookmarks = if show_bookmarks {
-                        self.layout_bookmarks(
-                            line_height,
-                            start_row..end_row,
-                            scroll_position,
-                            &gutter_dimensions,
-                            &gutter_hitbox,
-                            &snapshot,
-                            bookmark_rows,
-                            &row_infos,
-                            window,
-                            cx,
-                        )
+                        self.layout_bookmarks(&gutter, bookmark_rows, window, cx)
                     } else {
                         Vec::new()
                     };
@@ -10843,18 +10803,7 @@ impl Element for EditorElement {
                         .show_breakpoints
                         .unwrap_or(gutter_settings.breakpoints);
                     let breakpoints = if show_breakpoints {
-                        self.layout_breakpoints(
-                            line_height,
-                            start_row..end_row,
-                            scroll_position,
-                            &gutter_dimensions,
-                            &gutter_hitbox,
-                            &snapshot,
-                            breakpoint_rows,
-                            &row_infos,
-                            window,
-                            cx,
-                        )
+                        self.layout_breakpoints(&gutter, breakpoint_rows, window, cx)
                     } else {
                         Vec::new()
                     };
@@ -10902,16 +10851,7 @@ impl Element for EditorElement {
                                     .render_diff_review_button(display_row, button_width, cx)
                                     .into_any_element()
                             });
-                            prepaint_gutter_button(
-                                button,
-                                display_row,
-                                line_height,
-                                &gutter_dimensions,
-                                scroll_position,
-                                &gutter_hitbox,
-                                window,
-                                cx,
-                            )
+                            gutter.prepaint_gutter_button(button, display_row, window, cx)
                         });
 
                     self.layout_signature_help(
