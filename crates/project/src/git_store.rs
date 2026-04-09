@@ -33,10 +33,10 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDataReader, CommitDataRequest, CommitDetails, CommitDiff, CommitFile,
-        CommitOptions, DiffType, FetchOptions, GIT_GRAPH_MAX_BATCH_SIZE, GitRepository,
-        GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, UpstreamTrackingStatus,
-        Worktree as GitWorktree,
+        CommitOptions, CreateWorktreeTarget, DiffType, FetchOptions, GIT_GRAPH_MAX_BATCH_SIZE,
+        GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
+        UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -48,7 +48,6 @@ use gpui::{
     App, AppContext, AsyncApp, BackgroundExecutor, Context, Entity, EventEmitter, SharedString,
     Subscription, Task, WeakEntity,
 };
-use itertools::{EitherOrBoth, Itertools};
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
@@ -3193,23 +3192,33 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let range = envelope.payload.start as usize..envelope.payload.end as usize;
+        if range.start > range.end {
+            bail!(
+                "invalid graph commit range: start {} is greater than end {}",
+                range.start,
+                range.end
+            );
+        }
         let log_source = LogSource::from_proto(envelope.payload.log_source)?;
         let log_order = LogOrder::from_proto(envelope.payload.log_order)?;
         let first_request = range.start == 0;
-        let (commits, finished): (Vec<proto::InitialGraphCommit>, bool) =
+        let (commits, commit_shas, finished): (Vec<proto::InitialGraphCommit>, Vec<Oid>, bool) =
             repository.update(&mut cx, |repository, cx| {
-                let (commits, is_loading) =
-                    repository.graph_data(log_source, log_order, range.clone(), cx);
+                let GraphDataResponse {
+                    commits,
+                    is_loading,
+                    ..
+                } = repository.graph_data(log_source, log_order, range.clone(), cx);
                 (
                     commits.iter().map(|commit| commit.to_proto()).collect(),
+                    commits.iter().map(|commit| commit.sha).collect(),
                     !is_loading && commits.len() < range.count(),
                 )
             });
         if first_request && !commits.is_empty() {
             repository.update(&mut cx, |repository, cx| {
-                for commit in commits.iter() {
-                    let sha = Oid::from_str(&commit.sha).unwrap();
-                    let _ = repository.fetch_commit_data(sha, cx);
+                for sha in commit_shas {
+                    repository.fetch_commit_data(sha, cx);
                 }
             });
         }
@@ -4852,11 +4861,11 @@ impl Repository {
                             project_id,
                         })) => {
                             Self::remote_git_graph_data(
-                                repository,
+                                repository.clone(),
                                 &client,
                                 project_id,
                                 repository_id,
-                                log_source,
+                                log_source.clone(),
                                 log_order,
                                 cx,
                             )
@@ -4995,23 +5004,30 @@ impl Repository {
                 ));
             }
 
-            let graph_data_key = (log_order, log_source.clone());
+            let graph_data_key = (log_source.clone(), log_order);
             this.update(cx, |repository, cx| {
                 let graph_data = repository
                     .initial_graph_data
-                    .get_mut(&graph_data_key)
-                    .map(|(_, graph_data)| graph_data);
+                    .entry(graph_data_key.clone())
+                    .and_modify(|graph_data| {
+                        for commit_data in initial_graph_commit_datas {
+                            graph_data
+                                .commit_oid_to_index
+                                .insert(commit_data.sha, graph_data.commit_data.len());
+                            graph_data.commit_data.push(commit_data);
 
-                debug_assert!(
-                    graph_data.is_some(),
-                    "This task should be dropped if data doesn't exist"
-                );
-                if let Some(graph_data) = graph_data {
-                    graph_data.extend(initial_graph_commit_datas);
-                    cx.emit(RepositoryEvent::GitGraphCountUpdated(
-                        graph_data_key.clone(),
-                        graph_data.len(),
-                    ));
+                            cx.emit(RepositoryEvent::GraphEvent(
+                                graph_data_key.clone(),
+                                GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
+                            ));
+                        }
+                    });
+
+                match &graph_data {
+                    Entry::Occupied(_) => {}
+                    Entry::Vacant(_) => {
+                        debug_panic!("This task should be dropped if data doesn't exist");
+                    }
                 }
             })
             .ok();
@@ -5174,6 +5190,7 @@ impl Repository {
         let task = executor.spawn(async move {
             maybe!(async move {
                 let mut pending_requests = Vec::with_capacity(GIT_GRAPH_MAX_BATCH_SIZE);
+                let mut retry_delay = Duration::from_millis(1);
                 loop {
                     if pending_requests.is_empty() {
                         let Ok(first_request) = request_rx.recv().await else {
@@ -5201,31 +5218,46 @@ impl Repository {
                         .await?;
 
                     if response.commits.is_empty() {
-                        timer_executor.timer(Duration::from_millis(1)).await;
+                        timer_executor.timer(retry_delay).await;
+                        retry_delay =
+                            (retry_delay.saturating_mul(2)).min(Duration::from_millis(100));
                         continue;
                     }
+                    retry_delay = Duration::from_millis(1);
 
-                    let mut not_ready_reqeusts = Vec::with_capacity(GIT_GRAPH_MAX_BATCH_SIZE);
-                    for pair in pending_requests
-                        .into_iter()
-                        .zip_longest(response.commits.into_iter())
-                    {
-                        match pair {
-                            EitherOrBoth::Both(request, commit) => {
+                    let mut commits_by_sha = HashMap::default();
+                    for commit in response.commits {
+                        match Oid::from_str(&commit.sha) {
+                            Ok(sha) => {
+                                let old_commit = commits_by_sha.insert(sha, commit);
+                                if old_commit.is_some() {
+                                    log::error!("Duplicate graph commit data response for {sha}");
+                                }
+                            }
+                            Err(error) => {
+                                log::error!("Invalid graph commit SHA in response: {error}");
+                            }
+                        }
+                    }
+
+                    let mut not_ready_requests = Vec::with_capacity(GIT_GRAPH_MAX_BATCH_SIZE);
+                    for request in pending_requests {
+                        match commits_by_sha.remove(&request.sha) {
+                            Some(commit) => {
                                 request
                                     .response_tx
                                     .send(GraphCommitData::from_proto(&commit))
                                     .log_err();
                             }
-                            EitherOrBoth::Left(request) => {
-                                not_ready_reqeusts.push(request);
-                            }
-                            EitherOrBoth::Right(_) => {
-                                log::error!("Unexpected response from remote server");
-                            }
+                            None => not_ready_requests.push(request),
                         }
                     }
-                    pending_requests = not_ready_reqeusts;
+
+                    if !commits_by_sha.is_empty() {
+                        log::error!("Unexpected graph commit SHAs returned by remote server");
+                    }
+
+                    pending_requests = not_ready_requests;
                 }
                 anyhow::Ok(())
             })

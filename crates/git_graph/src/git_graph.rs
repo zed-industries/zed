@@ -3039,16 +3039,14 @@ pub mod test_util {
     use anyhow::{Context, Result, bail};
     use collections::{HashMap, HashSet};
     use git::repository::InitialGraphCommitData;
-    use gpui::TestAppContext;
-    use project::Project;
-    use project::git_store::{GitStoreEvent, RepositoryEvent};
     use git::{Oid, repository::GraphCommitData};
+    use gpui::TestAppContext;
     use rand::prelude::*;
+    use settings::SettingsStore;
     use smallvec::{SmallVec, smallvec};
-    use std::path::Path;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
 
-    fn init_test(cx: &mut TestAppContext) {
+    pub fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -3587,7 +3585,7 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_util::{generate_random_commit_dag, verify_all_invariants};
+    use crate::test_util::{generate_random_commit_dag, init_test, verify_all_invariants};
     use fs::FakeFs;
     use git::Oid;
     use git::repository::InitialGraphCommitData;
@@ -3595,17 +3593,9 @@ mod tests {
     use project::Project;
     use rand::prelude::*;
     use serde_json::json;
-    use settings::SettingsStore;
     use smallvec::smallvec;
     use std::path::Path;
-    use std::sync::Arc;
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-        });
-    }
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn test_git_graph_merge_commits() {

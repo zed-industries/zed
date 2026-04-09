@@ -125,13 +125,17 @@ impl GraphCommitData {
     }
 
     pub fn from_proto(commit: &proto::GraphCommitData) -> Result<Self> {
+        let mut parents = SmallVec::with_capacity(commit.parents.len());
+        for parent in &commit.parents {
+            parents.push(
+                Oid::from_str(parent)
+                    .with_context(|| format!("invalid parent commit SHA: {parent}"))?,
+            );
+        }
+
         Ok(GraphCommitData {
             sha: Oid::from_str(&commit.sha)?,
-            parents: commit
-                .parents
-                .iter()
-                .filter_map(|parent| Oid::from_str(&parent).ok())
-                .collect(),
+            parents,
             author_name: SharedString::from(&commit.author_name),
             author_email: SharedString::from(&commit.author_email),
             commit_timestamp: commit.commit_timestamp,
@@ -158,11 +162,13 @@ impl InitialGraphCommitData {
 
     pub fn from_proto(commit: proto::InitialGraphCommit) -> Result<Self> {
         let sha = Oid::from_str(&commit.sha)?;
-        let parents = commit
-            .parents
-            .iter()
-            .filter_map(|parent| Oid::from_str(&parent).ok())
-            .collect();
+        let mut parents = SmallVec::with_capacity(commit.parents.len());
+        for parent in &commit.parents {
+            parents.push(
+                Oid::from_str(parent)
+                    .with_context(|| format!("invalid parent commit SHA: {parent}"))?,
+            );
+        }
         let ref_names = commit.ref_names.iter().map(SharedString::from).collect();
         Ok(Self {
             sha,

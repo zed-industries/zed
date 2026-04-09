@@ -1,5 +1,5 @@
 use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
@@ -7,9 +7,9 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDataReader, CommitDataRequest, CommitDetails, CommitOptions,
-        FetchOptions, GIT_GRAPH_MAX_BATCH_SIZE, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, Remote, RepoPath, ResetMode, Worktree,
+        CreateWorktreeTarget, FetchOptions, GIT_GRAPH_MAX_BATCH_SIZE, GRAPH_CHUNK_SIZE,
+        GitRepository, GitRepositoryCheckpoint, GraphCommitData, InitialGraphCommitData, LogOrder,
+        LogSource, PushOptions, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -24,7 +24,7 @@ use rope::Rope;
 use smol::{channel::Sender, future::FutureExt as _};
 use std::{path::PathBuf, sync::Arc, sync::atomic::AtomicBool};
 use text::LineEnding;
-use util::{paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone)]
 pub struct FakeGitRepository {
@@ -1408,11 +1408,8 @@ impl GitRepository for FakeGitRepository {
                 let commit_data = commit_details
                     .get(&request.sha)
                     .cloned()
-                    .expect("Failed to get commit data");
-                request
-                    .response_tx
-                    .send(Ok(commit_data))
-                    .expect("Failed to send commit data");
+                    .ok_or_else(|| anyhow!("failed to get graph commit data for {}", request.sha));
+                request.response_tx.send(commit_data).log_err();
             }
         });
         Ok(CommitDataReader {

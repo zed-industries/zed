@@ -767,7 +767,7 @@ entity_messages!(
     FindSearchCandidatesChunk,
     FindSearchCandidatesCancelled,
     DownloadFileByPath,
-    GetRemoteProfilingData
+    GetRemoteProfilingData,
     GetInitialGraphCommit,
     GetGraphCommitData,
 );

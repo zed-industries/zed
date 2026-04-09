@@ -6,9 +6,9 @@ use agent::{AgentTool, ReadFileTool, ReadFileToolInput, ToolCallEventStream, Too
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use collections::{HashMap, HashSet};
-use git::repository::{DiffType, InitialGraphCommitData, LogOrder, LogSource};
-use language_model::{LanguageModelToolResultContent, fake_provider::FakeLanguageModel};
-use prompt_store::ProjectContext;
+use git::repository::{InitialGraphCommitData, LogOrder, LogSource};
+use language_model::LanguageModelToolResultContent;
+use languages::rust_lang;
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
@@ -2341,7 +2341,7 @@ async fn test_remote_git_graph_random_integration(
 
     let graph_commits: Vec<Arc<InitialGraphCommitData>> = repository.update(cx, |repo, cx| {
         repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx)
-            .0
+            .commits
             .to_vec()
     });
 
