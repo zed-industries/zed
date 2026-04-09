@@ -369,6 +369,8 @@ messages!(
     (GetRemoteProfilingDataResponse, Background),
     (GetInitialGraphCommit, Background),
     (GetInitialGraphCommitResponse, Background),
+    (GetGraphCommitData, Background),
+    (GetGraphCommitDataResponse, Background),
 );
 
 request_messages!(
@@ -573,6 +575,7 @@ request_messages!(
     (KillKernel, Ack),
     (GetRemoteProfilingData, GetRemoteProfilingDataResponse),
     (GetInitialGraphCommit, GetInitialGraphCommitResponse),
+    (GetGraphCommitData, GetGraphCommitDataResponse),
 );
 
 lsp_messages!(
@@ -766,6 +769,7 @@ entity_messages!(
     DownloadFileByPath,
     GetRemoteProfilingData
     GetInitialGraphCommit,
+    GetGraphCommitData,
 );
 
 entity_messages!(

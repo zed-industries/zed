@@ -478,7 +478,9 @@ message Envelope {
     GitGetHeadSha git_get_head_sha = 440;
     GitGetHeadShaResponse git_get_head_sha_response = 441;
     GetInitialGraphCommit get_initial_graph_commit = 442;
-    GetInitialGraphCommitResponse get_initial_graph_commit_response = 443; // current max
+    GetInitialGraphCommitResponse get_initial_graph_commit_response = 443;
+    GetGraphCommitData get_graph_commit_data = 444;
+    GetGraphCommitDataResponse get_graph_commit_data_response = 445; // current max
   }
 
   reserved 87 to 88;
