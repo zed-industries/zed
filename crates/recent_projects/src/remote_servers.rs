@@ -14,8 +14,8 @@ use extension_host::ExtensionStore;
 use fuzzy_nucleo::StringMatchCandidate;
 use futures::{FutureExt, channel::oneshot, future::Shared};
 use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, ClickEvent, ClipboardItem, Context, DismissEvent,
-    Entity, EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
+    Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
     WeakEntity, Window, canvas,
 };
 use log::{debug, info};
@@ -39,7 +39,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{self, AtomicBool, AtomicUsize},
+        atomic::{self, AtomicUsize},
     },
 };
 
@@ -778,19 +778,18 @@ impl DefaultState {
         }
     }
 
-    fn update_filter(&mut self, query: &str, executor: &BackgroundExecutor) {
+    fn update_filter(&mut self, query: &str) {
         if query.is_empty() {
             self.filtered_servers = self.servers.clone();
             return;
         }
 
         let smart_case = query.chars().any(|c| c.is_uppercase());
-        let cancel = AtomicBool::new(false);
 
         let mut scored: Vec<(RemoteEntry, f64)> = self
             .servers
             .iter()
-            .filter_map(|entry| filter_entry(entry, query, smart_case, &cancel, executor))
+            .filter_map(|entry| filter_entry(entry, query, smart_case))
             .collect();
         scored.sort_by(|a, b| b.1.total_cmp(&a.1));
         self.filtered_servers = scored.into_iter().map(|(entry, _)| entry).collect();
@@ -801,13 +800,11 @@ fn match_positions(
     candidate: &str,
     query: &str,
     smart_case: bool,
-    cancel: &AtomicBool,
-    executor: &BackgroundExecutor,
 ) -> Option<(Vec<usize>, f64)> {
     let candidates = [StringMatchCandidate::new(0, candidate)];
-    let matches = smol::block_on(fuzzy_nucleo::match_strings(
-        &candidates, query, smart_case, false, 1, cancel, executor.clone(),
-    ));
+    let matches = fuzzy_nucleo::match_strings_sync(
+        &candidates, query, smart_case, false, 1,
+    );
     let m = matches.into_iter().next()?;
     if m.positions.is_empty() {
         return None;
@@ -826,8 +823,6 @@ fn filter_entry(
     entry: &RemoteEntry,
     query: &str,
     smart_case: bool,
-    cancel: &AtomicBool,
-    executor: &BackgroundExecutor,
 ) -> Option<(RemoteEntry, f64)> {
     let host = entry.host_name();
 
@@ -837,7 +832,7 @@ fn filter_entry(
     };
 
     if projects.is_empty() {
-        return match_positions(host, query, smart_case, cancel, executor).map(
+        return match_positions(host, query, smart_case).map(
             |(positions, score)| {
                 let mut result = entry.clone();
                 match &mut result {
@@ -856,7 +851,7 @@ fn filter_entry(
         .enumerate()
         .filter_map(|(index, entry)| {
             let combined = format!("{host} {}", entry.project.paths.join(", "));
-            match_positions(&combined, query, smart_case, cancel, executor).map(
+            match_positions(&combined, query, smart_case).map(
                 |(positions, score)| {
                     let host_positions =
                         positions.iter().copied().filter(|&p| p < host_len).collect();
@@ -1516,7 +1511,7 @@ impl RemoteServerProjects {
     fn recompute_filter(&mut self, cx: &mut Context<Self>) {
         if let Mode::Default(state) = &mut self.mode {
             let query = self.filter_editor.read(cx).text(cx);
-            state.update_filter(query.trim(), &cx.background_executor().clone());
+            state.update_filter(query.trim());
             cx.notify();
         }
     }
@@ -2828,7 +2823,7 @@ impl RemoteServerProjects {
             self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
             if let Mode::Default(new_state) = &mut self.mode {
                 let query = self.filter_editor.read(cx).text(cx);
-                new_state.update_filter(query.trim(), &cx.background_executor().clone());
+                new_state.update_filter(query.trim());
                 state = new_state.clone();
             }
         }

@@ -18,5 +18,11 @@ gpui.workspace = true
 util.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
+fuzzy.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+
+[[bench]]
+name = "match_benchmark"
+harness = false

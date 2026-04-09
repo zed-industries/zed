@@ -188,7 +188,8 @@ fn path_match_helper<'a>(
                 .enumerate()
                 .filter_map(|(char_offset, (byte_offset, _))| {
                     matched_chars
-                        .contains(&(char_offset as u32))
+                        .binary_search(&(char_offset as u32))
+                        .is_ok()
                         .then_some(byte_offset)
                 })
                 .collect();

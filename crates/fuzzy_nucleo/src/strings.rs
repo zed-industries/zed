@@ -9,6 +9,7 @@ use std::{
 use gpui::BackgroundExecutor;
 use nucleo::Utf32Str;
 
+use util::char_bag::CharBag;
 use crate::paths::make_atoms;
 use crate::{
     matcher::{self, LENGTH_PENALTY},
@@ -19,12 +20,14 @@ use crate::{
 pub struct StringMatchCandidate {
     pub id: usize,
     pub string: String,
+    char_bag: CharBag,
 }
 
 impl StringMatchCandidate {
     pub fn new(id: usize, string: &str) -> Self {
         Self {
             id,
+            char_bag: CharBag::from(string),
             string: string.into(),
         }
     }
@@ -119,6 +122,7 @@ where
     }
 
     let atoms = make_atoms(query, smart_case);
+    let query_bag = CharBag::from(query);
 
     let num_cpus = executor.num_cpus().min(candidates.len());
     let segment_size = candidates.len().div_ceil(num_cpus);
@@ -143,6 +147,7 @@ where
 
                     _ = match_string_candidates(
                         &candidates[segment_start..segment_end],
+                        query_bag,
                         atoms,
                         matcher,
                         penalize_length,
@@ -165,8 +170,57 @@ where
     results
 }
 
+pub fn match_strings_sync<T>(
+    candidates: &[T],
+    query: &str,
+    smart_case: bool,
+    penalize_length: bool,
+    max_results: usize,
+) -> Vec<StringMatch>
+where
+    T: Borrow<StringMatchCandidate>,
+{
+    if candidates.is_empty() || max_results == 0 {
+        return Vec::new();
+    }
+
+    if query.is_empty() {
+        return candidates
+            .iter()
+            .map(|candidate| StringMatch {
+                candidate_id: candidate.borrow().id,
+                score: 0.,
+                positions: Default::default(),
+                string: candidate.borrow().string.clone(),
+            })
+            .collect();
+    }
+
+    let atoms = make_atoms(query, smart_case);
+    let query_bag = CharBag::from(query);
+    let config = nucleo::Config::DEFAULT;
+    let mut matcher = matcher::get_matcher(config);
+    let mut results = Vec::with_capacity(max_results.min(candidates.len()));
+
+    match_string_candidates(
+        candidates,
+        query_bag,
+        &atoms,
+        &mut matcher,
+        penalize_length,
+        &mut results,
+        &AtomicBool::new(false),
+    )
+    .ok();
+
+    matcher::return_matcher(matcher);
+    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    results
+}
+
 fn match_string_candidates<T>(
     candidates: &[T],
+    query_bag: CharBag,
     atoms: &[nucleo::pattern::Atom],
     matcher: &mut nucleo::Matcher,
     penalize_length: bool,
@@ -188,6 +242,10 @@ where
         }
 
         let borrowed = candidate.borrow();
+
+        if !borrowed.char_bag.is_superset(query_bag) {
+            continue;
+        }
 
         let haystack: Utf32Str = Utf32Str::new(&borrowed.string, &mut buf);
 
@@ -221,7 +279,8 @@ where
                 .enumerate()
                 .filter_map(|(char_offset, (byte_offset, _))| {
                     matched_chars
-                        .contains(&(char_offset as u32))
+                        .binary_search(&(char_offset as u32))
+                        .is_ok()
                         .then_some(byte_offset)
                 })
                 .collect();
@@ -315,10 +374,10 @@ mod tests {
         let _results = match_strings(&cs, "fuzzy", false, false, 10, &cancel, executor.clone()).await;
 
         // Exact/shorter matches should score higher than substrings buried in long names.
-        let ordered = match (_results[0].string.borrow(), _results[1].string.borrow(), _results[2].string.borrow()) {
-            ("fuzzy", "a_fuzzy_thing", "some_very_long_variable_name_fuzzy") => true,
-            _ => false
-        };
+        let ordered = matches!(
+            (_results[0].string.as_str(), _results[1].string.as_str(), _results[2].string.as_str()),
+            ("fuzzy", "a_fuzzy_thing", "some_very_long_variable_name_fuzzy")
+        );
         assert!(ordered, "matches are not in the proper order.");
 
         // penalize length should widen the gap between results.
@@ -363,5 +422,17 @@ mod tests {
         if let (Some(exact), Some(lower)) = (foobar_score, lower_score) {
             assert!(exact >= lower, "exact case match should score >= case-insensitive");
         }
+    }
+
+    #[gpui::test]
+    async fn test_char_bag_prefilter(executor: BackgroundExecutor) {
+        let cs = candidates(&["abcdef", "abc", "def", "aabbcc"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings(&cs, "abc", false, false, 10, &cancel, executor).await;
+        let matched: Vec<&str> = results.iter().map(|m| m.string.as_str()).collect();
+        assert!(matched.contains(&"abcdef"));
+        assert!(matched.contains(&"abc"));
+        assert!(matched.contains(&"aabbcc"));
+        assert!(!matched.contains(&"def"));
     }
 }

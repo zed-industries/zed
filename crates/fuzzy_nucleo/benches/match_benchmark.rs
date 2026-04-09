@@ -3,33 +3,34 @@ use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_ma
 use fuzzy::CharBag;
 use util::{paths::PathStyle, rel_path::RelPath};
 
+const DIRS: &[&str] = &[
+    "src", "crates/gpui/src", "crates/editor/src", "crates/fuzzy_nucleo/src",
+    "crates/workspace/src", "crates/project/src", "crates/language/src",
+    "crates/terminal/src", "crates/assistant/src", "crates/theme/src",
+    "tests/integration", "tests/unit", "docs/architecture", "scripts",
+    "assets/icons", "assets/fonts", "crates/git/src", "crates/rpc/src",
+    "crates/settings/src", "crates/diagnostics/src", "crates/search/src",
+    "crates/collab/src", "crates/db/src", "crates/lsp/src",
+];
+
+const FILENAMES: &[&str] = &[
+    "parser.rs", "main.rs", "executor.rs", "editor.rs", "strings.rs",
+    "workspace.rs", "project.rs", "buffer.rs", "colors.rs", "panel.rs",
+    "renderer.rs", "dispatcher.rs", "matcher.rs", "paths.rs", "context.rs",
+    "toolbar.rs", "statusbar.rs", "keymap.rs", "config.rs", "settings.rs",
+    "diagnostics.rs", "completion.rs", "hover.rs", "references.rs",
+    "inlay_hints.rs", "git_blame.rs", "terminal.rs", "search.rs",
+    "replace.rs", "outline.rs", "breadcrumbs.rs", "tab_bar.rs",
+    "Cargo.toml", "README.md", "build.sh", "LICENSE", "overview.md",
+    "string_helpers.rs", "test_helpers.rs", "fixtures.json", "schema.sql",
+];
+
 fn generate_candidates(count: usize) -> Vec<fuzzy_nucleo::StringMatchCandidate> {
-    let sample_strings = [
-        "src/lib/parser.rs",
-        "src/bin/main.rs",
-        "tests/parser_test.rs",
-        "crates/gpui/src/executor.rs",
-        "crates/editor/src/editor.rs",
-        "crates/fuzzy_nucleo/src/strings.rs",
-        "README.md",
-        "Cargo.toml",
-        "src/components/sidebar/panel.tsx",
-        "src/utils/string_helpers.rs",
-        "crates/workspace/src/workspace.rs",
-        "crates/project/src/project.rs",
-        "docs/architecture/overview.md",
-        "scripts/build.sh",
-        "src/theme/colors.rs",
-        "crates/language/src/buffer.rs",
-    ];
     (0..count)
         .map(|id| {
-            let base = &sample_strings[id % sample_strings.len()];
-            if id < sample_strings.len() {
-                fuzzy_nucleo::StringMatchCandidate::new(id, base)
-            } else {
-                fuzzy_nucleo::StringMatchCandidate::new(id, &format!("{base}/{id}"))
-            }
+            let dir = DIRS[id % DIRS.len()];
+            let file = FILENAMES[id / DIRS.len() % FILENAMES.len()];
+            fuzzy_nucleo::StringMatchCandidate::new(id, &format!("{dir}/{file}"))
         })
         .collect()
 }
@@ -77,46 +78,34 @@ fn bench_string_matching(criterion: &mut Criterion) {
     }
 }
 
-const PATH_SAMPLES: &[&str] = &[
-    "src/lib/parser.rs",
-    "src/bin/main.rs",
-    "tests/parser_test.rs",
-    "crates/gpui/src/executor.rs",
-    "crates/editor/src/editor.rs",
-    "crates/fuzzy_nucleo/src/strings.rs",
-    "README.md",
-    "Cargo.toml",
-    "src/components/sidebar/panel.tsx",
-    "src/utils/string_helpers.rs",
-    "crates/workspace/src/workspace.rs",
-    "crates/project/src/project.rs",
-    "docs/architecture/overview.md",
-    "scripts/build.sh",
-    "src/theme/colors.rs",
-    "crates/language/src/buffer.rs",
-];
-
-fn generate_nucleo_path_candidates(count: usize) -> Vec<fuzzy_nucleo::PathMatchCandidate<'static>> {
-    (0..count)
+fn generate_path_strings(count: usize) -> &'static [&'static str] {
+    let paths: Vec<&'static str> = (0..count)
         .map(|id| {
-            let path = PATH_SAMPLES[id % PATH_SAMPLES.len()];
-            fuzzy_nucleo::PathMatchCandidate {
-                is_dir: false,
-                path: RelPath::unix(path).unwrap(),
-            }
+            let dir = DIRS[id % DIRS.len()];
+            let file = FILENAMES[id / DIRS.len() % FILENAMES.len()];
+            &*String::leak(format!("{dir}/{file}"))
+        })
+        .collect();
+    Vec::leak(paths)
+}
+
+fn generate_nucleo_path_candidates(paths: &'static [&'static str]) -> Vec<fuzzy_nucleo::PathMatchCandidate<'static>> {
+    paths
+        .iter()
+        .map(|path| fuzzy_nucleo::PathMatchCandidate {
+            is_dir: false,
+            path: RelPath::unix(path).unwrap(),
         })
         .collect()
 }
 
-fn generate_fuzzy_path_candidates(count: usize) -> Vec<fuzzy::PathMatchCandidate<'static>> {
-    (0..count)
-        .map(|id| {
-            let path = PATH_SAMPLES[id % PATH_SAMPLES.len()];
-            fuzzy::PathMatchCandidate {
-                is_dir: false,
-                path: RelPath::unix(path).unwrap(),
-                char_bag: CharBag::from(path),
-            }
+fn generate_fuzzy_path_candidates(paths: &'static [&'static str]) -> Vec<fuzzy::PathMatchCandidate<'static>> {
+    paths
+        .iter()
+        .map(|path| fuzzy::PathMatchCandidate {
+            is_dir: false,
+            path: RelPath::unix(path).unwrap(),
+            char_bag: CharBag::from(*path),
         })
         .collect()
 }
@@ -124,13 +113,15 @@ fn generate_fuzzy_path_candidates(count: usize) -> Vec<fuzzy::PathMatchCandidate
 fn bench_path_matching(criterion: &mut Criterion) {
     let sizes = [100, 1000, 10_000];
     let queries = ["par", "src editor", "executor.rs"];
+    let all_path_strings = sizes.map(generate_path_strings);
 
     for query in queries {
         let mut group = criterion.benchmark_group(format!("path/{query}"));
-        for size in sizes {
+        for (size_index, &size) in sizes.iter().enumerate() {
+            let path_strings = all_path_strings[size_index];
             group.bench_function(BenchmarkId::new("nucleo", size), |b| {
                 b.iter_batched(
-                    || generate_nucleo_path_candidates(size),
+                    || generate_nucleo_path_candidates(&path_strings),
                     |candidates| {
                         fuzzy_nucleo::match_fixed_path_set(
                             candidates, 0, None, query, false, size, PathStyle::Posix,
@@ -141,7 +132,7 @@ fn bench_path_matching(criterion: &mut Criterion) {
             });
             group.bench_function(BenchmarkId::new("fuzzy", size), |b| {
                 b.iter_batched(
-                    || generate_fuzzy_path_candidates(size),
+                    || generate_fuzzy_path_candidates(&path_strings),
                     |candidates| {
                         fuzzy::match_fixed_path_set(
                             candidates, 0, None, query, false, size, PathStyle::Posix,

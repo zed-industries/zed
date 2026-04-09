@@ -1,4 +1,4 @@
-mod char_bag;
+pub use util::char_bag;
 mod matcher;
 mod paths;
 mod strings;
