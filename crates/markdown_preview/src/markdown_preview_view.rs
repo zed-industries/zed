@@ -676,13 +676,11 @@ fn handle_url_click(
     cx: &mut App,
 ) {
     let (path_part, fragment) = split_local_url_fragment(url.as_ref());
-    let path_part = path_part.to_string();
-    let fragment = fragment.map(|f| f.to_string());
 
     if path_part.is_empty() {
         if let Some(fragment) = fragment {
             let view = view.clone();
-            let slug = SharedString::from(fragment);
+            let slug = SharedString::from(fragment.to_string());
             window.defer(cx, move |window, cx| {
                 if let Some(view) = view.upgrade() {
                     let markdown = view.read(cx).markdown.clone();
@@ -710,7 +708,7 @@ fn handle_url_click(
         }
     } else {
         open_preview_url(
-            SharedString::from(path_part),
+            SharedString::from(path_part.to_string()),
             base_directory,
             workspace,
             window,

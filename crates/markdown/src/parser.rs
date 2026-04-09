@@ -112,12 +112,14 @@ fn build_heading_slugs(
                     };
                     *count += 1;
                     while slugs.contains_key(slug.as_str()) {
-                        if *slug_counts.get(&base_slug).unwrap_or(&0) >= MAX_DUPLICATE_HEADING_SLUGS
-                        {
+                        let Some(count) = slug_counts.get_mut(&base_slug) else {
+                            slug.clear();
+                            break;
+                        };
+                        if *count >= MAX_DUPLICATE_HEADING_SLUGS {
                             slug.clear();
                             break;
                         }
-                        let count = slug_counts.entry(base_slug.clone()).or_insert(0);
                         slug = format!("{base_slug}-{count}");
                         *count += 1;
                     }
