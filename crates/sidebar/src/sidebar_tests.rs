@@ -392,8 +392,7 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
 
     save_n_test_threads(3, &project, cx).await;
 
-    let project_group_key =
-        project.read_with(cx, |project, cx| project.project_group_key(cx).clone());
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
 
     // Set a custom width, collapse the group, and expand "View More".
     sidebar.update_in(cx, |sidebar, window, cx| {
@@ -661,8 +660,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
     // Create 17 threads: initially shows 5, then 10, then 15, then all 17 with Collapse
     save_n_test_threads(17, &project, cx).await;
 
-    let project_group_key =
-        project.read_with(cx, |project, cx| project.project_group_key(cx).clone());
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
@@ -744,8 +742,7 @@ async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
 
     save_n_test_threads(1, &project, cx).await;
 
-    let project_group_key =
-        project.read_with(cx, |project, cx| project.project_group_key(cx).clone());
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
 
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
