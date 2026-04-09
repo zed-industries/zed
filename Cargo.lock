@@ -19049,6 +19049,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39ec24b3121d976906ece63c9daad25b85969647682eee313cb5779fdd69e14e"
 
 [[package]]
+name = "unified_palette"
+version = "0.1.0"
+dependencies = [
+ "command_palette",
+ "editor",
+ "file_finder",
+ "go_to_line",
+ "gpui",
+ "outline",
+ "picker",
+ "project",
+ "project_symbols",
+ "settings",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "unindent"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

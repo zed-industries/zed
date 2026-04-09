@@ -248,7 +248,7 @@ members = [
 
     "tooling/compliance",
     "tooling/perf",
-    "tooling/xtask",
+    "tooling/xtask", "crates/unified_palette",
 ]
 default-members = ["crates/zed"]
 
