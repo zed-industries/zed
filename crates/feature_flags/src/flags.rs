@@ -57,6 +57,16 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
     }
 }
 
+pub struct VoiceInputFeatureFlag;
+
+impl FeatureFlag for VoiceInputFeatureFlag {
+    const NAME: &'static str = "voice-input";
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+
 pub struct ProjectPanelUndoRedoFeatureFlag;
 
 impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {

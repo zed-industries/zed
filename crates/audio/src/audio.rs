@@ -10,6 +10,8 @@ mod audio_settings;
 pub use audio_settings::AudioSettings;
 pub use audio_settings::LIVE_SETTINGS;
 
+pub mod speech;
+
 mod audio_pipeline;
 pub use audio_pipeline::Audio;
 pub use audio_pipeline::{AudioDeviceInfo, AvailableAudioDevices};

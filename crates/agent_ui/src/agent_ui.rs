@@ -192,6 +192,8 @@ actions!(
         ScrollOutputToPreviousMessage,
         /// Scroll the output to the next user message.
         ScrollOutputToNextMessage,
+        /// Toggles voice dictation for the message editor.
+        ToggleDictation,
     ]
 );
 

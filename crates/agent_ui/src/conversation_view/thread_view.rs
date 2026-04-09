@@ -333,6 +333,8 @@ pub struct ThreadView {
     pub generating_indicator_in_list: bool,
     pub history: Option<Entity<ThreadHistory>>,
     pub _history_subscription: Option<Subscription>,
+    pub is_dictating: bool,
+    _dictation_task: Option<Task<()>>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -576,6 +578,8 @@ impl ThreadView {
             _history_subscription: history_subscription,
             show_codex_windows_warning,
             generating_indicator_in_list: false,
+            is_dictating: false,
+            _dictation_task: None,
         };
 
         this.sync_generating_indicator(cx);
@@ -3253,7 +3257,8 @@ impl ThreadView {
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
                                     .children(self.render_fast_mode_control(cx))
-                                    .children(self.render_thinking_control(cx)),
+                                    .children(self.render_thinking_control(cx))
+                                    .children(self.render_dictation_button(cx)),
                             )
                             .child(
                                 h_flex()
@@ -3664,6 +3669,47 @@ impl ThreadView {
                         .progress_color(progress_color(progress_ratio)),
                     )
                     .hoverable_tooltip(build_tooltip)
+                    .into_any_element(),
+            )
+        }
+    }
+
+    fn render_dictation_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        #[cfg(not(feature = "audio"))]
+        {
+            let _ = cx;
+            return None;
+        }
+
+        #[cfg(feature = "audio")]
+        {
+            use audio::speech::{PlatformSpeechRecognizer, SpeechRecognizer};
+            use feature_flags::{FeatureFlagAppExt as _, VoiceInputFeatureFlag};
+
+            if !cx.has_flag::<VoiceInputFeatureFlag>() {
+                return None;
+            }
+
+            if !PlatformSpeechRecognizer::is_available() {
+                return None;
+            }
+
+            let is_dictating = self.is_dictating;
+            let (icon, tooltip_text) = if is_dictating {
+                (IconName::MicMute, "Stop Dictation")
+            } else {
+                (IconName::Mic, "Start Dictation")
+            };
+
+            Some(
+                IconButton::new("toggle-dictation", icon)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .when(is_dictating, |this| this.icon_color(Color::Accent))
+                    .tooltip(Tooltip::text(tooltip_text))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_dictation(window, cx);
+                    }))
                     .into_any_element(),
             )
         }
@@ -8656,6 +8702,72 @@ impl ThreadView {
                 }
             });
         });
+    }
+
+    fn toggle_dictation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(not(feature = "audio"))]
+        {
+            let _ = (window, cx);
+            return;
+        }
+
+        #[cfg(feature = "audio")]
+        {
+            use audio::speech::{PlatformSpeechRecognizer, SpeechEvent, SpeechRecognizer};
+            use futures::StreamExt as _;
+
+            if self.is_dictating {
+                PlatformSpeechRecognizer::stop();
+                self.is_dictating = false;
+                self._dictation_task = None;
+                cx.notify();
+                return;
+            }
+
+            if !PlatformSpeechRecognizer::is_available() {
+                log::warn!("Speech recognition is not available on this platform");
+                return;
+            }
+
+            let receiver = match PlatformSpeechRecognizer::start(cx) {
+                Ok(receiver) => receiver,
+                Err(error) => {
+                    log::error!("Failed to start speech recognition: {error}");
+                    return;
+                }
+            };
+
+            self.is_dictating = true;
+            cx.notify();
+
+            let message_editor = self.message_editor.downgrade();
+            self._dictation_task = Some(cx.spawn_in(window, async move |_this, cx| {
+                let mut receiver = receiver;
+                while let Some(event) = receiver.next().await {
+                    match event {
+                        SpeechEvent::FinalResult(text) => {
+                            message_editor
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.insert_text(&text, window, cx);
+                                })
+                                .log_err();
+                        }
+                        SpeechEvent::PartialResult(_) => {}
+                        SpeechEvent::Error(error) => {
+                            log::error!("Speech recognition error: {error}");
+                            break;
+                        }
+                    }
+                }
+                _this
+                    .update(cx, |this, cx| {
+                        this.is_dictating = false;
+                        this._dictation_task = None;
+                        cx.notify();
+                    })
+                    .log_err();
+            }));
+        }
     }
 
     fn toggle_thinking_effort_menu(
