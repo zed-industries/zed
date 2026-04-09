@@ -951,19 +951,9 @@ mod test {
     {
       "Id": "dc4e7b8ff4bf",
       "Config": {
-        "Env": [],
         "Labels": {
-          "devcontainer.metadata": "{\"customizations\":{\"vscode\":{\"extensions\":[\"some.extension\"]}},\"remoteUser\":\"ubuntu\"}"
+          "devcontainer.metadata": "{\"remoteUser\":\"ubuntu\"}"
         }
-      },
-      "Mounts": [
-        {
-          "Source": "/home/user/project",
-          "Destination": "/workspaces/project"
-        }
-      ],
-      "State": {
-        "Running": true
       }
     }
                 "#;
@@ -973,7 +963,7 @@ mod test {
         let metadata = config.config.labels.metadata.unwrap();
         assert_eq!(metadata.len(), 1);
         assert!(metadata[0].contains_key("remoteUser"));
-        assert!(metadata[0].contains_key("customizations"));
+        assert_eq!(metadata[0]["remoteUser"], "ubuntu");
     }
 
     #[test]
