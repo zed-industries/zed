@@ -152,6 +152,7 @@ pub trait LanguageModel: Send + Sync {
             let mut message_id = None;
             let mut first_item_text = None;
             let last_token_usage = Arc::new(Mutex::new(TokenUsage::default()));
+            let stripper = Arc::new(Mutex::new(ThinkTagStripper::new()));
 
             if let Some(first_event) = events.next().await {
                 match first_event {
@@ -159,7 +160,10 @@ pub trait LanguageModel: Send + Sync {
                         message_id = Some(id);
                     }
                     Ok(LanguageModelCompletionEvent::Text(text)) => {
-                        first_item_text = Some(text);
+                        let stripped = stripper.lock().process(&text);
+                        if !stripped.is_empty() {
+                            first_item_text = Some(stripped);
+                        }
                     }
                     _ => (),
                 }
@@ -170,12 +174,16 @@ pub trait LanguageModel: Send + Sync {
                     let last_token_usage = last_token_usage.clone();
                     move |result| {
                         let last_token_usage = last_token_usage.clone();
+                        let stripper = stripper.clone();
                         async move {
                             match result {
                                 Ok(LanguageModelCompletionEvent::Queued { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Started) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
-                                Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
+                                Ok(LanguageModelCompletionEvent::Text(text)) => {
+                                    let stripped = stripper.lock().process(&text);
+                                    if stripped.is_empty() { None } else { Some(Ok(stripped)) }
+                                }
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::RedactedThinking { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::ReasoningDetails(_)) => None,
@@ -248,6 +256,57 @@ pub trait LanguageModel: Send + Sync {
     }
 }
 
+const OPEN_THINK_TAG: &str = "<think>";
+const CLOSE_THINK_TAG: &str = "</think>";
+
+struct ThinkTagStripper {
+    buffer: String,
+    in_think: bool,
+}
+
+impl ThinkTagStripper {
+    fn new() -> Self {
+        Self {
+            buffer: String::new(),
+            in_think: false,
+        }
+    }
+
+    fn process(&mut self, input: &str) -> String {
+        self.buffer.push_str(input);
+        let mut output = String::new();
+        loop {
+            if self.in_think {
+                if let Some(end) = self.buffer.find(CLOSE_THINK_TAG) {
+                    self.buffer.drain(..end + CLOSE_THINK_TAG.len());
+                    self.in_think = false;
+                } else {
+                    let keep = partial_tag_suffix_len(&self.buffer, CLOSE_THINK_TAG);
+                    self.buffer.drain(..self.buffer.len() - keep);
+                    break;
+                }
+            } else if let Some(start) = self.buffer.find(OPEN_THINK_TAG) {
+                output.push_str(&self.buffer[..start]);
+                self.buffer.drain(..start + OPEN_THINK_TAG.len());
+                self.in_think = true;
+            } else {
+                let keep = partial_tag_suffix_len(&self.buffer, OPEN_THINK_TAG);
+                let emit = self.buffer.len() - keep;
+                output.push_str(&self.buffer[..emit]);
+                self.buffer.drain(..emit);
+                break;
+            }
+        }
+        output
+    }
+}
+
+fn partial_tag_suffix_len(s: &str, tag: &str) -> usize {
+    (1..tag.len())
+        .rev()
+        .find(|&i| s.ends_with(&tag[..i]))
+        .unwrap_or(0)
+}
 
 #[cfg(test)]
 mod tests {
