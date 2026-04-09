@@ -67,7 +67,7 @@ pub struct EditorSettingsContent {
     /// Only applies when `hover_popover_sticky` is enabled.
     ///
     /// Default: 300
-    pub hover_popover_sticky_delay: Option<DelayMs>,
+    pub hover_popover_hiding_delay: Option<DelayMs>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings

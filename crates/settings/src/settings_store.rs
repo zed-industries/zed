@@ -2062,7 +2062,7 @@ mod tests {
             .to_owned(),
             r#"{
               "base_keymap": "VSCode",
-              "hover_popover_sticky_delay": 500,
+              "hover_popover_hiding_delay": 500,
               "hover_popover_sticky": false
             }
             "#

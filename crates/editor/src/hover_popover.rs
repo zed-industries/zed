@@ -80,7 +80,7 @@ pub fn hover_at(
             }
 
             // If we are moving closer, or if no timer is running at all, start/restart the timer.
-            let delay = Duration::from_millis(settings.hover_popover_sticky_delay.0);
+            let delay = Duration::from_millis(settings.hover_popover_hiding_delay.0);
             let task = cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(delay).await;
                 this.update(cx, |editor, cx| {
@@ -2158,7 +2158,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_hover_popover_sticky_delay(cx: &mut gpui::TestAppContext) {
+    async fn test_hover_popover_hiding_delay(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
         let custom_delay_ms = 500u64;
@@ -2166,7 +2166,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|settings, cx| {
                 settings.update_user_settings(cx, |settings| {
                     settings.editor.hover_popover_sticky = Some(true);
-                    settings.editor.hover_popover_sticky_delay = Some(DelayMs(custom_delay_ms));
+                    settings.editor.hover_popover_hiding_delay = Some(DelayMs(custom_delay_ms));
                 });
             });
         });
@@ -2220,13 +2220,13 @@ mod tests {
         // Move mouse away (hover_at with None anchor triggers the hiding delay)
         cx.update_editor(|editor, window, cx| hover_at(editor, None, None, window, cx));
 
-        // Popover should still be visible before the custom delay expires
+        // Popover should still be visible before the custom hiding delay expires
         cx.background_executor
             .advance_clock(Duration::from_millis(custom_delay_ms - 100));
         cx.editor(|editor, _, _| {
             assert!(
                 editor.hover_state.visible(),
-                "Popover should remain visible before the sticky delay expires"
+                "Popover should remain visible before the hiding delay expires"
             );
         });
 
@@ -2236,7 +2236,7 @@ mod tests {
         cx.editor(|editor, _, _| {
             assert!(
                 !editor.hover_state.visible(),
-                "Popover should be hidden after the sticky delay expires"
+                "Popover should be hidden after the hiding delay expires"
             );
         });
     }
@@ -2312,7 +2312,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_hover_popover_sticky_delay_restarts_when_mouse_gets_closer(
+    async fn test_hover_popover_hiding_delay_restarts_when_mouse_gets_closer(
         cx: &mut gpui::TestAppContext,
     ) {
         init_test(cx, |_| {});
@@ -2322,7 +2322,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|settings, cx| {
                 settings.update_user_settings(cx, |settings| {
                     settings.editor.hover_popover_sticky = Some(true);
-                    settings.editor.hover_popover_sticky_delay = Some(DelayMs(custom_delay_ms));
+                    settings.editor.hover_popover_hiding_delay = Some(DelayMs(custom_delay_ms));
                 });
             });
         });
@@ -2410,7 +2410,7 @@ mod tests {
         cx.editor(|editor, _, _| {
             assert!(
                 editor.hover_state.visible(),
-                "Popover should remain visible because moving closer restarts the sticky timer"
+                "Popover should remain visible because moving closer restarts the hiding timer"
             );
         });
 
@@ -2421,7 +2421,7 @@ mod tests {
         cx.editor(|editor, _, _| {
             assert!(
                 !editor.hover_state.visible(),
-                "Popover should hide after the restarted sticky timer expires"
+                "Popover should hide after the restarted hiding timer expires"
             );
         });
     }
@@ -2435,7 +2435,7 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|settings, cx| {
                 settings.update_user_settings(cx, |settings| {
                     settings.editor.hover_popover_sticky = Some(true);
-                    settings.editor.hover_popover_sticky_delay = Some(DelayMs(custom_delay_ms));
+                    settings.editor.hover_popover_hiding_delay = Some(DelayMs(custom_delay_ms));
                 });
             });
         });
@@ -2493,7 +2493,7 @@ mod tests {
         cx.editor(|editor, _, _| {
             assert!(
                 editor.hover_state.visible(),
-                "Popover should still be visible before sticky delay expires"
+                "Popover should still be visible before hiding delay expires"
             );
         });
 
@@ -2531,7 +2531,7 @@ mod tests {
         cx.editor(|editor, _, _| {
             assert!(
                 !editor.hover_state.visible(),
-                "Popover should hide after the new sticky timer expires"
+                "Popover should hide after the new hiding timer expires"
             );
         });
     }
@@ -2545,7 +2545,7 @@ mod tests {
                 settings.update_user_settings(cx, |settings| {
                     settings.editor.hover_popover_enabled = Some(false);
                     settings.editor.hover_popover_sticky = Some(true);
-                    settings.editor.hover_popover_sticky_delay = Some(DelayMs(500));
+                    settings.editor.hover_popover_hiding_delay = Some(DelayMs(500));
                 });
             });
         });

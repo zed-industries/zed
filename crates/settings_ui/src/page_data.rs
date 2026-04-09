@@ -1782,15 +1782,15 @@ fn editor_page() -> SettingsPage {
             }),
             // todo(settings ui): add units to this number input
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Sticky Delay",
+                title: "Hiding Delay",
                 description: "Time to wait in milliseconds before hiding the hover popover after the mouse moves away.",
                 field: Box::new(SettingField {
-                    json_path: Some("hover_popover_sticky_delay"),
+                    json_path: Some("hover_popover_hiding_delay"),
                     pick: |settings_content| {
-                        settings_content.editor.hover_popover_sticky_delay.as_ref()
+                        settings_content.editor.hover_popover_hiding_delay.as_ref()
                     },
                     write: |settings_content, value| {
-                        settings_content.editor.hover_popover_sticky_delay = value;
+                        settings_content.editor.hover_popover_hiding_delay = value;
                     },
                 }),
                 metadata: None,

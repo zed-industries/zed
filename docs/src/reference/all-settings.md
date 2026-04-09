@@ -2475,10 +2475,10 @@ Example:
 
 `boolean` values
 
-## Hover Popover Sticky Delay
+## Hover Popover Hiding Delay
 
 - Description: Time to wait in milliseconds before hiding the hover popover after the mouse moves away from the hover target. Only applies when `hover_popover_sticky` is enabled.
-- Setting: `hover_popover_sticky_delay`
+- Setting: `hover_popover_hiding_delay`
 - Default: `300`
 
 **Options**
