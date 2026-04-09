@@ -929,7 +929,7 @@ impl GitGraph {
 
     fn row_height(cx: &App) -> Pixels {
         let settings = ThemeSettings::get_global(cx);
-        let font_size = settings.buffer_font_size(cx);
+        let font_size = settings.ui_font_size(cx);
         font_size + px(12.0)
     }
 
