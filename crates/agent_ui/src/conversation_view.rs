@@ -78,7 +78,7 @@ use crate::agent_diff::AgentDiff;
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
-use crate::thread_metadata_store::ThreadMetadataStore;
+
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
     Agent, AgentDiffPane, AgentInitialContent, AgentPanel, AllowAlways, AllowOnce,
@@ -2648,29 +2648,6 @@ impl ConversationView {
     pub fn history(&self) -> Option<&Entity<ThreadHistory>> {
         self.as_connected().and_then(|c| c.history.as_ref())
     }
-
-    pub fn delete_history_entry(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
-        let Some(connected) = self.as_connected() else {
-            return;
-        };
-
-        let Some(history) = &connected.history else {
-            return;
-        };
-        let task = history.update(cx, |history, cx| history.delete_session(&session_id, cx));
-        task.detach_and_log_err(cx);
-
-        if let Some(store) = ThreadMetadataStore::try_global(cx) {
-            store.update(cx, |store, cx| store.delete(session_id.clone(), cx));
-        }
-
-        let session_id = session_id.clone();
-        cx.spawn(async move |_this, cx| {
-            crate::thread_worktree_archive::cleanup_thread_archived_worktrees(&session_id, cx)
-                .await;
-        })
-        .detach();
-    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -2840,6 +2817,7 @@ pub(crate) mod tests {
     use workspace::{Item, MultiWorkspace};
 
     use crate::agent_panel;
+    use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
 
