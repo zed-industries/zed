@@ -943,113 +943,6 @@ fn compute_filter_results(servers: &[ServerFilterData], query: &str) -> Vec<Filt
         .collect()
 }
 
-#[cfg(test)]
-mod filter_tests {
-    use super::*;
-
-    fn server(host: &str, projects: &[&str]) -> ServerFilterData {
-        ServerFilterData {
-            host: host.to_string(),
-            project_paths: projects.iter().map(|p| p.to_string()).collect(),
-        }
-    }
-
-    #[test]
-    fn test_filter_host_only() {
-        let servers = [server("myhost", &[])];
-        let results = compute_filter_results(&servers, "myh");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].server_index, 0);
-        assert!(!results[0].host_positions.is_empty());
-    }
-
-    #[test]
-    fn test_filter_no_match() {
-        let servers = [server("myhost", &["/home/project"])];
-        let results = compute_filter_results(&servers, "zzz");
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_filter_project_path_match() {
-        let servers = [server("myhost", &["/home/user/project"])];
-        let results = compute_filter_results(&servers, "project");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].project_matches.len(), 1);
-        assert_eq!(results[0].project_matches[0].project_index, 0);
-    }
-
-    #[test]
-    fn test_filter_host_match_includes_all_projects() {
-        let servers = [server("myhost", &["/path/a", "/path/b"])];
-        let results = compute_filter_results(&servers, "myhost");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].project_matches.len(), 2);
-    }
-
-    #[test]
-    fn test_filter_excludes_non_matching_servers() {
-        let servers = [
-            server("alpha", &["/path/a"]),
-            server("beta", &["/path/b"]),
-        ];
-        let results = compute_filter_results(&servers, "alpha");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].server_index, 0);
-    }
-
-    #[test]
-    fn test_position_mapping_splits_host_and_path() {
-        let servers = [server("dev", &["/src/app"])];
-        let results = compute_filter_results(&servers, "dev app");
-
-        assert_eq!(results.len(), 1);
-        let result = &results[0];
-        let host = &servers[result.server_index].host;
-        let path = &servers[result.server_index].project_paths[0];
-
-        assert!(
-            result.host_positions.iter().all(|&p| p < host.len()),
-            "host positions {:?} must be within host {:?} (len {})",
-            result.host_positions,
-            host,
-            host.len(),
-        );
-
-        assert_eq!(result.project_matches.len(), 1);
-        let proj = &result.project_matches[0];
-        assert_eq!(proj.project_index, 0);
-        assert!(
-            proj.path_positions.iter().all(|&p| p < path.len()),
-            "path positions {:?} must be within path {:?} (len {})",
-            proj.path_positions,
-            path,
-            path.len(),
-        );
-
-        // "dev" should highlight characters in the host
-        assert!(!result.host_positions.is_empty(), "query 'dev' should match host 'dev'");
-        // "app" should highlight characters in the path
-        assert!(!proj.path_positions.is_empty(), "query 'app' should match path '/src/app'");
-    }
-
-    #[test]
-    fn test_position_mapping_host_only_server() {
-        let servers = [server("myhost", &[])];
-        let results = compute_filter_results(&servers, "myh");
-
-        assert_eq!(results.len(), 1);
-        let host = &servers[0].host;
-        assert!(
-            results[0].host_positions.iter().all(|&p| p < host.len()),
-            "host positions {:?} out of bounds for {:?}",
-            results[0].host_positions,
-            host,
-        );
-        assert!(results[0].project_matches.is_empty());
-    }
-}
-
 #[derive(Clone)]
 enum ViewServerOptionsState {
     Ssh {
@@ -3418,5 +3311,112 @@ impl Render for RemoteServerProjects {
                     .render_add_wsl_distro(state, window, cx)
                     .into_any_element(),
             })
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    fn server(host: &str, projects: &[&str]) -> ServerFilterData {
+        ServerFilterData {
+            host: host.to_string(),
+            project_paths: projects.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn test_filter_host_only() {
+        let servers = [server("myhost", &[])];
+        let results = compute_filter_results(&servers, "myh");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].server_index, 0);
+        assert!(!results[0].host_positions.is_empty());
+    }
+
+    #[test]
+    fn test_filter_no_match() {
+        let servers = [server("myhost", &["/home/project"])];
+        let results = compute_filter_results(&servers, "zzz");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_filter_project_path_match() {
+        let servers = [server("myhost", &["/home/user/project"])];
+        let results = compute_filter_results(&servers, "project");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].project_matches.len(), 1);
+        assert_eq!(results[0].project_matches[0].project_index, 0);
+    }
+
+    #[test]
+    fn test_filter_host_match_includes_all_projects() {
+        let servers = [server("myhost", &["/path/a", "/path/b"])];
+        let results = compute_filter_results(&servers, "myhost");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].project_matches.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_excludes_non_matching_servers() {
+        let servers = [
+            server("alpha", &["/path/a"]),
+            server("beta", &["/path/b"]),
+        ];
+        let results = compute_filter_results(&servers, "alpha");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].server_index, 0);
+    }
+
+    #[test]
+    fn test_position_mapping_splits_host_and_path() {
+        let servers = [server("dev", &["/src/app"])];
+        let results = compute_filter_results(&servers, "dev app");
+
+        assert_eq!(results.len(), 1);
+        let result = &results[0];
+        let host = &servers[result.server_index].host;
+        let path = &servers[result.server_index].project_paths[0];
+
+        assert!(
+            result.host_positions.iter().all(|&p| p < host.len()),
+            "host positions {:?} must be within host {:?} (len {})",
+            result.host_positions,
+            host,
+            host.len(),
+        );
+
+        assert_eq!(result.project_matches.len(), 1);
+        let proj = &result.project_matches[0];
+        assert_eq!(proj.project_index, 0);
+        assert!(
+            proj.path_positions.iter().all(|&p| p < path.len()),
+            "path positions {:?} must be within path {:?} (len {})",
+            proj.path_positions,
+            path,
+            path.len(),
+        );
+
+        // "dev" should highlight characters in the host
+        assert!(!result.host_positions.is_empty(), "query 'dev' should match host 'dev'");
+        // "app" should highlight characters in the path
+        assert!(!proj.path_positions.is_empty(), "query 'app' should match path '/src/app'");
+    }
+
+    #[test]
+    fn test_position_mapping_host_only_server() {
+        let servers = [server("myhost", &[])];
+        let results = compute_filter_results(&servers, "myh");
+
+        assert_eq!(results.len(), 1);
+        let host = &servers[0].host;
+        assert!(
+            results[0].host_positions.iter().all(|&p| p < host.len()),
+            "host positions {:?} out of bounds for {:?}",
+            results[0].host_positions,
+            host,
+        );
+        assert!(results[0].project_matches.is_empty());
     }
 }
