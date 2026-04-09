@@ -4207,8 +4207,10 @@ impl BackgroundScanner {
                 false
             }
         });
+        let canonical_path_to_symlink;
         {
             let snapshot = &self.state.lock().await.snapshot;
+            canonical_path_to_symlink = snapshot.canonical_path_to_symlink.clone();
 
             let mut ranges_to_drop = SmallVec::<[Range<usize>; 4]>::new();
 
@@ -4377,12 +4379,12 @@ impl BackgroundScanner {
         // But the worktree may also have entries under the symlink path (e.g. `linked/file.rs`).
         // Reload those aliased entries too so both views stay in sync.
         {
-            let snapshot = self.state.lock().await.snapshot.clone();
+            let state = self.state.lock().await;
             let mut extra_relative_paths: Vec<EventRoot> = Vec::new();
             let mut extra_events: Vec<PathEvent> = Vec::new();
             for (event, event_root) in events.iter().zip(relative_paths.iter()) {
                 let abs_path = SanitizedPath::new(&event.path);
-                for (canonical, symlink_path) in &snapshot.canonical_path_to_symlink {
+                for (canonical, symlink_path) in &canonical_path_to_symlink {
                     let Ok(suffix) =
                         abs_path.strip_prefix(&SanitizedPath::new(canonical.as_ref()))
                     else {
@@ -4400,7 +4402,8 @@ impl BackgroundScanner {
                     }
                     // Skip if the parent directory is not loaded.
                     let parent_is_loaded = alias_path.parent().is_none_or(|parent| {
-                        snapshot
+                        state
+                            .snapshot
                             .entry_for_path(parent)
                             .is_some_and(|e| e.kind == EntryKind::Dir)
                     });
