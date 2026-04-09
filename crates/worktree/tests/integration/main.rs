@@ -3268,7 +3268,6 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
 
-    // Create a directory structure with a symlinked directory
     fs.insert_tree(
         "/root",
         json!({
@@ -3284,7 +3283,6 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
     )
     .await;
 
-    // Create a symlink from project/linked to external
     fs.create_symlink(
         Path::new("/root/project/linked"),
         PathBuf::from("../external"),
@@ -3307,7 +3305,6 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    // Set up event tracking
     let events = Arc::new(Mutex::new(Vec::new()));
     tree.update(cx, |_, cx| {
         let events = events.clone();
@@ -3323,7 +3320,6 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
         .detach();
     });
 
-    // Verify initial state - the symlinked directory should be visible
     tree.read_with(cx, |tree, _| {
         let linked_entry = tree.entry_for_path(rel_path("linked")).unwrap();
         assert!(linked_entry.is_external, "symlinked dir should be marked external");
@@ -3333,7 +3329,6 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
         assert!(tree.entry_for_path(rel_path("linked/lib.rs")).is_none());
     });
 
-    // Load the symlinked directory by reading a file in it
     tree.update(cx, |tree, cx| {
         tree.load_file(rel_path("linked/lib.rs"), cx)
     })
@@ -3346,7 +3341,6 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
         assert!(tree.entry_for_path(rel_path("linked/lib.rs")).is_some());
     });
 
-    // Clear any events from the initial load
     events.lock().clear();
 
     // Now create a new file in the symlinked directory
@@ -3362,7 +3356,6 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
 
     tree.flush_fs_events(cx).await;
 
-    // Verify the new file appears in the worktree under the symlinked path
     tree.read_with(cx, |tree, _| {
         let new_file_entry = tree.entry_for_path(rel_path("linked/new_file.rs"));
         // Issue #35173: events reported via the canonical path should still map back
@@ -3377,7 +3370,6 @@ async fn test_symlinked_dir_file_creation(cx: &mut TestAppContext) {
         }
     });
 
-    // Verify we received an update event for the new file
     let captured_events = events.lock().clone();
     assert!(
         captured_events.iter().any(|(path, change)| {
@@ -3394,7 +3386,6 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
 
-    // Create a project with a real directory and a symlink to it inside the same project.
     fs.insert_tree(
         "/root/project",
         json!({
@@ -3405,7 +3396,6 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
     )
     .await;
 
-    // Create a symlink from project/linked to project/real (both inside the project root).
     fs.create_symlink(
         Path::new("/root/project/linked"),
         PathBuf::from("real"),
@@ -3428,7 +3418,6 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
 
-    // Both the real directory and the symlinked directory should be scanned and visible.
     tree.read_with(cx, |tree, _| {
         assert!(
             tree.entry_for_path(rel_path("real")).is_some(),
@@ -3453,7 +3442,6 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
         );
     });
 
-    // Set up event tracking.
     let events = Arc::new(Mutex::new(Vec::new()));
     tree.update(cx, |_, cx| {
         let events = events.clone();
@@ -3469,7 +3457,6 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
         .detach();
     });
 
-    // Create a new file in the real (canonical) directory.
     fs.insert_file("/root/project/real/new_file.rs", "// new".into())
         .await;
 
@@ -3481,7 +3468,6 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
 
     tree.flush_fs_events(cx).await;
 
-    // The new file must appear under both the real path and the symlink path.
     tree.read_with(cx, |tree, _| {
         assert!(
             tree.entry_for_path(rel_path("real/new_file.rs")).is_some(),
@@ -3493,7 +3479,6 @@ async fn test_symlinked_dir_inside_project(cx: &mut TestAppContext) {
         );
     });
 
-    // Verify that an update event was emitted for the symlink-aliased path.
     let captured_events = events.lock().clone();
     assert!(
         captured_events.iter().any(|(path, change)| {
