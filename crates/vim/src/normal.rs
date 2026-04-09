@@ -29,7 +29,7 @@ use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{Context, Window, actions};
-use language::{Point, SelectionGoal};
+use language::{AutoIndentMode, Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
 
@@ -717,19 +717,38 @@ impl Vim {
                     .into_iter()
                     .map(|selection| selection.start.row)
                     .collect();
-                let edits = selection_start_rows
-                    .into_iter()
-                    .map(|row| {
-                        let indent = snapshot
-                            .indent_and_comment_for_line(MultiBufferRow(row), cx)
-                            .chars()
-                            .collect::<String>();
 
-                        let start_of_line = Point::new(row, 0);
-                        (start_of_line..start_of_line, indent + "\n")
-                    })
-                    .collect::<Vec<_>>();
-                editor.edit_bottom_up_with_autoindent(edits, cx);
+                let mut plain_edits = Vec::new();
+                let mut autoindent_edits = Vec::new();
+                for row in selection_start_rows {
+                    let start_of_line = Point::new(row, 0);
+                    let auto_indent = snapshot
+                        .language_settings_at(start_of_line, cx)
+                        .auto_indent;
+                    let new_text = match auto_indent {
+                        AutoIndentMode::None => "\n".to_string(),
+                        AutoIndentMode::PreserveIndent | AutoIndentMode::SyntaxAware => {
+                            let indent = snapshot
+                                .indent_and_comment_for_line(MultiBufferRow(row), cx)
+                                .chars()
+                                .collect::<String>();
+                            indent + "\n"
+                        }
+                    };
+                    let edit = (start_of_line..start_of_line, new_text);
+                    if auto_indent == AutoIndentMode::SyntaxAware {
+                        autoindent_edits.push(edit);
+                    } else {
+                        plain_edits.push(edit);
+                    }
+                }
+                if !plain_edits.is_empty() {
+                    editor.edit(plain_edits, cx);
+                }
+                if !autoindent_edits.is_empty() {
+                    editor.edit_bottom_up_with_autoindent(autoindent_edits, cx);
+                }
+
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
                         let previous_line = map.start_of_relative_buffer_row(selection.start, -1);
@@ -764,18 +783,32 @@ impl Vim {
                         }
                     })
                     .collect();
-                let edits = selection_end_rows
-                    .into_iter()
-                    .map(|row| {
-                        let indent = snapshot
-                            .indent_and_comment_for_line(MultiBufferRow(row), cx)
-                            .chars()
-                            .collect::<String>();
 
-                        let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
-                        (end_of_line..end_of_line, "\n".to_string() + &indent)
-                    })
-                    .collect::<Vec<_>>();
+                let mut plain_edits = Vec::new();
+                let mut autoindent_edits = Vec::new();
+                for row in selection_end_rows {
+                    let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
+                    let auto_indent = snapshot
+                        .language_settings_at(end_of_line, cx)
+                        .auto_indent;
+                    let new_text = match auto_indent {
+                        AutoIndentMode::None => "\n".to_string(),
+                        AutoIndentMode::PreserveIndent | AutoIndentMode::SyntaxAware => {
+                            let indent = snapshot
+                                .indent_and_comment_for_line(MultiBufferRow(row), cx)
+                                .chars()
+                                .collect::<String>();
+                            "\n".to_string() + &indent
+                        }
+                    };
+                    let edit = (end_of_line..end_of_line, new_text);
+                    if auto_indent == AutoIndentMode::SyntaxAware {
+                        autoindent_edits.push(edit);
+                    } else {
+                        plain_edits.push(edit);
+                    }
+                }
+
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(&mut |map, selection| {
                         let current_line = if !selection.is_empty() && selection.end.column() == 0 {
@@ -790,7 +823,13 @@ impl Vim {
                         selection.collapse_to(insert_point, SelectionGoal::None)
                     });
                 });
-                editor.edit_with_autoindent(edits, cx);
+
+                if !plain_edits.is_empty() {
+                    editor.edit(plain_edits, cx);
+                }
+                if !autoindent_edits.is_empty() {
+                    editor.edit_with_autoindent(autoindent_edits, cx);
+                }
             });
         });
     }
@@ -2053,6 +2092,137 @@ mod test {
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
         cx.simulate_shared_keystrokes("x escape shift-o").await;
         cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_below_respects_auto_indent_none(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.project.all_languages.defaults.auto_indent =
+                        Some(settings::AutoIndentMode::None);
+                });
+            })
+        });
+
+        cx.set_state(
+            indoc! {"
+                fn test() {
+                    println!(ˇ);
+                }"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("o");
+        cx.assert_state(
+            indoc! {"
+                fn test() {
+                    println!();
+                ˇ
+                }"},
+            Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_above_respects_auto_indent_none(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.project.all_languages.defaults.auto_indent =
+                        Some(settings::AutoIndentMode::None);
+                });
+            })
+        });
+
+        cx.set_state(
+            indoc! {"
+                fn test() {
+                    println!(ˇ);
+                }"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("shift-o");
+        cx.assert_state(
+            indoc! {"
+                fn test() {
+                ˇ
+                    println!();
+                }"},
+            Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_respects_auto_indent_preserve_indent(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content.project.all_languages.defaults.auto_indent =
+                        Some(settings::AutoIndentMode::PreserveIndent);
+                });
+            })
+        });
+
+        cx.set_state(
+            indoc! {"
+                fn test() {
+                    println!(ˇ);
+                }"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("o");
+        cx.assert_state(
+            indoc! {"
+                fn test() {
+                    println!();
+                    ˇ
+                }"},
+            Mode::Insert,
+        );
+
+        cx.set_state(
+            indoc! {"
+                fn test() {
+                    println!(ˇ);
+                }"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("shift-o");
+        cx.assert_state(
+            indoc! {"
+                fn test() {
+                    ˇ
+                    println!();
+                }"},
+            Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_below_respects_auto_indent_syntax_aware(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                fn test() {ˇ
+                    println!();
+                }"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("o");
+        cx.assert_state(
+            indoc! {"
+                fn test() {
+                    ˇ
+                    println!();
+                }"},
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]
