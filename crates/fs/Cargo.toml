@@ -41,10 +41,7 @@ time.workspace = true
 util.workspace = true
 is_executable = "1.0.5"
 notify = "8.2.0"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc.workspace = true
-cocoa = "0.26"
+trash = { git = "https://github.com/zed-industries/trash-rs", rev = "3bf27effd4eb8699f2e484d3326b852fe3e53af7" }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

@@ -21,6 +21,7 @@ use project::search::SearchQuery;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{WithScrollbar, prelude::*};
+use util::markdown::split_local_url_fragment;
 use util::normalize_path;
 use workspace::item::{Item, ItemBufferKind, ItemHandle};
 use workspace::searchable::{
@@ -218,6 +219,7 @@ impl MarkdownPreviewView {
                     MarkdownOptions {
                         parse_html: true,
                         render_mermaid_diagrams: true,
+                        parse_heading_slugs: true,
                         ..Default::default()
                     },
                     cx,
@@ -580,8 +582,6 @@ impl MarkdownPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> MarkdownElement {
-        let workspace = self.workspace.clone();
-        let base_directory = self.base_directory.clone();
         let active_editor = self
             .active_editor
             .as_ref()
@@ -615,8 +615,20 @@ impl MarkdownPreviewView {
                 )
             }
         })
-        .on_url_click(move |url, window, cx| {
-            open_preview_url(url, base_directory.clone(), &workspace, window, cx);
+        .on_url_click({
+            let view_handle = cx.entity().downgrade();
+            let workspace = self.workspace.clone();
+            let base_directory = self.base_directory.clone();
+            move |url, window, cx| {
+                handle_url_click(
+                    url,
+                    &view_handle,
+                    base_directory.clone(),
+                    &workspace,
+                    window,
+                    cx,
+                );
+            }
         });
 
         if let Some(active_editor) = active_editor {
@@ -652,6 +664,56 @@ impl MarkdownPreviewView {
         }
 
         markdown_element
+    }
+}
+
+fn handle_url_click(
+    url: SharedString,
+    view: &WeakEntity<MarkdownPreviewView>,
+    base_directory: Option<PathBuf>,
+    workspace: &WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let (path_part, fragment) = split_local_url_fragment(url.as_ref());
+
+    if path_part.is_empty() {
+        if let Some(fragment) = fragment {
+            let view = view.clone();
+            let slug = SharedString::from(fragment.to_string());
+            window.defer(cx, move |window, cx| {
+                if let Some(view) = view.upgrade() {
+                    let markdown = view.read(cx).markdown.clone();
+                    let active_editor = view
+                        .read(cx)
+                        .active_editor
+                        .as_ref()
+                        .map(|state| state.editor.clone());
+
+                    let source_index =
+                        markdown.update(cx, |markdown, cx| markdown.scroll_to_heading(&slug, cx));
+
+                    if let Some(source_index) = source_index {
+                        if let Some(editor) = active_editor {
+                            MarkdownPreviewView::move_cursor_to_source_index(
+                                &editor,
+                                source_index,
+                                window,
+                                cx,
+                            );
+                        }
+                    }
+                }
+            });
+        }
+    } else {
+        open_preview_url(
+            SharedString::from(path_part.to_string()),
+            base_directory,
+            workspace,
+            window,
+            cx,
+        );
     }
 }
 

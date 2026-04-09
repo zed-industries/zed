@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use collections::HashSet as CollectionsHashSet;
 use std::path::PathBuf;
@@ -7,14 +8,14 @@ use std::sync::Arc;
 use fuzzy::StringMatchCandidate;
 use git::repository::Branch as GitBranch;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Task, Window, rems,
+    AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, ParentElement, Render, SharedString, Styled, Task, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
 use ui::{
-    HighlightedLabel, Icon, IconName, Label, LabelCommon, ListItem, ListItemSpacing, Tooltip,
-    prelude::*,
+    Divider, DocumentationAside, HighlightedLabel, Icon, IconName, Label, LabelCommon, ListItem,
+    ListItemSpacing, prelude::*,
 };
 use util::ResultExt as _;
 
@@ -206,10 +207,10 @@ impl Render for ThreadBranchPicker {
 enum ThreadBranchEntry {
     CurrentBranch,
     DefaultBranch,
+    Separator,
     ExistingBranch {
         branch: GitBranch,
         positions: Vec<usize>,
-        occupied_reason: Option<String>,
     },
     CreateNamed {
         name: String,
@@ -269,42 +270,44 @@ impl ThreadBranchPickerDelegate {
         matches
     }
 
-    fn current_branch_label(&self) -> SharedString {
-        if self.has_multiple_repositories {
-            SharedString::from("New branch from: current branches")
+    fn is_branch_occupied(&self, branch_name: &str) -> bool {
+        self.occupied_branches
+            .as_ref()
+            .is_some_and(|occupied| occupied.contains_key(branch_name))
+    }
+
+    fn branch_aside_text(&self, branch_name: &str, is_remote: bool) -> Option<SharedString> {
+        if self.is_branch_occupied(branch_name) {
+            Some(
+                format!(
+                    "This branch is already checked out in another worktree. \
+                     A new branch will be created from {branch_name}."
+                )
+                .into(),
+            )
+        } else if is_remote {
+            Some("A new local branch will be created from this remote branch.".into())
         } else {
-            SharedString::from(format!("New branch from: {}", self.current_branch_name))
+            None
         }
     }
 
-    fn default_branch_label(&self) -> Option<SharedString> {
-        let default_branch_name = self
-            .default_branch_name
-            .as_ref()
-            .filter(|name| *name != &self.current_branch_name)?;
-        let is_occupied = self
-            .occupied_branches
-            .as_ref()
-            .is_some_and(|occupied| occupied.contains_key(default_branch_name));
-        let prefix = if is_occupied {
-            "New branch from"
-        } else {
-            "From"
-        };
-        Some(SharedString::from(format!(
-            "{prefix}: {default_branch_name}"
-        )))
-    }
-
-    fn branch_label_prefix(&self, branch_name: &str) -> &'static str {
-        let is_occupied = self
-            .occupied_branches
-            .as_ref()
-            .is_some_and(|occupied| occupied.contains_key(branch_name));
-        if is_occupied {
-            "New branch from: "
-        } else {
-            "From: "
+    fn entry_aside_text(&self, entry: &ThreadBranchEntry) -> Option<SharedString> {
+        match entry {
+            ThreadBranchEntry::CurrentBranch => Some(SharedString::from(
+                "A new branch will be created from the current branch.",
+            )),
+            ThreadBranchEntry::DefaultBranch => {
+                let default_branch_name = self
+                    .default_branch_name
+                    .as_ref()
+                    .filter(|name| *name != &self.current_branch_name)?;
+                self.branch_aside_text(default_branch_name, false)
+            }
+            ThreadBranchEntry::ExistingBranch { branch, .. } => {
+                self.branch_aside_text(branch.name(), branch.is_remote())
+            }
+            _ => None,
         }
     }
 
@@ -379,7 +382,7 @@ impl ThreadBranchPickerDelegate {
 }
 
 impl PickerDelegate for ThreadBranchPickerDelegate {
-    type ListItem = ListItem;
+    type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search branches…".into()
@@ -406,6 +409,10 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
         self.selected_index = ix;
     }
 
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        !matches!(self.matches.get(ix), Some(ThreadBranchEntry::Separator))
+    }
+
     fn update_matches(
         &mut self,
         query: String,
@@ -418,10 +425,12 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
             if query.is_empty() {
                 if let Some(name) = self.selected_entry_name().map(ToOwned::to_owned) {
                     if self.prefer_create_entry() {
+                        matches.push(ThreadBranchEntry::Separator);
                         matches.push(ThreadBranchEntry::CreateNamed { name });
                     }
                 }
             } else {
+                matches.push(ThreadBranchEntry::Separator);
                 matches.push(ThreadBranchEntry::CreateNamed {
                     name: query.replace(' ', "-"),
                 });
@@ -437,19 +446,25 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
             self.selected_index = 0;
             return Task::ready(());
         };
-        let occupied_branches = self.occupied_branches.clone().unwrap_or_default();
 
         if query.is_empty() {
             let mut matches = self.fixed_matches();
-            for branch in all_branches.into_iter().filter(|branch| {
-                branch.name() != self.current_branch_name
-                    && self
-                        .default_branch_name
-                        .as_ref()
-                        .is_none_or(|default_branch_name| branch.name() != default_branch_name)
-            }) {
+            let filtered_branches: Vec<_> = all_branches
+                .into_iter()
+                .filter(|branch| {
+                    branch.name() != self.current_branch_name
+                        && self
+                            .default_branch_name
+                            .as_ref()
+                            .is_none_or(|default_branch_name| branch.name() != default_branch_name)
+                })
+                .collect();
+
+            if !filtered_branches.is_empty() {
+                matches.push(ThreadBranchEntry::Separator);
+            }
+            for branch in filtered_branches {
                 matches.push(ThreadBranchEntry::ExistingBranch {
-                    occupied_reason: occupied_branches.get(branch.name()).cloned(),
                     branch,
                     positions: Vec::new(),
                 });
@@ -504,6 +519,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
             picker
                 .update_in(cx, |picker, _window, cx| {
                     let mut matches = picker.delegate.fixed_matches();
+                    let mut has_dynamic_entries = false;
 
                     for candidate in &fuzzy_matches {
                         let branch = all_branches_clone[candidate.candidate_id].clone();
@@ -514,15 +530,20 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                         {
                             continue;
                         }
-                        let occupied_reason = occupied_branches.get(branch.name()).cloned();
+                        if !has_dynamic_entries {
+                            matches.push(ThreadBranchEntry::Separator);
+                            has_dynamic_entries = true;
+                        }
                         matches.push(ThreadBranchEntry::ExistingBranch {
                             branch,
                             positions: candidate.positions.clone(),
-                            occupied_reason,
                         });
                     }
 
                     if fuzzy_matches.is_empty() {
+                        if !has_dynamic_entries {
+                            matches.push(ThreadBranchEntry::Separator);
+                        }
                         matches.push(ThreadBranchEntry::CreateNamed {
                             name: normalized_query.clone(),
                         });
@@ -558,6 +579,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
         };
 
         match entry {
+            ThreadBranchEntry::Separator => return,
             ThreadBranchEntry::CurrentBranch => {
                 window.dispatch_action(
                     Box::new(self.new_worktree_action(NewWorktreeBranchTarget::CurrentBranch)),
@@ -615,81 +637,122 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
 
     fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
-    fn separators_after_indices(&self) -> Vec<usize> {
-        let fixed_count = self.fixed_matches().len();
-        if self.matches.len() > fixed_count {
-            vec![fixed_count - 1]
-        } else {
-            Vec::new()
-        }
-    }
-
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = self.matches.get(ix)?;
 
         match entry {
-            ThreadBranchEntry::CurrentBranch => Some(
-                ListItem::new("current-branch")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .start_slot(Icon::new(IconName::GitBranch).color(Color::Muted))
-                    .child(Label::new(self.current_branch_label())),
+            ThreadBranchEntry::Separator => Some(
+                div()
+                    .py(DynamicSpacing::Base04.rems(cx))
+                    .child(Divider::horizontal())
+                    .into_any_element(),
             ),
-            ThreadBranchEntry::DefaultBranch => Some(
-                ListItem::new("default-branch")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .start_slot(Icon::new(IconName::GitBranch).color(Color::Muted))
-                    .child(Label::new(self.default_branch_label()?)),
-            ),
-            ThreadBranchEntry::ExistingBranch {
-                branch,
-                positions,
-                occupied_reason,
-            } => {
-                let prefix = self.branch_label_prefix(branch.name());
-                let branch_name = branch.name().to_string();
-                let full_label = format!("{prefix}{branch_name}");
-                let adjusted_positions: Vec<usize> =
-                    positions.iter().map(|&p| p + prefix.len()).collect();
-
-                let item = ListItem::new(SharedString::from(format!("branch-{ix}")))
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .start_slot(Icon::new(IconName::GitBranch).color(Color::Muted))
-                    .child(HighlightedLabel::new(full_label, adjusted_positions).truncate());
-
-                Some(if let Some(reason) = occupied_reason.clone() {
-                    item.tooltip(Tooltip::text(reason))
-                } else if branch.is_remote() {
-                    item.tooltip(Tooltip::text(
-                        "Create a new local branch from this remote branch",
-                    ))
+            ThreadBranchEntry::CurrentBranch => {
+                let branch_name = if self.has_multiple_repositories {
+                    SharedString::from("current branches")
                 } else {
-                    item
-                })
+                    SharedString::from(self.current_branch_name.clone())
+                };
+
+                Some(
+                    ListItem::new("current-branch")
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(Label::new(branch_name))
+                        .into_any_element(),
+                )
+            }
+            ThreadBranchEntry::DefaultBranch => {
+                let default_branch_name = self
+                    .default_branch_name
+                    .as_ref()
+                    .filter(|name| *name != &self.current_branch_name)?;
+                let is_occupied = self.is_branch_occupied(default_branch_name);
+
+                let item = ListItem::new("default-branch")
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(Label::new(default_branch_name.clone()));
+
+                Some(
+                    if is_occupied {
+                        item.start_slot(Icon::new(IconName::GitBranchPlus).color(Color::Muted))
+                    } else {
+                        item
+                    }
+                    .into_any_element(),
+                )
+            }
+            ThreadBranchEntry::ExistingBranch {
+                branch, positions, ..
+            } => {
+                let branch_name = branch.name().to_string();
+                let needs_new_branch = self.is_branch_occupied(&branch_name) || branch.is_remote();
+
+                Some(
+                    ListItem::new(SharedString::from(format!("branch-{ix}")))
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(
+                            h_flex()
+                                .min_w_0()
+                                .gap_1()
+                                .child(
+                                    HighlightedLabel::new(branch_name, positions.clone())
+                                        .truncate(),
+                                )
+                                .when(needs_new_branch, |item| {
+                                    item.child(
+                                        Icon::new(IconName::GitBranchPlus)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }),
+                        )
+                        .into_any_element(),
+                )
             }
             ThreadBranchEntry::CreateNamed { name } => Some(
                 ListItem::new("create-named-branch")
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)
                     .toggle_state(selected)
-                    .start_slot(Icon::new(IconName::Plus).color(Color::Accent))
-                    .child(Label::new(format!("Create Branch: \"{name}\"…"))),
+                    .child(Label::new(format!("Create Branch: \"{name}\"…")))
+                    .into_any_element(),
             ),
         }
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         None
+    }
+
+    fn documentation_aside(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<DocumentationAside> {
+        let entry = self.matches.get(self.selected_index)?;
+        let aside_text = self.entry_aside_text(entry)?;
+        let side = crate::ui::documentation_aside_side(cx);
+
+        Some(DocumentationAside::new(
+            side,
+            Rc::new(move |_| Label::new(aside_text.clone()).into_any_element()),
+        ))
+    }
+
+    fn documentation_aside_index(&self) -> Option<usize> {
+        let entry = self.matches.get(self.selected_index)?;
+        self.entry_aside_text(entry).map(|_| self.selected_index)
     }
 }

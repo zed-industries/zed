@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use agent_settings::AgentSettings;
@@ -6,17 +7,18 @@ use fs::Fs;
 use fuzzy::StringMatchCandidate;
 use git::repository::Worktree as GitWorktree;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Task, Window, rems,
+    AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, ParentElement, Render, SharedString, Styled, Task, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Project, git_store::RepositoryId};
 use settings::{NewThreadLocation, Settings, update_settings_file};
 use ui::{
-    HighlightedLabel, Icon, IconName, Label, LabelCommon, ListItem, ListItemSpacing, Tooltip,
-    prelude::*,
+    Divider, DocumentationAside, HighlightedLabel, Label, LabelCommon, ListItem, ListItemSpacing,
+    Tooltip, prelude::*,
 };
 use util::ResultExt as _;
+use util::paths::PathExt;
 
 use crate::ui::HoldForDefault;
 use crate::{NewWorktreeBranchTarget, StartThreadIn};
@@ -46,24 +48,60 @@ impl ThreadWorktreePicker {
             _ => NewWorktreeBranchTarget::default(),
         };
 
-        let delegate = ThreadWorktreePickerDelegate {
-            matches: vec![
-                ThreadWorktreeEntry::CurrentWorktree,
-                ThreadWorktreeEntry::NewWorktree,
-            ],
-            all_worktrees: project
-                .read(cx)
-                .repositories(cx)
+        let all_worktrees: Vec<_> = project
+            .read(cx)
+            .repositories(cx)
+            .iter()
+            .map(|(repo_id, repo)| (*repo_id, repo.read(cx).linked_worktrees.clone()))
+            .collect();
+
+        let has_multiple_repositories = all_worktrees.len() > 1;
+
+        let linked_worktrees: Vec<_> = if has_multiple_repositories {
+            Vec::new()
+        } else {
+            all_worktrees
                 .iter()
-                .map(|(repo_id, repo)| (*repo_id, repo.read(cx).linked_worktrees.clone()))
-                .collect(),
+                .flat_map(|(_, worktrees)| worktrees.iter())
+                .filter(|worktree| {
+                    !project_worktree_paths
+                        .iter()
+                        .any(|project_path| project_path == &worktree.path)
+                })
+                .cloned()
+                .collect()
+        };
+
+        let mut initial_matches = vec![
+            ThreadWorktreeEntry::CurrentWorktree,
+            ThreadWorktreeEntry::NewWorktree,
+        ];
+
+        if !linked_worktrees.is_empty() {
+            initial_matches.push(ThreadWorktreeEntry::Separator);
+            for worktree in &linked_worktrees {
+                initial_matches.push(ThreadWorktreeEntry::LinkedWorktree {
+                    worktree: worktree.clone(),
+                    positions: Vec::new(),
+                });
+            }
+        }
+
+        let selected_index = match current_target {
+            StartThreadIn::LocalProject => 0,
+            StartThreadIn::NewWorktree { .. } => 1,
+            StartThreadIn::LinkedWorktree { path, .. } => initial_matches
+                .iter()
+                .position(|entry| matches!(entry, ThreadWorktreeEntry::LinkedWorktree { worktree, .. } if worktree.path == *path))
+                .unwrap_or(0),
+        };
+
+        let delegate = ThreadWorktreePickerDelegate {
+            matches: initial_matches,
+            all_worktrees,
             project_worktree_paths,
-            selected_index: match current_target {
-                StartThreadIn::LocalProject => 0,
-                StartThreadIn::NewWorktree { .. } => 1,
-                _ => 0,
-            },
-            project: project.clone(),
+            selected_index,
+            project,
             preserved_branch_target,
             fs,
         };
@@ -111,6 +149,7 @@ impl Render for ThreadWorktreePicker {
 enum ThreadWorktreeEntry {
     CurrentWorktree,
     NewWorktree,
+    Separator,
     LinkedWorktree {
         worktree: GitWorktree,
         positions: Vec<usize>,
@@ -139,7 +178,11 @@ impl ThreadWorktreePickerDelegate {
         }
     }
 
-    fn sync_selected_index(&mut self) {
+    fn sync_selected_index(&mut self, has_query: bool) {
+        if !has_query {
+            return;
+        }
+
         if let Some(index) = self
             .matches
             .iter()
@@ -159,7 +202,7 @@ impl ThreadWorktreePickerDelegate {
 }
 
 impl PickerDelegate for ThreadWorktreePickerDelegate {
-    type ListItem = ListItem;
+    type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search or create worktrees…".into()
@@ -186,12 +229,8 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         self.selected_index = ix;
     }
 
-    fn separators_after_indices(&self) -> Vec<usize> {
-        if self.matches.len() > 2 {
-            vec![1]
-        } else {
-            Vec::new()
-        }
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        !matches!(self.matches.get(ix), Some(ThreadWorktreeEntry::Separator))
     }
 
     fn update_matches(
@@ -238,6 +277,9 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         ];
 
         if query.is_empty() {
+            if !linked_worktrees.is_empty() {
+                matches.push(ThreadWorktreeEntry::Separator);
+            }
             for worktree in &linked_worktrees {
                 matches.push(ThreadWorktreeEntry::LinkedWorktree {
                     worktree: worktree.clone(),
@@ -245,6 +287,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                 });
             }
         } else if linked_worktrees.is_empty() {
+            matches.push(ThreadWorktreeEntry::Separator);
             matches.push(ThreadWorktreeEntry::CreateNamed {
                 name: normalized_query,
                 disabled_reason: create_named_disabled_reason,
@@ -283,6 +326,12 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                             ThreadWorktreeEntry::NewWorktree,
                         ];
 
+                        let has_extra_entries = !fuzzy_matches.is_empty();
+
+                        if has_extra_entries {
+                            new_matches.push(ThreadWorktreeEntry::Separator);
+                        }
+
                         for candidate in &fuzzy_matches {
                             new_matches.push(ThreadWorktreeEntry::LinkedWorktree {
                                 worktree: linked_worktrees_clone[candidate.candidate_id].clone(),
@@ -295,6 +344,9 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                             .any(|worktree| worktree.display_name() == query);
 
                         if !has_exact_match {
+                            if !has_extra_entries {
+                                new_matches.push(ThreadWorktreeEntry::Separator);
+                            }
                             new_matches.push(ThreadWorktreeEntry::CreateNamed {
                                 name: normalized_query.clone(),
                                 disabled_reason: create_named_disabled_reason.clone(),
@@ -302,7 +354,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                         }
 
                         picker.delegate.matches = new_matches;
-                        picker.delegate.sync_selected_index();
+                        picker.delegate.sync_selected_index(true);
 
                         cx.notify();
                     })
@@ -311,7 +363,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         }
 
         self.matches = matches;
-        self.sync_selected_index();
+        self.sync_selected_index(!query.is_empty());
 
         Task::ready(())
     }
@@ -322,6 +374,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         };
 
         match entry {
+            ThreadWorktreeEntry::Separator => return,
             ThreadWorktreeEntry::CurrentWorktree => {
                 if secondary {
                     update_settings_file(self.fs.clone(), cx, |settings, _| {
@@ -383,48 +436,73 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         let project = self.project.read(cx);
         let is_new_worktree_disabled =
             project.repositories(cx).is_empty() || project.is_via_collab();
-        let new_thread_location = AgentSettings::get_global(cx).new_thread_location;
-        let is_local_default = new_thread_location == NewThreadLocation::LocalProject;
-        let is_new_worktree_default = new_thread_location == NewThreadLocation::NewWorktree;
 
         match entry {
-            ThreadWorktreeEntry::CurrentWorktree => Some(
-                ListItem::new("current-worktree")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .start_slot(Icon::new(IconName::Folder).color(Color::Muted))
-                    .child(Label::new("Current Worktree"))
-                    .end_slot(HoldForDefault::new(is_local_default).more_content(false))
-                    .tooltip(Tooltip::text("Use the current project worktree")),
+            ThreadWorktreeEntry::Separator => Some(
+                div()
+                    .py(DynamicSpacing::Base04.rems(cx))
+                    .child(Divider::horizontal())
+                    .into_any_element(),
             ),
+            ThreadWorktreeEntry::CurrentWorktree => {
+                let path_label = project.active_repository(cx).map(|repo| {
+                    let path = repo.read(cx).work_directory_abs_path.clone();
+                    path.compact().to_string_lossy().to_string()
+                });
+
+                Some(
+                    ListItem::new("current-worktree")
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(
+                            v_flex()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .child(Label::new("Current Worktree"))
+                                .when_some(path_label, |this, path| {
+                                    this.child(
+                                        Label::new(path)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .truncate_start(),
+                                    )
+                                }),
+                        )
+                        .into_any_element(),
+                )
+            }
             ThreadWorktreeEntry::NewWorktree => {
                 let item = ListItem::new("new-worktree")
                     .inset(true)
                     .spacing(ListItemSpacing::Sparse)
                     .toggle_state(selected)
                     .disabled(is_new_worktree_disabled)
-                    .start_slot(
-                        Icon::new(IconName::Plus).color(if is_new_worktree_disabled {
-                            Color::Disabled
-                        } else {
-                            Color::Muted
-                        }),
-                    )
                     .child(
-                        Label::new("New Git Worktree").color(if is_new_worktree_disabled {
-                            Color::Disabled
-                        } else {
-                            Color::Default
-                        }),
+                        v_flex()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(
+                                Label::new("New Git Worktree")
+                                    .when(is_new_worktree_disabled, |this| {
+                                        this.color(Color::Disabled)
+                                    }),
+                            )
+                            .child(
+                                Label::new("Get a fresh new worktree")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
                     );
 
-                Some(if is_new_worktree_disabled {
-                    item.tooltip(Tooltip::text("Requires a Git repository in the project"))
-                } else {
-                    item.end_slot(HoldForDefault::new(is_new_worktree_default).more_content(false))
-                        .tooltip(Tooltip::text("Start a thread in a new Git worktree"))
-                })
+                Some(
+                    if is_new_worktree_disabled {
+                        item.tooltip(Tooltip::text("Requires a Git repository in the project"))
+                    } else {
+                        item
+                    }
+                    .into_any_element(),
+                )
             }
             ThreadWorktreeEntry::LinkedWorktree {
                 worktree,
@@ -437,14 +515,29 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                     .copied()
                     .filter(|&pos| pos < first_line.len())
                     .collect();
+                let path = worktree.path.compact();
 
                 Some(
                     ListItem::new(SharedString::from(format!("linked-worktree-{ix}")))
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
-                        .start_slot(Icon::new(IconName::GitWorktree).color(Color::Muted))
-                        .child(HighlightedLabel::new(first_line.to_owned(), positions).truncate()),
+                        .child(
+                            v_flex()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .child(
+                                    HighlightedLabel::new(first_line.to_owned(), positions)
+                                        .truncate(),
+                                )
+                                .child(
+                                    Label::new(path.to_string_lossy().to_string())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate_start(),
+                                ),
+                        )
+                        .into_any_element(),
                 )
             }
             ThreadWorktreeEntry::CreateNamed {
@@ -457,11 +550,6 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                     .spacing(ListItemSpacing::Sparse)
                     .toggle_state(selected)
                     .disabled(is_disabled)
-                    .start_slot(Icon::new(IconName::Plus).color(if is_disabled {
-                        Color::Disabled
-                    } else {
-                        Color::Accent
-                    }))
                     .child(Label::new(format!("Create Worktree: \"{name}\"…")).color(
                         if is_disabled {
                             Color::Disabled
@@ -470,16 +558,64 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                         },
                     ));
 
-                Some(if let Some(reason) = disabled_reason.clone() {
-                    item.tooltip(Tooltip::text(reason))
-                } else {
-                    item
-                })
+                Some(
+                    if let Some(reason) = disabled_reason.clone() {
+                        item.tooltip(Tooltip::text(reason))
+                    } else {
+                        item
+                    }
+                    .into_any_element(),
+                )
             }
         }
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         None
+    }
+
+    fn documentation_aside(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<DocumentationAside> {
+        let entry = self.matches.get(self.selected_index)?;
+        let is_default = match entry {
+            ThreadWorktreeEntry::CurrentWorktree => {
+                let new_thread_location = AgentSettings::get_global(cx).new_thread_location;
+                Some(new_thread_location == NewThreadLocation::LocalProject)
+            }
+            ThreadWorktreeEntry::NewWorktree => {
+                let project = self.project.read(cx);
+                let is_disabled = project.repositories(cx).is_empty() || project.is_via_collab();
+                if is_disabled {
+                    None
+                } else {
+                    let new_thread_location = AgentSettings::get_global(cx).new_thread_location;
+                    Some(new_thread_location == NewThreadLocation::NewWorktree)
+                }
+            }
+            _ => None,
+        }?;
+
+        let side = crate::ui::documentation_aside_side(cx);
+
+        Some(DocumentationAside::new(
+            side,
+            Rc::new(move |_| {
+                HoldForDefault::new(is_default)
+                    .more_content(false)
+                    .into_any_element()
+            }),
+        ))
+    }
+
+    fn documentation_aside_index(&self) -> Option<usize> {
+        match self.matches.get(self.selected_index) {
+            Some(ThreadWorktreeEntry::CurrentWorktree | ThreadWorktreeEntry::NewWorktree) => {
+                Some(self.selected_index)
+            }
+            _ => None,
+        }
     }
 }

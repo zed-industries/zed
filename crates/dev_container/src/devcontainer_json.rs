@@ -217,8 +217,8 @@ pub(crate) struct DevContainer {
     pub(crate) override_feature_install_order: Option<Vec<String>>,
     pub(crate) customizations: Option<ZedCustomizationsWrapper>,
     pub(crate) build: Option<ContainerBuild>,
-    #[serde(default, deserialize_with = "deserialize_string_or_int")]
-    pub(crate) app_port: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_app_port")]
+    pub(crate) app_port: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_mount_definition")]
     pub(crate) workspace_mount: Option<MountDefinition>,
     pub(crate) workspace_folder: Option<String>,
@@ -517,7 +517,7 @@ where
     Ok(Some(mounts))
 }
 
-fn deserialize_string_or_int<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+fn deserialize_app_port<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -530,9 +530,29 @@ where
         Int(u32),
     }
 
-    match StringOrInt::deserialize(deserializer)? {
-        StringOrInt::String(s) => Ok(Some(s)),
-        StringOrInt::Int(b) => Ok(Some(b.to_string())),
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum AppPort {
+        Array(Vec<StringOrInt>),
+        Single(StringOrInt),
+    }
+
+    fn normalize_port(value: StringOrInt) -> String {
+        match value {
+            StringOrInt::String(s) => {
+                if s.contains(':') {
+                    s
+                } else {
+                    format!("{s}:{s}")
+                }
+            }
+            StringOrInt::Int(n) => format!("{n}:{n}"),
+        }
+    }
+
+    match AppPort::deserialize(deserializer)? {
+        AppPort::Single(value) => Ok(vec![normalize_port(value)]),
+        AppPort::Array(values) => Ok(values.into_iter().map(normalize_port).collect()),
     }
 }
 
@@ -862,7 +882,7 @@ mod test {
                     memory: Some("8gb".to_string()),
                     storage: Some("32gb".to_string()),
                 }),
-                app_port: Some("8081".to_string()),
+                app_port: vec!["8081:8081".to_string()],
                 container_env: Some(HashMap::from([
                     ("MYVAR3".to_string(), "myvar3".to_string()),
                     ("MYVAR4".to_string(), "myvar4".to_string())
@@ -1304,7 +1324,7 @@ mod test {
                     memory: Some("8gb".to_string()),
                     storage: Some("32gb".to_string()),
                 }),
-                app_port: Some("8081".to_string()),
+                app_port: vec!["8081:8081".to_string()],
                 container_env: Some(HashMap::from([
                     ("MYVAR3".to_string(), "myvar3".to_string()),
                     ("MYVAR4".to_string(), "myvar4".to_string())
@@ -1347,6 +1367,35 @@ mod test {
         );
 
         assert_eq!(devcontainer.build_type(), DevContainerBuildType::Dockerfile);
+    }
+
+    #[test]
+    fn should_deserialize_app_port_array() {
+        let given_json = r#"
+            // These are some external comments. serde_lenient should handle them
+            {
+                // These are some internal comments
+                "name": "myDevContainer",
+                "remoteUser": "root",
+                "appPort": [
+                    "8081:8083",
+                    "9001",
+                ],
+                "build": {
+                   	"dockerfile": "DockerFile",
+                }
+            }
+            "#;
+
+        let result = deserialize_devcontainer_json(given_json);
+
+        assert!(result.is_ok());
+        let devcontainer = result.expect("ok");
+
+        assert_eq!(
+            devcontainer.app_port,
+            vec!["8081:8083".to_string(), "9001:9001".to_string()]
+        )
     }
 
     #[test]

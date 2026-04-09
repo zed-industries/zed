@@ -324,7 +324,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
       shell: pwsh
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
@@ -379,7 +379,7 @@ jobs:
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 250
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -430,7 +430,7 @@ jobs:
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -440,8 +440,6 @@ jobs:
         SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn${{ needs.orchestrate.outputs.changed_packages && format(' -E "{0}"', needs.orchestrate.outputs.changed_packages) || '' }}
-    - name: steps::cargo_build_visual_tests
-      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -537,6 +535,31 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  build_visual_tests_binary:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true'
+    runs-on: namespace-profile-mac-large
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::build_visual_tests_binary::cargo_build_visual_tests
+      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
   check_wasm:
     needs:
     - orchestrate
@@ -780,6 +803,7 @@ jobs:
     - run_tests_mac
     - doctests
     - check_workspace_binaries
+    - build_visual_tests_binary
     - check_wasm
     - check_dependencies
     - check_docs
@@ -810,6 +834,7 @@ jobs:
         check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
         check_result "doctests" "$RESULT_DOCTESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
+        check_result "build_visual_tests_binary" "$RESULT_BUILD_VISUAL_TESTS_BINARY"
         check_result "check_wasm" "$RESULT_CHECK_WASM"
         check_result "check_dependencies" "$RESULT_CHECK_DEPENDENCIES"
         check_result "check_docs" "$RESULT_CHECK_DOCS"
@@ -830,6 +855,7 @@ jobs:
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
+        RESULT_BUILD_VISUAL_TESTS_BINARY: ${{ needs.build_visual_tests_binary.result }}
         RESULT_CHECK_WASM: ${{ needs.check_wasm.result }}
         RESULT_CHECK_DEPENDENCIES: ${{ needs.check_dependencies.result }}
         RESULT_CHECK_DOCS: ${{ needs.check_docs.result }}

@@ -1,13 +1,12 @@
 pub mod fs_watcher;
 
 use parking_lot::Mutex;
+use std::ffi::OsString;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
 
 use anyhow::{Context as _, Result, anyhow};
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use ashpd::desktop::trash;
 use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
@@ -110,14 +109,27 @@ pub trait Fs: Send + Sync {
     ) -> Result<()>;
     async fn copy_file(&self, source: &Path, target: &Path, options: CopyOptions) -> Result<()>;
     async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
+
+    /// Removes a directory from the filesystem.
+    /// There is no expectation that the directory will be preserved in the
+    /// system trash.
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.remove_dir(path, options).await
-    }
+
+    /// Moves a directory to the system trash.
+    /// Returns a [`TrashedEntry`] that can be used to keep track of the
+    /// location of the trashed directory in the system's trash.
+    async fn trash_dir(&self, path: &Path) -> Result<TrashedEntry>;
+
+    /// Removes a file from the filesystem.
+    /// There is no expectation that the file will be preserved in the system
+    /// trash.
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
-    async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.remove_file(path, options).await
-    }
+
+    /// Moves a file to the system trash.
+    /// Returns a [`TrashedEntry`] that can be used to keep track of the
+    /// location of the trashed file in the system's trash.
+    async fn trash_file(&self, path: &Path) -> Result<TrashedEntry>;
+
     async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>>;
     async fn load(&self, path: &Path) -> Result<String> {
@@ -158,9 +170,80 @@ pub trait Fs: Send + Sync {
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
+    /// Restores a given `TrashedEntry`, moving it from the system's trash back
+    /// to the original path.
+    async fn restore(
+        &self,
+        trashed_entry: TrashedEntry,
+    ) -> std::result::Result<(), TrashRestoreError>;
+
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeFs> {
         panic!("called as_fake on a real fs");
+    }
+}
+
+// We use our own type rather than `trash::TrashItem` directly to avoid carrying
+// over fields we don't need (e.g. `time_deleted`) and to insulate callers and
+// tests from changes to that crate's API surface.
+/// Represents a file or directory that has been moved to the system trash,
+/// retaining enough information to restore it to its original location.
+#[derive(Clone, PartialEq)]
+pub struct TrashedEntry {
+    /// Platform-specific identifier for the file/directory in the trash.
+    ///
+    /// * Freedesktop – Path to the `.trashinfo` file.
+    /// * macOS & Windows – Full path to the file/directory in the system's
+    /// trash.
+    pub id: OsString,
+    /// Original name of the file/directory before it was moved to the trash.
+    pub name: OsString,
+    /// Original parent directory.
+    pub original_parent: PathBuf,
+}
+
+impl From<trash::TrashItem> for TrashedEntry {
+    fn from(item: trash::TrashItem) -> Self {
+        Self {
+            id: item.id,
+            name: item.name,
+            original_parent: item.original_parent,
+        }
+    }
+}
+
+impl TrashedEntry {
+    fn into_trash_item(self) -> trash::TrashItem {
+        trash::TrashItem {
+            id: self.id,
+            name: self.name,
+            original_parent: self.original_parent,
+            // `TrashedEntry` doesn't preserve `time_deleted` as we don't
+            // currently need it for restore, so we default it to 0 here.
+            time_deleted: 0,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum TrashRestoreError {
+    /// The specified `path` was not found in the system's trash.
+    NotFound { path: PathBuf },
+    /// A file or directory already exists at the restore destination.
+    Collision { path: PathBuf },
+    /// Any other platform-specific error.
+    Unknown { description: String },
+}
+
+impl From<trash::Error> for TrashRestoreError {
+    fn from(err: trash::Error) -> Self {
+        match err {
+            trash::Error::RestoreCollision { path, .. } => Self::Collision { path },
+            trash::Error::Unknown { description } => Self::Unknown { description },
+            other => Self::Unknown {
+                description: other.to_string(),
+            },
+        }
     }
 }
 
@@ -718,93 +801,12 @@ impl Fs for RealFs {
         }
     }
 
-    #[cfg(target_os = "macos")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use cocoa::{
-            base::{id, nil},
-            foundation::{NSAutoreleasePool, NSString},
-        };
-        use objc::{class, msg_send, sel, sel_impl};
-
-        unsafe {
-            /// Allow NSString::alloc use here because it sets autorelease
-            #[allow(clippy::disallowed_methods)]
-            unsafe fn ns_string(string: &str) -> id {
-                unsafe { NSString::alloc(nil).init_str(string).autorelease() }
-            }
-
-            let url: id = msg_send![class!(NSURL), fileURLWithPath: ns_string(path.to_string_lossy().as_ref())];
-            let array: id = msg_send![class!(NSArray), arrayWithObject: url];
-            let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
-
-            let _: id = msg_send![workspace, recycleURLs: array completionHandler: nil];
-        }
-        Ok(())
+    async fn trash_file(&self, path: &Path) -> Result<TrashedEntry> {
+        Ok(trash::delete_with_info(path)?.into())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        if let Ok(Some(metadata)) = self.metadata(path).await
-            && metadata.is_symlink
-        {
-            // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
-            return self.remove_file(path, RemoveOptions::default()).await;
-        }
-        let file = smol::fs::File::open(path).await?;
-        match trash::trash_file(&file.as_fd()).await {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                log::error!("Failed to trash file: {}", err);
-                // Trashing files can fail if you don't have a trashing dbus service configured.
-                // In that case, delete the file directly instead.
-                return self.remove_file(path, RemoveOptions::default()).await;
-            }
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use util::paths::SanitizedPath;
-        use windows::{
-            Storage::{StorageDeleteOption, StorageFile},
-            core::HSTRING,
-        };
-        // todo(windows)
-        // When new version of `windows-rs` release, make this operation `async`
-        let path = path.canonicalize()?;
-        let path = SanitizedPath::new(&path);
-        let path_string = path.to_string();
-        let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
-        file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-        Ok(())
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.trash_file(path, options).await
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.trash_file(path, options).await
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use util::paths::SanitizedPath;
-        use windows::{
-            Storage::{StorageDeleteOption, StorageFolder},
-            core::HSTRING,
-        };
-
-        // todo(windows)
-        // When new version of `windows-rs` release, make this operation `async`
-        let path = path.canonicalize()?;
-        let path = SanitizedPath::new(&path);
-        let path_string = path.to_string();
-        let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
-        folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
-        Ok(())
+    async fn trash_dir(&self, path: &Path) -> Result<TrashedEntry> {
+        self.trash_file(path).await
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -1252,6 +1254,13 @@ impl Fs for RealFs {
         );
         res
     }
+
+    async fn restore(
+        &self,
+        trashed_entry: TrashedEntry,
+    ) -> std::result::Result<(), TrashRestoreError> {
+        trash::restore_all([trashed_entry.into_trash_item()]).map_err(Into::into)
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -1287,6 +1296,7 @@ struct FakeFsState {
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
+    trash: Vec<(TrashedEntry, FakeFsEntry)>,
 }
 
 #[cfg(feature = "test-support")]
@@ -1572,6 +1582,7 @@ impl FakeFs {
                 path_write_counts: Default::default(),
                 moves: Default::default(),
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+                trash: Vec::new(),
             })),
         });
 
@@ -2168,6 +2179,13 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_graph_error(&self, dot_git: &Path, error: Option<String>) {
+        self.with_git_state(dot_git, true, |state| {
+            state.simulated_graph_error = error;
+        })
+        .unwrap();
+    }
+
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
     pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {
@@ -2389,6 +2407,90 @@ impl FakeFs {
 
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
+    }
+
+    /// Returns list of all tracked trash entries.
+    pub fn trash_entries(&self) -> Vec<TrashedEntry> {
+        self.state
+            .lock()
+            .trash
+            .iter()
+            .map(|(entry, _)| entry.clone())
+            .collect()
+    }
+
+    async fn remove_dir_inner(
+        &self,
+        path: &Path,
+        options: RemoveOptions,
+    ) -> Result<Option<FakeFsEntry>> {
+        self.simulate_random_delay().await;
+
+        let path = normalize_path(path);
+        let parent_path = path.parent().context("cannot remove the root")?;
+        let base_name = path.file_name().context("cannot remove the root")?;
+
+        let mut state = self.state.lock();
+        let parent_entry = state.entry(parent_path)?;
+        let entry = parent_entry
+            .dir_entries(parent_path)?
+            .entry(base_name.to_str().unwrap().into());
+
+        let removed = match entry {
+            btree_map::Entry::Vacant(_) => {
+                if !options.ignore_if_not_exists {
+                    anyhow::bail!("{path:?} does not exist");
+                }
+
+                None
+            }
+            btree_map::Entry::Occupied(mut entry) => {
+                {
+                    let children = entry.get_mut().dir_entries(&path)?;
+                    if !options.recursive && !children.is_empty() {
+                        anyhow::bail!("{path:?} is not empty");
+                    }
+                }
+
+                Some(entry.remove())
+            }
+        };
+
+        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        Ok(removed)
+    }
+
+    async fn remove_file_inner(
+        &self,
+        path: &Path,
+        options: RemoveOptions,
+    ) -> Result<Option<FakeFsEntry>> {
+        self.simulate_random_delay().await;
+
+        let path = normalize_path(path);
+        let parent_path = path.parent().context("cannot remove the root")?;
+        let base_name = path.file_name().unwrap();
+        let mut state = self.state.lock();
+        let parent_entry = state.entry(parent_path)?;
+        let entry = parent_entry
+            .dir_entries(parent_path)?
+            .entry(base_name.to_str().unwrap().into());
+        let removed = match entry {
+            btree_map::Entry::Vacant(_) => {
+                if !options.ignore_if_not_exists {
+                    anyhow::bail!("{path:?} does not exist");
+                }
+
+                None
+            }
+            btree_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().file_content(&path)?;
+                Some(entry.remove())
+            }
+        };
+
+        state.emit_event([(path, Some(PathEventKind::Removed))]);
+        Ok(removed)
     }
 }
 
@@ -2689,62 +2791,57 @@ impl Fs for FakeFs {
     }
 
     async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.simulate_random_delay().await;
+        self.remove_dir_inner(path, options).await.map(|_| ())
+    }
 
-        let path = normalize_path(path);
-        let parent_path = path.parent().context("cannot remove the root")?;
-        let base_name = path.file_name().context("cannot remove the root")?;
+    async fn trash_dir(&self, path: &Path) -> Result<TrashedEntry> {
+        let normalized_path = normalize_path(path);
+        let parent_path = normalized_path.parent().context("cannot remove the root")?;
+        let base_name = normalized_path.file_name().unwrap();
+        let options = RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        };
 
-        let mut state = self.state.lock();
-        let parent_entry = state.entry(parent_path)?;
-        let entry = parent_entry
-            .dir_entries(parent_path)?
-            .entry(base_name.to_str().unwrap().into());
+        match self.remove_dir_inner(path, options).await? {
+            Some(fake_entry) => {
+                let trashed_entry = TrashedEntry {
+                    id: base_name.to_str().unwrap().into(),
+                    name: base_name.to_str().unwrap().into(),
+                    original_parent: parent_path.to_path_buf(),
+                };
 
-        match entry {
-            btree_map::Entry::Vacant(_) => {
-                if !options.ignore_if_not_exists {
-                    anyhow::bail!("{path:?} does not exist");
-                }
+                let mut state = self.state.lock();
+                state.trash.push((trashed_entry.clone(), fake_entry));
+                Ok(trashed_entry)
             }
-            btree_map::Entry::Occupied(mut entry) => {
-                {
-                    let children = entry.get_mut().dir_entries(&path)?;
-                    if !options.recursive && !children.is_empty() {
-                        anyhow::bail!("{path:?} is not empty");
-                    }
-                }
-                entry.remove();
-            }
+            None => anyhow::bail!("{normalized_path:?} does not exist"),
         }
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
-        Ok(())
     }
 
     async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
-        self.simulate_random_delay().await;
+        self.remove_file_inner(path, options).await.map(|_| ())
+    }
 
-        let path = normalize_path(path);
-        let parent_path = path.parent().context("cannot remove the root")?;
-        let base_name = path.file_name().unwrap();
-        let mut state = self.state.lock();
-        let parent_entry = state.entry(parent_path)?;
-        let entry = parent_entry
-            .dir_entries(parent_path)?
-            .entry(base_name.to_str().unwrap().into());
-        match entry {
-            btree_map::Entry::Vacant(_) => {
-                if !options.ignore_if_not_exists {
-                    anyhow::bail!("{path:?} does not exist");
-                }
+    async fn trash_file(&self, path: &Path) -> Result<TrashedEntry> {
+        let normalized_path = normalize_path(path);
+        let parent_path = normalized_path.parent().context("cannot remove the root")?;
+        let base_name = normalized_path.file_name().unwrap();
+
+        match self.remove_file_inner(path, Default::default()).await? {
+            Some(fake_entry) => {
+                let trashed_entry = TrashedEntry {
+                    id: base_name.to_str().unwrap().into(),
+                    name: base_name.to_str().unwrap().into(),
+                    original_parent: parent_path.to_path_buf(),
+                };
+
+                let mut state = self.state.lock();
+                state.trash.push((trashed_entry.clone(), fake_entry));
+                Ok(trashed_entry)
             }
-            btree_map::Entry::Occupied(mut entry) => {
-                entry.get_mut().file_content(&path)?;
-                entry.remove();
-            }
+            None => anyhow::bail!("{normalized_path:?} does not exist"),
         }
-        state.emit_event([(path, Some(PathEventKind::Removed))]);
-        Ok(())
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -2993,6 +3090,51 @@ impl Fs for FakeFs {
         let (sender, receiver) = futures::channel::mpsc::unbounded();
         self.state.lock().job_event_subscribers.lock().push(sender);
         receiver
+    }
+
+    async fn restore(
+        &self,
+        trashed_entry: TrashedEntry,
+    ) -> std::result::Result<(), TrashRestoreError> {
+        let mut state = self.state.lock();
+
+        let Some((trashed_entry, fake_entry)) = state
+            .trash
+            .iter()
+            .find(|(entry, _)| *entry == trashed_entry)
+            .cloned()
+        else {
+            return Err(TrashRestoreError::NotFound {
+                path: PathBuf::from(trashed_entry.id),
+            });
+        };
+
+        let path = trashed_entry
+            .original_parent
+            .join(trashed_entry.name.clone());
+
+        let result = state.write_path(&path, |entry| match entry {
+            btree_map::Entry::Vacant(entry) => {
+                entry.insert(fake_entry);
+                Ok(())
+            }
+            btree_map::Entry::Occupied(_) => {
+                anyhow::bail!("Failed to restore {:?}", path);
+            }
+        });
+
+        match result {
+            Ok(_) => {
+                state.trash.retain(|(entry, _)| *entry != trashed_entry);
+                Ok(())
+            }
+            Err(_) => {
+                // For now we'll just assume that this failed because it was a
+                // collision error, which I think that, for the time being, is
+                // the only case where this could fail?
+                Err(TrashRestoreError::Collision { path })
+            }
+        }
     }
 
     #[cfg(feature = "test-support")]

@@ -530,6 +530,8 @@
       "ctrl-k ctrl-f": "editor::FormatSelections",
       "ctrl-/": ["editor::ToggleComments", { "advance_downwards": false }],
       "ctrl-k ctrl-c": ["editor::ToggleComments", { "advance_downwards": false }],
+      "ctrl-k ctrl-/": "editor::ToggleBlockComments",
+      "shift-alt-a": "editor::ToggleBlockComments",
       "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "shift-f8": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "f2": "editor::Rename",
@@ -1488,7 +1490,7 @@
   {
     "context": "NotebookEditor",
     "bindings": {
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "ctrl-enter": "notebook::Run",
       "ctrl-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1500,10 +1502,18 @@
     },
   },
   {
+    "context": "NotebookEditor && notebook_mode == command",
+    "bindings": {
+      "enter": "notebook::EnterEditMode",
+      "down": "menu::SelectNext",
+      "up": "menu::SelectPrevious",
+    },
+  },
+  {
     "context": "NotebookEditor > Editor",
     "bindings": {
       "enter": "editor::Newline",
-      "shift-enter": "notebook::Run",
+      "shift-enter": "notebook::RunAndAdvance",
       "ctrl-enter": "notebook::Run",
       "ctrl-shift-enter": "notebook::RunAll",
       "alt-up": "notebook::MoveCellUp",
@@ -1512,6 +1522,7 @@
       "ctrl-shift-m": "notebook::AddMarkdownBlock",
       "ctrl-shift-r": "notebook::RestartKernel",
       "ctrl-c": "notebook::InterruptKernel",
+      "escape": "notebook::EnterCommandMode",
     },
   },
 ]

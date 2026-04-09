@@ -272,6 +272,7 @@ pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
+    pub parse_heading_slugs: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -498,6 +499,16 @@ impl Markdown {
         self.pending_parse.is_some()
     }
 
+    pub fn scroll_to_heading(&mut self, slug: &str, cx: &mut Context<Self>) -> Option<usize> {
+        if let Some(source_index) = self.parsed_markdown.heading_slugs.get(slug).copied() {
+            self.autoscroll_request = Some(source_index);
+            cx.notify();
+            Some(source_index)
+        } else {
+            None
+        }
+    }
+
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -669,6 +680,7 @@ impl Markdown {
         let should_parse_links_only = self.options.parse_links_only;
         let should_parse_html = self.options.parse_html;
         let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
+        let should_parse_heading_slugs = self.options.parse_heading_slugs;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
 
@@ -683,17 +695,20 @@ impl Markdown {
                         root_block_starts: Arc::default(),
                         html_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
+                        heading_slugs: HashMap::default(),
                     },
                     Default::default(),
                 );
             }
 
-            let parsed = parse_markdown_with_options(&source, should_parse_html);
+            let parsed =
+                parse_markdown_with_options(&source, should_parse_html, should_parse_heading_slugs);
             let events = parsed.events;
             let language_names = parsed.language_names;
             let paths = parsed.language_paths;
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
+            let heading_slugs = parsed.heading_slugs;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -760,6 +775,7 @@ impl Markdown {
                     root_block_starts: Arc::from(root_block_starts),
                     html_blocks,
                     mermaid_diagrams,
+                    heading_slugs,
                 },
                 images_by_source_offset,
             )
@@ -883,6 +899,7 @@ pub struct ParsedMarkdown {
     pub root_block_starts: Arc<[usize]>,
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
+    pub heading_slugs: HashMap<SharedString, usize>,
 }
 
 impl ParsedMarkdown {
@@ -3120,7 +3137,7 @@ mod tests {
     #[test]
     fn test_table_checkbox_detection() {
         let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false).events;
+        let events = crate::parser::parse_markdown_with_options(md, false, false).events;
 
         let mut in_table = false;
         let mut cell_texts: Vec<String> = Vec::new();
@@ -3338,7 +3355,7 @@ mod tests {
     }
 
     fn has_code_block(markdown: &str) -> bool {
-        let parsed_data = parse_markdown_with_options(markdown, false);
+        let parsed_data = parse_markdown_with_options(markdown, false, false);
         parsed_data
             .events
             .iter()

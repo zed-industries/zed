@@ -1,4 +1,3 @@
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
@@ -1758,7 +1757,7 @@ fn editor_page() -> SettingsPage {
                 title: "Delay",
                 description: "Time to wait in milliseconds before showing the informational hover box.",
                 field: Box::new(SettingField {
-                    json_path: Some("hover_popover_enabled"),
+                    json_path: Some("hover_popover_delay"),
                     pick: |settings_content| settings_content.editor.hover_popover_delay.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.hover_popover_delay = value;
@@ -4451,7 +4450,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 28] {
+    fn project_panel_section() -> [SettingsPageItem; 29] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4945,6 +4944,24 @@ fn panels_page() -> SettingsPage {
                             .get_or_insert_default()
                             .sort_mode = value;
                     },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sort Order",
+                description: "Whether to sort file and folder names case-sensitively in the project panel.",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        settings_content.project_panel.as_ref()?.sort_order.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .sort_order = value;
+                    },
+                    json_path: Some("project_panel.sort_order"),
                 }),
                 metadata: None,
                 files: USER,
@@ -5579,96 +5596,6 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn notification_panel_section() -> [SettingsPageItem; 5] {
-        [
-            SettingsPageItem::SectionHeader("Notification Panel"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Notification Panel Button",
-                description: "Show the notification panel button in the status bar.",
-                field: Box::new(SettingField {
-                    json_path: Some("notification_panel.button"),
-                    pick: |settings_content| {
-                        settings_content
-                            .notification_panel
-                            .as_ref()?
-                            .button
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .notification_panel
-                            .get_or_insert_default()
-                            .button = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Notification Panel Dock",
-                description: "Where to dock the notification panel.",
-                field: Box::new(SettingField {
-                    json_path: Some("notification_panel.dock"),
-                    pick: |settings_content| {
-                        settings_content.notification_panel.as_ref()?.dock.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .notification_panel
-                            .get_or_insert_default()
-                            .dock = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Notification Panel Default Width",
-                description: "Default width of the notification panel in pixels.",
-                field: Box::new(SettingField {
-                    json_path: Some("notification_panel.default_width"),
-                    pick: |settings_content| {
-                        settings_content
-                            .notification_panel
-                            .as_ref()?
-                            .default_width
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .notification_panel
-                            .get_or_insert_default()
-                            .default_width = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Show Count Badge",
-                description: "Show a badge on the notification panel icon with the count of unread notifications.",
-                field: Box::new(SettingField {
-                    json_path: Some("notification_panel.show_count_badge"),
-                    pick: |settings_content| {
-                        settings_content
-                            .notification_panel
-                            .as_ref()?
-                            .show_count_badge
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .notification_panel
-                            .get_or_insert_default()
-                            .show_count_badge = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
-    }
-
     fn collaboration_panel_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Collaboration Panel"),
@@ -5737,7 +5664,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 6] {
+    fn agent_panel_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5812,6 +5739,24 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Agent Panel Max Content Width",
+                description: "Maximum content width in pixels. Content will be centered when the panel is wider than this value.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.max_content_width"),
+                    pick: |settings_content| {
+                        settings_content.agent.as_ref()?.max_content_width.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .max_content_width = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]
     }
 
@@ -5823,7 +5768,6 @@ fn panels_page() -> SettingsPage {
             outline_panel_section(),
             git_panel_section(),
             debugger_panel_section(),
-            notification_panel_section(),
             collaboration_panel_section(),
             agent_panel_section(),
         ],
@@ -7242,7 +7186,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 2] {
+    fn general_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7258,10 +7202,23 @@ fn ai_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER | PROJECT,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar Side",
+                description: "Which side of the window the threads sidebar appears on.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.sidebar_side"),
+                    pick: |settings_content| settings_content.agent.as_ref()?.sidebar_side.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.agent.get_or_insert_default().sidebar_side = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]
     }
 
-    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -7275,30 +7232,28 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
         ];
 
-        if cx.has_flag::<AgentV2FeatureFlag>() {
-            items.push(SettingsPageItem::SettingItem(SettingItem {
-                title: "New Thread Location",
-                description: "Whether to start a new thread in the current local project or in a new Git worktree.",
-                field: Box::new(SettingField {
-                    json_path: Some("agent.new_thread_location"),
-                    pick: |settings_content| {
-                        settings_content
-                            .agent
-                            .as_ref()?
-                            .new_thread_location
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .agent
-                            .get_or_insert_default()
-                            .new_thread_location = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }));
-        }
+        items.push(SettingsPageItem::SettingItem(SettingItem {
+            title: "New Thread Location",
+            description: "Whether to start a new thread in the current local project or in a new Git worktree.",
+            field: Box::new(SettingField {
+                json_path: Some("agent.new_thread_location"),
+                pick: |settings_content| {
+                    settings_content
+                        .agent
+                        .as_ref()?
+                        .new_thread_location
+                        .as_ref()
+                },
+                write: |settings_content, value| {
+                    settings_content
+                        .agent
+                        .get_or_insert_default()
+                        .new_thread_location = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }));
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
