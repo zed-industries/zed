@@ -285,6 +285,7 @@ TBD: Centered layout related settings
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
     "max_width_columns": 80,        // Maximum width of minimap
+    "diagnostics": "all",           // Show diagnostics (none, error, warning, information, all)
     "current_line_highlight": null  // Highlight current line (null, line, gutter)
   },
 

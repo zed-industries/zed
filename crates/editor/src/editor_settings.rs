@@ -104,6 +104,7 @@ pub struct Minimap {
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
     pub max_width_columns: num::NonZeroU32,
+    pub diagnostics: ScrollbarDiagnostics,
 }
 
 impl Minimap {
@@ -238,6 +239,7 @@ impl Settings for EditorSettings {
                 thumb_border: minimap.thumb_border.unwrap(),
                 current_line_highlight: minimap.current_line_highlight,
                 max_width_columns: minimap.max_width_columns.unwrap(),
+                diagnostics: minimap.diagnostics.unwrap(),
             },
             gutter: Gutter {
                 min_line_number_digits: gutter.min_line_number_digits.unwrap(),
