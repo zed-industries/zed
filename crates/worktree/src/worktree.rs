@@ -510,13 +510,17 @@ impl Worktree {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
-            let snapshot = Snapshot::new(
+            let mut snapshot = Snapshot::new(
                 WorktreeId::from_proto(worktree.id),
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
                 Path::new(&worktree.abs_path).into(),
                 path_style,
             );
+
+            snapshot.root_repo_common_dir = worktree
+                .root_repo_common_dir
+                .map(|p| SanitizedPath::new_arc(Path::new(&p)));
 
             let background_snapshot = Arc::new(Mutex::new((
                 snapshot.clone(),
@@ -676,6 +680,9 @@ impl Worktree {
             root_name: self.root_name().to_proto(),
             visible: self.is_visible(),
             abs_path: self.abs_path().to_string_lossy().into_owned(),
+            root_repo_common_dir: self
+                .root_repo_common_dir()
+                .map(|p| p.to_string_lossy().into_owned()),
         }
     }
 
@@ -2430,9 +2437,12 @@ impl Snapshot {
         self.entries_by_path.edit(entries_by_path_edits, ());
         self.entries_by_id.edit(entries_by_id_edits, ());
 
-        self.root_repo_common_dir = update
+        if let Some(dir) = update
             .root_repo_common_dir
-            .map(|p| SanitizedPath::new_arc(Path::new(&p)));
+            .map(|p| SanitizedPath::new_arc(Path::new(&p)))
+        {
+            self.root_repo_common_dir = Some(dir);
+        }
 
         self.scan_id = update.scan_id as usize;
         if update.is_last_update {

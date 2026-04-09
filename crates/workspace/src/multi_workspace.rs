@@ -6,8 +6,10 @@ use gpui::{
     actions, deferred, px,
 };
 use project::{DirectoryLister, DisableAiSettings, Project, ProjectGroupKey};
+use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
@@ -22,6 +24,7 @@ use ui::{ContextMenu, right_click_menu};
 
 const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 
+use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
     Panel, Workspace, WorkspaceId, client_side_decorations,
@@ -299,6 +302,7 @@ pub struct MultiWorkspace {
     workspaces: Vec<Entity<Workspace>>,
     active_workspace: ActiveWorkspace,
     project_group_keys: Vec<ProjectGroupKey>,
+    provisional_project_group_keys: HashMap<EntityId, ProjectGroupKey>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
@@ -351,6 +355,7 @@ impl MultiWorkspace {
         Self {
             window_id: window.window_handle().window_id(),
             project_group_keys: Vec::new(),
+            provisional_project_group_keys: HashMap::default(),
             workspaces: Vec::new(),
             active_workspace: ActiveWorkspace::Transient(workspace),
             sidebar: None,
@@ -559,6 +564,16 @@ impl MultiWorkspace {
                         this.add_project_group_key(workspace.read(cx).project_group_key(cx));
                     }
                 }
+                project::Event::WorktreeUpdatedRootRepoCommonDir(_) => {
+                    if let Some(workspace) = workspace.upgrade() {
+                        this.maybe_clear_provisional_project_group_key(&workspace, cx);
+                        this.add_project_group_key(
+                            this.project_group_key_for_workspace(&workspace, cx),
+                        );
+                        this.remove_stale_project_group_keys(cx);
+                        cx.notify();
+                    }
+                }
                 _ => {}
             }
         })
@@ -581,6 +596,53 @@ impl MultiWorkspace {
         }
         // Store newest first so the vec is in "most recently added"
         self.project_group_keys.insert(0, project_group_key);
+    }
+
+    pub fn set_provisional_project_group_key(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        project_group_key: ProjectGroupKey,
+    ) {
+        self.provisional_project_group_keys
+            .insert(workspace.entity_id(), project_group_key.clone());
+        self.add_project_group_key(project_group_key);
+    }
+
+    pub fn project_group_key_for_workspace(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &App,
+    ) -> ProjectGroupKey {
+        self.provisional_project_group_keys
+            .get(&workspace.entity_id())
+            .cloned()
+            .unwrap_or_else(|| workspace.read(cx).project_group_key(cx))
+    }
+
+    fn maybe_clear_provisional_project_group_key(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        cx: &App,
+    ) {
+        let live_key = workspace.read(cx).project_group_key(cx);
+        if self
+            .provisional_project_group_keys
+            .get(&workspace.entity_id())
+            .is_some_and(|key| *key == live_key)
+        {
+            self.provisional_project_group_keys
+                .remove(&workspace.entity_id());
+        }
+    }
+
+    fn remove_stale_project_group_keys(&mut self, cx: &App) {
+        let workspace_keys: HashSet<ProjectGroupKey> = self
+            .workspaces
+            .iter()
+            .map(|workspace| self.project_group_key_for_workspace(workspace, cx))
+            .collect();
+        self.project_group_keys
+            .retain(|key| workspace_keys.contains(key));
     }
 
     pub fn restore_project_group_keys(&mut self, keys: Vec<ProjectGroupKey>) {
@@ -616,7 +678,7 @@ impl MultiWorkspace {
             .map(|key| (key.clone(), Vec::new()))
             .collect::<Vec<_>>();
         for workspace in &self.workspaces {
-            let key = workspace.read(cx).project_group_key(cx);
+            let key = self.project_group_key_for_workspace(workspace, cx);
             if let Some((_, workspaces)) = groups.iter_mut().find(|(k, _)| k == &key) {
                 workspaces.push(workspace.clone());
             }
@@ -629,9 +691,9 @@ impl MultiWorkspace {
         project_group_key: &ProjectGroupKey,
         cx: &App,
     ) -> impl Iterator<Item = &Entity<Workspace>> {
-        self.workspaces
-            .iter()
-            .filter(move |ws| ws.read(cx).project_group_key(cx) == *project_group_key)
+        self.workspaces.iter().filter(move |workspace| {
+            self.project_group_key_for_workspace(workspace, cx) == *project_group_key
+        })
     }
 
     pub fn remove_folder_from_project_group(
@@ -792,12 +854,102 @@ impl MultiWorkspace {
         )
     }
 
-    /// Finds an existing workspace whose root paths exactly match the given path list.
-    pub fn workspace_for_paths(&self, path_list: &PathList, cx: &App) -> Option<Entity<Workspace>> {
+    /// Finds an existing workspace whose root paths and host exactly match.
+    pub fn workspace_for_paths(
+        &self,
+        path_list: &PathList,
+        host: Option<&RemoteConnectionOptions>,
+        cx: &App,
+    ) -> Option<Entity<Workspace>> {
         self.workspaces
             .iter()
-            .find(|ws| PathList::new(&ws.read(cx).root_paths(cx)) == *path_list)
+            .find(|ws| {
+                let key = ws.read(cx).project_group_key(cx);
+                key.host().as_ref() == host
+                    && PathList::new(&ws.read(cx).root_paths(cx)) == *path_list
+            })
             .cloned()
+    }
+
+    /// Finds an existing workspace whose paths match, or creates a new one.
+    ///
+    /// For local projects (`host` is `None`), this delegates to
+    /// [`Self::find_or_create_local_workspace`]. For remote projects, it
+    /// tries an exact path match and, if no existing workspace is found,
+    /// calls `connect_remote` to establish a connection and creates a new
+    /// remote workspace.
+    ///
+    /// The `connect_remote` closure is responsible for any user-facing
+    /// connection UI (e.g. password prompts). It receives the connection
+    /// options and should return a [`Task`] that resolves to the
+    /// [`RemoteClient`] session, or `None` if the connection was
+    /// cancelled.
+    pub fn find_or_create_workspace(
+        &mut self,
+        paths: PathList,
+        host: Option<RemoteConnectionOptions>,
+        provisional_project_group_key: Option<ProjectGroupKey>,
+        connect_remote: impl FnOnce(
+            RemoteConnectionOptions,
+            &mut Window,
+            &mut Context<Self>,
+        ) -> Task<Result<Option<Entity<remote::RemoteClient>>>>
+        + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Workspace>>> {
+        if let Some(workspace) = self.workspace_for_paths(&paths, host.as_ref(), cx) {
+            self.activate(workspace.clone(), window, cx);
+            return Task::ready(Ok(workspace));
+        }
+
+        let Some(connection_options) = host else {
+            return self.find_or_create_local_workspace(paths, window, cx);
+        };
+
+        let app_state = self.workspace().read(cx).app_state().clone();
+        let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+        let connect_task = connect_remote(connection_options.clone(), window, cx);
+        let paths_vec = paths.paths().to_vec();
+
+        cx.spawn(async move |_this, cx| {
+            let session = connect_task
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Remote connection was cancelled"))?;
+
+            let new_project = cx.update(|cx| {
+                Project::remote(
+                    session,
+                    app_state.client.clone(),
+                    app_state.node_runtime.clone(),
+                    app_state.user_store.clone(),
+                    app_state.languages.clone(),
+                    app_state.fs.clone(),
+                    true,
+                    cx,
+                )
+            });
+
+            let window_handle =
+                window_handle.ok_or_else(|| anyhow::anyhow!("Window is not a MultiWorkspace"))?;
+
+            open_remote_project_with_existing_connection(
+                connection_options,
+                new_project,
+                paths_vec,
+                app_state,
+                window_handle,
+                provisional_project_group_key,
+                cx,
+            )
+            .await?;
+
+            window_handle.update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                multi_workspace.add(workspace.clone(), window, cx);
+                workspace
+            })
+        })
     }
 
     /// Finds an existing workspace in this multi-workspace whose paths match,
@@ -810,7 +962,7 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self.workspace_for_paths(&path_list, cx) {
+        if let Some(workspace) = self.workspace_for_paths(&path_list, None, cx) {
             self.activate(workspace.clone(), window, cx);
             return Task::ready(Ok(workspace));
         }
@@ -930,7 +1082,7 @@ impl MultiWorkspace {
     /// Promotes a former transient workspace into the persistent list.
     /// Returns the index of the newly inserted workspace.
     fn promote_transient(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
-        let project_group_key = workspace.read(cx).project().read(cx).project_group_key(cx);
+        let project_group_key = self.project_group_key_for_workspace(&workspace, cx);
         self.add_project_group_key(project_group_key);
         self.workspaces.push(workspace.clone());
         cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
@@ -967,7 +1119,7 @@ impl MultiWorkspace {
         if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
             index
         } else {
-            let project_group_key = workspace.read(cx).project().read(cx).project_group_key(cx);
+            let project_group_key = self.project_group_key_for_workspace(&workspace, cx);
 
             Self::subscribe_to_workspace(&workspace, window, cx);
             self.sync_sidebar_to_workspace(&workspace, cx);

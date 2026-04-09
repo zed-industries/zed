@@ -1894,6 +1894,7 @@ async fn join_project(
             root_name: worktree.root_name.clone(),
             visible: worktree.visible,
             abs_path: worktree.abs_path.clone(),
+            root_repo_common_dir: None,
         })
         .collect::<Vec<_>>();
 
