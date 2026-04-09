@@ -4727,6 +4727,36 @@ pub fn dump_workspace_info(
         )
         .ok();
 
+        // project_group_key_for_workspace internally reads the workspace,
+        // so we can only call it for workspaces other than this_entity
+        // (which is already being updated).
+        if let Some(mw) = &multi_workspace {
+            if *ws == this_entity {
+                let workspace_key = workspace.project_group_key(cx);
+                writeln!(output, "ProjectGroupKey: {workspace_key:?}").ok();
+            } else {
+                let effective_key = mw.read(cx).project_group_key_for_workspace(ws, cx);
+                let workspace_key = ws.read(cx).project_group_key(cx);
+                if effective_key != workspace_key {
+                    writeln!(
+                        output,
+                        "ProjectGroupKey (multi_workspace): {effective_key:?}"
+                    )
+                    .ok();
+                    writeln!(
+                        output,
+                        "ProjectGroupKey (workspace, DISAGREES): {workspace_key:?}"
+                    )
+                    .ok();
+                } else {
+                    writeln!(output, "ProjectGroupKey: {effective_key:?}").ok();
+                }
+            }
+        } else {
+            let workspace_key = workspace.project_group_key(cx);
+            writeln!(output, "ProjectGroupKey: {workspace_key:?}").ok();
+        }
+
         // The action handler is already inside an update on `this_entity`,
         // so we must avoid a nested read/update on that same entity.
         if *ws == this_entity {
