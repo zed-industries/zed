@@ -367,6 +367,8 @@ messages!(
     (KillKernel, Background),
     (GetRemoteProfilingData, Background),
     (GetRemoteProfilingDataResponse, Background),
+    (GetInitialGraphCommit, Background),
+    (GetInitialGraphCommitResponse, Background),
 );
 
 request_messages!(
@@ -570,6 +572,7 @@ request_messages!(
     (SpawnKernel, SpawnKernelResponse),
     (KillKernel, Ack),
     (GetRemoteProfilingData, GetRemoteProfilingDataResponse),
+    (GetInitialGraphCommit, GetInitialGraphCommitResponse),
 );
 
 lsp_messages!(
@@ -762,6 +765,7 @@ entity_messages!(
     FindSearchCandidatesCancelled,
     DownloadFileByPath,
     GetRemoteProfilingData
+    GetInitialGraphCommit,
 );
 
 entity_messages!(
