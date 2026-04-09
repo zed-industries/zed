@@ -1,10 +1,12 @@
 use super::Axis;
 use crate::{
-    Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
+    Autoscroll, Editor, EditorMode, EditorSettings, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
     ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow, scroll::ScrollOffset,
 };
 use gpui::{Context, Point, Window};
+use settings::Settings;
+use text::ToOffset;
 
 impl Editor {
     pub fn next_screen(&mut self, _: &NextScreen, window: &mut Window, cx: &mut Context<Editor>) {
@@ -73,18 +75,37 @@ impl Editor {
     ) {
         let display_snapshot = self.display_snapshot(cx);
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
-        let new_screen_top = self
-            .selections
-            .newest_display(&display_snapshot)
-            .head()
-            .row()
-            .0;
+        let selection_head = self.selections.newest_display(&display_snapshot).head();
+
+        let sticky_headers_len = if EditorSettings::get_global(cx).sticky_scroll.enabled
+            && let Some(buffer_snapshot) = display_snapshot.buffer_snapshot().as_singleton()
+        {
+            let select_head_point =
+                rope::Point::new(selection_head.to_point(&display_snapshot).row, 0);
+            buffer_snapshot
+                .outline_items_containing(select_head_point..select_head_point, false, None)
+                .iter()
+                .filter(|outline| {
+                    outline.range.start.offset
+                        < select_head_point.to_offset(&buffer_snapshot) as u32
+                })
+                .collect::<Vec<_>>()
+                .len()
+        } else {
+            0
+        } as u32;
+
+        let new_screen_top = selection_head.row().0;
         let header_offset = display_snapshot
             .buffer_snapshot()
             .show_headers()
             .then(|| display_snapshot.buffer_header_height())
             .unwrap_or(0);
-        let new_screen_top = new_screen_top.saturating_sub(scroll_margin_rows + header_offset);
+
+        // If the number of sticky headers exceeds the vertical_scroll_margin,
+        // we need to adjust the scroll top a bit further
+        let adjustment = scroll_margin_rows.max(sticky_headers_len) + header_offset;
+        let new_screen_top = new_screen_top.saturating_sub(adjustment);
         self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
     }
 

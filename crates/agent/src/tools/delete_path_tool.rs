@@ -2,7 +2,9 @@ use super::tool_permissions::{
     SensitiveSettingsKind, authorize_symlink_access, canonicalize_worktree_roots,
     detect_symlink_escape, sensitive_settings_kind,
 };
-use crate::{AgentTool, ToolCallEventStream, ToolPermissionDecision, decide_permission_for_path};
+use crate::{
+    AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision, decide_permission_for_path,
+};
 use action_log::ActionLog;
 use agent_client_protocol::ToolKind;
 use agent_settings::AgentSettings;
@@ -71,22 +73,27 @@ impl AgentTool for DeletePathTool {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        input: ToolInput<Self::Input>,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
-        let path = input.path;
-
-        let settings = AgentSettings::get_global(cx);
-        let decision = decide_permission_for_path(Self::NAME, &path, settings);
-
-        if let ToolPermissionDecision::Deny(reason) = decision {
-            return Task::ready(Err(reason));
-        }
-
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |cx| {
+            let input = input
+                .recv()
+                .await
+                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let path = input.path;
+
+            let decision = cx.update(|cx| {
+                decide_permission_for_path(Self::NAME, &path, AgentSettings::get_global(cx))
+            });
+
+            if let ToolPermissionDecision::Deny(reason) = decision {
+                return Err(reason);
+            }
+
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
@@ -278,9 +285,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                DeletePathToolInput {
+                ToolInput::resolved(DeletePathToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -294,7 +301,10 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         let result = task.await;
@@ -345,9 +355,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                DeletePathToolInput {
+                ToolInput::resolved(DeletePathToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -405,9 +415,9 @@ mod tests {
         let (event_stream, mut event_rx) = ToolCallEventStream::test();
         let task = cx.update(|cx| {
             tool.run(
-                DeletePathToolInput {
+                ToolInput::resolved(DeletePathToolInput {
                     path: "project/link_to_external".into(),
-                },
+                }),
                 event_stream,
                 cx,
             )
@@ -421,13 +431,16 @@ mod tests {
         );
 
         auth.response
-            .send(acp::PermissionOptionId::new("allow"))
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
             .unwrap();
 
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Expected a single authorization prompt",
         );
@@ -488,9 +501,9 @@ mod tests {
         let result = cx
             .update(|cx| {
                 tool.run(
-                    DeletePathToolInput {
+                    ToolInput::resolved(DeletePathToolInput {
                         path: "project/link_to_external".into(),
-                    },
+                    }),
                     event_stream,
                     cx,
                 )
@@ -500,8 +513,8 @@ mod tests {
         assert!(result.is_err(), "Tool should fail when policy denies");
         assert!(
             !matches!(
-                event_rx.try_next(),
-                Ok(Some(Ok(crate::ThreadEvent::ToolCallAuthorization(_))))
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
         );

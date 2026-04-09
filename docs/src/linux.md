@@ -65,7 +65,7 @@ We'd love your help making Zed available for everyone. If Zed is not yet availab
 
 The packages in this section provide binary installs for Zed but are not official packages within the associated distributions. These packages are maintained by community members and as such a higher level of caution should be taken when installing them.
 
-#### Debian
+#### Debian and Ubuntu
 
 Zed is available in [this community-maintained repository](https://debian.griffo.io/).
 

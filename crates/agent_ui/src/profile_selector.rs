@@ -1,12 +1,14 @@
-use crate::{CycleModeSelector, ManageProfiles, ToggleProfileSelector};
+use crate::{
+    CycleModeSelector, ManageProfiles, ToggleProfileSelector, ui::documentation_aside_side,
+};
 use agent_settings::{
     AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, Context, DismissEvent, Entity, FocusHandle,
-    Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
+    Action, AnyElement, AnyView, App, BackgroundExecutor, Context, DismissEvent, Entity,
+    FocusHandle, Focusable, ForegroundExecutor, SharedString, Subscription, Task, Window,
 };
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use settings::{Settings as _, SettingsStore, update_settings_file};
@@ -15,8 +17,8 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::{
-    DocumentationAside, DocumentationSide, HighlightedLabel, KeyBinding, LabelSize, ListItem,
-    ListItemSpacing, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    DocumentationAside, HighlightedLabel, KeyBinding, LabelSize, ListItem, ListItemSpacing,
+    PopoverMenuHandle, Tooltip, prelude::*,
 };
 
 /// Trait for types that can provide and manage agent profiles
@@ -90,6 +92,7 @@ impl ProfileSelector {
 
         if let Some((next_profile_id, _)) = profiles.get_index(next_index) {
             self.provider.set_profile(next_profile_id.clone(), cx);
+            cx.notify();
         }
     }
 
@@ -177,36 +180,34 @@ impl Render for ProfileSelector {
         let trigger_button = Button::new("profile-selector", selected_profile)
             .label_size(LabelSize::Small)
             .color(Color::Muted)
-            .icon(icon)
-            .icon_size(IconSize::XSmall)
-            .icon_position(IconPosition::End)
-            .icon_color(Color::Muted)
-            .selected_style(ButtonStyle::Tinted(TintColor::Accent));
+            .end_icon(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
+
+        let tooltip: Box<dyn Fn(&mut Window, &mut App) -> AnyView> = Box::new(Tooltip::element({
+            move |_window, cx| {
+                let container = || h_flex().gap_1().justify_between();
+                v_flex()
+                    .gap_1()
+                    .child(
+                        container()
+                            .child(Label::new("Change Profile"))
+                            .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
+                    )
+                    .child(
+                        container()
+                            .pt_1()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(Label::new("Cycle Through Profiles"))
+                            .child(KeyBinding::for_action(&CycleModeSelector, cx)),
+                    )
+                    .into_any()
+            }
+        }));
 
         PickerPopoverMenu::new(
             picker,
             trigger_button,
-            Tooltip::element({
-                move |_window, cx| {
-                    let container = || h_flex().gap_1().justify_between();
-                    v_flex()
-                        .gap_1()
-                        .child(
-                            container()
-                                .child(Label::new("Change Profile"))
-                                .child(KeyBinding::for_action(&ToggleProfileSelector, cx)),
-                        )
-                        .child(
-                            container()
-                                .pt_1()
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .child(Label::new("Cycle Through Profiles"))
-                                .child(KeyBinding::for_action(&CycleModeSelector, cx)),
-                        )
-                        .into_any()
-                }
-            }),
+            tooltip,
             gpui::Corner::BottomRight,
             cx,
         )
@@ -443,12 +444,7 @@ impl PickerDelegate for ProfilePickerDelegate {
         cx.notify();
     }
 
-    fn can_select(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
         match self.filtered_entries.get(ix) {
             Some(ProfilePickerEntry::Profile(_)) => true,
             Some(ProfilePickerEntry::Header(_)) | None => false,
@@ -635,13 +631,7 @@ impl PickerDelegate for ProfilePickerDelegate {
         let candidate = self.candidates.get(entry.candidate_index)?;
         let docs_aside = Self::documentation(candidate)?.to_string();
 
-        let settings = AgentSettings::get_global(cx);
-        let side = match settings.dock {
-            settings::DockPosition::Left => DocumentationSide::Right,
-            settings::DockPosition::Bottom | settings::DockPosition::Right => {
-                DocumentationSide::Left
-            }
-        };
+        let side = documentation_aside_side(cx);
 
         Some(DocumentationAside {
             side,

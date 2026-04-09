@@ -73,6 +73,34 @@ impl Label {
     gpui::margin_style_methods!({
         visibility: pub
     });
+
+    pub fn flex_1(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self.style().flex_shrink = Some(1.);
+        self.style().flex_basis = Some(gpui::relative(0.).into());
+        self
+    }
+
+    pub fn flex_none(mut self) -> Self {
+        self.style().flex_grow = Some(0.);
+        self.style().flex_shrink = Some(0.);
+        self
+    }
+
+    pub fn flex_grow(mut self) -> Self {
+        self.style().flex_grow = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink(mut self) -> Self {
+        self.style().flex_shrink = Some(1.);
+        self
+    }
+
+    pub fn flex_shrink_0(mut self) -> Self {
+        self.style().flex_shrink = Some(0.);
+        self
+    }
 }
 
 impl LabelCommon for Label {

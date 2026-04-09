@@ -6,8 +6,9 @@ use crate::{
     ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
     buffer_search::registrar::WithResultsOrExternalQuery,
     search_bar::{
-        ActionButtonState, alignment_element, filter_search_results_input, input_base_styles,
-        render_action_button, render_text_input,
+        ActionButtonState, HistoryNavigationDirection, alignment_element,
+        filter_search_results_input, input_base_styles, render_action_button, render_text_input,
+        should_navigate_history,
     },
 };
 use any_vec::AnyVec;
@@ -15,12 +16,13 @@ use collections::HashMap;
 use editor::{
     Editor, EditorSettings, MultiBufferOffset, SplittableEditor, ToggleSplitDiff,
     actions::{Backtab, FoldAll, Tab, ToggleFoldAll, UnfoldAll},
+    scroll::Autoscroll,
 };
 use futures::channel::oneshot;
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
-    IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
-    WeakEntity, Window, div,
+    Action as _, App, ClickEvent, Context, Entity, EventEmitter, Focusable,
+    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
+    Styled, Subscription, Task, WeakEntity, Window, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -31,7 +33,9 @@ use project::{
 use fs::Fs;
 use settings::{DiffViewStyle, Settings, update_settings_file};
 use std::{any::TypeId, sync::Arc};
-use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
+use zed_actions::{
+    OpenSettingsAt, outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath,
+};
 
 use ui::{
     BASE_REM_SIZE_IN_PX, IconButtonShape, PlatformStyle, TextSize, Tooltip, prelude::*,
@@ -108,82 +112,94 @@ impl Render for BufferSearchBar {
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
                 .map(|splittable_editor| {
-                    let is_split = splittable_editor.read(cx).is_split();
-                    let focus_handle = splittable_editor.focus_handle(cx);
+                    let editor_ref = splittable_editor.read(cx);
+                    let diff_view_style = editor_ref.diff_view_style();
+
+                    let is_split_set = diff_view_style == DiffViewStyle::Split;
+                    let is_split_active = editor_ref.is_split();
+                    let min_columns =
+                        EditorSettings::get_global(cx).minimum_split_diff_width as u32;
+
+                    let split_icon = if is_split_set && !is_split_active {
+                        IconName::DiffSplitAuto
+                    } else {
+                        IconName::DiffSplit
+                    };
+
                     h_flex()
                         .gap_1()
                         .child(
                             IconButton::new("diff-unified", IconName::DiffUnified)
-                                .shape(IconButtonShape::Square)
-                                .toggle_state(!is_split)
-                                .tooltip(Tooltip::element(move |_, cx| {
-                                    v_flex()
-                                        .gap_1()
-                                        .child(Label::new("Unified"))
-                                        .child(
-                                            h_flex()
-                                                .gap_0p5()
-                                                .text_sm()
-                                                .text_color(Color::Muted.color(cx))
-                                                .children(render_modifiers(
-                                                    &gpui::Modifiers::secondary_key(),
-                                                    PlatformStyle::platform(),
-                                                    None,
-                                                    Some(TextSize::Default.rems(cx).into()),
-                                                    false,
-                                                ))
-                                                .child("click to set as default"),
-                                        )
-                                        .into_any()
-                                }))
+                                .icon_size(IconSize::Small)
+                                .toggle_state(diff_view_style == DiffViewStyle::Unified)
+                                .tooltip(Tooltip::text("Unified"))
                                 .on_click({
-                                    let focus_handle = focus_handle.clone();
+                                    let splittable_editor = splittable_editor.downgrade();
                                     move |_, window, cx| {
-                                        if window.modifiers().secondary() {
-                                            update_settings_file(
-                                                <dyn Fs>::global(cx),
-                                                cx,
-                                                |settings, _| {
-                                                    settings.editor.diff_view_style =
-                                                        Some(DiffViewStyle::Unified);
-                                                },
-                                            );
-                                        }
-                                        if is_split {
-                                            focus_handle.focus(window, cx);
-                                            window
-                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                        update_settings_file(
+                                            <dyn Fs>::global(cx),
+                                            cx,
+                                            |settings, _| {
+                                                settings.editor.diff_view_style =
+                                                    Some(DiffViewStyle::Unified);
+                                            },
+                                        );
+                                        if diff_view_style == DiffViewStyle::Split {
+                                            splittable_editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_split(
+                                                        &ToggleSplitDiff,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
                                         }
                                     }
                                 }),
                         )
                         .child(
-                            IconButton::new("diff-split", IconName::DiffSplit)
-                                .shape(IconButtonShape::Square)
-                                .toggle_state(is_split)
+                            IconButton::new("diff-split", split_icon)
+                                .toggle_state(diff_view_style == DiffViewStyle::Split)
+                                .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::element(move |_, cx| {
+                                    let message = if is_split_set && !is_split_active {
+                                        format!("Split when wider than {} columns", min_columns)
+                                            .into()
+                                    } else {
+                                        SharedString::from("Split")
+                                    };
+
                                     v_flex()
-                                        .gap_1()
-                                        .child(Label::new("Split"))
+                                        .child(message)
                                         .child(
                                             h_flex()
                                                 .gap_0p5()
-                                                .text_sm()
+                                                .text_ui_sm(cx)
                                                 .text_color(Color::Muted.color(cx))
                                                 .children(render_modifiers(
                                                     &gpui::Modifiers::secondary_key(),
                                                     PlatformStyle::platform(),
                                                     None,
-                                                    Some(TextSize::Default.rems(cx).into()),
+                                                    Some(TextSize::Small.rems(cx).into()),
                                                     false,
                                                 ))
-                                                .child("click to set as default"),
+                                                .child("click to change min width"),
                                         )
                                         .into_any()
                                 }))
                                 .on_click({
+                                    let splittable_editor = splittable_editor.downgrade();
                                     move |_, window, cx| {
                                         if window.modifiers().secondary() {
+                                            window.dispatch_action(
+                                                OpenSettingsAt {
+                                                    path: "minimum_split_diff_width".to_string(),
+                                                }
+                                                .boxed_clone(),
+                                                cx,
+                                            );
+                                        } else {
                                             update_settings_file(
                                                 <dyn Fs>::global(cx),
                                                 cx,
@@ -192,11 +208,17 @@ impl Render for BufferSearchBar {
                                                         Some(DiffViewStyle::Split);
                                                 },
                                             );
-                                        }
-                                        if !is_split {
-                                            focus_handle.focus(window, cx);
-                                            window
-                                                .dispatch_action(ToggleSplitDiff.boxed_clone(), cx);
+                                            if diff_view_style == DiffViewStyle::Unified {
+                                                splittable_editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.toggle_split(
+                                                            &ToggleSplitDiff,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
                                         }
                                     }
                                 }),
@@ -224,7 +246,7 @@ impl Render for BufferSearchBar {
 
             let collapse_expand_icon_button = |id| {
                 IconButton::new(id, icon)
-                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
                     .tooltip(move |_, cx| {
                         Tooltip::for_action_in(
                             tooltip_label,
@@ -233,9 +255,9 @@ impl Render for BufferSearchBar {
                             cx,
                         )
                     })
-                    .on_click(|_event, window, cx| {
-                        window.dispatch_action(ToggleFoldAll.boxed_clone(), cx)
-                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.toggle_fold_all(&ToggleFoldAll, window, cx);
+                    }))
             };
 
             if self.dismissed {
@@ -269,6 +291,7 @@ impl Render for BufferSearchBar {
             regex,
             replacement,
             selection,
+            select_all,
             find_in_results,
         } = self.supported_options(cx);
 
@@ -327,13 +350,11 @@ impl Render for BufferSearchBar {
         };
 
         let query_column = input_style
-            .child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .overflow_hidden()
-                    .child(render_text_input(&self.query_editor, color_override, cx)),
-            )
+            .child(div().flex_1().min_w_0().py_1().child(render_text_input(
+                &self.query_editor,
+                color_override,
+                cx,
+            )))
             .child(
                 h_flex()
                     .flex_none()
@@ -441,14 +462,16 @@ impl Render for BufferSearchBar {
                         ))
                     });
 
-                el.child(render_action_button(
-                    "buffer-search-nav-button",
-                    IconName::SelectAll,
-                    Default::default(),
-                    "Select All Matches",
-                    &SelectAllMatches,
-                    query_focus,
-                ))
+                el.when(select_all, |el| {
+                    el.child(render_action_button(
+                        "buffer-search-nav-button",
+                        IconName::SelectAll,
+                        Default::default(),
+                        "Select All Matches",
+                        &SelectAllMatches,
+                        query_focus.clone(),
+                    ))
+                })
                 .child(matches_column)
             })
             .when(find_in_results, |el| {
@@ -474,39 +497,42 @@ impl Render for BufferSearchBar {
             .child(query_column)
             .child(mode_column);
 
-        let replace_line =
-            should_show_replace_input.then(|| {
-                let replace_column = input_base_styles(replacement_border)
-                    .child(render_text_input(&self.replacement_editor, None, cx));
-                let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
+        let replace_line = should_show_replace_input.then(|| {
+            let replace_column = input_base_styles(replacement_border).child(
+                div()
+                    .flex_1()
+                    .py_1()
+                    .child(render_text_input(&self.replacement_editor, None, cx)),
+            );
+            let focus_handle = self.replacement_editor.read(cx).focus_handle(cx);
 
-                let replace_actions = h_flex()
-                    .min_w_64()
-                    .gap_1()
-                    .child(render_action_button(
-                        "buffer-search-replace-button",
-                        IconName::ReplaceNext,
-                        Default::default(),
-                        "Replace Next Match",
-                        &ReplaceNext,
-                        focus_handle.clone(),
-                    ))
-                    .child(render_action_button(
-                        "buffer-search-replace-button",
-                        IconName::ReplaceAll,
-                        Default::default(),
-                        "Replace All Matches",
-                        &ReplaceAll,
-                        focus_handle,
-                    ));
+            let replace_actions = h_flex()
+                .min_w_64()
+                .gap_1()
+                .child(render_action_button(
+                    "buffer-search-replace-button",
+                    IconName::ReplaceNext,
+                    Default::default(),
+                    "Replace Next Match",
+                    &ReplaceNext,
+                    focus_handle.clone(),
+                ))
+                .child(render_action_button(
+                    "buffer-search-replace-button",
+                    IconName::ReplaceAll,
+                    Default::default(),
+                    "Replace All Matches",
+                    &ReplaceAll,
+                    focus_handle,
+                ));
 
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .when(has_collapse_button, |this| this.child(alignment_element()))
-                    .child(replace_column)
-                    .child(replace_actions)
-            });
+            h_flex()
+                .w_full()
+                .gap_2()
+                .when(has_collapse_button, |this| this.child(alignment_element()))
+                .child(replace_column)
+                .child(replace_actions)
+        });
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
@@ -821,13 +847,14 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let query_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
+            let mut editor = Editor::auto_height(1, 4, window, cx);
             editor.set_use_autoclose(false);
+            editor.set_use_selection_highlight(false);
             editor
         });
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let replacement_editor = cx.new(|cx| Editor::auto_height(1, 4, window, cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
@@ -963,7 +990,9 @@ impl BufferSearchBar {
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;
-                if deploy.replace_enabled && handle.is_focused(window) {
+
+                let has_seed_text = self.query_suggestion(window, cx).is_some();
+                if deploy.replace_enabled && has_seed_text {
                     handle = self.replacement_editor.focus_handle(cx);
                     select_query = false;
                 };
@@ -1176,6 +1205,7 @@ impl BufferSearchBar {
                     let len = query_buffer.len(cx);
                     query_buffer.edit([(MultiBufferOffset(0)..len, query)], None, cx);
                 });
+                query_editor.request_autoscroll(Autoscroll::fit(), cx);
             });
             self.set_search_options(options, cx);
             self.clear_matches(window, cx);
@@ -1694,15 +1724,19 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !should_navigate_history(&self.query_editor, HistoryNavigationDirection::Next, cx) {
+            cx.propagate();
+            return;
+        }
+
         if let Some(new_query) = self
             .search_history
             .next(&mut self.search_history_cursor)
             .map(str::to_string)
         {
             drop(self.search(&new_query, Some(self.search_options), false, window, cx));
-        } else {
-            self.search_history_cursor.reset();
-            drop(self.search("", Some(self.search_options), false, window, cx));
+        } else if let Some(draft) = self.search_history_cursor.take_draft() {
+            drop(self.search(&draft, Some(self.search_options), false, window, cx));
         }
     }
 
@@ -1712,6 +1746,11 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !should_navigate_history(&self.query_editor, HistoryNavigationDirection::Previous, cx) {
+            cx.propagate();
+            return;
+        }
+
         if self.query(cx).is_empty()
             && let Some(new_query) = self
                 .search_history
@@ -1722,9 +1761,10 @@ impl BufferSearchBar {
             return;
         }
 
+        let current_query = self.query(cx);
         if let Some(new_query) = self
             .search_history
-            .previous(&mut self.search_history_cursor)
+            .previous(&mut self.search_history_cursor, &current_query)
             .map(str::to_string)
         {
             drop(self.search(&new_query, Some(self.search_options), false, window, cx));
@@ -1864,7 +1904,7 @@ mod tests {
 
     use super::*;
     use editor::{
-        DisplayPoint, Editor, ExcerptRange, MultiBuffer, SearchSettings, SelectionEffects,
+        DisplayPoint, Editor, MultiBuffer, PathKey, SearchSettings, SelectionEffects,
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
@@ -1880,7 +1920,7 @@ mod tests {
             cx.set_global(store);
             editor::init(cx);
 
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             crate::init(cx);
         });
     }
@@ -1922,14 +1962,18 @@ mod tests {
             let mut buffer = MultiBuffer::new(language::Capability::ReadWrite);
 
             //[ExcerptRange::new(Point::new(0, 0)..Point::new(2, 0))]
-            buffer.push_excerpts(
+            buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
                 buffer1,
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(3, 0))],
+                [Point::new(0, 0)..Point::new(3, 0)],
+                0,
                 cx,
             );
-            buffer.push_excerpts(
+            buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
                 buffer2,
-                [ExcerptRange::new(Point::new(0, 0)..Point::new(1, 0))],
+                [Point::new(0, 0)..Point::new(1, 0)],
+                0,
                 cx,
             );
 
@@ -2702,13 +2746,13 @@ mod tests {
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
-        // Next history query after the latest should set the query to the empty string.
+        // Next history query after the latest should preserve the current query.
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.next_history_query(&NextHistoryQuery, window, cx);
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -2716,17 +2760,17 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.query(cx), "c");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
-        // First previous query for empty current query should set the query to the latest.
+        // Previous query should navigate backwards through history.
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "c");
+            assert_eq!(search_bar.query(cx), "b");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
@@ -2736,7 +2780,7 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "b");
+            assert_eq!(search_bar.query(cx), "a");
             assert_eq!(search_bar.search_options, SearchOptions::CASE_SENSITIVE);
         });
 
@@ -2817,8 +2861,68 @@ mod tests {
         });
         cx.background_executor.run_until_parked();
         search_bar.update(cx, |search_bar, cx| {
-            assert_eq!(search_bar.query(cx), "");
+            assert_eq!(search_bar.query(cx), "ba");
             assert_eq!(search_bar.search_options, SearchOptions::NONE);
+        });
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_search_query_history_autoscroll(cx: &mut TestAppContext) {
+        let (_editor, search_bar, cx) = init_test(cx);
+
+        // Add a long multi-line query that exceeds the editor's max
+        // visible height (4 lines), then a short query.
+        let long_query = "line1\nline2\nline3\nline4\nline5\nline6";
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search(long_query, None, true, window, cx)
+            })
+            .await
+            .unwrap();
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("short", None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        // Navigate back to the long entry. Since "short" is single-line,
+        // the history navigation is allowed.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.previous_history_query(&PreviousHistoryQuery, window, cx);
+        });
+        cx.background_executor.run_until_parked();
+        search_bar.update(cx, |search_bar, cx| {
+            assert_eq!(search_bar.query(cx), long_query);
+        });
+
+        // The cursor should be scrolled into view despite the content
+        // exceeding the editor's max visible height.
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            let snapshot = search_bar
+                .query_editor
+                .update(cx, |editor, cx| editor.snapshot(window, cx));
+            let cursor_row = search_bar
+                .query_editor
+                .read(cx)
+                .selections
+                .newest_display(&snapshot)
+                .head()
+                .row();
+            let scroll_top = search_bar
+                .query_editor
+                .update(cx, |editor, cx| editor.scroll_position(cx).y);
+            let visible_lines = search_bar
+                .query_editor
+                .read(cx)
+                .visible_line_count()
+                .unwrap_or(0.0);
+            let scroll_bottom = scroll_top + visible_lines;
+            assert!(
+                (cursor_row.0 as f64) < scroll_bottom,
+                "cursor row {cursor_row:?} should be visible (scroll range {scroll_top}..{scroll_bottom})"
+            );
         });
     }
 
@@ -3100,6 +3204,47 @@ mod tests {
         .await;
     }
 
+    #[gpui::test]
+    async fn test_deploy_replace_focuses_replacement_editor(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_display_ranges([
+                    DisplayPoint::new(DisplayRow(0), 8)..DisplayPoint::new(DisplayRow(0), 16)
+                ])
+            });
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.deploy(
+                &Deploy {
+                    focus: true,
+                    replace_enabled: true,
+                    selection_search_enabled: false,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            assert!(
+                search_bar
+                    .replacement_editor
+                    .focus_handle(cx)
+                    .is_focused(window),
+                "replacement editor should be focused when deploying replace with a selection",
+            );
+            assert!(
+                !search_bar.query_editor.focus_handle(cx).is_focused(window),
+                "search editor should not be focused when replacement editor is focused",
+            );
+        });
+    }
+
     #[perf]
     #[gpui::test]
     async fn test_find_matches_in_selections_singleton_buffer_multiple_selections(
@@ -3265,17 +3410,15 @@ mod tests {
 
         assert_eq!(initial_location, ToolbarItemLocation::Secondary);
 
-        let mut events = cx.events(&search_bar);
+        let mut events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
 
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.dismiss(&Dismiss, window, cx);
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::Hidden
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Hidden))
         );
 
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -3283,10 +3426,8 @@ mod tests {
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::Secondary
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Secondary))
         );
     }
 
@@ -3301,17 +3442,15 @@ mod tests {
 
         assert_eq!(initial_location, ToolbarItemLocation::PrimaryLeft);
 
-        let mut events = cx.events(&search_bar);
+        let mut events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
 
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.dismiss(&Dismiss, window, cx);
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::PrimaryLeft
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::PrimaryLeft))
         );
 
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -3319,10 +3458,8 @@ mod tests {
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::PrimaryLeft
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::PrimaryLeft))
         );
     }
 
@@ -3341,17 +3478,15 @@ mod tests {
 
         assert_eq!(initial_location, ToolbarItemLocation::Hidden);
 
-        let mut events = cx.events(&search_bar);
+        let mut events = cx.events::<ToolbarItemEvent, BufferSearchBar>(&search_bar);
 
         search_bar.update_in(cx, |search_bar, window, cx| {
             search_bar.dismiss(&Dismiss, window, cx);
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::Hidden
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Hidden))
         );
 
         search_bar.update_in(cx, |search_bar, window, cx| {
@@ -3359,10 +3494,8 @@ mod tests {
         });
 
         assert_eq!(
-            events.try_next().unwrap(),
-            Some(ToolbarItemEvent::ChangeLocation(
-                ToolbarItemLocation::Secondary
-            ))
+            events.try_recv().unwrap(),
+            (ToolbarItemEvent::ChangeLocation(ToolbarItemLocation::Secondary))
         );
     }
 
@@ -3415,7 +3548,16 @@ mod tests {
 
         // Manually unfold one buffer (simulating a chevron click)
         let first_buffer_id = editor.read_with(cx, |editor, cx| {
-            editor.buffer().read(cx).excerpt_buffer_ids()[0]
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .nth(0)
+                .unwrap()
+                .context
+                .start
+                .buffer_id
         });
         editor.update_in(cx, |editor, _window, cx| {
             editor.unfold_buffer(first_buffer_id, cx);
@@ -3429,7 +3571,16 @@ mod tests {
 
         // Manually unfold the second buffer too
         let second_buffer_id = editor.read_with(cx, |editor, cx| {
-            editor.buffer().read(cx).excerpt_buffer_ids()[1]
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .excerpts()
+                .nth(1)
+                .unwrap()
+                .context
+                .start
+                .buffer_id
         });
         editor.update_in(cx, |editor, _window, cx| {
             editor.unfold_buffer(second_buffer_id, cx);

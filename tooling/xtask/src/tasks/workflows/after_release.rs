@@ -123,7 +123,7 @@ fn publish_winget() -> NamedJob {
                 "X-GitHub-Api-Version" = "2022-11-28"
             }
             $body = @{ branch = "master" } | ConvertTo-Json
-            $uri = "https://api.github.com/repos/${{ github.repository_owner }}/winget-pkgs/merge-upstream"
+            $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY_OWNER/winget-pkgs/merge-upstream"
             try {
                 Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $body -ContentType "application/json"
                 Write-Host "Successfully synced winget-pkgs fork"

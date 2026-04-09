@@ -246,6 +246,7 @@ async fn test_first_line_pattern(cx: &mut TestAppContext) {
         matcher: LanguageMatcher {
             path_suffixes: vec!["js".into()],
             first_line_pattern: Some(Regex::new(r"\bnode\b").unwrap()),
+            ..LanguageMatcher::default()
         },
         ..Default::default()
     });
@@ -458,15 +459,18 @@ fn test_edit_events(cx: &mut gpui::App) {
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
         vec![
-            BufferEvent::Edited,
+            BufferEvent::Edited { is_local: true },
             BufferEvent::DirtyChanged,
-            BufferEvent::Edited,
-            BufferEvent::Edited,
+            BufferEvent::Edited { is_local: true },
+            BufferEvent::Edited { is_local: true },
         ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
+        vec![
+            BufferEvent::Edited { is_local: false },
+            BufferEvent::DirtyChanged
+        ]
     );
 
     buffer1.update(cx, |buffer, cx| {
@@ -481,11 +485,17 @@ fn test_edit_events(cx: &mut gpui::App) {
     });
     assert_eq!(
         mem::take(&mut *buffer_1_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged,]
+        vec![
+            BufferEvent::Edited { is_local: true },
+            BufferEvent::DirtyChanged,
+        ]
     );
     assert_eq!(
         mem::take(&mut *buffer_2_events.lock()),
-        vec![BufferEvent::Edited, BufferEvent::DirtyChanged]
+        vec![
+            BufferEvent::Edited { is_local: false },
+            BufferEvent::DirtyChanged
+        ]
     );
 }
 
@@ -3237,7 +3247,7 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
 async fn test_preview_edits(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init_settings(cx, |_| {});
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
     });
 
     let insertion_style = HighlightStyle {
@@ -4092,7 +4102,13 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     let snapshot = buffer.read(cx).snapshot();
 
     // Get all chunks and verify their bitmaps
-    let chunks = snapshot.chunks(0..snapshot.len(), false);
+    let chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        },
+    );
 
     for chunk in chunks {
         let chunk_text = chunk.text;

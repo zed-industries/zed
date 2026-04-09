@@ -28,7 +28,7 @@ pub fn main() {
         let language_registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
         let fs = fs::FakeFs::new(cx.background_executor().clone());
         languages::init(language_registry, fs, node_runtime, cx);
-        theme::init(LoadThemes::JustBase, cx);
+        theme_settings::init(LoadThemes::JustBase, cx);
         Assets.load_fonts(cx).unwrap();
 
         cx.activate(true);

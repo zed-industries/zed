@@ -78,6 +78,7 @@ pub trait Along {
     Deserialize,
     JsonSchema,
     Hash,
+    Neg,
 )]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
@@ -179,12 +180,6 @@ impl<T: Clone + Debug + Default + PartialEq> Along for Point<T> {
                 y: f(self.y.clone()),
             },
         }
-    }
-}
-
-impl<T: Clone + Debug + Default + PartialEq + Negate> Negate for Point<T> {
-    fn negate(self) -> Self {
-        self.map(Negate::negate)
     }
 }
 
@@ -393,7 +388,9 @@ impl<T: Clone + Debug + Default + PartialEq + Display> Display for Point<T> {
 ///
 /// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
 /// It is commonly used to specify dimensions for elements in a UI, such as a window or element.
-#[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
+#[derive(
+    Add, Clone, Copy, Default, Deserialize, Div, Hash, Neg, PartialEq, Refineable, Serialize, Sub,
+)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Size<T: Clone + Debug + Default + PartialEq> {
@@ -594,34 +591,6 @@ where
             } else {
                 self.height.clone()
             },
-        }
-    }
-}
-
-impl<T> Sub for Size<T>
-where
-    T: Sub<Output = T> + Clone + Debug + Default + PartialEq,
-{
-    type Output = Size<T>;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        Size {
-            width: self.width - rhs.width,
-            height: self.height - rhs.height,
-        }
-    }
-}
-
-impl<T> Add for Size<T>
-where
-    T: Add<Output = T> + Clone + Debug + Default + PartialEq,
-{
-    type Output = Size<T>;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Size {
-            width: self.width + rhs.width,
-            height: self.height + rhs.height,
         }
     }
 }
@@ -1241,6 +1210,15 @@ where
         Self {
             origin: self.origin - rhs,
             size: self.size,
+        }
+    }
+}
+
+impl<T: Clone + Debug + Default + PartialEq> From<Size<T>> for Point<T> {
+    fn from(size: Size<T>) -> Self {
+        Self {
+            x: size.width,
+            y: size.height,
         }
     }
 }
@@ -3751,48 +3729,6 @@ impl Half for Pixels {
 impl Half for Rems {
     fn half(&self) -> Self {
         Self(self.0 / 2.)
-    }
-}
-
-/// Provides a trait for types that can negate their values.
-pub trait Negate {
-    /// Returns the negation of the given value
-    fn negate(self) -> Self;
-}
-
-impl Negate for i32 {
-    fn negate(self) -> Self {
-        -self
-    }
-}
-
-impl Negate for f32 {
-    fn negate(self) -> Self {
-        -self
-    }
-}
-
-impl Negate for DevicePixels {
-    fn negate(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl Negate for ScaledPixels {
-    fn negate(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl Negate for Pixels {
-    fn negate(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl Negate for Rems {
-    fn negate(self) -> Self {
-        Self(-self.0)
     }
 }
 

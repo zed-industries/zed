@@ -7,8 +7,8 @@ use block::ConcreteBlock;
 use cocoa::{
     appkit::{
         NSApplication, NSApplicationActivationPolicy::NSApplicationActivationPolicyRegular,
-        NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel, NSSavePanel,
-        NSVisualEffectState, NSVisualEffectView, NSWindow,
+        NSControl as _, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponse, NSOpenPanel,
+        NSSavePanel, NSVisualEffectState, NSVisualEffectView, NSWindow,
     },
     base::{BOOL, NO, YES, id, nil, selector},
     foundation::{
@@ -24,6 +24,7 @@ use core_foundation::{
     string::{CFString, CFStringRef},
 };
 use ctor::ctor;
+use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
@@ -61,6 +62,9 @@ use util::{
 const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &str = "platform";
+const INTERNET_EVENT_CLASS: u32 = 0x4755524c; // 'GURL'
+const AE_GET_URL: u32 = 0x4755524c; // 'GURL'
+const DIRECT_OBJECT_KEY: u32 = 0x2d2d2d2d; // '----'
 static mut APP_CLASS: *const Class = ptr::null();
 static mut APP_DELEGATE_CLASS: *const Class = ptr::null();
 
@@ -135,8 +139,8 @@ unsafe fn build_classes() {
                 handle_dock_menu as extern "C" fn(&mut Object, Sel, id) -> id,
             );
             decl.add_method(
-                sel!(application:openURLs:),
-                open_urls as extern "C" fn(&mut Object, Sel, id, id),
+                sel!(handleGetURLEvent:withReplyEvent:),
+                handle_get_url_event as extern "C" fn(&mut Object, Sel, id, id),
             );
 
             decl.add_method(
@@ -296,6 +300,7 @@ impl MacPlatform {
                     action,
                     os_action,
                     checked,
+                    disabled,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -393,13 +398,18 @@ impl MacPlatform {
                     if *checked {
                         item.setState_(NSVisualEffectState::Active);
                     }
+                    item.setEnabled_(if *disabled { NO } else { YES });
 
                     let tag = actions.len() as NSInteger;
                     let _: () = msg_send![item, setTag: tag];
                     actions.push(action.boxed_clone());
                     item
                 }
-                MenuItem::Submenu(Menu { name, items }) => {
+                MenuItem::Submenu(Menu {
+                    name,
+                    items,
+                    disabled,
+                }) => {
                     let item = NSMenuItem::new(nil).autorelease();
                     let submenu = NSMenu::new(nil).autorelease();
                     submenu.setDelegate_(delegate);
@@ -407,6 +417,7 @@ impl MacPlatform {
                         submenu.addItem_(Self::create_menu_item(item, delegate, actions, keymap));
                     }
                     item.setSubmenu_(submenu);
+                    item.setEnabled_(if *disabled { NO } else { YES });
                     item.setTitle_(ns_string(name));
                     item
                 }
@@ -493,13 +504,11 @@ impl Platform for MacPlatform {
         // this, we make quitting the application asynchronous so that we aren't holding borrows to
         // the app state on the stack when we actually terminate the app.
 
-        use crate::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
-
         unsafe {
-            dispatch_async_f(dispatch_get_main_queue(), ptr::null_mut(), Some(quit));
+            DispatchQueue::main().exec_async_f(ptr::null_mut(), quit);
         }
 
-        unsafe extern "C" fn quit(_: *mut c_void) {
+        extern "C" fn quit(_: *mut c_void) {
             unsafe {
                 let app = NSApplication::sharedApplication(nil);
                 let _: () = msg_send![app, terminate: nil];
@@ -1172,7 +1181,7 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
     }
 }
 
-extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
+extern "C" fn will_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
 
@@ -1186,6 +1195,17 @@ extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
             let false_value: id = msg_send![class!(NSNumber), numberWithBool:false];
             let _: () = msg_send![user_defaults, setObject: false_value forKey: name];
         }
+
+        // Register kAEGetURL Apple Event handler so that URL open requests are
+        // delivered synchronously before applicationDidFinishLaunching:, replacing
+        // application:openURLs: which has non-deterministic timing.
+        let event_manager: id = msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+        let _: () = msg_send![event_manager,
+            setEventHandler: this as id
+            andSelector: sel!(handleGetURLEvent:withReplyEvent:)
+            forEventClass: INTERNET_EVENT_CLASS
+            andEventID: AE_GET_URL
+        ];
     }
 }
 
@@ -1261,19 +1281,13 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
     // Defer to the next run loop iteration to avoid re-entrant borrows of the App RefCell,
     // as NSNotificationCenter delivers this notification synchronously and it may fire while
     // the App is already borrowed (same pattern as quit() above).
-    use crate::dispatcher::{dispatch_get_main_queue, dispatch_sys::dispatch_async_f};
-
     let platform = unsafe { get_mac_platform(this) };
     let platform_ptr = platform as *const MacPlatform as *mut c_void;
     unsafe {
-        dispatch_async_f(
-            dispatch_get_main_queue(),
-            platform_ptr,
-            Some(on_thermal_state_change),
-        );
+        DispatchQueue::main().exec_async_f(platform_ptr, on_thermal_state_change);
     }
 
-    unsafe extern "C" fn on_thermal_state_change(context: *mut c_void) {
+    extern "C" fn on_thermal_state_change(context: *mut c_void) {
         let platform = unsafe { &*(context as *const MacPlatform) };
         let mut lock = platform.0.lock();
         if let Some(mut callback) = lock.on_thermal_state_change.take() {
@@ -1288,27 +1302,36 @@ extern "C" fn on_thermal_state_change(this: &mut Object, _: Sel, _: id) {
     }
 }
 
-extern "C" fn open_urls(this: &mut Object, _: Sel, _: id, urls: id) {
-    let urls = unsafe {
-        (0..urls.count())
-            .filter_map(|i| {
-                let url = urls.objectAtIndex(i);
-                match CStr::from_ptr(url.absoluteString().UTF8String() as *mut c_char).to_str() {
-                    Ok(string) => Some(string.to_string()),
-                    Err(err) => {
-                        log::error!("error converting path to string: {}", err);
-                        None
-                    }
+extern "C" fn handle_get_url_event(this: &mut Object, _: Sel, event: id, _reply: id) {
+    unsafe {
+        let descriptor: id = msg_send![event, paramDescriptorForKeyword: DIRECT_OBJECT_KEY];
+        if descriptor == nil {
+            return;
+        }
+        let url_string: id = msg_send![descriptor, stringValue];
+        if url_string == nil {
+            return;
+        }
+        let utf8_ptr = url_string.UTF8String() as *mut c_char;
+        if utf8_ptr.is_null() {
+            return;
+        }
+        let url_str = CStr::from_ptr(utf8_ptr);
+        match url_str.to_str() {
+            Ok(string) => {
+                let urls = vec![string.to_string()];
+                let platform = get_mac_platform(this);
+                let mut lock = platform.0.lock();
+                if let Some(mut callback) = lock.open_urls.take() {
+                    drop(lock);
+                    callback(urls);
+                    platform.0.lock().open_urls.get_or_insert(callback);
                 }
-            })
-            .collect::<Vec<_>>()
-    };
-    let platform = unsafe { get_mac_platform(this) };
-    let mut lock = platform.0.lock();
-    if let Some(mut callback) = lock.open_urls.take() {
-        drop(lock);
-        callback(urls);
-        platform.0.lock().open_urls.get_or_insert(callback);
+            }
+            Err(err) => {
+                log::error!("error converting URL to string: {}", err);
+            }
+        }
     }
 }
 
@@ -1389,6 +1412,7 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     pub(super) fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+    pub(super) fn TISCopyCurrentKeyboardInputSource() -> *mut Object;
     pub(super) fn TISGetInputSourceProperty(
         inputSource: *mut Object,
         propertyKey: *const c_void,
@@ -1410,6 +1434,9 @@ unsafe extern "C" {
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
     pub(super) static kTISPropertyLocalizedName: CFStringRef;
+    pub(super) static kTISPropertyInputSourceIsASCIICapable: CFStringRef;
+    pub(super) static kTISPropertyInputSourceType: CFStringRef;
+    pub(super) static kTISTypeKeyboardInputMode: CFStringRef;
 }
 
 mod security {

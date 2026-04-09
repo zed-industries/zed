@@ -1,6 +1,7 @@
 use crate::PredictEditsRequestTrigger;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::ops::Range;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RawCompletionRequest {
@@ -27,6 +28,13 @@ pub struct PredictEditsV3Request {
 pub struct PredictEditsV3Response {
     pub request_id: String,
     pub output: String,
+    /// The editable region byte range within `cursor_excerpt` that the
+    /// server used for this request. When present, the client should use
+    /// this range to extract the old text from its local excerpt for
+    /// diffing, rather than relying on its own format-derived range.
+    pub editable_range: Range<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

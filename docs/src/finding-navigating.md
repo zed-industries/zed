@@ -19,7 +19,9 @@ Open any file in your project with {#kb file_finder::Toggle}. Type part of the f
 
 ## Project Search
 
-Search across all files with {#kb pane::DeploySearch}. Results appear in a [multibuffer](./multibuffers.md), letting you edit matches in place.
+Search across all files with {#kb pane::DeploySearch}. Start typing in the search field to begin searching—results appear as you type.
+
+Results appear in a [multibuffer](./multibuffers.md), letting you edit matches in place.
 
 ## Go to Definition
 

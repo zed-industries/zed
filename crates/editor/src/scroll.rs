@@ -5,10 +5,10 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
+    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
-    persistence::DB,
+    persistence::EditorDb,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
@@ -44,13 +44,13 @@ impl ScrollAnchor {
     pub(super) fn new() -> Self {
         Self {
             offset: gpui::Point::default(),
-            anchor: Anchor::min(),
+            anchor: Anchor::Min,
         }
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.offset.apply_along(Axis::Vertical, |offset| {
-            if self.anchor == Anchor::min() {
+            if self.anchor == Anchor::Min {
                 0.
             } else {
                 let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();
@@ -372,6 +372,7 @@ impl ScrollManager {
         &mut self,
         scroll_position: gpui::Point<ScrollOffset>,
         map: &DisplaySnapshot,
+        scroll_beyond_last_line: ScrollBeyondLastLine,
         local: bool,
         autoscroll: bool,
         workspace_id: Option<WorkspaceId>,
@@ -379,7 +380,7 @@ impl ScrollManager {
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
         let scroll_top = scroll_position.y.max(0.);
-        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+        let scroll_top = match scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => scroll_top,
             ScrollBeyondLastLine::Off => {
                 if let Some(height_in_lines) = self.visible_line_count {
@@ -400,7 +401,6 @@ impl ScrollManager {
                 }
             }
         };
-
         let scroll_top_row = DisplayRow(scroll_top as u32);
         let scroll_top_buffer_point = map
             .clip_point(
@@ -467,12 +467,13 @@ impl ScrollManager {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
             let executor = cx.background_executor().clone();
 
+            let db = EditorDb::global(cx);
             self._save_scroll_position_task = cx.background_executor().spawn(async move {
                 executor.timer(Duration::from_millis(10)).await;
                 log::debug!(
                     "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
                 );
-                DB.save_scroll_position(
+                db.save_scroll_position(
                     item_id,
                     workspace_id,
                     top_row,
@@ -638,6 +639,20 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin as usize
     }
 
+    pub(crate) fn scroll_beyond_last_line(&self, cx: &App) -> ScrollBeyondLastLine {
+        match self.mode {
+            EditorMode::Minimap { .. }
+            | EditorMode::Full {
+                sizing_behavior: SizingBehavior::Default,
+                ..
+            } => EditorSettings::get_global(cx).scroll_beyond_last_line,
+
+            EditorMode::Full { .. } | EditorMode::SingleLine | EditorMode::AutoHeight { .. } => {
+                ScrollBeyondLastLine::Off
+            }
+        }
+    }
+
     pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut Context<Self>) {
         self.scroll_manager.vertical_scroll_margin = margin_rows as f64;
         cx.notify();
@@ -775,10 +790,11 @@ impl Editor {
         } else {
             scroll_position
         };
-
+        let scroll_beyond_last_line = self.scroll_beyond_last_line(cx);
         self.scroll_manager.set_scroll_position(
             adjusted_position,
             &display_map,
+            scroll_beyond_last_line,
             local,
             autoscroll,
             workspace_id,
@@ -937,7 +953,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let scroll_position = DB.get_scroll_position(item_id, workspace_id);
+        let scroll_position = EditorDb::global(cx).get_scroll_position(item_id, workspace_id);
         if let Ok(Some((top_row, x, y))) = scroll_position {
             let top_anchor = self
                 .buffer()
