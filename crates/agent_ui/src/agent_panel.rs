@@ -56,8 +56,9 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
-    DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    DismissEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
+    pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -819,7 +820,7 @@ pub struct AgentPanel {
     agent_layout_onboarding_dismissed: AtomicBool,
     selected_agent: Agent,
     start_thread_in: StartThreadIn,
-    worktree_creation_status: Option<WorktreeCreationStatus>,
+    worktree_creation_status: Option<(EntityId, WorktreeCreationStatus)>,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
     _worktree_creation_task: Option<Task<()>>,
@@ -2903,7 +2904,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.worktree_creation_status = Some(WorktreeCreationStatus::Error(message));
+        if let Some((_, status)) = &mut self.worktree_creation_status {
+            *status = WorktreeCreationStatus::Error(message);
+        }
         if matches!(self.active_view, ActiveView::Uninitialized) {
             let selected_agent = self.selected_agent.clone();
             self.new_agent_thread(selected_agent, window, cx);
@@ -2920,12 +2923,17 @@ impl AgentPanel {
     ) {
         if matches!(
             self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
+            Some((_, WorktreeCreationStatus::Creating))
         ) {
             return;
         }
 
-        self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
+        let conversation_view_id = self
+            .active_conversation_view()
+            .map(|v| v.entity_id())
+            .unwrap_or_else(|| EntityId::from(0u64));
+        self.worktree_creation_status =
+            Some((conversation_view_id, WorktreeCreationStatus::Creating));
         cx.notify();
 
         let (git_repos, non_git_paths) = self.classify_worktrees(cx);
@@ -3441,7 +3449,7 @@ impl Panel for AgentPanel {
             && matches!(self.active_view, ActiveView::Uninitialized)
             && !matches!(
                 self.worktree_creation_status,
-                Some(WorktreeCreationStatus::Creating)
+                Some((_, WorktreeCreationStatus::Creating))
             )
         {
             let selected_agent = self.selected_agent.clone();
@@ -3681,13 +3689,19 @@ impl AgentPanel {
         !self.project.read(cx).repositories(cx).is_empty()
     }
 
+    fn is_active_view_creating_worktree(&self, _cx: &App) -> bool {
+        match &self.worktree_creation_status {
+            Some((view_id, WorktreeCreationStatus::Creating)) => {
+                self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id)
+            }
+            _ => false,
+        }
+    }
+
     fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        let is_creating = matches!(
-            self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
-        );
+        let is_creating = self.is_active_view_creating_worktree(cx);
 
         let trigger_parts = self
             .start_thread_in
@@ -3740,10 +3754,7 @@ impl AgentPanel {
     }
 
     fn render_new_worktree_branch_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_creating = matches!(
-            self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
-        );
+        let is_creating = self.is_active_view_creating_worktree(cx);
 
         let project_ref = self.project.read(cx);
         let trigger_parts = self
@@ -4211,7 +4222,11 @@ impl AgentPanel {
     }
 
     fn render_worktree_creation_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let status = self.worktree_creation_status.as_ref()?;
+        let (view_id, status) = self.worktree_creation_status.as_ref()?;
+        let active_view_id = self.active_conversation_view().map(|v| v.entity_id());
+        if active_view_id != Some(*view_id) {
+            return None;
+        }
         match status {
             WorktreeCreationStatus::Creating => Some(
                 h_flex()
@@ -4751,10 +4766,11 @@ impl AgentPanel {
     ///
     /// This is a test-only helper for visual tests.
     pub fn worktree_creation_status_for_tests(&self) -> Option<&WorktreeCreationStatus> {
-        self.worktree_creation_status.as_ref()
+        self.worktree_creation_status.as_ref().map(|(_, s)| s)
     }
 
-    /// Sets the worktree creation status directly.
+    /// Sets the worktree creation status directly, associating it with the
+    /// currently active conversation view.
     ///
     /// This is a test-only helper for visual tests that need to show the
     /// "Creating worktree…" spinner or error banners.
@@ -4763,7 +4779,13 @@ impl AgentPanel {
         status: Option<WorktreeCreationStatus>,
         cx: &mut Context<Self>,
     ) {
-        self.worktree_creation_status = status;
+        self.worktree_creation_status = status.map(|s| {
+            let view_id = self
+                .active_conversation_view()
+                .map(|v| v.entity_id())
+                .unwrap_or_else(|| EntityId::from(0u64));
+            (view_id, s)
+        });
         cx.notify();
     }
 
@@ -6011,7 +6033,8 @@ mod tests {
 
         // Simulate worktree creation in progress and reset to Uninitialized
         panel.update_in(cx, |panel, window, cx| {
-            panel.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
+            panel.worktree_creation_status =
+                Some((EntityId::from(0u64), WorktreeCreationStatus::Creating));
             panel.active_view = ActiveView::Uninitialized;
             Panel::set_active(panel, true, window, cx);
             assert!(
