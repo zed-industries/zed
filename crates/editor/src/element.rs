@@ -3154,41 +3154,19 @@ impl EditorElement {
             bookmarks
                 .into_iter()
                 .filter_map(|display_row| {
-                    if row_infos
-                        .get((display_row.0.saturating_sub(range.start.0)) as usize)
-                        .is_some_and(|row_info| {
-                            row_info.expand_info.is_some()
-                                || row_info
-                                    .diff_status
-                                    .is_some_and(|status| status.is_deleted())
-                        })
-                    {
-                        return None;
-                    }
-
-                    if range.start > display_row || range.end < display_row {
-                        return None;
-                    }
-
-                    let row =
-                        MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(snapshot).row);
-                    if snapshot.is_line_folded(row) {
-                        return None;
-                    }
-
-                    let icon = editor.render_bookmark();
-
-                    let icon = prepaint_gutter_button(
-                        icon.into_any_element(),
-                        display_row,
-                        line_height,
+                    Self::layout_gutter_item(
+                        row_infos,
                         gutter_dimensions,
-                        scroll_position,
                         gutter_hitbox,
+                        scroll_position,
+                        line_height,
+                        display_row,
+                        range.clone(),
+                        snapshot,
+                        |_| editor.render_bookmark().into_any_element(),
                         window,
                         cx,
-                    );
-                    Some(icon)
+                    )
                 })
                 .collect_vec()
         })
@@ -3215,44 +3193,73 @@ impl EditorElement {
             breakpoints
                 .into_iter()
                 .filter_map(|(display_row, (text_anchor, bp, state))| {
-                    if row_infos
-                        .get((display_row.0.saturating_sub(range.start.0)) as usize)
-                        .is_some_and(|row_info| {
-                            row_info.expand_info.is_some()
-                                || row_info
-                                    .diff_status
-                                    .is_some_and(|status| status.is_deleted())
-                        })
-                    {
-                        return None;
-                    }
-
-                    if range.start > display_row || range.end < display_row {
-                        return None;
-                    }
-
-                    let row =
-                        MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(snapshot).row);
-                    if snapshot.is_line_folded(row) {
-                        return None;
-                    }
-
-                    let button = editor.render_breakpoint(text_anchor, display_row, &bp, state, cx);
-
-                    let button = prepaint_gutter_button(
-                        button.into_any_element(),
-                        display_row,
-                        line_height,
+                    Self::layout_gutter_item(
+                        row_infos,
                         gutter_dimensions,
-                        scroll_position,
                         gutter_hitbox,
+                        scroll_position,
+                        line_height,
+                        display_row,
+                        range.clone(),
+                        snapshot,
+                        |cx| {
+                            editor
+                                .render_breakpoint(text_anchor, display_row, &bp, state, cx)
+                                .into_any_element()
+                        },
                         window,
                         cx,
-                    );
-                    Some(button)
+                    )
                 })
                 .collect_vec()
         })
+    }
+
+    fn layout_gutter_item(
+        row_infos: &[RowInfo],
+        gutter_dimensions: &GutterDimensions,
+        gutter_hitbox: &Hitbox,
+        scroll_position: gpui::Point<ScrollOffset>,
+        line_height: Pixels,
+        display_row: DisplayRow,
+        range: Range<DisplayRow>,
+        snapshot: &EditorSnapshot,
+        render_item: impl Fn(&mut Context<'_, Editor>) -> AnyElement,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) -> Option<AnyElement> {
+        if row_infos
+            .get((display_row.0.saturating_sub(range.start.0)) as usize)
+            .is_some_and(|row_info| {
+                row_info.expand_info.is_some()
+                    || row_info
+                        .diff_status
+                        .is_some_and(|status| status.is_deleted())
+            })
+        {
+            return None;
+        }
+
+        if range.start > display_row || range.end < display_row {
+            return None;
+        }
+
+        let row = MultiBufferRow(DisplayPoint::new(display_row, 0).to_point(snapshot).row);
+        if snapshot.is_line_folded(row) {
+            return None;
+        }
+
+        let button = prepaint_gutter_button(
+            render_item(cx),
+            display_row,
+            line_height,
+            gutter_dimensions,
+            scroll_position,
+            gutter_hitbox,
+            window,
+            cx,
+        );
+        Some(button)
     }
 
     fn should_render_diff_review_button(
