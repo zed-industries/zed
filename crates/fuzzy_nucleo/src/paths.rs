@@ -11,6 +11,8 @@ use util::{paths::PathStyle, rel_path::RelPath};
 use nucleo::Utf32Str;
 use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 
+use util::char_bag::CharBag;
+
 use crate::matcher::{self, LENGTH_PENALTY};
 use crate::Cancelled;
 
@@ -18,6 +20,7 @@ use crate::Cancelled;
 pub struct PathMatchCandidate<'a> {
     pub is_dir: bool,
     pub path: &'a RelPath,
+    pub char_bag: CharBag,
 }
 
 #[derive(Clone, Debug)]
@@ -126,6 +129,7 @@ fn get_filename_match_bonus(
 fn path_match_helper<'a>(
     matcher: &mut nucleo::Matcher,
     atoms: &[Atom],
+    query_bag: CharBag,
     candidates: impl Iterator<Item = PathMatchCandidate<'a>>,
     results: &mut Vec<PathMatch>,
     worktree_id: usize,
@@ -151,6 +155,10 @@ fn path_match_helper<'a>(
         matched_chars.clear();
         if cancel_flag.load(atomic::Ordering::Relaxed) {
             return Err(Cancelled);
+        }
+
+        if !candidate.char_bag.is_superset(query_bag) {
+            continue;
         }
 
         candidate_buf.truncate(path_prefix_len);
@@ -234,6 +242,7 @@ pub fn match_fixed_path_set(
     let mut matcher = matcher::get_matcher(config);
 
     let atoms = make_atoms(query, smart_case);
+    let query_bag = CharBag::from(query);
 
     let root_is_file = worktree_root_name.is_some() && candidates.iter().all(|c| c.path.is_empty());
 
@@ -244,6 +253,7 @@ pub fn match_fixed_path_set(
     path_match_helper(
         &mut matcher,
         &atoms,
+        query_bag,
         candidates.into_iter(),
         &mut results,
         worktree_id,
@@ -282,6 +292,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     };
 
     let atoms = make_atoms(&query, smart_case);
+    let query_bag = CharBag::from(query.as_str());
 
     let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);
@@ -316,6 +327,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             if path_match_helper(
                                 matcher,
                                 &atoms,
+                                query_bag,
                                 candidates,
                                 results,
                                 candidate_set.id(),

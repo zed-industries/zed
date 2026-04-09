@@ -11,6 +11,7 @@ use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
+use util::char_bag::CharBag;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
@@ -701,6 +702,7 @@ fn matching_history_items<'a>(
             let candidate = PathMatchCandidate {
                 is_dir: false, // You can't open directories as project items
                 path: &found_path.project.path,
+                char_bag: CharBag::from(found_path.project.path.as_unix_str()),
                 // Only match history items names, otherwise their paths may match too many queries, producing false positives.
                 // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
                 // it would be shown first always, despite the latter being a better match.
