@@ -112,8 +112,7 @@ fn build_heading_slugs(
                     };
                     *count += 1;
                     while slugs.contains_key(slug.as_str()) {
-                        if *slug_counts.get(&base_slug).unwrap_or(&0)
-                            >= MAX_DUPLICATE_HEADING_SLUGS
+                        if *slug_counts.get(&base_slug).unwrap_or(&0) >= MAX_DUPLICATE_HEADING_SLUGS
                         {
                             slug.clear();
                             break;
@@ -1221,11 +1220,7 @@ mod tests {
 
     #[test]
     fn test_heading_slug_collision_with_dedup_suffix() {
-        let parsed = parse_markdown_with_options(
-            "# Foo\n\n## Foo\n\n## Foo 1",
-            false,
-            true,
-        );
+        let parsed = parse_markdown_with_options("# Foo\n\n## Foo\n\n## Foo 1", false, true);
         assert_eq!(parsed.heading_slugs.len(), 3);
         assert!(parsed.heading_slugs.contains_key("foo"));
         assert!(parsed.heading_slugs.contains_key("foo-1"));
