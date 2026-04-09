@@ -19,6 +19,7 @@ use db::{
 use futures::{FutureExt as _, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
+use remote::RemoteConnectionOptions;
 use ui::{App, Context, SharedString};
 use util::ResultExt as _;
 use workspace::PathList;
@@ -60,6 +61,7 @@ fn migrate_thread_metadata(cx: &mut App) {
                         created_at: entry.created_at,
                         folder_paths: entry.folder_paths,
                         main_worktree_paths: PathList::default(),
+                        remote_connection: None,
                         archived: true,
                     })
                 })
@@ -121,6 +123,7 @@ pub struct ThreadMetadata {
     pub created_at: Option<DateTime<Utc>>,
     pub folder_paths: PathList,
     pub main_worktree_paths: PathList,
+    pub remote_connection: Option<RemoteConnectionOptions>,
     pub archived: bool,
 }
 
@@ -747,6 +750,7 @@ impl ThreadMetadataStore {
                     updated_at,
                     folder_paths,
                     main_worktree_paths,
+                    remote_connection: None,
                     archived,
                 };
 
@@ -801,6 +805,7 @@ impl Domain for ThreadMetadataDb {
                 PRIMARY KEY (session_id, archived_worktree_id)
             ) STRICT;
         ),
+        sql!(ALTER TABLE sidebar_threads ADD COLUMN remote_connection TEXT),
     ];
 }
 
@@ -817,7 +822,7 @@ impl ThreadMetadataDb {
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
-            "SELECT session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order \
+            "SELECT session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection \
              FROM sidebar_threads \
              ORDER BY updated_at DESC"
         )?()
@@ -847,11 +852,17 @@ impl ThreadMetadataDb {
         } else {
             (Some(main_serialized.paths), Some(main_serialized.order))
         };
+        let remote_connection = row
+            .remote_connection
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .context("serialize thread metadata remote connection")?;
         let archived = row.archived;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
+            let sql = "INSERT INTO sidebar_threads(session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
                        ON CONFLICT(session_id) DO UPDATE SET \
                            agent_id = excluded.agent_id, \
                            title = excluded.title, \
@@ -861,7 +872,8 @@ impl ThreadMetadataDb {
                            folder_paths_order = excluded.folder_paths_order, \
                            archived = excluded.archived, \
                            main_worktree_paths = excluded.main_worktree_paths, \
-                           main_worktree_paths_order = excluded.main_worktree_paths_order";
+                           main_worktree_paths_order = excluded.main_worktree_paths_order, \
+                           remote_connection = excluded.remote_connection";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&id, 1)?;
             i = stmt.bind(&agent_id, i)?;
@@ -872,7 +884,8 @@ impl ThreadMetadataDb {
             i = stmt.bind(&folder_paths_order, i)?;
             i = stmt.bind(&archived, i)?;
             i = stmt.bind(&main_worktree_paths, i)?;
-            stmt.bind(&main_worktree_paths_order, i)?;
+            i = stmt.bind(&main_worktree_paths_order, i)?;
+            stmt.bind(&remote_connection, i)?;
             stmt.exec()
         })
         .await
@@ -1005,6 +1018,8 @@ impl Column for ThreadMetadata {
             Column::column(statement, next)?;
         let (main_worktree_paths_order_str, next): (Option<String>, i32) =
             Column::column(statement, next)?;
+        let (remote_connection_json, next): (Option<String>, i32) =
+            Column::column(statement, next)?;
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
@@ -1035,6 +1050,12 @@ impl Column for ThreadMetadata {
             })
             .unwrap_or_default();
 
+        let remote_connection = remote_connection_json
+            .as_deref()
+            .map(serde_json::from_str::<RemoteConnectionOptions>)
+            .transpose()
+            .context("deserialize thread metadata remote connection")?;
+
         Ok((
             ThreadMetadata {
                 session_id: acp::SessionId::new(id),
@@ -1044,6 +1065,7 @@ impl Column for ThreadMetadata {
                 created_at,
                 folder_paths,
                 main_worktree_paths,
+                remote_connection,
                 archived,
             },
             next,
@@ -1087,6 +1109,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
     use project::Project;
+    use remote::{RemoteConnectionOptions, WslConnectionOptions};
     use std::path::Path;
     use std::rc::Rc;
 
@@ -1126,6 +1149,7 @@ mod tests {
             created_at: Some(updated_at),
             folder_paths,
             main_worktree_paths: PathList::default(),
+            remote_connection: None,
         }
     }
 
@@ -1340,6 +1364,7 @@ mod tests {
             created_at: Some(now - chrono::Duration::seconds(10)),
             folder_paths: project_a_paths.clone(),
             main_worktree_paths: PathList::default(),
+            remote_connection: None,
             archived: false,
         };
 
@@ -1450,6 +1475,7 @@ mod tests {
             created_at: Some(existing_updated_at),
             folder_paths: project_paths.clone(),
             main_worktree_paths: PathList::default(),
+            remote_connection: None,
             archived: false,
         };
 

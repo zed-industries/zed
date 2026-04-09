@@ -245,6 +245,7 @@ fn save_thread_metadata(
             folder_paths,
             main_worktree_paths,
             archived: false,
+            remote_connection: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx));
     });
@@ -813,6 +814,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
                     archived: false,
+                    remote_connection: None,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -836,6 +838,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
                     archived: false,
+                    remote_connection: None,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -853,6 +856,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-3")),
                     agent_id: AgentId::new("zed-agent"),
+                    remote_connection: None,
                     folder_paths: PathList::default(),
                     main_worktree_paths: PathList::default(),
                     title: "Error thread".into(),
@@ -872,10 +876,12 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 diff_stats: DiffStats::default(),
             }),
             // Thread with WaitingForConfirmation status, not active
+            // remote_connection: None,
             ListEntry::Thread(ThreadEntry {
                 metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-4")),
                     agent_id: AgentId::new("zed-agent"),
+                    remote_connection: None,
                     folder_paths: PathList::default(),
                     main_worktree_paths: PathList::default(),
                     title: "Waiting thread".into(),
@@ -895,10 +901,12 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 diff_stats: DiffStats::default(),
             }),
             // Background thread that completed (should show notification)
+            // remote_connection: None,
             ListEntry::Thread(ThreadEntry {
                 metadata: ThreadMetadata {
                     session_id: acp::SessionId::new(Arc::from("t-5")),
                     agent_id: AgentId::new("zed-agent"),
+                    remote_connection: None,
                     folder_paths: PathList::default(),
                     main_worktree_paths: PathList::default(),
                     title: "Notified thread".into(),
@@ -2197,6 +2205,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
                 folder_paths: PathList::default(),
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             &workspace_a,
             false,
@@ -2253,6 +2262,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
                 folder_paths: PathList::default(),
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             &workspace_b,
             false,
@@ -3692,6 +3702,7 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
                 folder_paths: PathList::new(&[PathBuf::from("/project-b")]),
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             window,
             cx,
@@ -3757,6 +3768,7 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
                 folder_paths: PathList::new(&[std::path::PathBuf::from("/project-b")]),
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             window,
             cx,
@@ -3820,6 +3832,7 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
                 folder_paths: PathList::default(),
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             window,
             cx,
@@ -3875,6 +3888,7 @@ async fn test_activate_archived_thread_saved_paths_opens_new_workspace(cx: &mut 
                 folder_paths: path_list_b,
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             window,
             cx,
@@ -3929,6 +3943,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
                 folder_paths: PathList::new(&[PathBuf::from("/project-b")]),
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             window,
             cx,
@@ -4006,6 +4021,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
                 folder_paths: PathList::new(&[PathBuf::from("/project-b")]),
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             window,
             cx,
@@ -4086,6 +4102,7 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
                 folder_paths: PathList::new(&[PathBuf::from("/project-a")]),
                 main_worktree_paths: PathList::default(),
                 archived: false,
+                remote_connection: None,
             },
             window,
             cx,
@@ -6006,6 +6023,7 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             folder_paths: PathList::new(&[PathBuf::from("/project")]),
             main_worktree_paths: PathList::default(),
             archived: false,
+            remote_connection: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx));
     });
@@ -6361,6 +6379,7 @@ mod property_test {
             folder_paths: path_list,
             main_worktree_paths,
             archived: false,
+            remote_connection: None,
         };
         cx.update(|_, cx| {
             ThreadMetadataStore::global(cx)
@@ -7094,6 +7113,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             folder_paths: PathList::new(&[PathBuf::from("/project-wt-1")]),
             main_worktree_paths,
             archived: false,
+            remote_connection: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx));
     });
