@@ -6110,28 +6110,46 @@ impl ProjectGroupKey {
         Self { paths, host }
     }
 
-    pub fn display_name(&self) -> SharedString {
+    pub fn path_list(&self) -> &PathList {
+        &self.paths
+    }
+
+    pub fn display_name(
+        &self,
+        path_detail_map: &std::collections::HashMap<PathBuf, usize>,
+    ) -> SharedString {
         let mut names = Vec::with_capacity(self.paths.paths().len());
         for abs_path in self.paths.paths() {
-            if let Some(name) = abs_path.file_name() {
-                names.push(name.to_string_lossy().to_string());
+            let detail = path_detail_map.get(abs_path).copied().unwrap_or(0);
+            let suffix = path_suffix(abs_path, detail);
+            if !suffix.is_empty() {
+                names.push(suffix);
             }
         }
         if names.is_empty() {
-            // TODO: Can we do something better in this case?
             "Empty Workspace".into()
         } else {
             names.join(", ").into()
         }
     }
 
-    pub fn path_list(&self) -> &PathList {
-        &self.paths
-    }
-
     pub fn host(&self) -> Option<RemoteConnectionOptions> {
         self.host.clone()
     }
+}
+
+pub fn path_suffix(path: &Path, detail: usize) -> String {
+    let mut components: Vec<_> = path
+        .components()
+        .rev()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy()),
+            _ => None,
+        })
+        .take(detail + 1)
+        .collect();
+    components.reverse();
+    components.join("/")
 }
 
 pub struct PathMatchCandidateSet {

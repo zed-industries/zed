@@ -883,12 +883,27 @@ impl Sidebar {
             (icon, icon_from_external_svg)
         };
 
-        for (group_key, group_workspaces) in mw.project_groups(cx) {
+        let groups: Vec<_> = mw.project_groups(cx).collect();
+
+        let mut all_paths: Vec<PathBuf> = groups
+            .iter()
+            .flat_map(|(key, _)| key.path_list().paths().iter().cloned())
+            .collect();
+        all_paths.sort();
+        all_paths.dedup();
+        let path_details =
+            util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
+                project::path_suffix(path, detail)
+            });
+        let path_detail_map: HashMap<PathBuf, usize> =
+            all_paths.into_iter().zip(path_details).collect();
+
+        for (group_key, group_workspaces) in &groups {
             if group_key.path_list().paths().is_empty() {
                 continue;
             }
 
-            let label = group_key.display_name();
+            let label = group_key.display_name(&path_detail_map);
 
             let is_collapsed = self.collapsed_groups.contains(&group_key);
             let should_load_threads = !is_collapsed || !query.is_empty();
@@ -989,7 +1004,7 @@ impl Sidebar {
 
                 // Load any legacy threads for any single linked wortree of this project group.
                 let mut linked_worktree_paths = HashSet::new();
-                for workspace in &group_workspaces {
+                for workspace in group_workspaces {
                     if workspace.read(cx).visible_worktrees(cx).count() != 1 {
                         continue;
                     }
@@ -1192,7 +1207,7 @@ impl Sidebar {
                         None
                     };
                     let thread_store = ThreadMetadataStore::global(cx);
-                    for ws in &group_workspaces {
+                    for ws in group_workspaces {
                         if Some(ws.entity_id()) == draft_ws_id {
                             continue;
                         }
