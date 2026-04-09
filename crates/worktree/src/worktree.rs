@@ -48,7 +48,7 @@ use smallvec::{SmallVec, smallvec};
 use smol::channel::{self, Sender};
 use std::{
     any::Any,
-    borrow::{Borrow as _, Cow},
+    borrow::Borrow as _,
     cmp::Ordering,
     collections::hash_map,
     convert::TryFrom,
@@ -4280,10 +4280,10 @@ impl BackgroundScanner {
                     }
                 }
 
-                let relative_path: Cow<RelPath> = if let Ok(path) = abs_path.strip_prefix(&root_canonical_path)
+                let relative_path: Arc<RelPath> = if let Ok(path) = abs_path.strip_prefix(&root_canonical_path)
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
-                    path
+                    path.into_arc()
                 } else {
                     // Events for a symlinked directory may be reported via the canonical path.
                     let found_symlink_match =
@@ -4296,9 +4296,7 @@ impl BackgroundScanner {
                                     .ok()?;
                                 let suffix_rel =
                                     RelPath::new(suffix, PathStyle::local()).ok()?;
-                                Some(Cow::Owned(
-                                    symlink_path.join(&suffix_rel).as_ref().to_owned(),
-                                ))
+                                Some(symlink_path.join(&suffix_rel).as_ref().to_owned().into_arc())
                             });
 
                     if let Some(path) = found_symlink_match {
@@ -4364,7 +4362,7 @@ impl BackgroundScanner {
                 }
 
                 relative_paths.push(EventRoot {
-                    path: relative_path.into_arc(),
+                    path: relative_path,
                     was_rescanned: matches!(event.kind, Some(fs::PathEventKind::Rescan)),
                 });
             }
