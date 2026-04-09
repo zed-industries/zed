@@ -263,14 +263,16 @@ impl DevContainerManifest {
     async fn get_base_image_from_config(&self) -> Result<String, DevContainerError> {
         match self.dev_container().build_type() {
             DevContainerBuildType::Image(image) => {
-                return Ok(image.to_string());
+                return Ok(image);
             }
             DevContainerBuildType::Dockerfile(build) => {
                 let dockerfile_contents = self.expanded_dockerfile_content().await?;
-                return image_from_dockerfile(dockerfile_contents, build.target).ok_or_else(|| {
-                    log::error!("Unable to find base image in Dockerfile");
-                    DevContainerError::DevContainerParseFailed
-                });
+                return image_from_dockerfile(dockerfile_contents, &build.target).ok_or_else(
+                    || {
+                        log::error!("Unable to find base image in Dockerfile");
+                        DevContainerError::DevContainerParseFailed
+                    },
+                );
             }
             DevContainerBuildType::DockerCompose => {
                 let docker_compose_manifest = self.docker_compose_manifest().await?;
@@ -284,7 +286,7 @@ impl DevContainerManifest {
                     let dockerfile_contents = self.expanded_dockerfile_content().await?;
                     return image_from_dockerfile(
                         dockerfile_contents,
-                        main_service.build.as_ref().and_then(|b| b.target.clone()),
+                        &main_service.build.as_ref().and_then(|b| b.target.clone()),
                     )
                     .ok_or_else(|| {
                         log::error!("Unable to find base image in Dockerfile");
@@ -1399,7 +1401,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                 DevContainerError::FilesystemError
             })?;
 
-        let updated_image_tag = format!("{}", features_build_info.image_tag);
+        let updated_image_tag = features_build_info.image_tag.clone();
 
         let mut command = Command::new(self.docker_client.docker_cli());
         command.args(["build"]);
@@ -1793,7 +1795,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         }
         for app_port in &self.dev_container().app_port {
             command.arg("-p");
-            // Should just implement display for an AppPort struct which takes care of this; it might be a custom map like (literally) "8081:8080"
             command.arg(app_port);
         }
 
@@ -2015,6 +2016,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
         })?;
         let mut parsed_lines: Vec<String> = Vec::new();
         let mut inline_args: Vec<(String, String)> = Vec::new();
+        let key_regex = Regex::new(r"(?:^|\s)(\w+)=").expect("valid regex");
 
         for line in contents.lines() {
             let mut parsed_line = line.to_string();
@@ -2027,7 +2029,6 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             }
             if let Some(arg_directives) = parsed_line.strip_prefix("ARG ") {
                 let trimmed = arg_directives.trim();
-                let key_regex = Regex::new(r"(?:^|\s)(\w+)=").expect("valid regex");
                 let key_matches: Vec<_> = key_regex.captures_iter(trimmed).collect();
                 for (i, captures) in key_matches.iter().enumerate() {
                     let key = captures[1].to_string();
@@ -2310,7 +2311,7 @@ fn dockerfile_inject_alias(
     alias: &str,
     build_target: Option<String>,
 ) -> String {
-    match image_from_dockerfile(dockerfile_content.to_string(), build_target) {
+    match image_from_dockerfile(dockerfile_content.to_string(), &build_target) {
         Some(target) => format!(
             r#"{dockerfile_content}
 FROM {target} AS {alias}"#
@@ -2319,25 +2320,23 @@ FROM {target} AS {alias}"#
     }
 }
 
-fn image_from_dockerfile(dockerfile_contents: String, target: Option<String>) -> Option<String> {
+fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -> Option<String> {
     dockerfile_contents
         .lines()
         .filter(|line| line.starts_with("FROM"))
-        .filter(|from_line| match &target {
+        .rfind(|from_line| match &target {
             Some(target) => {
                 let parts = from_line.split(' ').collect::<Vec<&str>>();
                 if parts.len() >= 3
                     && parts.get(parts.len() - 2).unwrap_or(&"").to_lowercase() == "as"
                 {
-                    parts.get(parts.len() - 1).unwrap_or(&"").to_lowercase()
-                        == target.to_lowercase()
+                    parts.last().unwrap_or(&"").to_lowercase() == target.to_lowercase()
                 } else {
                     false
                 }
             }
             None => true,
         })
-        .last()
         .and_then(|from_line| {
             from_line
                 .split(' ')
@@ -4581,7 +4580,7 @@ FROM ${IMAGE} AS devcontainer
             .unwrap();
         let base_image = image_from_dockerfile(
             dockerfile_contents,
-            devcontainer_manifest
+            &devcontainer_manifest
                 .dev_container()
                 .build
                 .as_ref()
@@ -4628,7 +4627,7 @@ ARG IMAGE=${REGISTRY}/${REPOSITORY}:${VERSION}
 ARG DEV_IMAGE=${REGISTRY}/${REPOSITORY}:latest
 
 FROM ${DEV_IMAGE} AS development
-FROM ${IMAGE} as production
+FROM ${IMAGE} AS production
                     "#
                 .trim()
                 .to_string(),
@@ -4644,7 +4643,7 @@ FROM ${IMAGE} as production
             .unwrap();
         let base_image = image_from_dockerfile(
             dockerfile_contents,
-            devcontainer_manifest
+            &devcontainer_manifest
                 .dev_container()
                 .build
                 .as_ref()
@@ -4682,7 +4681,7 @@ FROM ${IMAGE} as production
             .atomic_write(
                 PathBuf::from(TEST_PROJECT_PATH).join(".devcontainer/Dockerfile"),
                 r#"
-ARG INVALID_FOWARD_REFERENCE=${OTP_VERSION}
+ARG INVALID_FORWARD_REFERENCE=${OTP_VERSION}
 ARG ELIXIR_VERSION=1.20.0-rc.4
 ARG FOO=foo BAR=bar
 ARG FOOBAR=${FOO}${BAR}
@@ -4711,7 +4710,7 @@ FROM ${IMAGE} AS devcontainer
         assert_eq!(
             &expanded_dockerfile,
             r#"
-ARG INVALID_FOWARD_REFERENCE=${OTP_VERSION}
+ARG INVALID_FORWARD_REFERENCE=${OTP_VERSION}
 ARG ELIXIR_VERSION=1.20.0-rc.4
 ARG FOO=foo BAR=bar
 ARG FOOBAR=foobar
