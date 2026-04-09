@@ -240,6 +240,24 @@ impl Model {
         }
     }
 
+    /// Returns (input_cost_per_1m, output_cost_per_1m) in USD for known models.
+    /// Returns `None` for custom models or models with unknown pricing.
+    pub fn cost_per_million_tokens(&self) -> Option<(f64, f64)> {
+        match self {
+            Self::ThreePointFiveTurbo => Some((0.50, 1.50)),
+            Self::Four => Some((30.0, 60.0)),
+            Self::FourTurbo => Some((10.0, 30.0)),
+            Self::FourOmniMini => Some((0.15, 0.60)),
+            Self::FourPointOneNano => Some((0.10, 0.40)),
+            Self::O1 => Some((15.0, 60.0)),
+            Self::O3Mini => Some((1.10, 4.40)),
+            Self::O3 => Some((2.0, 8.0)),
+            Self::Custom { .. } => None,
+            // GPT-5+ models: pricing not yet confirmed, return None
+            _ => None,
+        }
+    }
+
     pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
         match self {
             Self::Custom {

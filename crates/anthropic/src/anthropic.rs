@@ -269,6 +269,23 @@ impl Model {
         }
     }
 
+    /// Returns (input_cost_per_1m, output_cost_per_1m) in USD for known models.
+    /// Returns `None` for custom models where pricing is unknown.
+    pub fn cost_per_million_tokens(&self) -> Option<(f64, f64)> {
+        match self {
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_6 => Some((15.0, 75.0)),
+            Self::ClaudeSonnet4 | Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4_6 => {
+                Some((3.0, 15.0))
+            }
+            Self::ClaudeHaiku4_5 => Some((0.80, 4.0)),
+            Self::Claude3Haiku => Some((0.25, 1.25)),
+            Self::Custom { .. } => None,
+        }
+    }
+
     pub fn default_temperature(&self) -> f32 {
         match self {
             Self::ClaudeOpus4
@@ -1141,4 +1158,28 @@ fn test_match_window_exceeded() {
         message: "prompt is too long: invalid tokens".to_string(),
     };
     assert_eq!(error.match_window_exceeded(), None);
+}
+
+#[test]
+fn test_known_model_pricing() {
+    assert_eq!(Model::ClaudeSonnet4_6.cost_per_million_tokens(), Some((3.0, 15.0)));
+    assert_eq!(Model::ClaudeOpus4_6.cost_per_million_tokens(), Some((15.0, 75.0)));
+    assert_eq!(Model::ClaudeHaiku4_5.cost_per_million_tokens(), Some((0.80, 4.0)));
+    assert_eq!(Model::Claude3Haiku.cost_per_million_tokens(), Some((0.25, 1.25)));
+}
+
+#[test]
+fn test_custom_model_pricing_returns_none() {
+    let custom = Model::Custom {
+        name: "my-model".to_string(),
+        max_tokens: 100_000,
+        display_name: None,
+        tool_override: None,
+        cache_configuration: None,
+        max_output_tokens: None,
+        default_temperature: None,
+        extra_beta_headers: Vec::new(),
+        mode: AnthropicModelMode::Default,
+    };
+    assert_eq!(custom.cost_per_million_tokens(), None);
 }

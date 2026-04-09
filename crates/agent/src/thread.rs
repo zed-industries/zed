@@ -941,7 +941,6 @@ pub struct Thread {
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
-    #[allow(unused)]
     cumulative_token_usage: TokenUsage,
     #[allow(unused)]
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
@@ -1636,10 +1635,31 @@ impl Thread {
             return;
         };
 
+        let previous = self
+            .request_token_usage
+            .get(&last_user_message.id)
+            .copied()
+            .unwrap_or_default();
+        let delta = language_model::TokenUsage {
+            input_tokens: update.input_tokens.saturating_sub(previous.input_tokens),
+            output_tokens: update.output_tokens.saturating_sub(previous.output_tokens),
+            cache_creation_input_tokens: update
+                .cache_creation_input_tokens
+                .saturating_sub(previous.cache_creation_input_tokens),
+            cache_read_input_tokens: update
+                .cache_read_input_tokens
+                .saturating_sub(previous.cache_read_input_tokens),
+        };
+        self.cumulative_token_usage = self.cumulative_token_usage + delta;
+
         self.request_token_usage
             .insert(last_user_message.id.clone(), update);
         cx.emit(TokenUsageUpdated(self.latest_token_usage()));
         cx.notify();
+    }
+
+    pub fn cumulative_token_usage(&self) -> TokenUsage {
+        self.cumulative_token_usage
     }
 
     pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {

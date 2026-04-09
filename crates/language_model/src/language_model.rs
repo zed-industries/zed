@@ -354,11 +354,118 @@ impl LanguageModelCostInfo {
         }
     }
 
+    /// Estimate the dollar cost for the given token usage.
+    ///
+    /// Returns `None` for `RequestCost` (no per-token pricing available).
+    ///
+    /// Note: cache tokens (creation and read) are currently billed at the
+    /// standard input rate. Actual provider pricing may differ (e.g., Anthropic
+    /// charges 1.25x for cache writes, 0.1x for cache reads). This is an
+    /// approximation.
+    pub fn estimate_cost(&self, usage: &TokenUsage) -> Option<f64> {
+        match self {
+            LanguageModelCostInfo::TokenCost {
+                input_token_cost_per_1m,
+                output_token_cost_per_1m,
+            } => {
+                let total_input = usage.input_tokens
+                    + usage.cache_creation_input_tokens
+                    + usage.cache_read_input_tokens;
+                let input_cost = total_input as f64 * input_token_cost_per_1m / 1_000_000.0;
+                let output_cost =
+                    usage.output_tokens as f64 * output_token_cost_per_1m / 1_000_000.0;
+                Some(input_cost + output_cost)
+            }
+            LanguageModelCostInfo::RequestCost { .. } => None,
+        }
+    }
+
     fn cost_value_to_string(cost: &f64) -> SharedString {
         if (cost.fract() - 0.0).abs() < std::f64::EPSILON {
             SharedString::from(format!("{:.0}", cost))
         } else {
             SharedString::from(format!("{:.2}", cost))
         }
+    }
+}
+
+/// Format a dollar cost for display.
+pub fn format_cost(cost: f64) -> String {
+    if cost < 0.01 {
+        "<$0.01".to_string()
+    } else {
+        format!("${:.2}", cost)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_estimate_cost_token_based() {
+        let cost_info = LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: 3.0,
+            output_token_cost_per_1m: 15.0,
+        };
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,
+            output_tokens: 100_000,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        };
+        let cost = cost_info.estimate_cost(&usage).expect("should return cost");
+        assert!((cost - 4.5).abs() < 0.001); // $3 input + $1.5 output
+    }
+
+    #[test]
+    fn test_estimate_cost_with_cache_tokens() {
+        let cost_info = LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: 3.0,
+            output_token_cost_per_1m: 15.0,
+        };
+        let usage = TokenUsage {
+            input_tokens: 500_000,
+            output_tokens: 50_000,
+            cache_creation_input_tokens: 200_000,
+            cache_read_input_tokens: 300_000,
+        };
+        let cost = cost_info.estimate_cost(&usage).expect("should return cost");
+        // Total input: 1M tokens -> $3, output: 50k -> $0.75
+        assert!((cost - 3.75).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_estimate_cost_request_based_returns_none() {
+        let cost_info = LanguageModelCostInfo::RequestCost {
+            cost_per_request: 0.01,
+        };
+        let usage = TokenUsage {
+            input_tokens: 1_000,
+            output_tokens: 500,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+        };
+        assert!(cost_info.estimate_cost(&usage).is_none());
+    }
+
+    #[test]
+    fn test_estimate_cost_zero_usage() {
+        let cost_info = LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: 15.0,
+            output_token_cost_per_1m: 75.0,
+        };
+        let usage = TokenUsage::default();
+        let cost = cost_info.estimate_cost(&usage).expect("should return cost");
+        assert!((cost - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_format_cost() {
+        assert_eq!(format_cost(0.001), "<$0.01");
+        assert_eq!(format_cost(0.005), "<$0.01");
+        assert_eq!(format_cost(0.05), "$0.05");
+        assert_eq!(format_cost(1.234), "$1.23");
+        assert_eq!(format_cost(10.0), "$10.00");
     }
 }

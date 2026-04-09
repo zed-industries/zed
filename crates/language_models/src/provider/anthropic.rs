@@ -11,9 +11,9 @@ use language_model::{
     ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
     ConfigurationViewTargetAgent, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCacheConfiguration, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter, env_var,
+    LanguageModelCostInfo, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, RateLimiter, env_var,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
@@ -353,6 +353,14 @@ impl LanguageModel for AnthropicModel {
         } else {
             Vec::new()
         }
+    }
+
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        let (input, output) = self.model.cost_per_million_tokens()?;
+        Some(LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: input,
+            output_token_cost_per_1m: output,
+        })
     }
 
     fn telemetry_id(&self) -> String {

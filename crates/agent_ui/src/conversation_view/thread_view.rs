@@ -349,9 +349,11 @@ pub struct TurnFields {
     pub _turn_timer_task: Option<Task<()>>,
     pub last_turn_duration: Option<Duration>,
     pub last_turn_tokens: Option<u64>,
+    pub last_turn_cost: Option<f64>,
     pub turn_generation: usize,
     pub turn_started_at: Option<Instant>,
     pub turn_tokens: Option<u64>,
+    pub turn_cost: Option<f64>,
 }
 
 impl ThreadView {
@@ -848,7 +850,9 @@ impl ThreadView {
         self.turn_fields.turn_started_at = Some(Instant::now());
         self.turn_fields.last_turn_duration = None;
         self.turn_fields.last_turn_tokens = None;
+        self.turn_fields.last_turn_cost = None;
         self.turn_fields.turn_tokens = Some(0);
+        self.turn_fields.turn_cost = None;
         self.turn_fields._turn_timer_task = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -870,6 +874,7 @@ impl ThreadView {
             .take()
             .map(|started| started.elapsed());
         self.turn_fields.last_turn_tokens = self.turn_fields.turn_tokens.take();
+        self.turn_fields.last_turn_cost = self.turn_fields.turn_cost.take();
         self.turn_fields._turn_timer_task = None;
     }
 
@@ -877,6 +882,16 @@ impl ThreadView {
         if let Some(usage) = self.thread.read(cx).token_usage() {
             if let Some(tokens) = &mut self.turn_fields.turn_tokens {
                 *tokens += usage.output_tokens;
+            }
+        }
+        if let Some(thread) = self.as_native_thread(cx) {
+            let thread = thread.read(cx);
+            if let Some(model) = thread.model() {
+                if let Some(cost_info) = model.model_cost_info() {
+                    if let Some(request_usage) = thread.latest_request_token_usage() {
+                        self.turn_fields.turn_cost = cost_info.estimate_cost(&request_usage);
+                    }
+                }
             }
         }
     }
@@ -3509,6 +3524,28 @@ impl ThreadView {
             crate::humanize_token_count(usage.max_tokens.saturating_sub(max_output_tokens));
         let output_max_label = crate::humanize_token_count(max_output_tokens);
 
+        let (cumulative_input, cumulative_output, session_cost, model_name) = self
+            .as_native_thread(cx)
+            .map(|thread| {
+                let thread = thread.read(cx);
+                let cumulative = thread.cumulative_token_usage();
+                let cost = thread.model().and_then(|model| {
+                    model
+                        .model_cost_info()
+                        .and_then(|info| info.estimate_cost(&cumulative))
+                });
+                let name = thread
+                    .model()
+                    .map(|m| SharedString::from(m.name().0.to_string()));
+                (
+                    Some(crate::humanize_token_count(cumulative.input_tokens)),
+                    Some(crate::humanize_token_count(cumulative.output_tokens)),
+                    cost,
+                    name,
+                )
+            })
+            .unwrap_or((None, None, None, None));
+
         let build_tooltip = {
             move |_window: &mut Window, cx: &mut App| {
                 let percentage = percentage.clone();
@@ -3520,6 +3557,10 @@ impl ThreadView {
                 let output_max_label = output_max_label.clone();
                 let project_entry_ids = project_entry_ids.clone();
                 let workspace = workspace.clone();
+                let cumulative_input = cumulative_input.clone();
+                let cumulative_output = cumulative_output.clone();
+                let session_cost = session_cost;
+                let model_name = model_name.clone();
                 cx.new(move |_cx| TokenUsageTooltip {
                     percentage,
                     used,
@@ -3535,6 +3576,10 @@ impl ThreadView {
                     project_rules_count,
                     project_entry_ids,
                     workspace,
+                    cumulative_input,
+                    cumulative_output,
+                    session_cost,
+                    model_name,
                 })
                 .into()
             }
@@ -4182,6 +4227,10 @@ struct TokenUsageTooltip {
     project_rules_count: usize,
     project_entry_ids: Vec<ProjectEntryId>,
     workspace: WeakEntity<Workspace>,
+    cumulative_input: Option<String>,
+    cumulative_output: Option<String>,
+    session_cost: Option<f64>,
+    model_name: Option<SharedString>,
 }
 
 impl Render for TokenUsageTooltip {
@@ -4200,6 +4249,10 @@ impl Render for TokenUsageTooltip {
         let project_rules_count = self.project_rules_count;
         let project_entry_ids = self.project_entry_ids.clone();
         let workspace = self.workspace.clone();
+        let cumulative_input = self.cumulative_input.clone();
+        let cumulative_output = self.cumulative_output.clone();
+        let session_cost = self.session_cost;
+        let model_name = self.model_name.clone();
 
         ui::tooltip_container(cx, move |container, cx| {
             container
@@ -4322,6 +4375,49 @@ impl Render for TokenUsageTooltip {
                                             )
                                         }),
                                 ),
+                        )
+                    },
+                )
+                .when(
+                    cumulative_input.is_some(),
+                    |this| {
+                        let cumulative_input = cumulative_input.clone().unwrap_or_default();
+                        let cumulative_output = cumulative_output.clone().unwrap_or_default();
+
+                        this.child(
+                            v_flex()
+                                .mt_1p5()
+                                .pt_1p5()
+                                .pb_0p5()
+                                .gap_0p5()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(
+                                    Label::new("Session Usage")
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                )
+                                .when_some(model_name, |this, name| {
+                                    this.child(Label::new(name).size(LabelSize::Small))
+                                })
+                                .child(
+                                    h_flex()
+                                        .gap_0p5()
+                                        .child(Label::new("In:").color(Color::Muted))
+                                        .child(Label::new(cumulative_input))
+                                        .child(Label::new("Out:").color(Color::Muted).ml_1())
+                                        .child(Label::new(cumulative_output)),
+                                )
+                                .when_some(session_cost, |this, cost| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_0p5()
+                                            .child(Label::new("Est. cost:").color(Color::Muted))
+                                            .child(Label::new(
+                                                language_model::format_cost(cost),
+                                            )),
+                                    )
+                                }),
                         )
                     },
                 )
@@ -4851,6 +4947,19 @@ impl ThreadView {
             })
             .flatten();
 
+        let last_turn_cost_label = show_stats
+            .then(|| {
+                self.turn_fields
+                    .last_turn_cost
+                    .filter(|&cost| cost >= 0.001)
+                    .map(|cost| {
+                        Label::new(language_model::format_cost(cost))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    })
+            })
+            .flatten();
+
         let mut container = h_flex()
             .w_full()
             .py_2()
@@ -4860,12 +4969,15 @@ impl ThreadView {
             .hover(|s| s.opacity(1.))
             .justify_end()
             .when(
-                last_turn_tokens_label.is_some() || last_turn_clock.is_some(),
+                last_turn_tokens_label.is_some()
+                    || last_turn_clock.is_some()
+                    || last_turn_cost_label.is_some(),
                 |this| {
                     this.child(
                         h_flex()
                             .gap_1()
                             .px_1()
+                            .when_some(last_turn_cost_label, |this, label| this.child(label))
                             .when_some(last_turn_tokens_label, |this, label| this.child(label))
                             .when_some(last_turn_clock, |this, label| this.child(label)),
                     )
@@ -5232,6 +5344,15 @@ impl ThreadView {
             })
             .flatten();
 
+        let turn_cost_label = show_stats
+            .then(|| {
+                self.turn_fields
+                    .turn_cost
+                    .filter(|&cost| cost >= 0.01)
+                    .map(|cost| language_model::format_cost(cost))
+            })
+            .flatten();
+
         let arrow_icon = if is_waiting {
             IconName::ArrowUp
         } else {
@@ -5290,6 +5411,13 @@ impl ThreadView {
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         ),
+                )
+            })
+            .when_some(turn_cost_label, |this, cost| {
+                this.child(
+                    Label::new(cost)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
                 )
             })
             .into_any_element()

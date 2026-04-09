@@ -6,10 +6,10 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    RateLimiter, env_var,
+    LanguageModelCompletionEvent, LanguageModelCostInfo, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
@@ -355,6 +355,14 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn supports_split_token_display(&self) -> bool {
         true
+    }
+
+    fn model_cost_info(&self) -> Option<LanguageModelCostInfo> {
+        let (input, output) = self.model.cost_per_million_tokens()?;
+        Some(LanguageModelCostInfo::TokenCost {
+            input_token_cost_per_1m: input,
+            output_token_cost_per_1m: output,
+        })
     }
 
     fn telemetry_id(&self) -> String {
