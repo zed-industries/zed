@@ -33,7 +33,7 @@ pub enum NewThreadLocation {
     NewWorktree,
 }
 
-/// Where to position the sidebar.
+/// Where to position the threads sidebar.
 #[derive(
     Clone,
     Copy,
@@ -114,7 +114,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the sidebar.
+    /// Where to position the threads sidebar.
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
