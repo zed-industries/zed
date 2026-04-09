@@ -4804,6 +4804,7 @@ mod tests {
     };
     use acp_thread::{StubAgentConnection, ThreadStatus};
     use agent_servers::CODEX_ID;
+    use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
