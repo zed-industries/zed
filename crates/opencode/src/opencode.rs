@@ -17,6 +17,41 @@ pub enum ApiProtocol {
     Google,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum OpenCodeSubscription {
+    Zen,
+    Go,
+    Free,
+}
+
+impl OpenCodeSubscription {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Zen => "Zen",
+            Self::Go => "Go",
+            Self::Free => "Free",
+        }
+    }
+
+    pub fn id_prefix(&self) -> &'static str {
+        match self {
+            Self::Zen => "zen",
+            Self::Go => "go",
+            Self::Free => "free",
+        }
+    }
+
+    pub fn api_path_suffix(&self) -> &'static str {
+        match self {
+            Self::Zen => "",
+            Self::Go => "/go",
+            Self::Free => "",
+        }
+    }
+}
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
@@ -88,6 +123,12 @@ pub enum Model {
     Glm5_1,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
+    #[serde(rename = "minimax-m2.7")]
+    MiniMaxM2_7,
+    #[serde(rename = "mimo-v2-pro")]
+    MimoV2Pro,
+    #[serde(rename = "mimo-v2-omni")]
+    MimoV2Omni,
     #[serde(rename = "big-pickle")]
     BigPickle,
     #[serde(rename = "nemotron-3-super-free")]
@@ -101,12 +142,52 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         protocol: ApiProtocol,
+        custom_model_api_url: Option<String>,
     },
 }
 
 impl Model {
     pub fn default_fast() -> Self {
         Self::ClaudeHaiku4_5
+    }
+
+    pub fn default_go() -> Self {
+        Self::KimiK2_5
+    }
+
+    pub fn default_go_fast() -> Self {
+        Self::MiniMaxM2_5
+    }
+
+    pub fn default_free() -> Self {
+        Self::BigPickle
+    }
+
+    pub fn default_free_fast() -> Self {
+        Self::MiniMaxM2_5Free
+    }
+
+    pub fn available_subscriptions(&self) -> &'static [OpenCodeSubscription] {
+        match self {
+            // Models available in both Zen and Go
+            Self::Glm5 | Self::Glm5_1 | Self::KimiK2_5 | Self::MiniMaxM2_5 => {
+                &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go]
+            }
+
+            // Go-only models
+            Self::MiniMaxM2_7 | Self::MimoV2Pro | Self::MimoV2Omni => &[OpenCodeSubscription::Go],
+
+            // Free models
+            Self::MiniMaxM2_5Free | Self::Nemotron3SuperFree | Self::BigPickle => {
+                &[OpenCodeSubscription::Free]
+            }
+
+            // Custom models get their subscription from settings, not from here
+            Self::Custom { .. } => &[],
+
+            // All other built-in models are Zen-only
+            _ => &[OpenCodeSubscription::Zen],
+        }
     }
 
     pub fn id(&self) -> &str {
@@ -144,6 +225,9 @@ impl Model {
             Self::Glm5 => "glm-5",
             Self::Glm5_1 => "glm-5.1",
             Self::KimiK2_5 => "kimi-k2.5",
+            Self::MiniMaxM2_7 => "minimax-m2.7",
+            Self::MimoV2Pro => "mimo-v2-pro",
+            Self::MimoV2Omni => "mimo-v2-omni",
             Self::BigPickle => "big-pickle",
             Self::Nemotron3SuperFree => "nemotron-3-super-free",
 
@@ -186,6 +270,9 @@ impl Model {
             Self::Glm5 => "GLM 5",
             Self::Glm5_1 => "GLM 5.1",
             Self::KimiK2_5 => "Kimi K2.5",
+            Self::MiniMaxM2_7 => "MiniMax M2.7",
+            Self::MimoV2Pro => "MiMo V2 Pro",
+            Self::MimoV2Omni => "MiMo V2 Omni",
             Self::BigPickle => "Big Pickle",
             Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
 
@@ -229,6 +316,9 @@ impl Model {
             | Self::Glm5
             | Self::Glm5_1
             | Self::KimiK2_5
+            | Self::MiniMaxM2_7
+            | Self::MimoV2Pro
+            | Self::MimoV2Omni
             | Self::BigPickle
             | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
 
@@ -262,9 +352,12 @@ impl Model {
             Self::Gemini3Flash => 1_048_576,
 
             // OpenAI-compatible models
+            Self::MiniMaxM2_7 => 204_800,
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 204_800,
             Self::Glm5 | Self::Glm5_1 => 204_800,
             Self::KimiK2_5 => 262_144,
+            Self::MimoV2Pro => 1_048_576,
+            Self::MimoV2Omni => 262_144,
             Self::BigPickle => 200_000,
             Self::Nemotron3SuperFree => 204_800,
 
@@ -305,11 +398,13 @@ impl Model {
             Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
 
             // OpenAI-compatible models
+            Self::MiniMaxM2_7 => Some(131_072),
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
             Self::Glm5 | Self::Glm5_1 => Some(131_072),
             Self::BigPickle => Some(128_000),
             Self::KimiK2_5 => Some(65_536),
             Self::Nemotron3SuperFree => Some(128_000),
+            Self::MimoV2Pro | Self::MimoV2Omni => Some(64_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -353,14 +448,16 @@ impl Model {
             // Google models support images
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
-            // Kimi K2.5 supports images
-            Self::KimiK2_5 => true,
+            // OpenAI-compatible models with image support
+            Self::KimiK2_5 | Self::MimoV2Omni => true,
 
-            // OpenAI-compatible models — conservative default
+            // OpenAI-compatible models without image support
             Self::MiniMaxM2_5
             | Self::MiniMaxM2_5Free
             | Self::Glm5
             | Self::Glm5_1
+            | Self::MiniMaxM2_7
+            | Self::MimoV2Pro
             | Self::BigPickle
             | Self::Nemotron3SuperFree => false,
 
@@ -375,12 +472,12 @@ impl Model {
     }
 }
 
-/// Stream generate content for Google models via OpenCode Zen.
+/// Stream generate content for Google models via OpenCode.
 ///
 /// Unlike `google_ai::stream_generate_content()`, this uses:
 /// - `/v1/models/{model}` path (not `/v1beta/models/{model}`)
 /// - `Authorization: Bearer` header (not `key=` query param)
-pub async fn stream_generate_content_zen(
+pub async fn stream_generate_content(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
@@ -426,7 +523,7 @@ pub async fn stream_generate_content_zen(
         let mut text = String::new();
         response.body_mut().read_to_string(&mut text).await?;
         Err(anyhow!(
-            "error during streamGenerateContent via OpenCode Zen, status code: {:?}, body: {}",
+            "error during streamGenerateContent via OpenCode, status code: {:?}, body: {}",
             response.status(),
             text
         ))
