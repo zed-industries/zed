@@ -7682,15 +7682,9 @@ impl EditorElement {
                         };
 
                         if delta_y > 0.0 {
-                            window.dispatch_action(
-                                Box::new(zed_actions::IncreaseBufferFontSize { persist: false }),
-                                cx,
-                            );
+                            theme_settings::increase_buffer_font_size(cx);
                         } else if delta_y < 0.0 {
-                            window.dispatch_action(
-                                Box::new(zed_actions::DecreaseBufferFontSize { persist: false }),
-                                cx,
-                            );
+                            theme_settings::decrease_buffer_font_size(cx);
                         }
 
                         cx.stop_propagation();
