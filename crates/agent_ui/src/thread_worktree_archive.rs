@@ -39,17 +39,12 @@ pub struct RootPlan {
     /// Multiple projects can reference the same path when the user has the
     /// worktree open in more than one workspace.
     pub affected_projects: Vec<AffectedProject>,
-    /// The `Repository` entity for this worktree, used to run git commands
-    /// (create WIP commits, stage files, reset) during
-    /// [`persist_worktree_state`]. `None` when the `GitStore` hasn't created
-    /// a `Repository` for this worktree yet — in that case,
-    /// `persist_worktree_state` falls back to creating a temporary headless
-    /// project to obtain one.
-    pub worktree_repo: Option<Entity<Repository>>,
+    /// The `Repository` entity for this linked worktree, used to run git
+    /// commands (create WIP commits, stage files, reset) during
+    /// [`persist_worktree_state`].
+    pub worktree_repo: Entity<Repository>,
     /// The branch the worktree was on, so it can be restored later.
-    /// `None` if the worktree was in detached HEAD state or if no
-    /// `Repository` entity was available at planning time (in which case
-    /// `persist_worktree_state` reads it from the repo snapshot instead).
+    /// `None` if the worktree was in detached HEAD state.
     pub branch_name: Option<String>,
 }
 
@@ -86,13 +81,8 @@ fn archived_worktree_ref_name(id: i64) -> String {
 ///    linked worktree — needed for both git ref creation and
 ///    `git worktree remove`.
 ///
-/// When no `Repository` entity is available (e.g. the `GitStore` hasn't
-/// finished scanning), the function falls back to deriving `main_repo_path`
-/// from the worktree snapshot's `root_repo_common_dir`. In that case
-/// `worktree_repo` is `None` and [`persist_worktree_state`] will create a
-/// temporary headless project to obtain one.
-///
-/// Returns `None` if no open project has this path as a visible worktree.
+/// Returns `None` if the path is not a linked worktree (main worktrees
+/// cannot be archived to disk) or if no open project has it loaded.
 pub fn build_root_plan(
     path: &Path,
     workspaces: &[Entity<Workspace>],
@@ -139,40 +129,19 @@ pub fn build_root_plan(
             .then_some((snapshot, repo))
         });
 
-    let matching_worktree_snapshot = workspaces.iter().find_map(|workspace| {
-        workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .visible_worktrees(cx)
-            .find(|worktree| worktree.read(cx).abs_path().as_ref() == path.as_path())
-            .map(|worktree| worktree.read(cx).snapshot())
-    });
-
-    let (main_repo_path, worktree_repo, branch_name) =
-        if let Some((linked_snapshot, repo)) = linked_repo {
-            (
-                linked_snapshot.original_repo_abs_path.to_path_buf(),
-                Some(repo),
-                linked_snapshot
-                    .branch
-                    .as_ref()
-                    .map(|branch| branch.name().to_string()),
-            )
-        } else {
-            let main_repo_path = matching_worktree_snapshot
-                .as_ref()?
-                .root_repo_common_dir()
-                .and_then(|dir| dir.parent())?
-                .to_path_buf();
-            (main_repo_path, None, None)
-        };
-
+    // Only linked worktrees can be archived to disk via `git worktree remove`.
+    // Main worktrees must be left alone — git refuses to remove them.
+    let (linked_snapshot, repo) = linked_repo?;
+    let main_repo_path = linked_snapshot.original_repo_abs_path.to_path_buf();
+    let branch_name = linked_snapshot
+        .branch
+        .as_ref()
+        .map(|branch| branch.name().to_string());
     Some(RootPlan {
         root_path: path,
         main_repo_path,
         affected_projects,
-        worktree_repo,
+        worktree_repo: repo,
         branch_name,
     })
 }
@@ -369,10 +338,7 @@ async fn rollback_root(root: &RootPlan, cx: &mut AsyncApp) {
 ///
 /// On success, returns the archived worktree DB row ID for rollback.
 pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Result<i64> {
-    let (worktree_repo, _temp_worktree_project) = match &root.worktree_repo {
-        Some(worktree_repo) => (worktree_repo.clone(), None),
-        None => find_or_create_repository(&root.root_path, cx).await?,
-    };
+    let worktree_repo = root.worktree_repo.clone();
 
     let original_commit_hash = worktree_repo
         .update(cx, |repo, _cx| repo.head_sha())
