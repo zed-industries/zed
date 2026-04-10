@@ -8376,7 +8376,7 @@ impl ThreadView {
             .unwrap_or_else(|| "one folder".to_string());
 
         let description = format!(
-            "This agent only operates on \"{}\". Other folders on this workspace are not accessible to it.",
+            "This agent only operates on \"{}\". Other folders in this workspace are not accessible to it.",
             active_dir
         );
 
