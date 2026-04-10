@@ -3148,7 +3148,7 @@ impl EditorElement {
             bookmarks
                 .into_iter()
                 .filter_map(|display_row| {
-                    gutter.layout_gutter_item(
+                    gutter.layout_gutter_item_skipping_folds(
                         display_row,
                         |_| editor.render_bookmark().into_any_element(),
                         window,
@@ -3174,7 +3174,7 @@ impl EditorElement {
             breakpoints
                 .into_iter()
                 .filter_map(|(display_row, (text_anchor, bp, state))| {
-                    gutter.layout_gutter_item(
+                    gutter.layout_gutter_item_skipping_folds(
                         display_row,
                         |cx| {
                             editor
@@ -3247,13 +3247,6 @@ impl EditorElement {
             return Vec::new();
         }
 
-        let GutterArgs {
-            range,
-            snapshot,
-            row_infos,
-            ..
-        } = gutter;
-
         self.editor.update(cx, |editor, cx| {
             let active_task_indicator_row =
                 // TODO: add edit button on the right side of each row in the context menu
@@ -3265,7 +3258,7 @@ impl EditorElement {
                 {
                     actions
                         .tasks()
-                        .map(|tasks| tasks.position.to_display_point(snapshot).row())
+                        .map(|tasks| tasks.position.to_display_point(gutter.snapshot).row())
                         .or_else(|| match deployed_from {
                             Some(CodeActionSource::Indicator(row)) => Some(*row),
                             _ => None,
@@ -3277,33 +3270,22 @@ impl EditorElement {
             run_indicators
                 .iter()
                 .filter_map(|display_row| {
-                    // TODO("pass in the locations")
-
-                    if !range.contains(display_row) {
-                        return None;
-                    }
-                    if row_infos
-                        .get((*display_row - range.start).0 as usize)
-                        .is_some_and(|row_info| row_info.expand_info.is_some())
-                    {
-                        return None;
-                    }
-
-                    let button = editor.render_run_indicator(
-                        &self.style,
-                        Some(*display_row) == active_task_indicator_row,
-                        breakpoints.get(&display_row).map(|(anchor, _, _)| *anchor),
+                    gutter.layout_gutter_item(
                         *display_row,
-                        cx,
-                    );
-
-                    let button = gutter.prepaint_gutter_button(
-                        button.into_any_element(),
-                        *display_row,
+                        |cx| {
+                            editor
+                                .render_run_indicator(
+                                    &self.style,
+                                    Some(*display_row) == active_task_indicator_row,
+                                    breakpoints.get(&display_row).map(|(anchor, _, _)| *anchor),
+                                    *display_row,
+                                    cx,
+                                )
+                                .into_any_element()
+                        },
                         window,
                         cx,
-                    );
-                    Some(button)
+                    )
                 })
                 .collect_vec()
         })
@@ -7914,6 +7896,25 @@ struct GutterArgs<'a> {
 }
 
 impl GutterArgs<'_> {
+    fn layout_gutter_item_skipping_folds(
+        &self,
+        display_row: DisplayRow,
+        render_item: impl Fn(&mut Context<'_, Editor>) -> AnyElement,
+        window: &mut Window,
+        cx: &mut Context<'_, Editor>,
+    ) -> Option<AnyElement> {
+        let row = MultiBufferRow(
+            DisplayPoint::new(display_row, 0)
+                .to_point(self.snapshot)
+                .row,
+        );
+        if self.snapshot.is_line_folded(row) {
+            return None;
+        }
+
+        self.layout_gutter_item(display_row, render_item, window, cx)
+    }
+
     fn layout_gutter_item(
         &self,
         display_row: DisplayRow,
@@ -7921,6 +7922,10 @@ impl GutterArgs<'_> {
         window: &mut Window,
         cx: &mut Context<'_, Editor>,
     ) -> Option<AnyElement> {
+        if !self.range.contains(&display_row) {
+            return None;
+        }
+
         if self
             .row_infos
             .get((display_row.0.saturating_sub(self.range.start.0)) as usize)
@@ -7931,19 +7936,6 @@ impl GutterArgs<'_> {
                         .is_some_and(|status| status.is_deleted())
             })
         {
-            return None;
-        }
-
-        if self.range.start > display_row || self.range.end < display_row {
-            return None;
-        }
-
-        let row = MultiBufferRow(
-            DisplayPoint::new(display_row, 0)
-                .to_point(self.snapshot)
-                .row,
-        );
-        if self.snapshot.is_line_folded(row) {
             return None;
         }
 
