@@ -18,6 +18,7 @@ use gpui::{
     px, uniform_list,
 };
 use language::line_diff;
+use log;
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::git_store::{
     CommitDataState, GitGraphEvent, GitStore, GitStoreEvent, GraphDataResponse, Repository,
@@ -1338,10 +1339,12 @@ impl GitGraph {
     }
 
     fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut Context<Self>) {
+        log::debug!("GitGraph::select_first");
         self.select_entry(0, ScrollStrategy::Nearest, cx);
     }
 
     fn select_prev(&mut self, _: &SelectPrevious, window: &mut Window, cx: &mut Context<Self>) {
+        log::debug!("GitGraph::select_prev");
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
             self.select_entry(
                 selected_entry_idx.saturating_sub(1),
@@ -1354,6 +1357,7 @@ impl GitGraph {
     }
 
     fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        log::debug!("GitGraph::select_next");
         if let Some(selected_entry_idx) = &self.selected_entry_idx {
             self.select_entry(
                 selected_entry_idx
@@ -1368,6 +1372,7 @@ impl GitGraph {
     }
 
     fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
+        log::debug!("GitGraph::select_last");
         self.select_entry(
             self.graph_data.commits.len().saturating_sub(1),
             ScrollStrategy::Nearest,
@@ -4139,6 +4144,154 @@ mod tests {
                 Some(1),
                 "Row calculation should yield absolute row exactly"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_git_graph_navigation(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let commits = generate_random_commit_dag(&mut rng, 10, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // Focus the git graph
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.focus_handle(cx).focus(window, cx);
+        });
+        cx.run_until_parked();
+
+        // Draw it to ensure action handlers are registered
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| { assert_eq!(graph.graph_data.commits.len(), 10); });
+        // Initial state: no selection
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, None);
+        });
+
+        // Select first
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
+        });
+
+        // Select next
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_next(&menu::SelectNext, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(1));
+        });
+
+        // Select previous
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_prev(&menu::SelectPrevious, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
+        });
+
+        // Select last
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_last(&menu::SelectLast, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(9));
+        });
+
+        // Select next at the end should stay at the end
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_next(&menu::SelectNext, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(9));
+        });
+
+        // Select previous from last
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_prev(&menu::SelectPrevious, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(8));
+        });
+
+        // Select previous from no selection should select first
+        git_graph.update(cx, |graph, cx| {
+            graph.selected_entry_idx = None;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_prev(&menu::SelectPrevious, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
+        });
+
+        // Select next from no selection should select first
+        git_graph.update(cx, |graph, cx| {
+            graph.selected_entry_idx = None;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_next(&menu::SelectNext, window, cx);
+        });
+        cx.run_until_parked();
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.selected_entry_idx, Some(0));
         });
     }
 }
