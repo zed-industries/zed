@@ -5,7 +5,7 @@ use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
 use futures::FutureExt as _;
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
-use language_model::LanguageModelToolResultContent;
+use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
 use util::ResultExt;
@@ -401,8 +401,19 @@ impl AnyAgentTool for ContextServerTool {
                         concatenated_text.push_str(&text);
                         llm_output.push(LanguageModelToolResultContent::Text(text.into()));
                     }
-                    context_server::types::ToolResponseContent::Image { .. } => {
-                        log::warn!("Ignoring image content from tool response");
+                    context_server::types::ToolResponseContent::Image { data, mime_type } => {
+                        match LanguageModelImage::from_base64(data) {
+                            Ok(image) => {
+                                llm_output.push(LanguageModelToolResultContent::Image(image));
+                            }
+                            Err(err) => {
+                                let msg =
+                                    format!("Image ({mime_type}) could not be processed: {err}");
+                                log::warn!("{msg}");
+                                concatenated_text.push_str(&msg);
+                                llm_output.push(LanguageModelToolResultContent::Text(msg.into()));
+                            }
+                        }
                     }
                     context_server::types::ToolResponseContent::Audio { .. } => {
                         log::warn!("Ignoring audio content from tool response");
@@ -415,7 +426,30 @@ impl AnyAgentTool for ContextServerTool {
                     }
                 }
             }
+            // Images are intentionally omitted from raw_output, which is only used as a
+            // plain-text display fallback for clients that don't consume the `content` field.
             let raw_output = serde_json::Value::String(concatenated_text);
+
+            // Push content to the UI for live preview during tool execution.
+            let ui_content: Vec<_> = llm_output
+                .iter()
+                .map(|part| match part {
+                    LanguageModelToolResultContent::Image(img) => {
+                        acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
+                            acp::ImageContent::new(img.source.to_string(), "image/png"),
+                        )))
+                    }
+                    LanguageModelToolResultContent::Text(text) => {
+                        acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Text(
+                            acp::TextContent::new(text.to_string()),
+                        )))
+                    }
+                })
+                .collect();
+            if !ui_content.is_empty() {
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(ui_content));
+            }
+
             Ok(AgentToolOutput {
                 raw_output,
                 llm_output,

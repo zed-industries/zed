@@ -50,24 +50,27 @@ impl LanguageModelImage {
         }
 
         let source = source?;
-        let size_obj = size_obj?;
 
-        let mut width = None;
-        let mut height = None;
+        let size = size_obj.and_then(|size_obj| {
+            let mut width = None;
+            let mut height = None;
 
-        for (k, v) in size_obj.iter() {
-            match k.to_lowercase().as_str() {
-                "width" => width = v.as_i64().map(|w| w as i32),
-                "height" => height = v.as_i64().map(|h| h as i32),
-                _ => {}
+            for (k, v) in size_obj.iter() {
+                match k.to_lowercase().as_str() {
+                    "width" => width = v.as_i64().map(|w| w as i32),
+                    "height" => height = v.as_i64().map(|h| h as i32),
+                    _ => {}
+                }
             }
-        }
 
-        Some(Self {
-            size: Some(ImageSize {
+            Some(ImageSize {
                 width: width?,
                 height: height?,
-            }),
+            })
+        });
+
+        Some(Self {
+            size,
             source: SharedString::from(source.to_string()),
         })
     }
@@ -622,5 +625,50 @@ mod tests {
             reasoning_details: None,
         };
         assert_eq!(message.string_contents(), "prefix first second suffix");
+    }
+
+    #[test]
+    fn test_deserialize_tool_result_content_mixed() {
+        // Simulates a stored tool result with text + image (no size field),
+        // as produced by MCP tool responses.
+        let json = serde_json::json!([
+            {"Text": "Analysis complete."},
+            {"Image": {"source": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="}}
+        ]);
+
+        let content: Vec<LanguageModelToolResultContent> =
+            serde_json::from_value(json).expect("should deserialize mixed content");
+
+        assert_eq!(content.len(), 2);
+        assert!(
+            matches!(&content[0], LanguageModelToolResultContent::Text(t) if t.as_ref() == "Analysis complete.")
+        );
+        assert!(
+            matches!(&content[1], LanguageModelToolResultContent::Image(img) if !img.source.is_empty() && img.size.is_none())
+        );
+    }
+
+    #[test]
+    fn test_deserialize_tool_result_content_image_with_size() {
+        let json = serde_json::json!(
+            {"Image": {"source": "abc123", "size": {"width": 100, "height": 200}}}
+        );
+
+        let content: LanguageModelToolResultContent =
+            serde_json::from_value(json).expect("should deserialize image with size");
+
+        match content {
+            LanguageModelToolResultContent::Image(img) => {
+                assert_eq!(img.source.as_ref(), "abc123");
+                assert_eq!(
+                    img.size,
+                    Some(ImageSize {
+                        width: 100,
+                        height: 200
+                    })
+                );
+            }
+            _ => panic!("expected Image variant"),
+        }
     }
 }

@@ -2082,6 +2082,333 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_mcp_tool_image_response(cx: &mut TestAppContext) {
+    struct TestCase {
+        name: &'static str,
+        response_content: Vec<context_server::types::ToolResponseContent>,
+        expected_ui_image_count: usize,
+        expected_ui_text_count: usize,
+        expect_llm_image: bool,
+        expected_llm_text: Option<&'static str>,
+    }
+
+    let test_image_base64 = test_png_base64();
+    let test_gif_base64 = test_gif_base64();
+
+    let test_cases = vec![
+        TestCase {
+            name: "text only",
+            response_content: vec![context_server::types::ToolResponseContent::Text {
+                text: "Here is the result.".into(),
+            }],
+            expected_ui_image_count: 0,
+            expected_ui_text_count: 1,
+            expect_llm_image: false,
+            expected_llm_text: Some("Here is the result."),
+        },
+        TestCase {
+            name: "gif image (re-encoded to PNG)",
+            response_content: vec![context_server::types::ToolResponseContent::Image {
+                data: test_gif_base64.clone(),
+                mime_type: "image/gif".into(),
+            }],
+            expected_ui_image_count: 1,
+            expected_ui_text_count: 0,
+            expect_llm_image: true,
+            expected_llm_text: None,
+        },
+        TestCase {
+            name: "png image",
+            response_content: vec![context_server::types::ToolResponseContent::Image {
+                data: test_image_base64.clone(),
+                mime_type: "image/png".into(),
+            }],
+            expected_ui_image_count: 1,
+            expected_ui_text_count: 0,
+            expect_llm_image: true,
+            expected_llm_text: None,
+        },
+        TestCase {
+            name: "mixed text and image",
+            response_content: vec![
+                context_server::types::ToolResponseContent::Text {
+                    text: "Analysis results: Found 5 items.".into(),
+                },
+                context_server::types::ToolResponseContent::Image {
+                    data: test_image_base64.clone(),
+                    mime_type: "image/png".into(),
+                },
+            ],
+            expected_ui_image_count: 1,
+            expected_ui_text_count: 1,
+            expect_llm_image: true,
+            expected_llm_text: None,
+        },
+        TestCase {
+            name: "multiple images",
+            response_content: vec![
+                context_server::types::ToolResponseContent::Image {
+                    data: test_image_base64.clone(),
+                    mime_type: "image/png".into(),
+                },
+                context_server::types::ToolResponseContent::Image {
+                    data: test_gif_base64.clone(),
+                    mime_type: "image/gif".into(),
+                },
+            ],
+            expected_ui_image_count: 2,
+            expected_ui_text_count: 0,
+            expect_llm_image: true,
+            expected_llm_text: None,
+        },
+        TestCase {
+            name: "interleaved text and images",
+            response_content: vec![
+                context_server::types::ToolResponseContent::Text {
+                    text: "Item #1".into(),
+                },
+                context_server::types::ToolResponseContent::Image {
+                    data: test_image_base64.clone(),
+                    mime_type: "image/png".into(),
+                },
+                context_server::types::ToolResponseContent::Text {
+                    text: "Item #2".into(),
+                },
+                context_server::types::ToolResponseContent::Image {
+                    data: test_gif_base64.clone(),
+                    mime_type: "image/gif".into(),
+                },
+                context_server::types::ToolResponseContent::Text {
+                    text: "Item #3".into(),
+                },
+            ],
+            expected_ui_image_count: 2,
+            expected_ui_text_count: 3,
+            expect_llm_image: true,
+            expected_llm_text: None,
+        },
+    ];
+
+    for test_case in test_cases {
+        let (test, mut mcp_tool_calls) = setup_mcp_image_test(cx, "test_server", "run_tool").await;
+        let fake_model = test.model.as_fake();
+
+        let mut events = drive_mcp_tool_call(
+            &test.thread,
+            &fake_model,
+            &mut mcp_tool_calls,
+            "run_tool",
+            test_case.response_content,
+            cx,
+        )
+        .await;
+
+        // Verify live preview: content should be pushed to the UI during execution.
+        let expected_total = test_case.expected_ui_image_count + test_case.expected_ui_text_count;
+        if expected_total > 0 {
+            let mut found_image_count = 0;
+            let mut found_text_count = 0;
+            while let Some(event) = events.next().now_or_never() {
+                if let Some(Ok(ThreadEvent::ToolCallUpdate(
+                    acp_thread::ToolCallUpdate::UpdateFields(update),
+                ))) = event
+                {
+                    if let Some(content) = &update.fields.content {
+                        for item in content {
+                            match item {
+                                acp::ToolCallContent::Content(acp::Content {
+                                    content: acp::ContentBlock::Image(img),
+                                    ..
+                                }) => {
+                                    assert_eq!(
+                                        img.mime_type, "image/png",
+                                        "case: {}: all images should be re-encoded as PNG",
+                                        test_case.name
+                                    );
+                                    assert!(
+                                        !img.data.is_empty(),
+                                        "case: {}: image data should not be empty",
+                                        test_case.name
+                                    );
+                                    found_image_count += 1;
+                                }
+                                acp::ToolCallContent::Content(acp::Content {
+                                    content: acp::ContentBlock::Text(text),
+                                    ..
+                                }) => {
+                                    assert!(
+                                        !text.text.is_empty(),
+                                        "case: {}: text content should not be empty",
+                                        test_case.name
+                                    );
+                                    found_text_count += 1;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                found_image_count, test_case.expected_ui_image_count,
+                "case: {}: wrong number of image content blocks in UI",
+                test_case.name
+            );
+            assert_eq!(
+                found_text_count, test_case.expected_ui_text_count,
+                "case: {}: wrong number of text content blocks in UI",
+                test_case.name
+            );
+        }
+
+        // Verify LLM tool result content.
+        let tool_result = extract_single_tool_result(&fake_model, test_case.name);
+        if test_case.expect_llm_image {
+            let has_image = tool_result.content.iter().any(|c| {
+                matches!(c, language_model::LanguageModelToolResultContent::Image(img) if img.size.is_some())
+            });
+            assert!(
+                has_image,
+                "case: {}: expected Image with size in LLM tool result (from process_image)",
+                test_case.name
+            );
+        }
+        if let Some(expected_text) = test_case.expected_llm_text {
+            let has_text = tool_result.content.iter().any(|c| {
+                matches!(c, language_model::LanguageModelToolResultContent::Text(t) if t.as_ref() == expected_text)
+            });
+            assert!(
+                has_text,
+                "case: {}: expected text '{}' in LLM tool result",
+                test_case.name, expected_text
+            );
+        }
+
+        finish_turn(&fake_model, events).await;
+    }
+}
+
+#[gpui::test]
+async fn test_mcp_tool_image_response_without_image_support(cx: &mut TestAppContext) {
+    let (test, mut mcp_tool_calls) = setup_mcp_image_test(cx, "no_image_server", "get_image").await;
+    let fake_model = test.model.as_fake();
+
+    // Override: the model does NOT support images.
+    fake_model.set_supports_images(false);
+
+    let events = drive_mcp_tool_call(
+        &test.thread,
+        &fake_model,
+        &mut mcp_tool_calls,
+        "get_image",
+        vec![context_server::types::ToolResponseContent::Image {
+            data: test_png_base64(),
+            mime_type: "image/png".into(),
+        }],
+        cx,
+    )
+    .await;
+
+    let tool_result = extract_single_tool_result(&fake_model, "without_image_support");
+
+    // When the model doesn't support images, the request builder replaces
+    // image content with a fallback text message so the LLM gets
+    // something meaningful instead of an unsupported payload.
+    match tool_result
+        .content
+        .last()
+        .expect("should have fallback text")
+    {
+        language_model::LanguageModelToolResultContent::Text(text) => {
+            assert!(
+                text.contains("doesn't support"),
+                "expected fallback text about missing image support, got: {text:?}"
+            );
+        }
+        other => panic!(
+            "expected text fallback when model lacks image support, got: {:?}",
+            other
+        ),
+    }
+
+    finish_turn(&fake_model, events).await;
+}
+
+#[gpui::test]
+async fn test_mcp_tool_image_restored_on_replay(cx: &mut TestAppContext) {
+    let (test, mut mcp_tool_calls) =
+        setup_mcp_image_test(cx, "image_replay_server", "get_screenshot").await;
+    let fake_model = test.model.as_fake();
+
+    let events = drive_mcp_tool_call(
+        &test.thread,
+        &fake_model,
+        &mut mcp_tool_calls,
+        "get_screenshot",
+        vec![context_server::types::ToolResponseContent::Image {
+            data: test_png_base64(),
+            mime_type: "image/png".into(),
+        }],
+        cx,
+    )
+    .await;
+
+    // Complete the turn — pop the pending completion so finish_turn starts a fresh one.
+    let _completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("should have a pending completion after tool call");
+    fake_model.send_last_completion_stream_text_chunk("Here's the screenshot!");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+
+    // Simulate app restart: disconnect the MCP server
+    test.context_server_store.update(cx, |store, cx| {
+        store
+            .stop_server(&ContextServerId("image_replay_server".into()), cx)
+            .log_err();
+    });
+    cx.run_until_parked();
+
+    // Replay the thread (simulates loading a saved thread after restart)
+    let mut replay_events = test.thread.update(cx, |thread, cx| thread.replay(cx));
+
+    let mut found_image_content = false;
+    while let Some(event) = replay_events.next().await {
+        let event = event.unwrap();
+        if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
+            &event
+        {
+            if update.tool_call_id.to_string() == "tool_1" {
+                if let Some(content) = &update.fields.content {
+                    for item in content {
+                        if let acp::ToolCallContent::Content(acp::Content {
+                            content: acp::ContentBlock::Image(image),
+                            ..
+                        }) = item
+                        {
+                            assert!(
+                                !image.data.is_empty(),
+                                "Image data should be restored from saved tool result"
+                            );
+                            assert_eq!(image.mime_type, "image/png");
+                            found_image_content = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        found_image_content,
+        "Image content should be restored when replaying tool call"
+    );
+}
+
+#[gpui::test]
 #[cfg_attr(not(feature = "e2e"), ignore)]
 async fn test_cancellation(cx: &mut TestAppContext) {
     let ThreadTest { thread, .. } = setup(cx, TestModel::Sonnet4).await;
@@ -4463,6 +4790,166 @@ fn setup_context_server(
     });
     cx.run_until_parked();
     mcp_tool_calls_rx
+}
+
+/// Returns a base64-encoded 1x1 red pixel PNG for testing.
+///
+/// This is a minimal valid PNG image suitable for use in MCP image response tests.
+fn test_png_base64() -> String {
+    // 1x1 red pixel PNG (RGBA [255, 0, 0, 255])
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==".to_string()
+}
+
+/// Returns a base64-encoded 1x1 transparent GIF for testing.
+fn test_gif_base64() -> String {
+    "R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==".to_string()
+}
+
+/// Extracts the single tool result from the fake model's latest pending completion.
+///
+/// Panics with context if there is no pending completion or the message doesn't
+/// contain exactly one tool result.
+fn extract_single_tool_result(
+    fake_model: &FakeLanguageModel,
+    case_name: &str,
+) -> language_model::LanguageModelToolResult {
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .unwrap_or_else(|| panic!("case: {case_name}: should have a pending completion"));
+    let tool_results: Vec<_> = completion
+        .messages
+        .last()
+        .unwrap_or_else(|| panic!("case: {case_name}: completion should have messages"))
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            MessageContent::ToolResult(result) => Some(result.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        tool_results.len(),
+        1,
+        "case: {case_name}: expected exactly one tool result"
+    );
+    tool_results.into_iter().next().unwrap()
+}
+
+/// Completes an MCP tool call turn by sending a final text chunk and draining the
+/// event stream.
+async fn finish_turn(
+    fake_model: &FakeLanguageModel,
+    events: UnboundedReceiver<Result<ThreadEvent>>,
+) {
+    fake_model.send_last_completion_stream_text_chunk("Done!");
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
+/// Sets up a test environment with a single MCP context server, image support enabled,
+/// and auto-allow tool permissions.
+async fn setup_mcp_image_test(
+    cx: &mut TestAppContext,
+    server_name: &'static str,
+    tool_name: &'static str,
+) -> (
+    ThreadTest,
+    UnboundedReceiver<(
+        context_server::types::CallToolParams,
+        oneshot::Sender<context_server::types::CallToolResponse>,
+    )>,
+) {
+    let test = setup(cx, TestModel::Fake).await;
+    test.model.as_fake().set_supports_images(true);
+
+    test.fs
+        .insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "tool_permissions": { "default": "allow" },
+                    "profiles": {
+                        "test": {
+                            "name": "Test Profile",
+                            "enable_all_context_servers": true,
+                            "tools": {}
+                        },
+                    }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+    cx.run_until_parked();
+    test.thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let mcp_tool_calls = setup_context_server(
+        server_name,
+        vec![context_server::types::Tool {
+            name: tool_name.into(),
+            title: None,
+            description: Some("Test tool".into()),
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: None,
+            annotations: None,
+        }],
+        &test.context_server_store,
+        cx,
+    );
+
+    (test, mcp_tool_calls)
+}
+
+/// Sends a user message, streams a tool use from the fake model, and responds to the
+/// MCP tool call with the given content. Returns the event stream for further assertions.
+async fn drive_mcp_tool_call(
+    thread: &Entity<Thread>,
+    fake_model: &FakeLanguageModel,
+    mcp_tool_calls: &mut UnboundedReceiver<(
+        context_server::types::CallToolParams,
+        oneshot::Sender<context_server::types::CallToolResponse>,
+    )>,
+    tool_name: &str,
+    response_content: Vec<context_server::types::ToolResponseContent>,
+    cx: &mut TestAppContext,
+) -> UnboundedReceiver<Result<ThreadEvent>> {
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Run the tool"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: tool_name.into(),
+            raw_input: json!({}).to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+    assert_eq!(tool_call_params.name, tool_name);
+    tool_call_response
+        .send(context_server::types::CallToolResponse {
+            content: response_content,
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    events
 }
 
 #[gpui::test]

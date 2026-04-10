@@ -984,6 +984,32 @@ pub struct Thread {
     running_subagents: Vec<WeakEntity<Thread>>,
 }
 
+fn tool_result_to_tool_call_content(
+    tool_result: Option<&LanguageModelToolResult>,
+) -> Option<Vec<acp::ToolCallContent>> {
+    tool_result
+        .map(|result| {
+            result
+                .content
+                .iter()
+                .map(|part| match part {
+                    LanguageModelToolResultContent::Text(text) => {
+                        acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Text(
+                            acp::TextContent::new(text.to_string()),
+                        )))
+                    }
+                    LanguageModelToolResultContent::Image(image) => acp::ToolCallContent::Content(
+                        acp::Content::new(acp::ContentBlock::Image(acp::ImageContent::new(
+                            image.source.to_string(),
+                            "image/png".to_string(),
+                        ))),
+                    ),
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|c| !c.is_empty())
+}
+
 impl Thread {
     fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
         let image = model.map_or(true, |model| model.supports_images());
@@ -1209,13 +1235,13 @@ impl Thread {
                         .raw_input(tool_use.input.clone()),
                 )))
                 .ok();
-            stream.update_tool_call_fields(
-                &tool_use.id,
-                acp::ToolCallUpdateFields::new()
-                    .status(status)
-                    .raw_output(output),
-                None,
-            );
+            let mut update_fields = acp::ToolCallUpdateFields::new()
+                .status(status)
+                .raw_output(output);
+            if let Some(content) = tool_result_to_tool_call_content(tool_result) {
+                update_fields = update_fields.content(content);
+            }
+            stream.update_tool_call_fields(&tool_use.id, update_fields, None);
             return;
         };
 
@@ -1242,13 +1268,13 @@ impl Thread {
                 .log_err();
         }
 
-        stream.update_tool_call_fields(
-            &tool_use.id,
-            acp::ToolCallUpdateFields::new()
-                .status(status)
-                .raw_output(output),
-            None,
-        );
+        let mut update_fields = acp::ToolCallUpdateFields::new()
+            .status(status)
+            .raw_output(output);
+        if let Some(content) = tool_result_to_tool_call_content(tool_result) {
+            update_fields = update_fields.content(content);
+        }
+        stream.update_tool_call_fields(&tool_use.id, update_fields, None);
     }
 
     pub fn from_db(
@@ -4279,6 +4305,61 @@ mod tests {
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use std::sync::Arc;
+
+    fn make_tool_result(content: Vec<LanguageModelToolResultContent>) -> LanguageModelToolResult {
+        LanguageModelToolResult {
+            tool_use_id: LanguageModelToolUseId::from("id"),
+            tool_name: Arc::from("tool"),
+            is_error: false,
+            content,
+            output: None,
+        }
+    }
+
+    #[test]
+    fn test_tool_result_to_tool_call_content_none() {
+        assert!(tool_result_to_tool_call_content(None).is_none());
+    }
+
+    #[test]
+    fn test_tool_result_to_tool_call_content_empty() {
+        let result = make_tool_result(vec![]);
+        assert!(tool_result_to_tool_call_content(Some(&result)).is_none());
+    }
+
+    #[test]
+    fn test_tool_result_to_tool_call_content_text() {
+        let result = make_tool_result(vec![LanguageModelToolResultContent::Text(Arc::from(
+            "hello",
+        ))]);
+        let content = tool_result_to_tool_call_content(Some(&result)).unwrap();
+        assert_eq!(content.len(), 1);
+        assert!(matches!(
+            &content[0],
+            acp::ToolCallContent::Content(acp::Content {
+                content: acp::ContentBlock::Text(t), ..
+            }) if t.text == "hello"
+        ));
+    }
+
+    #[test]
+    fn test_tool_result_to_tool_call_content_image() {
+        let result = make_tool_result(vec![LanguageModelToolResultContent::Image(
+            LanguageModelImage {
+                source: "data:image/png;base64,abc".into(),
+                size: None,
+            },
+        )]);
+        let content = tool_result_to_tool_call_content(Some(&result)).unwrap();
+        assert_eq!(content.len(), 1);
+        assert!(matches!(
+            &content[0],
+            acp::ToolCallContent::Content(acp::Content {
+                content: acp::ContentBlock::Image(_),
+                ..
+            })
+        ));
+    }
 
     async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {
         cx.update(|cx| {

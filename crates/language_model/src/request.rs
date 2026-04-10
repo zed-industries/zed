@@ -4,7 +4,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use base64::write::EncoderWriter;
 use gpui::{
-    App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, Size, Task, point, px, size,
+    App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
+    point, px, size,
 };
 use image::GenericImageView as _;
 use image::codecs::png::PngEncoder;
@@ -28,11 +29,29 @@ const MAX_IMAGE_DOWNSCALE_PASSES: usize = 8;
 /// Extension trait for `LanguageModelImage` that provides GPUI-dependent functionality.
 pub trait LanguageModelImageExt {
     const FORMAT: ImageFormat;
+    /// Decode base64 image data of any supported format, re-encode as PNG with
+    /// size constraints applied. Used for MCP tool response images.
+    fn from_base64(base64_data: impl Into<SharedString>) -> Result<Self>
+    where
+        Self: Sized;
     fn from_image(data: Arc<Image>, cx: &mut App) -> Task<Option<LanguageModelImage>>;
 }
 
 impl LanguageModelImageExt for LanguageModelImage {
     const FORMAT: ImageFormat = ImageFormat::Png;
+
+    fn from_base64(base64_data: impl Into<SharedString>) -> Result<Self> {
+        use base64::Engine;
+
+        let raw_base64: SharedString = base64_data.into();
+        anyhow::ensure!(!raw_base64.is_empty(), "empty base64 data");
+
+        let bytes = base64::engine::general_purpose::STANDARD.decode(raw_base64.as_bytes())?;
+        let dynamic_image = image::ImageReader::new(Cursor::new(&bytes))
+            .with_guessed_format()?
+            .decode()?;
+        process_image(dynamic_image)
+    }
 
     fn from_image(data: Arc<Image>, cx: &mut App) -> Task<Option<LanguageModelImage>> {
         cx.background_spawn(async move {
@@ -54,81 +73,86 @@ impl LanguageModelImageExt for LanguageModelImage {
             }
             .log_err()?;
 
-            let width = dynamic_image.width();
-            let height = dynamic_image.height();
-            let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
-
-            // First apply any provider-specific dimension constraints we know about (Anthropic).
-            let mut processed_image = if image_size.width.0 > ANTHROPIC_SIZE_LIMIT as i32
-                || image_size.height.0 > ANTHROPIC_SIZE_LIMIT as i32
-            {
-                let new_bounds = ObjectFit::ScaleDown.get_bounds(
-                    gpui::Bounds {
-                        origin: point(px(0.0), px(0.0)),
-                        size: size(px(ANTHROPIC_SIZE_LIMIT), px(ANTHROPIC_SIZE_LIMIT)),
-                    },
-                    image_size,
-                );
-                dynamic_image.resize(
-                    new_bounds.size.width.into(),
-                    new_bounds.size.height.into(),
-                    image::imageops::FilterType::Triangle,
-                )
-            } else {
-                dynamic_image
-            };
-
-            // Then enforce a default per-image size cap on the encoded PNG bytes.
-            //
-            // We always send PNG bytes (either original PNG bytes, or re-encoded PNG) base64'd.
-            // The upstream provider limit we want to respect is effectively on the binary image
-            // payload size, so we enforce against the encoded PNG bytes before base64 encoding.
-            let mut encoded_png = encode_png_bytes(&processed_image).log_err()?;
-            for _pass in 0..MAX_IMAGE_DOWNSCALE_PASSES {
-                if encoded_png.len() <= DEFAULT_IMAGE_MAX_BYTES {
-                    break;
-                }
-
-                // Scale down geometrically to converge quickly. We don't know the final PNG size
-                // as a function of pixels, so we iteratively shrink.
-                let (w, h) = processed_image.dimensions();
-                if w <= 1 || h <= 1 {
-                    break;
-                }
-
-                // Shrink by ~15% each pass (0.85). This is a compromise between speed and
-                // preserving image detail.
-                let new_w = ((w as f32) * 0.85).round().max(1.0) as u32;
-                let new_h = ((h as f32) * 0.85).round().max(1.0) as u32;
-
-                processed_image =
-                    processed_image.resize(new_w, new_h, image::imageops::FilterType::Triangle);
-                encoded_png = encode_png_bytes(&processed_image).log_err()?;
-            }
-
-            if encoded_png.len() > DEFAULT_IMAGE_MAX_BYTES {
-                // Still too large after multiple passes; treat as non-convertible for now.
-                // (Provider-specific handling can be introduced later.)
-                return None;
-            }
-
-            // Now base64 encode the PNG bytes.
-            let base64_image = encode_bytes_as_base64(encoded_png.as_slice()).log_err()?;
-
-            // SAFETY: The base64 encoder should not produce non-UTF8.
-            let source = unsafe { String::from_utf8_unchecked(base64_image) };
-
-            let (final_width, final_height) = processed_image.dimensions();
-
-            Some(LanguageModelImage {
-                size: Some(ImageSize {
-                    width: final_width as i32,
-                    height: final_height as i32,
-                }),
-                source: source.into(),
-            })
+            process_image(dynamic_image).log_err()
         })
     }
+}
+
+/// Normalize an image to PNG with provider size constraints applied.
+fn process_image(dynamic_image: image::DynamicImage) -> Result<LanguageModelImage> {
+    let width = dynamic_image.width();
+    let height = dynamic_image.height();
+    let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
+
+    // First apply any provider-specific dimension constraints we know about (Anthropic).
+    let mut processed_image = if image_size.width.0 > ANTHROPIC_SIZE_LIMIT as i32
+        || image_size.height.0 > ANTHROPIC_SIZE_LIMIT as i32
+    {
+        let new_bounds = ObjectFit::ScaleDown.get_bounds(
+            gpui::Bounds {
+                origin: point(px(0.0), px(0.0)),
+                size: size(px(ANTHROPIC_SIZE_LIMIT), px(ANTHROPIC_SIZE_LIMIT)),
+            },
+            image_size,
+        );
+        dynamic_image.resize(
+            new_bounds.size.width.into(),
+            new_bounds.size.height.into(),
+            image::imageops::FilterType::Triangle,
+        )
+    } else {
+        dynamic_image
+    };
+
+    // Then enforce a default per-image size cap on the encoded PNG bytes.
+    //
+    // We always send PNG bytes (either original PNG bytes, or re-encoded PNG) base64'd.
+    // The upstream provider limit we want to respect is effectively on the binary image
+    // payload size, so we enforce against the encoded PNG bytes before base64 encoding.
+    let mut encoded_png = encode_png_bytes(&processed_image)?;
+    for _pass in 0..MAX_IMAGE_DOWNSCALE_PASSES {
+        if encoded_png.len() <= DEFAULT_IMAGE_MAX_BYTES {
+            break;
+        }
+
+        // Scale down geometrically to converge quickly. We don't know the final PNG size
+        // as a function of pixels, so we iteratively shrink.
+        let (w, h) = processed_image.dimensions();
+        if w <= 1 || h <= 1 {
+            break;
+        }
+
+        // Shrink by ~15% each pass (0.85). This is a compromise between speed and
+        // preserving image detail.
+        let new_w = ((w as f32) * 0.85).round().max(1.0) as u32;
+        let new_h = ((h as f32) * 0.85).round().max(1.0) as u32;
+
+        processed_image =
+            processed_image.resize(new_w, new_h, image::imageops::FilterType::Triangle);
+        encoded_png = encode_png_bytes(&processed_image)?;
+    }
+
+    anyhow::ensure!(
+        encoded_png.len() <= DEFAULT_IMAGE_MAX_BYTES,
+        "image still exceeds size limit after downscaling ({} bytes)",
+        encoded_png.len()
+    );
+
+    // Now base64 encode the PNG bytes.
+    let base64_image = encode_bytes_as_base64(encoded_png.as_slice())?;
+
+    // SAFETY: The base64 encoder only produces ASCII.
+    let source = unsafe { String::from_utf8_unchecked(base64_image) };
+
+    let (final_width, final_height) = processed_image.dimensions();
+
+    Ok(LanguageModelImage {
+        size: Some(ImageSize {
+            width: final_width as i32,
+            height: final_height as i32,
+        }),
+        source: source.into(),
+    })
 }
 
 fn encode_png_bytes(image: &image::DynamicImage) -> Result<Vec<u8>> {
