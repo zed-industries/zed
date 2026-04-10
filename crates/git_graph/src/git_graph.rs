@@ -1542,7 +1542,7 @@ impl GitGraph {
             return;
         }
 
-        let (request_tx, request_rx) = smol::channel::unbounded::<Oid>();
+        let (request_tx, request_rx) = async_channel::unbounded::<Oid>();
 
         repo.update(cx, |repo, cx| {
             repo.search_commits(

@@ -10,6 +10,7 @@ use std::{
 };
 
 use anyhow::Context;
+use async_channel::{Receiver, Sender, bounded, unbounded};
 use collections::HashSet;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -19,7 +20,6 @@ use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
-use smol::channel::{Receiver, Sender, bounded, unbounded};
 
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};

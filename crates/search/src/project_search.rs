@@ -483,7 +483,7 @@ impl ProjectSearch {
                 while let Some(new_ranges) = new_ranges.next().await {
                     // `new_ranges.next().await` likely never gets hit while still pending so `async_task`
                     // will not reschedule, starving other front end tasks, insert a yield point for that here
-                    smol::future::yield_now().await;
+                    futures_lite::future::yield_now().await;
                     project_search
                         .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);

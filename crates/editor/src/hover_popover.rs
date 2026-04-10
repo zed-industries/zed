@@ -1204,13 +1204,13 @@ mod tests {
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
+    use futures::stream::StreamExt;
     use gpui::App;
     use indoc::indoc;
     use markdown::parser::MarkdownEvent;
     use project::InlayId;
     use settings::InlayHintSettingsContent;
     use settings::{DelayMs, SettingsStore};
-    use smol::stream::StreamExt;
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
     use text::Bias;
