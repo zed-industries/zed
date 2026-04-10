@@ -11,7 +11,6 @@ impl Render for CsvPreviewView {
         let render_prep_start = Instant::now();
         let table_with_settings = v_flex()
             .size_full()
-            .p_4()
             .bg(theme.colors().editor_background)
             .track_focus(&self.focus_handle)
             .child(self.render_settings_panel(window, cx))
