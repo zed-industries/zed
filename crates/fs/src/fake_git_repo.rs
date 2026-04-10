@@ -379,14 +379,8 @@ impl GitRepository for FakeGitRepository {
 
     fn tracked_paths(&self) -> Task<Result<Vec<RepoPath>>> {
         let result = self.fs.with_git_state(&self.dot_git_path, false, |state| {
-            let mut paths = state
-                .head_contents
-                .keys()
-                .chain(state.index_contents.keys())
-                .cloned()
-                .collect::<Vec<_>>();
+            let mut paths = state.index_contents.keys().cloned().collect::<Vec<_>>();
             paths.sort();
-            paths.dedup();
             anyhow::Ok(paths)
         });
         Task::ready(match result {
