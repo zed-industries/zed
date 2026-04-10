@@ -1759,6 +1759,7 @@ impl Sidebar {
 
                 let menu =
                     ContextMenu::build_persistent(window, cx, move |menu, _window, menu_cx| {
+                        let weak_menu = menu_cx.weak_entity();
                         let mut menu = menu
                             .header("Project Folders")
                             .end_slot_action(Box::new(menu::EndSlot));
@@ -1771,6 +1772,7 @@ impl Sidebar {
                             let path = path.clone();
                             let project_group_key = project_group_key.clone();
                             let multi_workspace = multi_workspace.clone();
+                            let weak_menu = weak_menu.clone();
                             menu = menu.entry_with_end_slot_on_hover(
                                 name.clone(),
                                 None,
@@ -1787,6 +1789,7 @@ impl Sidebar {
                                             );
                                         })
                                         .ok();
+                                    weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                                 },
                             );
                         }
@@ -1797,6 +1800,7 @@ impl Sidebar {
                             {
                                 let project_group_key = project_group_key.clone();
                                 let multi_workspace = multi_workspace.clone();
+                                let weak_menu = weak_menu.clone();
                                 move |window, cx| {
                                     multi_workspace
                                         .update(cx, |multi_workspace, cx| {
@@ -1807,13 +1811,13 @@ impl Sidebar {
                                             );
                                         })
                                         .ok();
+                                    weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                                 }
                             },
                         );
 
                         let project_group_key = project_group_key.clone();
                         let multi_workspace = multi_workspace.clone();
-                        let weak_menu = menu_cx.weak_entity();
                         menu.separator()
                             .entry("Remove Project", None, move |window, cx| {
                                 multi_workspace
