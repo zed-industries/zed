@@ -270,29 +270,14 @@ fn rollout_workflows_to_extension(
         "#,
         };
 
-        named::uses(
-            "peter-evans",
-            "create-pull-request",
-            "98357b18bf14b5342f975ff684046ec3b2a07725",
-        )
-        .add_with(("path", "extension"))
-        .add_with(("title", title.clone()))
-        .add_with(("body", body))
-        .add_with(("commit-message", title))
-        .add_with(("branch", "update-workflows"))
-        .add_with((
-            "committer",
-            "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-        ))
-        .add_with((
-            "author",
-            "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-        ))
-        .add_with(("base", "main"))
-        .add_with(("delete-branch", true))
-        .add_with(("token", token.to_string()))
-        .add_with(("sign-commits", true))
-        .id("create-pr")
+        steps::create_pull_request(token)
+            .with_title(title)
+            .with_body(body)
+            .with_branch("update-workflows")
+            .with_base("main")
+            .with_path("extension")
+            .with_id("create-pr")
+            .into()
     }
 
     fn enable_auto_merge(token: &StepOutput) -> Step<gh_workflow::Run> {

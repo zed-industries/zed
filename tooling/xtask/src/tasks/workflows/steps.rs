@@ -508,6 +508,142 @@ pub mod named {
     }
 }
 
+const ZED_ZIPPY_IDENTITY: &str =
+    "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>";
+
+pub(crate) struct CreatePullRequestStep<Title = (), Body = ()> {
+    title: Title,
+    body: Body,
+    token: String,
+    commit_message: Option<String>,
+    branch: Option<String>,
+    base: Option<String>,
+    path: Option<String>,
+    labels: Option<String>,
+    assignees: Option<String>,
+    step_id: Option<String>,
+}
+
+pub fn create_pull_request(token: impl ToString) -> CreatePullRequestStep {
+    CreatePullRequestStep {
+        title: (),
+        body: (),
+        token: token.to_string(),
+        commit_message: None,
+        branch: None,
+        base: None,
+        path: None,
+        labels: None,
+        assignees: None,
+        step_id: None,
+    }
+}
+
+impl<Body> CreatePullRequestStep<(), Body> {
+    pub fn with_title(self, title: impl ToString) -> CreatePullRequestStep<String, Body> {
+        CreatePullRequestStep {
+            title: title.to_string(),
+            body: self.body,
+            token: self.token,
+            commit_message: self.commit_message,
+            branch: self.branch,
+            base: self.base,
+            path: self.path,
+            labels: self.labels,
+            assignees: self.assignees,
+            step_id: self.step_id,
+        }
+    }
+}
+
+impl<Title> CreatePullRequestStep<Title, ()> {
+    pub fn with_body(self, body: impl ToString) -> CreatePullRequestStep<Title, String> {
+        CreatePullRequestStep {
+            title: self.title,
+            body: body.to_string(),
+            token: self.token,
+            commit_message: self.commit_message,
+            branch: self.branch,
+            base: self.base,
+            path: self.path,
+            labels: self.labels,
+            assignees: self.assignees,
+            step_id: self.step_id,
+        }
+    }
+}
+
+impl<Title, Body> CreatePullRequestStep<Title, Body> {
+    pub fn with_commit_message(mut self, commit_message: impl ToString) -> Self {
+        self.commit_message = Some(commit_message.to_string());
+        self
+    }
+
+    pub fn with_branch(mut self, branch: impl ToString) -> Self {
+        self.branch = Some(branch.to_string());
+        self
+    }
+
+    pub fn with_base(mut self, base: impl ToString) -> Self {
+        self.base = Some(base.to_string());
+        self
+    }
+
+    pub fn with_path(mut self, path: impl ToString) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+
+    pub fn with_labels(mut self, labels: impl ToString) -> Self {
+        self.labels = Some(labels.to_string());
+        self
+    }
+
+    pub fn with_assignees(mut self, assignees: impl ToString) -> Self {
+        self.assignees = Some(assignees.to_string());
+        self
+    }
+
+    pub fn with_id(mut self, id: impl ToString) -> Self {
+        self.step_id = Some(id.to_string());
+        self
+    }
+}
+
+impl From<CreatePullRequestStep<String, String>> for Step<Use> {
+    fn from(value: CreatePullRequestStep<String, String>) -> Self {
+        Step::new("steps::create_pull_request")
+            .uses(
+                "peter-evans",
+                "create-pull-request",
+                "98357b18bf14b5342f975ff684046ec3b2a07725",
+            )
+            .add_with((
+                "commit-message",
+                value.commit_message.unwrap_or_else(|| value.title.clone()),
+            ))
+            .add_with(("title", value.title))
+            .add_with(("body", value.body))
+            .add_with(("committer", ZED_ZIPPY_IDENTITY))
+            .add_with(("author", ZED_ZIPPY_IDENTITY))
+            .add_with(("delete-branch", true))
+            .add_with(("sign-commits", true))
+            .add_with(("token", value.token))
+            .when_some(value.branch, |step, branch| {
+                step.add_with(("branch", branch))
+            })
+            .when_some(value.base, |step, base| step.add_with(("base", base)))
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+            .when_some(value.labels, |step, labels| {
+                step.add_with(("labels", labels))
+            })
+            .when_some(value.assignees, |step, assignees| {
+                step.add_with(("assignees", assignees))
+            })
+            .when_some(value.step_id, |step, id| step.id(id))
+    }
+}
+
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
         .add_env(("REF_NAME", ref_name.to_string()))

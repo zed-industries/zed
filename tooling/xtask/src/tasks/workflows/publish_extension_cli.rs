@@ -88,31 +88,19 @@ fn create_pull_request_zed(generated_token: &StepOutput, short_sha: &StepOutput)
         short_sha
     );
 
-    named::uses("peter-evans", "create-pull-request", "98357b18bf14b5342f975ff684046ec3b2a07725").with(
-        Input::default()
-            .add("title", title.clone())
-            .add(
-                "body",
-                indoc! {r#"
-                    This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
+    steps::create_pull_request(generated_token)
+        .with_title(title)
+        .with_body(indoc! {r#"
+            This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
 
-                    Release Notes:
+            Release Notes:
 
-                    - N/A
-                "#},
-            )
-            .add("commit-message", title)
-            .add("branch", "update-extension-cli-sha")
-            .add(
-                "committer",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            )
-            .add("base", "main")
-            .add("delete-branch", true)
-            .add("token", generated_token.to_string())
-            .add("sign-commits", true)
-            .add("assignees", Context::github().actor().to_string()),
-    )
+            - N/A
+        "#})
+        .with_branch("update-extension-cli-sha")
+        .with_base("main")
+        .with_assignees(Context::github().actor())
+        .into()
 }
 
 fn update_sha_in_extensions(publish_job: &NamedJob) -> NamedJob {
@@ -160,28 +148,16 @@ fn create_pull_request_extensions(
 ) -> Step<Use> {
     let title = format!("Bump extension CLI version to `{}`", short_sha);
 
-    named::uses("peter-evans", "create-pull-request", "98357b18bf14b5342f975ff684046ec3b2a07725").with(
-        Input::default()
-            .add("title", title.clone())
-            .add(
-                "body",
-                indoc! {r#"
-                    This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
-                "#},
-            )
-            .add("commit-message", title)
-            .add("branch", "update-extension-cli-sha")
-            .add(
-                "committer",
-                "zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>",
-            )
-            .add("base", "main")
-            .add("delete-branch", true)
-            .add("token", generated_token.to_string())
-            .add("sign-commits", true)
-            .add("labels", "allow-no-extension")
-            .add("assignees", Context::github().actor().to_string()),
-    )
+    steps::create_pull_request(generated_token)
+        .with_title(title)
+        .with_body(indoc! {r#"
+            This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
+        "#})
+        .with_branch("update-extension-cli-sha")
+        .with_base("main")
+        .with_labels("allow-no-extension")
+        .with_assignees(Context::github().actor())
+        .into()
 }
 
 fn get_short_sha() -> (Step<Run>, StepOutput) {

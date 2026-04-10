@@ -29,6 +29,9 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        fetch-depth: 0
+        ref: ${{ inputs.branch }}
+        token: ${{ steps.generate-token.outputs.token }}
     - id: generate-token
       name: steps::authenticate_as_zippy
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
@@ -38,15 +41,58 @@ jobs:
         permission-contents: write
         permission-workflows: write
         permission-pull-requests: write
-    - name: cherry_pick::run_cherry_pick::cherry_pick
-      run: ./script/cherry-pick "$BRANCH" "$COMMIT" "$CHANNEL"
+    - id: cherry-pick
+      name: cherry_pick::run_cherry_pick::cherry_pick
+      run: |
+        git cherry-pick -n "$COMMIT"
+
+        COMMIT_TITLE=$(git log -1 --pretty=format:"%s" "$COMMIT")
+        COMMIT_BODY=$(git log -1 --pretty=format:"%b" "$COMMIT")
+        COMMIT_AUTHOR=$(git log -1 --pretty=format:"%aN <%aE>" "$COMMIT")
+
+        COAUTHORS=$(echo "$COMMIT_BODY" | grep -i "^Co-authored-by:" || true)
+
+        COMMIT_MSG="${COMMIT_TITLE} (cherry-pick to ${CHANNEL})"
+        COMMIT_MSG="${COMMIT_MSG}"$'\n'$'\n'"Co-authored-by: ${COMMIT_AUTHOR}"
+        if [ -n "$COAUTHORS" ]; then
+            COMMIT_MSG="${COMMIT_MSG}"$'\n'"${COAUTHORS}"
+        fi
+
+        if [[ "$COMMIT_TITLE" =~ \(#([0-9]+)\)$ ]]; then
+            ORIGINAL_PR="${BASH_REMATCH[1]}"
+            PR_BODY="Cherry-pick of #${ORIGINAL_PR} to ${CHANNEL}"
+        else
+            PR_BODY="Cherry-pick of ${COMMIT} to ${CHANNEL}"
+        fi
+
+        PR_BODY="${PR_BODY}"$'\n'$'\n'"----"$'\n'"${COMMIT_BODY}"
+
+        {
+            echo "title=${COMMIT_TITLE} (cherry-pick to ${CHANNEL})"
+            echo "commit_message<<EOF"
+            echo "$COMMIT_MSG"
+            echo "EOF"
+            echo "body<<EOF"
+            echo "$PR_BODY"
+            echo "EOF"
+        } >> "$GITHUB_OUTPUT"
       env:
-        BRANCH: ${{ inputs.branch }}
         COMMIT: ${{ inputs.commit }}
         CHANNEL: ${{ inputs.channel }}
-        GIT_COMMITTER_NAME: Zed Zippy
-        GIT_COMMITTER_EMAIL: hi@zed.dev
-        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
+    - name: steps::create_pull_request
+      uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
+      with:
+        title: ${{ steps.cherry-pick.outputs.title }}
+        body: ${{ steps.cherry-pick.outputs.body }}
+        commit-message: ${{ steps.cherry-pick.outputs.commit_message }}
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        delete-branch: true
+        sign-commits: true
+        token: ${{ steps.generate-token.outputs.token }}
+        branch: zippy-cherry-pick-${{ inputs.pr_number }}-${{ inputs.channel }}
+        base: ${{ inputs.branch }}
+        assignees: ${{ github.actor }}
 defaults:
   run:
     shell: bash -euxo pipefail {0}
