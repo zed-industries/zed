@@ -89,6 +89,11 @@ pub struct EditorSettingsContent {
     /// Default: 1.0
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub scroll_sensitivity: Option<f32>,
+    /// Whether to zoom the editor font size with the mouse wheel
+    /// while holding the primary modifier key (Cmd on macOS, Ctrl on other platforms).
+    ///
+    /// Default: false
+    pub mouse_wheel_zoom: Option<bool>,
     /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
     /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
     /// happens when a user holds the alt or option key while scrolling.

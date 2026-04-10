@@ -636,6 +636,9 @@
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
+  // Whether to zoom the editor font size with the mouse wheel
+  // while holding the primary modifier key (Cmd on macOS, Ctrl on other platforms).
+  "mouse_wheel_zoom": false,
   // Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
@@ -964,7 +967,7 @@
     //
     // Default: true
     "flexible": true,
-    // Where to position the sidebar. Can be 'left' or 'right'.
+    // Where to position the threads sidebar. Can be 'left' or 'right'.
     "sidebar_side": "left",
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
@@ -1075,7 +1078,7 @@
           "terminal": true,
           "thinking": true,
           "update_plan": true,
-          "web_search": true,
+          "search_web": true,
         },
       },
       "ask": {
@@ -1095,7 +1098,7 @@
           "spawn_agent": true,
           "thinking": true,
           "update_plan": true,
-          "web_search": true,
+          "search_web": true,
         },
       },
       "minimal": {

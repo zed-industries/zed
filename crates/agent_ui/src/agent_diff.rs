@@ -98,6 +98,7 @@ impl AgentDiffPane {
             editor
                 .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
             editor.register_addon(AgentDiffAddon);
+            editor.disable_mouse_wheel_zoom();
             editor
         });
 

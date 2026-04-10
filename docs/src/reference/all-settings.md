@@ -3396,6 +3396,16 @@ List of strings containing any combination of:
 
 Positive `float` values
 
+### Mouse Wheel Zoom
+
+- Description: Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key (Cmd on macOS, Ctrl on other platforms).
+- Setting: `mouse_wheel_zoom`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ### Fast Scroll Sensitivity
 
 - Description: Scroll sensitivity multiplier for fast scrolling. This multiplier is applied to both the horizontal and vertical delta values while scrolling. Fast scrolling happens when a user holds the alt or option key while scrolling.

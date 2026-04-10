@@ -63,6 +63,6 @@ impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
     const NAME: &'static str = "project-panel-undo-redo";
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }

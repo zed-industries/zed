@@ -777,7 +777,7 @@ impl ActionLog {
                         initial_version == current_version && current_content == tracked_content;
 
                     if is_ai_only_content {
-                        buffer
+                        let task = buffer
                             .read(cx)
                             .entry_id(cx)
                             .and_then(|entry_id| {
@@ -785,7 +785,12 @@ impl ActionLog {
                                     project.delete_entry(entry_id, false, cx)
                                 })
                             })
-                            .unwrap_or(Task::ready(Ok(())))
+                            .unwrap_or_else(|| Task::ready(Ok(None)));
+
+                        cx.background_spawn(async move {
+                            task.await?;
+                            Ok(())
+                        })
                     } else {
                         // Not sure how to disentangle edits made by the user
                         // from edits made by the AI at this point.

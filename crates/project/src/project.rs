@@ -2566,7 +2566,7 @@ impl Project {
         path: ProjectPath,
         trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let entry = self.entry_for_path(&path, cx)?;
         self.delete_entry(entry.id, trash, cx)
     }
@@ -2577,11 +2577,32 @@ impl Project {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
         worktree.update(cx, |worktree, cx| {
             worktree.delete_entry(entry_id, trash, cx)
+        })
+    }
+
+    #[inline]
+    pub fn restore_entry(
+        &self,
+        worktree_id: WorktreeId,
+        trash_entry: TrashedEntry,
+        cx: &mut Context<'_, Self>,
+    ) -> Task<Result<ProjectPath>> {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("No worktree for id {worktree_id:?}")));
+        };
+
+        cx.spawn(async move |_, cx| {
+            Worktree::restore_entry(trash_entry, worktree, cx)
+                .await
+                .map(|rel_path_buf| ProjectPath {
+                    worktree_id: worktree_id,
+                    path: Arc::from(rel_path_buf.as_rel_path()),
+                })
         })
     }
 
@@ -6110,28 +6131,46 @@ impl ProjectGroupKey {
         Self { paths, host }
     }
 
-    pub fn display_name(&self) -> SharedString {
+    pub fn path_list(&self) -> &PathList {
+        &self.paths
+    }
+
+    pub fn display_name(
+        &self,
+        path_detail_map: &std::collections::HashMap<PathBuf, usize>,
+    ) -> SharedString {
         let mut names = Vec::with_capacity(self.paths.paths().len());
         for abs_path in self.paths.paths() {
-            if let Some(name) = abs_path.file_name() {
-                names.push(name.to_string_lossy().to_string());
+            let detail = path_detail_map.get(abs_path).copied().unwrap_or(0);
+            let suffix = path_suffix(abs_path, detail);
+            if !suffix.is_empty() {
+                names.push(suffix);
             }
         }
         if names.is_empty() {
-            // TODO: Can we do something better in this case?
             "Empty Workspace".into()
         } else {
             names.join(", ").into()
         }
     }
 
-    pub fn path_list(&self) -> &PathList {
-        &self.paths
-    }
-
     pub fn host(&self) -> Option<RemoteConnectionOptions> {
         self.host.clone()
     }
+}
+
+pub fn path_suffix(path: &Path, detail: usize) -> String {
+    let mut components: Vec<_> = path
+        .components()
+        .rev()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy()),
+            _ => None,
+        })
+        .take(detail + 1)
+        .collect();
+    components.reverse();
+    components.join("/")
 }
 
 pub struct PathMatchCandidateSet {

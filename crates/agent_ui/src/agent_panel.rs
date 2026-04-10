@@ -56,8 +56,9 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
-    DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    DismissEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
+    pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
@@ -819,7 +820,7 @@ pub struct AgentPanel {
     agent_layout_onboarding_dismissed: AtomicBool,
     selected_agent: Agent,
     start_thread_in: StartThreadIn,
-    worktree_creation_status: Option<WorktreeCreationStatus>,
+    worktree_creation_status: Option<(EntityId, WorktreeCreationStatus)>,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
     _worktree_creation_task: Option<Task<()>>,
@@ -2795,6 +2796,7 @@ impl AgentPanel {
             PathBuf,
             futures::channel::oneshot::Receiver<Result<()>>,
         )>,
+        fs: Arc<dyn Fs>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<PathBuf>> {
         let mut created_paths: Vec<PathBuf> = Vec::new();
@@ -2803,10 +2805,10 @@ impl AgentPanel {
         let mut first_error: Option<anyhow::Error> = None;
 
         for (repo, new_path, receiver) in creation_infos {
+            repos_and_paths.push((repo.clone(), new_path.clone()));
             match receiver.await {
                 Ok(Ok(())) => {
-                    created_paths.push(new_path.clone());
-                    repos_and_paths.push((repo, new_path));
+                    created_paths.push(new_path);
                 }
                 Ok(Err(err)) => {
                     if first_error.is_none() {
@@ -2825,34 +2827,66 @@ impl AgentPanel {
             return Ok(created_paths);
         };
 
-        // Rollback all successfully created worktrees
-        let mut rollback_receivers = Vec::new();
+        // Rollback all attempted worktrees (both successful and failed)
+        let mut rollback_futures = Vec::new();
         for (rollback_repo, rollback_path) in &repos_and_paths {
-            if let Ok(receiver) = cx.update(|_, cx| {
-                rollback_repo.update(cx, |repo, _cx| {
-                    repo.remove_worktree(rollback_path.clone(), true)
+            let receiver = cx
+                .update(|_, cx| {
+                    rollback_repo.update(cx, |repo, _cx| {
+                        repo.remove_worktree(rollback_path.clone(), true)
+                    })
                 })
-            }) {
-                rollback_receivers.push((rollback_path.clone(), receiver));
-            }
+                .ok();
+
+            rollback_futures.push((rollback_path.clone(), receiver));
         }
+
         let mut rollback_failures: Vec<String> = Vec::new();
-        for (path, receiver) in rollback_receivers {
-            match receiver.await {
-                Ok(Ok(())) => {}
-                Ok(Err(rollback_err)) => {
-                    log::error!(
-                        "failed to rollback worktree at {}: {rollback_err}",
-                        path.display()
-                    );
-                    rollback_failures.push(format!("{}: {rollback_err}", path.display()));
+        for (path, receiver_opt) in rollback_futures {
+            let mut git_remove_failed = false;
+
+            if let Some(receiver) = receiver_opt {
+                match receiver.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(rollback_err)) => {
+                        log::error!(
+                            "git worktree remove failed for {}: {rollback_err}",
+                            path.display()
+                        );
+                        git_remove_failed = true;
+                    }
+                    Err(canceled) => {
+                        log::error!(
+                            "git worktree remove failed for {}: {canceled}",
+                            path.display()
+                        );
+                        git_remove_failed = true;
+                    }
                 }
-                Err(rollback_err) => {
-                    log::error!(
-                        "failed to rollback worktree at {}: {rollback_err}",
-                        path.display()
-                    );
-                    rollback_failures.push(format!("{}: {rollback_err}", path.display()));
+            } else {
+                log::error!(
+                    "failed to dispatch git worktree remove for {}",
+                    path.display()
+                );
+                git_remove_failed = true;
+            }
+
+            // `git worktree remove` normally removes this directory, but since
+            // `git worktree remove` failed (or wasn't dispatched), manually rm the directory.
+            if git_remove_failed {
+                if let Err(fs_err) = fs
+                    .remove_dir(
+                        &path,
+                        fs::RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await
+                {
+                    let msg = format!("{}: failed to remove directory: {fs_err}", path.display());
+                    log::error!("{}", msg);
+                    rollback_failures.push(msg);
                 }
             }
         }
@@ -2870,7 +2904,9 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.worktree_creation_status = Some(WorktreeCreationStatus::Error(message));
+        if let Some((_, status)) = &mut self.worktree_creation_status {
+            *status = WorktreeCreationStatus::Error(message);
+        }
         if matches!(self.active_view, ActiveView::Uninitialized) {
             let selected_agent = self.selected_agent.clone();
             self.new_agent_thread(selected_agent, window, cx);
@@ -2887,12 +2923,17 @@ impl AgentPanel {
     ) {
         if matches!(
             self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
+            Some((_, WorktreeCreationStatus::Creating))
         ) {
             return;
         }
 
-        self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
+        let conversation_view_id = self
+            .active_conversation_view()
+            .map(|v| v.entity_id())
+            .unwrap_or_else(|| EntityId::from(0u64));
+        self.worktree_creation_status =
+            Some((conversation_view_id, WorktreeCreationStatus::Creating));
         cx.notify();
 
         let (git_repos, non_git_paths) = self.classify_worktrees(cx);
@@ -3058,8 +3099,10 @@ impl AgentPanel {
                             }
                         };
 
+                    let fs = cx.update(|_, cx| <dyn Fs>::global(cx))?;
+
                     let created_paths =
-                        match Self::await_and_rollback_on_failure(creation_infos, cx).await {
+                        match Self::await_and_rollback_on_failure(creation_infos, fs, cx).await {
                             Ok(paths) => paths,
                             Err(err) => {
                                 this.update_in(cx, |this, window, cx| {
@@ -3147,28 +3190,33 @@ impl AgentPanel {
         let window_handle = window_handle
             .ok_or_else(|| anyhow!("No window handle available for workspace creation"))?;
 
-        let workspace_task = window_handle.update(cx, |multi_workspace, window, cx| {
-            let path_list = PathList::new(&all_paths);
-            let active_workspace = multi_workspace.workspace().clone();
+        let (workspace_task, modal_workspace) =
+            window_handle.update(cx, |multi_workspace, window, cx| {
+                let path_list = PathList::new(&all_paths);
+                let active_workspace = multi_workspace.workspace().clone();
+                let modal_workspace = active_workspace.clone();
 
-            multi_workspace.find_or_create_workspace(
-                path_list,
-                remote_connection_options,
-                None,
-                move |connection_options, window, cx| {
-                    remote_connection::connect_with_modal(
-                        &active_workspace,
-                        connection_options,
-                        window,
-                        cx,
-                    )
-                },
-                window,
-                cx,
-            )
-        })?;
+                let task = multi_workspace.find_or_create_workspace(
+                    path_list,
+                    remote_connection_options,
+                    None,
+                    move |connection_options, window, cx| {
+                        remote_connection::connect_with_modal(
+                            &active_workspace,
+                            connection_options,
+                            window,
+                            cx,
+                        )
+                    },
+                    window,
+                    cx,
+                );
+                (task, modal_workspace)
+            })?;
 
-        let new_workspace = workspace_task.await?;
+        let result = workspace_task.await;
+        remote_connection::dismiss_connection_modal(&modal_workspace, cx);
+        let new_workspace = result?;
 
         let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
 
@@ -3406,7 +3454,7 @@ impl Panel for AgentPanel {
             && matches!(self.active_view, ActiveView::Uninitialized)
             && !matches!(
                 self.worktree_creation_status,
-                Some(WorktreeCreationStatus::Creating)
+                Some((_, WorktreeCreationStatus::Creating))
             )
         {
             let selected_agent = self.selected_agent.clone();
@@ -3646,13 +3694,19 @@ impl AgentPanel {
         !self.project.read(cx).repositories(cx).is_empty()
     }
 
+    fn is_active_view_creating_worktree(&self, _cx: &App) -> bool {
+        match &self.worktree_creation_status {
+            Some((view_id, WorktreeCreationStatus::Creating)) => {
+                self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id)
+            }
+            _ => false,
+        }
+    }
+
     fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        let is_creating = matches!(
-            self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
-        );
+        let is_creating = self.is_active_view_creating_worktree(cx);
 
         let trigger_parts = self
             .start_thread_in
@@ -3705,10 +3759,7 @@ impl AgentPanel {
     }
 
     fn render_new_worktree_branch_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_creating = matches!(
-            self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
-        );
+        let is_creating = self.is_active_view_creating_worktree(cx);
 
         let project_ref = self.project.read(cx);
         let trigger_parts = self
@@ -4176,7 +4227,11 @@ impl AgentPanel {
     }
 
     fn render_worktree_creation_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let status = self.worktree_creation_status.as_ref()?;
+        let (view_id, status) = self.worktree_creation_status.as_ref()?;
+        let active_view_id = self.active_conversation_view().map(|v| v.entity_id());
+        if active_view_id != Some(*view_id) {
+            return None;
+        }
         match status {
             WorktreeCreationStatus::Creating => Some(
                 h_flex()
@@ -4716,10 +4771,11 @@ impl AgentPanel {
     ///
     /// This is a test-only helper for visual tests.
     pub fn worktree_creation_status_for_tests(&self) -> Option<&WorktreeCreationStatus> {
-        self.worktree_creation_status.as_ref()
+        self.worktree_creation_status.as_ref().map(|(_, s)| s)
     }
 
-    /// Sets the worktree creation status directly.
+    /// Sets the worktree creation status directly, associating it with the
+    /// currently active conversation view.
     ///
     /// This is a test-only helper for visual tests that need to show the
     /// "Creating worktree…" spinner or error banners.
@@ -4728,7 +4784,13 @@ impl AgentPanel {
         status: Option<WorktreeCreationStatus>,
         cx: &mut Context<Self>,
     ) {
-        self.worktree_creation_status = status;
+        self.worktree_creation_status = status.map(|s| {
+            let view_id = self
+                .active_conversation_view()
+                .map(|v| v.entity_id())
+                .unwrap_or_else(|| EntityId::from(0u64));
+            (view_id, s)
+        });
         cx.notify();
     }
 
@@ -4769,6 +4831,7 @@ mod tests {
     };
     use acp_thread::{StubAgentConnection, ThreadStatus};
     use agent_servers::CODEX_ID;
+    use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
@@ -5975,7 +6038,8 @@ mod tests {
 
         // Simulate worktree creation in progress and reset to Uninitialized
         panel.update_in(cx, |panel, window, cx| {
-            panel.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
+            panel.worktree_creation_status =
+                Some((EntityId::from(0u64), WorktreeCreationStatus::Creating));
             panel.active_view = ActiveView::Uninitialized;
             Panel::set_active(panel, true, window, cx);
             assert!(
@@ -6421,7 +6485,7 @@ mod tests {
                 let metadata = store
                     .entry(session_id)
                     .unwrap_or_else(|| panic!("{label} thread metadata should exist"));
-                metadata.folder_paths.clone()
+                metadata.folder_paths().clone()
             });
             let mut sorted = metadata_paths.ordered_paths().cloned().collect::<Vec<_>>();
             sorted.sort();
@@ -6669,6 +6733,287 @@ mod tests {
                 "a thread should have been created"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_rollback_all_succeed_returns_ok(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let path_a = PathBuf::from("/worktrees/branch/project_a");
+        let path_b = PathBuf::from("/worktrees/branch/project_b");
+
+        let (sender_a, receiver_a) = futures::channel::oneshot::channel::<Result<()>>();
+        let (sender_b, receiver_b) = futures::channel::oneshot::channel::<Result<()>>();
+        sender_a.send(Ok(())).unwrap();
+        sender_b.send(Ok(())).unwrap();
+
+        let creation_infos = vec![
+            (repository.clone(), path_a.clone(), receiver_a),
+            (repository.clone(), path_b.clone(), receiver_b),
+        ];
+
+        let fs_clone = fs.clone();
+        let result = multi_workspace
+            .update(cx, |_, window, cx| {
+                window.spawn(cx, async move |cx| {
+                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
+                })
+            })
+            .unwrap()
+            .await;
+
+        let paths = result.expect("all succeed should return Ok");
+        assert_eq!(paths, vec![path_a, path_b]);
+    }
+
+    #[gpui::test]
+    async fn test_rollback_on_failure_attempts_all_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        // Actually create a worktree so it exists in FakeFs for rollback to find.
+        let success_path = PathBuf::from("/worktrees/branch/project");
+        cx.update(|cx| {
+            repository.update(cx, |repo, _| {
+                repo.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "branch".to_string(),
+                        base_sha: None,
+                    },
+                    success_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        cx.executor().run_until_parked();
+
+        // Verify the worktree directory exists before rollback.
+        assert!(
+            fs.is_dir(&success_path).await,
+            "worktree directory should exist before rollback"
+        );
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        // Build creation_infos: one success, one failure.
+        let failed_path = PathBuf::from("/worktrees/branch/failed_project");
+
+        let (sender_ok, receiver_ok) = futures::channel::oneshot::channel::<Result<()>>();
+        let (sender_err, receiver_err) = futures::channel::oneshot::channel::<Result<()>>();
+        sender_ok.send(Ok(())).unwrap();
+        sender_err
+            .send(Err(anyhow!("branch already exists")))
+            .unwrap();
+
+        let creation_infos = vec![
+            (repository.clone(), success_path.clone(), receiver_ok),
+            (repository.clone(), failed_path.clone(), receiver_err),
+        ];
+
+        let fs_clone = fs.clone();
+        let result = multi_workspace
+            .update(cx, |_, window, cx| {
+                window.spawn(cx, async move |cx| {
+                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
+                })
+            })
+            .unwrap()
+            .await;
+
+        assert!(
+            result.is_err(),
+            "should return error when any creation fails"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("branch already exists"),
+            "error should mention the original failure: {err_msg}"
+        );
+
+        // The successful worktree should have been rolled back by git.
+        cx.executor().run_until_parked();
+        assert!(
+            !fs.is_dir(&success_path).await,
+            "successful worktree directory should be removed by rollback"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rollback_on_canceled_receiver(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let path = PathBuf::from("/worktrees/branch/project");
+
+        // Drop the sender to simulate a canceled receiver.
+        let (_sender, receiver) = futures::channel::oneshot::channel::<Result<()>>();
+        drop(_sender);
+
+        let creation_infos = vec![(repository.clone(), path.clone(), receiver)];
+
+        let fs_clone = fs.clone();
+        let result = multi_workspace
+            .update(cx, |_, window, cx| {
+                window.spawn(cx, async move |cx| {
+                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
+                })
+            })
+            .unwrap()
+            .await;
+
+        assert!(
+            result.is_err(),
+            "should return error when receiver is canceled"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("canceled"),
+            "error should mention cancellation: {err_msg}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rollback_cleans_up_orphan_directories(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        // Simulate the orphan state: create_dir_all was called but git
+        // worktree add failed, leaving a directory with leftover files.
+        let orphan_path = PathBuf::from("/worktrees/branch/orphan_project");
+        fs.insert_tree(
+            "/worktrees/branch/orphan_project",
+            json!({ "leftover.txt": "junk" }),
+        )
+        .await;
+
+        assert!(
+            fs.is_dir(&orphan_path).await,
+            "orphan dir should exist before rollback"
+        );
+
+        let (sender, receiver) = futures::channel::oneshot::channel::<Result<()>>();
+        sender.send(Err(anyhow!("hook failed"))).unwrap();
+
+        let creation_infos = vec![(repository.clone(), orphan_path.clone(), receiver)];
+
+        let fs_clone = fs.clone();
+        let result = multi_workspace
+            .update(cx, |_, window, cx| {
+                window.spawn(cx, async move |cx| {
+                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
+                })
+            })
+            .unwrap()
+            .await;
+
+        cx.executor().run_until_parked();
+
+        assert!(result.is_err());
+        assert!(
+            !fs.is_dir(&orphan_path).await,
+            "orphan worktree directory should be removed by filesystem cleanup"
+        );
     }
 
     #[gpui::test]
