@@ -84,16 +84,10 @@ pub enum Model {
     MiniMaxM2_5Free,
     #[serde(rename = "glm-5")]
     Glm5,
+    #[serde(rename = "glm-5.1")]
+    Glm5_1,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
-    #[serde(rename = "mimo-v2-pro-free")]
-    MimoV2ProFree,
-    #[serde(rename = "mimo-v2-omni-free")]
-    MimoV2OmniFree,
-    #[serde(rename = "mimo-v2-flash-free")]
-    MimoV2FlashFree,
-    #[serde(rename = "trinity-large-preview-free")]
-    TrinityLargePreviewFree,
     #[serde(rename = "big-pickle")]
     BigPickle,
     #[serde(rename = "nemotron-3-super-free")]
@@ -148,11 +142,8 @@ impl Model {
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::MiniMaxM2_5Free => "minimax-m2.5-free",
             Self::Glm5 => "glm-5",
+            Self::Glm5_1 => "glm-5.1",
             Self::KimiK2_5 => "kimi-k2.5",
-            Self::MimoV2ProFree => "mimo-v2-pro-free",
-            Self::MimoV2OmniFree => "mimo-v2-omni-free",
-            Self::MimoV2FlashFree => "mimo-v2-flash-free",
-            Self::TrinityLargePreviewFree => "trinity-large-preview-free",
             Self::BigPickle => "big-pickle",
             Self::Nemotron3SuperFree => "nemotron-3-super-free",
 
@@ -193,11 +184,8 @@ impl Model {
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::MiniMaxM2_5Free => "MiniMax M2.5 Free",
             Self::Glm5 => "GLM 5",
+            Self::Glm5_1 => "GLM 5.1",
             Self::KimiK2_5 => "Kimi K2.5",
-            Self::MimoV2ProFree => "MiMo V2 Pro Free",
-            Self::MimoV2OmniFree => "MiMo V2 Omni Free",
-            Self::MimoV2FlashFree => "MiMo V2 Flash Free",
-            Self::TrinityLargePreviewFree => "Trinity Large Preview Free",
             Self::BigPickle => "Big Pickle",
             Self::Nemotron3SuperFree => "Nemotron 3 Super Free",
 
@@ -239,11 +227,8 @@ impl Model {
             Self::MiniMaxM2_5
             | Self::MiniMaxM2_5Free
             | Self::Glm5
+            | Self::Glm5_1
             | Self::KimiK2_5
-            | Self::MimoV2ProFree
-            | Self::MimoV2OmniFree
-            | Self::MimoV2FlashFree
-            | Self::TrinityLargePreviewFree
             | Self::BigPickle
             | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
 
@@ -255,9 +240,10 @@ impl Model {
         match self {
             // Anthropic models
             Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => 1_000_000,
-            Self::ClaudeOpus4_5 | Self::ClaudeSonnet4_5 | Self::ClaudeSonnet4 => 200_000,
+            Self::ClaudeSonnet4_5 => 1_000_000,
+            Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
             Self::ClaudeOpus4_1 => 200_000,
-            Self::ClaudeHaiku4_5 => 200_000,
+            Self::ClaudeSonnet4 => 1_000_000,
             Self::Claude3_5Haiku => 200_000,
 
             // OpenAI models
@@ -276,14 +262,11 @@ impl Model {
             Self::Gemini3Flash => 1_048_576,
 
             // OpenAI-compatible models
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 196_608,
-            Self::Glm5 => 200_000,
+            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 204_800,
+            Self::Glm5 | Self::Glm5_1 => 204_800,
             Self::KimiK2_5 => 262_144,
-            Self::MimoV2ProFree => 1_048_576,
-            Self::MimoV2OmniFree | Self::MimoV2FlashFree => 262_144,
-            Self::TrinityLargePreviewFree => 131_072,
             Self::BigPickle => 200_000,
-            Self::Nemotron3SuperFree => 262_144,
+            Self::Nemotron3SuperFree => 204_800,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -293,12 +276,12 @@ impl Model {
         match self {
             // Anthropic models
             Self::ClaudeOpus4_6 => Some(128_000),
-            Self::ClaudeSonnet4_6 => Some(64_000),
             Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
-            | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5 => Some(64_000),
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeSonnet4 => Some(64_000),
+            Self::ClaudeOpus4_1 => Some(32_000),
             Self::Claude3_5Haiku => Some(8_192),
 
             // OpenAI models
@@ -322,12 +305,11 @@ impl Model {
             Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
 
             // OpenAI-compatible models
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(65_536),
-            Self::Glm5 | Self::BigPickle => Some(128_000),
+            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
+            Self::Glm5 | Self::Glm5_1 => Some(131_072),
+            Self::BigPickle => Some(128_000),
             Self::KimiK2_5 => Some(65_536),
-            Self::MimoV2ProFree => Some(131_072),
-            Self::MimoV2OmniFree | Self::MimoV2FlashFree => Some(65_536),
-            Self::TrinityLargePreviewFree | Self::Nemotron3SuperFree => Some(16_384),
+            Self::Nemotron3SuperFree => Some(128_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -371,15 +353,14 @@ impl Model {
             // Google models support images
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
+            // Kimi K2.5 supports images
+            Self::KimiK2_5 => true,
+
             // OpenAI-compatible models — conservative default
             Self::MiniMaxM2_5
             | Self::MiniMaxM2_5Free
             | Self::Glm5
-            | Self::KimiK2_5
-            | Self::MimoV2ProFree
-            | Self::MimoV2OmniFree
-            | Self::MimoV2FlashFree
-            | Self::TrinityLargePreviewFree
+            | Self::Glm5_1
             | Self::BigPickle
             | Self::Nemotron3SuperFree => false,
 
