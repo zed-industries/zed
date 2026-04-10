@@ -477,6 +477,36 @@ impl ThreadMetadataStore {
         }
     }
 
+    pub fn update_main_worktree_paths(
+        &mut self,
+        old_paths: &PathList,
+        new_paths: PathList,
+        cx: &mut Context<Self>,
+    ) {
+        let session_ids = match self.threads_by_main_paths.remove(old_paths) {
+            Some(ids) if !ids.is_empty() => ids,
+            _ => return,
+        };
+
+        let new_index = self
+            .threads_by_main_paths
+            .entry(new_paths.clone())
+            .or_default();
+
+        for session_id in &session_ids {
+            new_index.insert(session_id.clone());
+
+            if let Some(thread) = self.threads.get_mut(session_id) {
+                thread.main_worktree_paths = new_paths.clone();
+                self.pending_thread_ops_tx
+                    .try_send(DbOperation::Upsert(thread.clone()))
+                    .log_err();
+            }
+        }
+
+        cx.notify();
+    }
+
     pub fn create_archived_worktree(
         &self,
         worktree_path: String,
