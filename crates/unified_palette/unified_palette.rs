@@ -3,12 +3,17 @@ mod unified_palette_tests;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Task, Window, WeakEntity, div, prelude::*,
+    actions, Action, App, AppContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, Render, Task, Window, WeakEntity, prelude::*,
 };
+use gpui_util::ResultExt;
 use picker::{Picker, PickerDelegate};
-use ui::prelude::*;
-use workspace::ModalView;
+use project::{ProjectPath, WorktreeId};
+use ui::{prelude::*, Label, ListItem, ListItemSpacing};
+use util::rel_path::RelPath;
+use workspace::{ModalView, Workspace};
+
+actions!(unified_palette, [ToggleUnifiedPalette]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(UnifiedPalette::register).detach();
@@ -25,16 +30,42 @@ pub enum PaletteMode {
 
 pub struct UnifiedPalette {
     picker: Entity<Picker<UnifiedPaletteDelegate>>,
-    workspace: WeakEntity<workspace::Workspace>,
+    _workspace: WeakEntity<workspace::Workspace>,
+}
+
+#[derive(Clone)]
+enum Match {
+    File(FileMatch),
+    Command(CommandMatch),
+    Line(LineMatch),
+}
+
+#[derive(Clone)]
+struct FileMatch {
+    worktree_id: WorktreeId,
+    path: Arc<RelPath>,
+    display_path: String,
+}
+
+#[derive(Clone)]
+struct CommandMatch {
+    name: String,
+    action: Arc<dyn Action>,
+}
+
+#[derive(Clone)]
+struct LineMatch {
+    line_number: u32,
 }
 
 pub struct UnifiedPaletteDelegate {
     mode: PaletteMode,
-    workspace: WeakEntity<workspace::Workspace>,
+    workspace: WeakEntity<Workspace>,
     project: Entity<project::Project>,
+    unified_palette: WeakEntity<UnifiedPalette>,
     
-    // Match data (instead of storing sub-pickers)
-    matches: Vec<String>,
+    // Match data
+    matches: Vec<Match>,
     selected_index: usize,
 }
 
@@ -42,7 +73,7 @@ impl UnifiedPalette {
     fn register(
         workspace: &mut workspace::Workspace,
         _window: Option<&mut Window>,
-        cx: &mut Context<workspace::Workspace>,
+        _cx: &mut Context<workspace::Workspace>,
     ) {
         workspace.register_action(
             |workspace, _action: &workspace::ToggleFileFinder, window, cx| {
@@ -50,12 +81,17 @@ impl UnifiedPalette {
                 let workspace_handle = cx.entity().downgrade();
                 
                 workspace.toggle_modal(window, cx, move |window, cx| {
-                    let delegate = UnifiedPaletteDelegate::new(workspace_handle.clone(), project, cx);
+                    let delegate = UnifiedPaletteDelegate::new(
+                        workspace_handle.clone(),
+                        project,
+                        cx.entity().downgrade(),
+                        cx,
+                    );
                     let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
                     
                     UnifiedPalette {
                         picker,
-                        workspace: workspace_handle,
+                        _workspace: workspace_handle,
                     }
                 });
             },
@@ -71,12 +107,17 @@ impl UnifiedPalette {
         let project = workspace.project().clone();
         
         cx.new(|cx| {
-            let delegate = UnifiedPaletteDelegate::new(workspace_handle.clone(), project, cx);
+            let delegate = UnifiedPaletteDelegate::new(
+                workspace_handle.clone(),
+                project,
+                cx.entity().downgrade(),
+                cx,
+            );
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
             
             Self {
                 picker,
-                workspace: workspace_handle,
+                _workspace: workspace_handle,
             }
         })
     }
@@ -84,14 +125,16 @@ impl UnifiedPalette {
 
 impl UnifiedPaletteDelegate {
     fn new(
-        workspace: WeakEntity<workspace::Workspace>,
+        workspace: WeakEntity<Workspace>,
         project: Entity<project::Project>,
+        unified_palette: WeakEntity<UnifiedPalette>,
         _cx: &mut App,
     ) -> Self {
         Self {
             mode: PaletteMode::FileFinder,
             workspace,
             project,
+            unified_palette,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -103,16 +146,21 @@ impl UnifiedPaletteDelegate {
             return;
         }
         
-        // Simple file search - just get file names from project
         let project = self.project.read(cx);
         let mut files = Vec::new();
         
         for worktree in project.worktrees(cx) {
             let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            
             for entry in worktree.files(false, 0) {
                 let path_str = format!("{:?}", entry.path).trim_matches('"').to_string();
                 if path_str.to_lowercase().contains(&query.to_lowercase()) {
-                    files.push(path_str);
+                    files.push(Match::File(FileMatch {
+                        worktree_id,
+                        path: entry.path.clone(),
+                        display_path: path_str,
+                    }));
                     if files.len() >= 100 {
                         break;
                     }
@@ -123,10 +171,40 @@ impl UnifiedPaletteDelegate {
         self.matches = files;
         self.selected_index = 0;
     }
+    
+    fn search_commands(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let actions = window.available_actions(cx);
+        let mut commands = Vec::new();
+        
+        for action in actions {
+            let name = action.name();
+            if query.is_empty() || name.to_lowercase().contains(&query.to_lowercase()) {
+                commands.push(Match::Command(CommandMatch {
+                    name: name.to_string(),
+                    action: Arc::from(action),
+                }));
+                if commands.len() >= 100 {
+                    break;
+                }
+            }
+        }
+        
+        self.matches = commands;
+        self.selected_index = 0;
+    }
+    
+    fn search_line(&mut self, query: &str, _cx: &mut Context<Picker<Self>>) {
+        if let Ok(line_number) = query.parse::<u32>() {
+            self.matches = vec![Match::Line(LineMatch { line_number })];
+        } else {
+            self.matches.clear();
+        }
+        self.selected_index = 0;
+    }
 }
 
 impl PickerDelegate for UnifiedPaletteDelegate {
-    type ListItem = AnyElement;
+    type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
         self.matches.len()
@@ -142,16 +220,18 @@ impl PickerDelegate for UnifiedPaletteDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        match self.mode {
+        let text = match self.mode {
             PaletteMode::FileFinder => "Go to file...".into(),
             PaletteMode::CommandPalette => "Execute a command...".into(),
             PaletteMode::ProjectSymbols => "Go to symbol...".into(),
             PaletteMode::Outline => "Go to symbol in editor...".into(),
             PaletteMode::GoToLine => "Go to line...".into(),
-        }
+        };
+        log::trace!("UnifiedPalette: Placeholder text for {:?}: {}", self.mode, text);
+        text
     }
 
-    fn update_matches(&mut self, query: String, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
+    fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
         // Detect mode from prefix
         let (new_mode, stripped_query) = if let Some(detected_mode) = detect_mode_from_query(&query) {
             let stripped = query.chars().skip(1).collect::<String>();
@@ -162,52 +242,131 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         
         // Switch mode if changed
         if new_mode != self.mode {
+            log::info!("UnifiedPalette: Mode changed from {:?} to {:?}", self.mode, new_mode);
             self.mode = new_mode;
             self.matches.clear();
             cx.notify();
         }
         
+        log::debug!("UnifiedPalette: Searching in {:?} mode with query: '{}'", self.mode, stripped_query);
+        
         // Search based on mode
         match self.mode {
             PaletteMode::FileFinder => {
                 self.search_files(&stripped_query, cx);
-                cx.notify();
+                log::debug!("UnifiedPalette: Found {} file matches", self.matches.len());
             }
             PaletteMode::CommandPalette => {
-                // TODO: Search commands
-                self.matches.clear();
-                cx.notify();
+                self.search_commands(&stripped_query, window, cx);
+                log::debug!("UnifiedPalette: Found {} command matches", self.matches.len());
             }
-            PaletteMode::ProjectSymbols => {
-                // TODO: Search symbols
-                self.matches.clear();
-                cx.notify();
+            PaletteMode::GoToLine => {
+                self.search_line(&stripped_query, cx);
+                log::debug!("UnifiedPalette: Found {} line matches", self.matches.len());
             }
-            _ => {}
+            PaletteMode::ProjectSymbols | PaletteMode::Outline => {
+                log::warn!("UnifiedPalette: {:?} mode not yet implemented", self.mode);
+                self.matches.clear();
+            }
         }
         
+        cx.notify();
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        // TODO: Forward to active sub-picker
-        cx.emit(DismissEvent);
+    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        log::info!("UnifiedPalette: Confirm called in {:?} mode (secondary: {})", self.mode, secondary);
+        
+        let Some(selected_match) = self.matches.get(self.selected_index).cloned() else {
+            log::warn!("UnifiedPalette: No match selected, dismissing");
+            self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            return;
+        };
+        
+        let Some(workspace) = self.workspace.upgrade() else {
+            log::error!("UnifiedPalette: Workspace no longer exists, dismissing");
+            self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            return;
+        };
+        
+        match selected_match {
+            Match::File(file_match) => {
+                log::info!("UnifiedPalette: Opening file: {}", file_match.display_path);
+                let project_path = ProjectPath {
+                    worktree_id: file_match.worktree_id,
+                    path: file_match.path,
+                };
+                
+                let open_task = workspace.update(cx, |workspace, cx| {
+                    if secondary {
+                        workspace.split_path_preview(project_path, false, None, window, cx)
+                    } else {
+                        workspace.open_path_preview(project_path, None, true, false, true, window, cx)
+                    }
+                });
+                
+                let palette = self.unified_palette.clone();
+                cx.spawn_in(window, async move |_, cx| {
+                    open_task.await.log_err();
+                    log::debug!("UnifiedPalette: File opened, dismissing modal");
+                    palette.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                }).detach();
+            }
+            Match::Command(command_match) => {
+                log::info!("UnifiedPalette: Executing command: {}", command_match.name);
+                window.dispatch_action(command_match.action.as_ref().boxed_clone(), cx);
+                log::debug!("UnifiedPalette: Command dispatched, dismissing modal");
+                self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            }
+            Match::Line(line_match) => {
+                log::info!("UnifiedPalette: Going to line {}", line_match.line_number);
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(active_item) = workspace.active_item(cx) {
+                        if let Some(editor) = active_item.downcast::<editor::Editor>() {
+                            editor.update(cx, |editor, cx| {
+                                let point = language::Point::new(line_match.line_number.saturating_sub(1), 0);
+                                editor.change_selections(
+                                    editor::SelectionEffects::default(),
+                                    window,
+                                    cx,
+                                    |s| {
+                                        s.select_ranges([point..point]);
+                                    },
+                                );
+                                log::debug!("UnifiedPalette: Selection changed to line {}", line_match.line_number);
+                            });
+                        } else {
+                            log::warn!("UnifiedPalette: Active item is not an editor");
+                        }
+                    } else {
+                        log::warn!("UnifiedPalette: No active item in workspace");
+                    }
+                });
+                log::debug!("UnifiedPalette: Dismissing modal after go-to-line");
+                self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            }
+        }
     }
 
     fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
-        // Cleanup
+        log::info!("UnifiedPalette: Modal dismissed");
     }
 
-    fn render_match(&self, ix: usize, selected: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<Self::ListItem> {
-        let match_text = self.matches.get(ix)?;
+    fn render_match(&self, ix: usize, selected: bool, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> Option<Self::ListItem> {
+        let match_item = self.matches.get(ix)?;
+        
+        let display_text = match match_item {
+            Match::File(file_match) => file_match.display_path.clone(),
+            Match::Command(command_match) => command_match.name.clone(),
+            Match::Line(line_match) => format!("Go to line {}", line_match.line_number),
+        };
         
         Some(
-            div()
-                .px_2()
-                .py_1()
-                .when(selected, |el| el.bg(cx.theme().colors().element_selected))
-                .child(match_text.clone())
-                .into_any_element()
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(Label::new(display_text))
         )
     }
 }

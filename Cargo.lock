@@ -19058,12 +19058,16 @@ dependencies = [
  "fuzzy",
  "go_to_line",
  "gpui",
+ "gpui_util",
+ "language",
+ "log",
  "outline",
  "picker",
  "project",
  "project_symbols",
  "settings",
  "ui",
+ "util",
  "workspace",
 ]
 

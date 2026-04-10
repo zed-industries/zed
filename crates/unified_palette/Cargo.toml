@@ -14,11 +14,15 @@ file_finder.workspace = true
 fuzzy.workspace = true
 go_to_line.workspace = true
 gpui.workspace = true
+gpui_util.workspace = true
+language.workspace = true
+log.workspace = true
 outline.workspace = true
 picker.workspace = true
 project.workspace = true
 project_symbols.workspace = true
 ui.workspace = true
+util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
