@@ -31,7 +31,6 @@ jobs:
         clean: false
         fetch-depth: 0
         ref: ${{ inputs.branch }}
-        token: ${{ steps.generate-token.outputs.token }}
     - id: generate-token
       name: steps::authenticate_as_zippy
       uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
@@ -82,9 +81,9 @@ jobs:
     - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
+        commit-message: ${{ steps.cherry-pick.outputs.commit_message }}
         title: ${{ steps.cherry-pick.outputs.title }}
         body: ${{ steps.cherry-pick.outputs.body }}
-        commit-message: ${{ steps.cherry-pick.outputs.commit_message }}
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         delete-branch: true

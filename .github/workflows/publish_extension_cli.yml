@@ -65,6 +65,7 @@ jobs:
     - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
+        commit-message: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         title: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         body: |
           This PR bumps the extension CLI version used in the extension workflows to `${{ github.sha }}`.
@@ -72,7 +73,6 @@ jobs:
           Release Notes:
 
           - N/A
-        commit-message: 'extension_ci: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`'
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         delete-branch: true
@@ -111,10 +111,10 @@ jobs:
     - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
+        commit-message: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         title: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         body: |
           This PR bumps the extension CLI version to https://github.com/zed-industries/zed/commit/${{ github.sha }}.
-        commit-message: Bump extension CLI version to `${{ steps.short-sha.outputs.sha_short }}`
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         delete-branch: true

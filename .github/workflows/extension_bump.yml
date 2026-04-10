@@ -140,9 +140,9 @@ jobs:
     - name: steps::create_pull_request
       uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
       with:
+        commit-message: ${{ steps.bump-version.outputs.title }}
         title: ${{ steps.bump-version.outputs.title }}
         body: ${{ steps.bump-version.outputs.body }}
-        commit-message: ${{ steps.bump-version.outputs.title }}
         committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
         delete-branch: true

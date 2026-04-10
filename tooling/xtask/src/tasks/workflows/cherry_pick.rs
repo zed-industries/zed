@@ -96,12 +96,7 @@ fn run_cherry_pick(
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
-            .add_step(
-                steps::checkout_repo()
-                    .with_full_history()
-                    .with_ref(branch)
-                    .with_token(&token),
-            )
+            .add_step(steps::checkout_repo().with_full_history().with_ref(branch))
             .add_step(authenticate)
             .add_step(cherry_pick_step)
             .add_step(
