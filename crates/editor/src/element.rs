@@ -892,7 +892,7 @@ impl EditorElement {
 
             if event.position.x <= hitbox.bounds.right() - gutter_right_padding {
                 let point_for_position = position_map.point_for_position(event.position);
-                editor.set_breakpoint_context_menu(
+                editor.set_gutter_context_menu(
                     point_for_position.previous_valid.row(),
                     None,
                     event.position,
@@ -7956,10 +7956,7 @@ impl Gutter<'_> {
         );
         let indicator_size = button.layout_as_root(available_space, window, cx);
         let git_gutter_width = EditorElement::gutter_strip_width(self.line_height)
-            + self
-                .dimensions
-                .git_blame_entries_width
-                .unwrap_or_default();
+            + self.dimensions.git_blame_entries_width.unwrap_or_default();
 
         let x = git_gutter_width + px(2.);
 

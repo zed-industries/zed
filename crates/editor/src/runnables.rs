@@ -546,13 +546,7 @@ impl Editor {
             );
         }))
         .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_breakpoint_context_menu(
-                row,
-                active_breakpoint,
-                event.position(),
-                window,
-                cx,
-            );
+            editor.set_gutter_context_menu(row, active_breakpoint, event.position(), window, cx);
         }))
     }
 

@@ -9168,7 +9168,7 @@ impl Editor {
         breakpoint_display_points
     }
 
-    fn breakpoint_context_menu(
+    fn gutter_context_menu(
         &self,
         anchor: Anchor,
         window: &mut Window,
@@ -9216,6 +9216,14 @@ impl Editor {
             "Unset Breakpoint"
         } else {
             "Set Breakpoint"
+        };
+
+        let bookmark = self.bookmark_at_row(row, window, cx);
+
+        let set_bookmark_msg = if bookmark.as_ref().is_some() {
+            "Remove Bookmark"
+        } else {
+            "Add Bookmark"
         };
 
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
@@ -9317,16 +9325,28 @@ impl Editor {
                             .log_err();
                     }
                 })
-                .entry(hit_condition_breakpoint_msg, None, move |window, cx| {
+                .entry(hit_condition_breakpoint_msg, None, {
+                    let breakpoint = breakpoint.clone();
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.add_edit_breakpoint_block(
+                                    anchor,
+                                    breakpoint.as_ref(),
+                                    BreakpointPromptEditAction::HitCondition,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
+                    }
+                })
+                .separator()
+                .entry(set_bookmark_msg, None, move |_window, cx| {
                     weak_editor
                         .update(cx, |this, cx| {
-                            this.add_edit_breakpoint_block(
-                                anchor,
-                                breakpoint.as_ref(),
-                                BreakpointPromptEditAction::HitCondition,
-                                window,
-                                cx,
-                            );
+                            this.toggle_bookmark_at_anchor(anchor, cx);
                         })
                         .log_err();
                 })
@@ -9437,13 +9457,7 @@ impl Editor {
                 }
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                editor.set_breakpoint_context_menu(
-                    row,
-                    Some(position),
-                    event.position(),
-                    window,
-                    cx,
-                );
+                editor.set_gutter_context_menu(row, Some(position), event.position(), window, cx);
             }))
             .tooltip(move |_window, cx| {
                 Tooltip::with_meta_in(
@@ -12028,7 +12042,7 @@ impl Editor {
         }
     }
 
-    fn set_breakpoint_context_menu(
+    fn set_gutter_context_menu(
         &mut self,
         display_row: DisplayRow,
         position: Option<Anchor>,
@@ -12042,7 +12056,7 @@ impl Editor {
             .snapshot(cx)
             .anchor_before(Point::new(display_row.0, 0u32));
 
-        let context_menu = self.breakpoint_context_menu(position.unwrap_or(source), window, cx);
+        let context_menu = self.gutter_context_menu(position.unwrap_or(source), window, cx);
 
         self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
             self,
@@ -12152,6 +12166,66 @@ impl Editor {
                                 .buffer_snapshot()
                                 .anchor_in_excerpt(bp.position)
                                 .map(|position| (position, bp.bp.clone()))
+                        } else {
+                            None
+                        }
+                    })
+            })
+    }
+
+    pub(crate) fn bookmark_at_row(
+        &self,
+        row: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Anchor> {
+        let snapshot = self.snapshot(window, cx);
+        let bookmark_position = snapshot.buffer_snapshot().anchor_before(Point::new(row, 0));
+
+        self.bookmark_at_anchor(bookmark_position, &snapshot, cx)
+    }
+
+    // TODO(austincummings): This is largely the same as breakpoint_at_anchor, maybe an opportunity to refactor this
+    pub(crate) fn bookmark_at_anchor(
+        &self,
+        bookmark_position: Anchor,
+        snapshot: &EditorSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Option<Anchor> {
+        let (bookmark_position, _) = snapshot
+            .buffer_snapshot()
+            .anchor_to_buffer_anchor(bookmark_position)?;
+        let buffer = self.buffer.read(cx).buffer(bookmark_position.buffer_id)?;
+
+        let buffer_snapshot = buffer.read(cx).snapshot();
+
+        let row = buffer_snapshot
+            .summary_for_anchor::<text::PointUtf16>(&bookmark_position)
+            .row;
+
+        let line_len = buffer_snapshot.line_len(row);
+        let anchor_end = buffer_snapshot.anchor_after(Point::new(row, line_len));
+
+        self.bookmark_store
+            .as_ref()?
+            .update(cx, |bookmark_store, cx| {
+                bookmark_store
+                    .bookmarks_for_buffer(
+                        buffer,
+                        bookmark_position..anchor_end,
+                        &buffer_snapshot,
+                        cx,
+                    )
+                    .first()
+                    .and_then(|bookmark| {
+                        let bookmark_row = buffer_snapshot
+                            .summary_for_anchor::<text::PointUtf16>(&bookmark.anchor())
+                            .row;
+
+                        if bookmark_row == row {
+                            snapshot
+                                .buffer_snapshot()
+                                .anchor_in_excerpt(bookmark.anchor())
                         } else {
                             None
                         }
@@ -12453,6 +12527,25 @@ impl Editor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn breakpoint_store(&self) -> Option<Entity<BreakpointStore>> {
         self.breakpoint_store.clone()
+    }
+
+    fn toggle_bookmark_at_anchor(&mut self, anchor: Anchor, cx: &mut Context<Self>) {
+        let Some(bookmark_store) = &self.bookmark_store else {
+            return;
+        };
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some((position, _)) = buffer_snapshot.anchor_to_buffer_anchor(anchor) else {
+            return;
+        };
+        let Some(buffer) = self.buffer.read(cx).buffer(position.buffer_id) else {
+            return;
+        };
+
+        bookmark_store.update(cx, |bookmark_store, cx| {
+            bookmark_store.toggle_bookmark(buffer, position, cx);
+        });
+
+        cx.notify();
     }
 
     pub fn prepare_restore_change(
