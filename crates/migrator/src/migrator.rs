@@ -4809,7 +4809,22 @@ mod tests {
             }
             "#
             .unindent(),
-            None,
+            Some(
+                &r#"
+                {
+                    "agent": {
+                        "tool_permissions": {
+                            "tools": {
+                                "search_web": {
+                                    "allow": false
+                                }
+                            }
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
         );
     }
 

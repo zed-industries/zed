@@ -58,9 +58,7 @@ fn migrate_agent_value(object: &mut serde_json::Map<String, Value>) -> Result<()
 }
 
 fn rename_key(tools: &mut serde_json::Map<String, Value>) {
-    if tools.contains_key(OLD_TOOL_NAME) && !tools.contains_key(NEW_TOOL_NAME) {
-        if let Some(value) = tools.remove(OLD_TOOL_NAME) {
-            tools.insert(NEW_TOOL_NAME.to_string(), value);
-        }
+    if let Some(value) = tools.remove(OLD_TOOL_NAME) {
+        tools.insert(NEW_TOOL_NAME.to_string(), value);
     }
 }
