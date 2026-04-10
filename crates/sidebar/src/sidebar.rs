@@ -1016,10 +1016,10 @@ impl Sidebar {
                 // Open; otherwise use Closed.
                 let resolve_workspace = |row: &ThreadMetadata| -> ThreadEntryWorkspace {
                     workspace_by_path_list
-                        .get(&row.folder_paths)
+                        .get(row.folder_paths())
                         .map(|ws| ThreadEntryWorkspace::Open((*ws).clone()))
                         .unwrap_or_else(|| ThreadEntryWorkspace::Closed {
-                            folder_paths: row.folder_paths.clone(),
+                            folder_paths: row.folder_paths().clone(),
                             project_group_key: group_key.clone(),
                         })
                 };
@@ -1029,8 +1029,8 @@ impl Sidebar {
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees = worktree_info_from_thread_paths(
-                            &row.folder_paths,
-                            &row.main_worktree_paths,
+                            row.folder_paths(),
+                            row.main_worktree_paths(),
                             &linked_to_main,
                         );
                         ThreadEntry {
@@ -2255,7 +2255,7 @@ impl Sidebar {
                 panel.load_agent_thread(
                     Agent::from(metadata.agent_id.clone()),
                     metadata.session_id.clone(),
-                    Some(metadata.folder_paths.clone()),
+                    Some(metadata.folder_paths().clone()),
                     Some(metadata.title.clone()),
                     focus,
                     window,
@@ -2453,7 +2453,7 @@ impl Sidebar {
             _ => None,
         };
 
-        if metadata.folder_paths.paths().is_empty() {
+        if metadata.folder_paths().paths().is_empty() {
             ThreadMetadataStore::global(cx)
                 .update(cx, |store, cx| store.unarchive(&session_id, cx));
 
@@ -2465,7 +2465,7 @@ impl Sidebar {
             if let Some(workspace) = active_workspace {
                 self.activate_thread_locally(&metadata, &workspace, false, window, cx);
             } else {
-                let path_list = metadata.folder_paths.clone();
+                let path_list = metadata.folder_paths().clone();
                 if let Some((target_window, workspace)) =
                     self.find_open_workspace_for_path_list(&path_list, cx)
                 {
@@ -2483,7 +2483,7 @@ impl Sidebar {
         let task = store
             .read(cx)
             .get_archived_worktrees_for_thread(session_id.0.to_string(), cx);
-        let path_list = metadata.folder_paths.clone();
+        let path_list = metadata.folder_paths().clone();
 
         let task_session_id = session_id.clone();
         let restore_task = cx.spawn_in(window, async move |this, cx| {
@@ -2579,7 +2579,7 @@ impl Sidebar {
                         cx.update(|_window, cx| store.read(cx).entry(&session_id).cloned())?;
 
                     if let Some(updated_metadata) = updated_metadata {
-                        let new_paths = updated_metadata.folder_paths.clone();
+                        let new_paths = updated_metadata.folder_paths().clone();
 
                         cx.update(|_window, cx| {
                             store.update(cx, |store, cx| {
@@ -2754,7 +2754,7 @@ impl Sidebar {
             .read(cx)
             .entry(session_id)
             .cloned();
-        let thread_folder_paths = metadata.as_ref().map(|m| m.folder_paths.clone());
+        let thread_folder_paths = metadata.as_ref().map(|m| m.folder_paths().clone());
 
         // Compute which linked worktree roots should be archived from disk if
         // this thread is archived. This must happen before we remove any
@@ -2781,7 +2781,7 @@ impl Sidebar {
                     }
                 }
                 metadata
-                    .folder_paths
+                    .folder_paths()
                     .ordered_paths()
                     .filter_map(|path| {
                         thread_worktree_archive::build_root_plan(path, &workspaces, cx)
@@ -2987,7 +2987,7 @@ impl Sidebar {
         if let Some(metadata) = neighbor {
             if let Some(workspace) = self.multi_workspace.upgrade().and_then(|mw| {
                 mw.read(cx)
-                    .workspace_for_paths(&metadata.folder_paths, None, cx)
+                    .workspace_for_paths(metadata.folder_paths(), None, cx)
             }) {
                 self.activate_workspace(&workspace, window, cx);
                 Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);

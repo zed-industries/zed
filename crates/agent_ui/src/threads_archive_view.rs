@@ -340,7 +340,7 @@ impl ThreadsArchiveView {
             return;
         }
 
-        if thread.folder_paths.is_empty() {
+        if thread.folder_paths().is_empty() {
             self.show_project_picker_for_thread(thread, window, cx);
             return;
         }
@@ -537,7 +537,7 @@ impl ThreadsArchiveView {
                     })
                     .timestamp(timestamp)
                     .highlight_positions(highlight_positions.clone())
-                    .project_paths(thread.folder_paths.paths_owned())
+                    .project_paths(thread.folder_paths().paths_owned())
                     .focused(is_focused)
                     .hovered(is_hovered)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {
@@ -930,7 +930,8 @@ impl ProjectPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        self.thread.folder_paths = paths.clone();
+        self.thread.worktree_paths =
+            super::thread_metadata_store::ThreadWorktreePaths::from_folder_paths(&paths);
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
             store.update_working_directories(&self.thread.session_id, paths, cx);
         });
