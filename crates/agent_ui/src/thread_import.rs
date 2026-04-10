@@ -18,12 +18,12 @@ use ui::{
     prelude::*,
 };
 use util::ResultExt;
-use workspace::{ModalView, MultiWorkspace, PathList, Workspace};
+use workspace::{ModalView, MultiWorkspace, Workspace};
 
 use crate::{
     Agent, AgentPanel,
     agent_connection_store::AgentConnectionStore,
-    thread_metadata_store::{ThreadMetadata, ThreadMetadataStore},
+    thread_metadata_store::{ThreadMetadata, ThreadMetadataStore, ThreadWorktreePaths},
 };
 
 pub struct AcpThreadImportOnboarding;
@@ -527,8 +527,7 @@ fn collect_importable_threads(
                     .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into()),
                 updated_at: session.updated_at.unwrap_or_else(|| Utc::now()),
                 created_at: session.created_at,
-                folder_paths,
-                main_worktree_paths: PathList::default(),
+                worktree_paths: ThreadWorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: remote_connection.clone(),
                 archived: true,
             });

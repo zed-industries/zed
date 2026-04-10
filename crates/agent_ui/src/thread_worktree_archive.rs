@@ -192,7 +192,7 @@ pub fn path_is_referenced_by_other_unarchived_threads(
         .filter(|thread| !thread.archived)
         .any(|thread| {
             thread
-                .folder_paths
+                .folder_paths()
                 .paths()
                 .iter()
                 .any(|other_path| other_path.as_path() == path)
@@ -428,7 +428,7 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
             .entries()
             .filter(|thread| {
                 thread
-                    .folder_paths
+                    .folder_paths()
                     .paths()
                     .iter()
                     .any(|p| p.as_path() == root.root_path)

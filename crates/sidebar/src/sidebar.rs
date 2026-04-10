@@ -4,7 +4,7 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentSettings;
-use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
+use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore, ThreadWorktreePaths};
 use agent_ui::thread_worktree_archive;
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
@@ -283,10 +283,8 @@ impl ListEntry {
                 }
             }
             ListEntry::ProjectHeader { key, .. } => multi_workspace
-                .workspaces()
-                .find(|ws| PathList::new(&ws.read(cx).root_paths(cx)) == *key.path_list())
+                .workspaces_for_project_group(key, cx)
                 .cloned()
-                .into_iter()
                 .collect(),
             ListEntry::ViewMore { .. } => Vec::new(),
         }
@@ -365,35 +363,63 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 ///
 /// For each path in the thread's `folder_paths`, produces a
 /// [`WorktreeInfo`] with a short display name, full path, and whether
-/// the worktree is the main checkout or a linked git worktree.
-fn worktree_info_from_thread_paths(
-    folder_paths: &PathList,
-    group_key: &project::ProjectGroupKey,
-) -> impl Iterator<Item = WorktreeInfo> {
-    let main_paths = group_key.path_list().paths();
-    folder_paths.paths().iter().filter_map(|path| {
-        let is_main = main_paths.iter().any(|mp| mp.as_path() == path.as_path());
-        if is_main {
-            let name = path.file_name()?.to_string_lossy().to_string();
-            Some(WorktreeInfo {
-                name: SharedString::from(name),
-                full_path: SharedString::from(path.display().to_string()),
-                highlight_positions: Vec::new(),
-                kind: ui::WorktreeKind::Main,
-            })
-        } else {
-            let main_path = main_paths
-                .iter()
-                .find(|mp| mp.file_name() == path.file_name())
-                .or(main_paths.first())?;
-            Some(WorktreeInfo {
-                name: linked_worktree_short_name(main_path, path).unwrap_or_default(),
-                full_path: SharedString::from(path.display().to_string()),
+/// the worktree is the main checkout or a linked git worktree. When
+/// multiple main paths exist and a linked worktree's short name alone
+/// wouldn't identify which main project it belongs to, the main project
+/// name is prefixed for disambiguation (e.g. `project:feature`).
+///
+fn worktree_info_from_thread_paths(worktree_paths: &ThreadWorktreePaths) -> Vec<WorktreeInfo> {
+    let mut infos: Vec<WorktreeInfo> = Vec::new();
+    let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
+    let mut unique_main_count = HashSet::new();
+
+    for (main_path, folder_path) in worktree_paths.ordered_pairs() {
+        unique_main_count.insert(main_path.clone());
+        let is_linked = main_path != folder_path;
+
+        if is_linked {
+            let short_name = linked_worktree_short_name(main_path, folder_path).unwrap_or_default();
+            let project_name = main_path
+                .file_name()
+                .map(|n| SharedString::from(n.to_string_lossy().to_string()))
+                .unwrap_or_default();
+            linked_short_names.push((short_name.clone(), project_name));
+            infos.push(WorktreeInfo {
+                name: short_name,
+                full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Linked,
-            })
+            });
+        } else {
+            let Some(name) = folder_path.file_name() else {
+                continue;
+            };
+            infos.push(WorktreeInfo {
+                name: SharedString::from(name.to_string_lossy().to_string()),
+                full_path: SharedString::from(folder_path.display().to_string()),
+                highlight_positions: Vec::new(),
+                kind: ui::WorktreeKind::Main,
+            });
         }
-    })
+    }
+
+    // When the group has multiple main worktree paths and the thread's
+    // folder paths don't all share the same short name, prefix each
+    // linked worktree chip with its main project name so the user knows
+    // which project it belongs to.
+    let all_same_name = infos.len() > 1 && infos.iter().all(|i| i.name == infos[0].name);
+
+    if unique_main_count.len() > 1 && !all_same_name {
+        for (info, (_short_name, project_name)) in infos
+            .iter_mut()
+            .filter(|i| i.kind == ui::WorktreeKind::Linked)
+            .zip(linked_short_names.iter())
+        {
+            info.name = SharedString::from(format!("{}:{}", project_name, info.name));
+        }
+    }
+
+    infos
 }
 
 /// Shows a [`RemoteConnectionModal`] on the given workspace and establishes
@@ -478,6 +504,34 @@ impl Sidebar {
                     this.update_entries(cx);
                 }
                 MultiWorkspaceEvent::WorkspaceRemoved(_) => {
+                    this.update_entries(cx);
+                }
+                MultiWorkspaceEvent::WorktreePathAdded {
+                    old_main_paths,
+                    added_path,
+                } => {
+                    let added_path = added_path.clone();
+                    ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                        store.change_worktree_paths(
+                            old_main_paths,
+                            |paths| paths.add_path(&added_path, &added_path),
+                            cx,
+                        );
+                    });
+                    this.update_entries(cx);
+                }
+                MultiWorkspaceEvent::WorktreePathRemoved {
+                    old_main_paths,
+                    removed_path,
+                } => {
+                    let removed_path = removed_path.clone();
+                    ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                        store.change_worktree_paths(
+                            old_main_paths,
+                            |paths| paths.remove_main_path(&removed_path),
+                            cx,
+                        );
+                    });
                     this.update_entries(cx);
                 }
             },
@@ -947,35 +1001,33 @@ impl Sidebar {
                 // Open; otherwise use Closed.
                 let resolve_workspace = |row: &ThreadMetadata| -> ThreadEntryWorkspace {
                     workspace_by_path_list
-                        .get(&row.folder_paths)
+                        .get(row.folder_paths())
                         .map(|ws| ThreadEntryWorkspace::Open((*ws).clone()))
                         .unwrap_or_else(|| ThreadEntryWorkspace::Closed {
-                            folder_paths: row.folder_paths.clone(),
+                            folder_paths: row.folder_paths().clone(),
                             project_group_key: group_key.clone(),
                         })
                 };
 
                 // Build a ThreadEntry from a metadata row.
-                let make_thread_entry = |row: ThreadMetadata,
-                                         workspace: ThreadEntryWorkspace|
-                 -> ThreadEntry {
-                    let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                    let worktrees: Vec<WorktreeInfo> =
-                        worktree_info_from_thread_paths(&row.folder_paths, &group_key).collect();
-                    ThreadEntry {
-                        metadata: row,
-                        icon,
-                        icon_from_external_svg,
-                        status: AgentThreadStatus::default(),
-                        workspace,
-                        is_live: false,
-                        is_background: false,
-                        is_title_generating: false,
-                        highlight_positions: Vec::new(),
-                        worktrees,
-                        diff_stats: DiffStats::default(),
-                    }
-                };
+                let make_thread_entry =
+                    |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
+                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
+                        let worktrees = worktree_info_from_thread_paths(&row.worktree_paths);
+                        ThreadEntry {
+                            metadata: row,
+                            icon,
+                            icon_from_external_svg,
+                            status: AgentThreadStatus::default(),
+                            workspace,
+                            is_live: false,
+                            is_background: false,
+                            is_title_generating: false,
+                            highlight_positions: Vec::new(),
+                            worktrees,
+                            diff_stats: DiffStats::default(),
+                        }
+                    };
 
                 // Main code path: one query per group via main_worktree_paths.
                 // The main_worktree_paths column is set on all new threads and
@@ -1190,12 +1242,15 @@ impl Sidebar {
                 // Emit a DraftThread entry when the active draft belongs to this group.
                 if is_draft_for_group {
                     if let Some(ActiveEntry::Draft(draft_ws)) = &self.active_entry {
-                        let ws_path_list = workspace_path_list(draft_ws, cx);
-                        let worktrees = worktree_info_from_thread_paths(&ws_path_list, &group_key);
+                        let ws_worktree_paths = ThreadWorktreePaths::from_project(
+                            draft_ws.read(cx).project().read(cx),
+                            cx,
+                        );
+                        let worktrees = worktree_info_from_thread_paths(&ws_worktree_paths);
                         entries.push(ListEntry::DraftThread {
                             key: group_key.clone(),
                             workspace: None,
-                            worktrees: worktrees.collect(),
+                            worktrees,
                         });
                     }
                 }
@@ -1218,13 +1273,16 @@ impl Sidebar {
                         if Some(ws.entity_id()) == draft_ws_id {
                             continue;
                         }
-                        let ws_path_list = workspace_path_list(ws, cx);
+                        let ws_worktree_paths =
+                            ThreadWorktreePaths::from_project(ws.read(cx).project().read(cx), cx);
                         let has_linked_worktrees =
-                            worktree_info_from_thread_paths(&ws_path_list, &group_key)
+                            worktree_info_from_thread_paths(&ws_worktree_paths)
+                                .iter()
                                 .any(|wt| wt.kind == ui::WorktreeKind::Linked);
                         if !has_linked_worktrees {
                             continue;
                         }
+                        let ws_path_list = workspace_path_list(ws, cx);
                         let store = thread_store.read(cx);
                         let has_threads = store.entries_for_path(&ws_path_list).next().is_some()
                             || store
@@ -1234,8 +1292,7 @@ impl Sidebar {
                         if has_threads {
                             continue;
                         }
-                        let worktrees: Vec<WorktreeInfo> =
-                            worktree_info_from_thread_paths(&ws_path_list, &group_key).collect();
+                        let worktrees = worktree_info_from_thread_paths(&ws_worktree_paths);
 
                         entries.push(ListEntry::DraftThread {
                             key: group_key.clone(),
@@ -2170,7 +2227,7 @@ impl Sidebar {
                 panel.load_agent_thread(
                     Agent::from(metadata.agent_id.clone()),
                     metadata.session_id.clone(),
-                    Some(metadata.folder_paths.clone()),
+                    Some(metadata.folder_paths().clone()),
                     Some(metadata.title.clone()),
                     focus,
                     window,
@@ -2368,7 +2425,7 @@ impl Sidebar {
             _ => None,
         };
 
-        if metadata.folder_paths.paths().is_empty() {
+        if metadata.folder_paths().paths().is_empty() {
             ThreadMetadataStore::global(cx)
                 .update(cx, |store, cx| store.unarchive(&session_id, cx));
 
@@ -2380,7 +2437,7 @@ impl Sidebar {
             if let Some(workspace) = active_workspace {
                 self.activate_thread_locally(&metadata, &workspace, false, window, cx);
             } else {
-                let path_list = metadata.folder_paths.clone();
+                let path_list = metadata.folder_paths().clone();
                 if let Some((target_window, workspace)) =
                     self.find_open_workspace_for_path_list(&path_list, cx)
                 {
@@ -2398,7 +2455,7 @@ impl Sidebar {
         let task = store
             .read(cx)
             .get_archived_worktrees_for_thread(session_id.0.to_string(), cx);
-        let path_list = metadata.folder_paths.clone();
+        let path_list = metadata.folder_paths().clone();
 
         let task_session_id = session_id.clone();
         let restore_task = cx.spawn_in(window, async move |this, cx| {
@@ -2494,7 +2551,7 @@ impl Sidebar {
                         cx.update(|_window, cx| store.read(cx).entry(&session_id).cloned())?;
 
                     if let Some(updated_metadata) = updated_metadata {
-                        let new_paths = updated_metadata.folder_paths.clone();
+                        let new_paths = updated_metadata.folder_paths().clone();
 
                         cx.update(|_window, cx| {
                             store.update(cx, |store, cx| {
@@ -2669,7 +2726,7 @@ impl Sidebar {
             .read(cx)
             .entry(session_id)
             .cloned();
-        let thread_folder_paths = metadata.as_ref().map(|m| m.folder_paths.clone());
+        let thread_folder_paths = metadata.as_ref().map(|m| m.folder_paths().clone());
 
         // Compute which linked worktree roots should be archived from disk if
         // this thread is archived. This must happen before we remove any
@@ -2696,7 +2753,7 @@ impl Sidebar {
                     }
                 }
                 metadata
-                    .folder_paths
+                    .folder_paths()
                     .ordered_paths()
                     .filter_map(|path| {
                         thread_worktree_archive::build_root_plan(path, &workspaces, cx)
@@ -2902,7 +2959,7 @@ impl Sidebar {
         if let Some(metadata) = neighbor {
             if let Some(workspace) = self.multi_workspace.upgrade().and_then(|mw| {
                 mw.read(cx)
-                    .workspace_for_paths(&metadata.folder_paths, None, cx)
+                    .workspace_for_paths(metadata.folder_paths(), None, cx)
             }) {
                 self.activate_workspace(&workspace, window, cx);
                 Self::load_agent_thread_in_workspace(&workspace, metadata, true, window, cx);
