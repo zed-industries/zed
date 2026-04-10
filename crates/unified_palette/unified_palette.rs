@@ -31,6 +31,7 @@ pub enum PaletteMode {
 pub struct UnifiedPalette {
     picker: Entity<Picker<UnifiedPaletteDelegate>>,
     _workspace: WeakEntity<workspace::Workspace>,
+    _subscription: gpui::Subscription,
 }
 
 #[derive(Clone)]
@@ -67,6 +68,7 @@ pub struct UnifiedPaletteDelegate {
     // Match data
     matches: Vec<Match>,
     selected_index: usize,
+    last_query: String,
 }
 
 impl UnifiedPalette {
@@ -89,9 +91,14 @@ impl UnifiedPalette {
                     );
                     let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
                     
+                    let subscription = cx.subscribe(&picker, |this, _, _: &DismissEvent, cx| {
+                        cx.emit(DismissEvent);
+                    });
+                    
                     UnifiedPalette {
                         picker,
                         _workspace: workspace_handle,
+                        _subscription: subscription,
                     }
                 });
             },
@@ -115,9 +122,14 @@ impl UnifiedPalette {
             );
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
             
+            let subscription = cx.subscribe(&picker, |this, _, _: &DismissEvent, cx| {
+                cx.emit(DismissEvent);
+            });
+            
             Self {
                 picker,
                 _workspace: workspace_handle,
+                _subscription: subscription,
             }
         })
     }
@@ -137,6 +149,7 @@ impl UnifiedPaletteDelegate {
             unified_palette,
             matches: Vec::new(),
             selected_index: 0,
+            last_query: String::new(),
         }
     }
     
@@ -232,6 +245,9 @@ impl PickerDelegate for UnifiedPaletteDelegate {
     }
 
     fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
+        // Store the raw query
+        self.last_query = query.clone();
+        
         // Detect mode from prefix
         let (new_mode, stripped_query) = if let Some(detected_mode) = detect_mode_from_query(&query) {
             let stripped = query.chars().skip(1).collect::<String>();
@@ -277,9 +293,14 @@ impl PickerDelegate for UnifiedPaletteDelegate {
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         log::info!("UnifiedPalette: Confirm called in {:?} mode (secondary: {})", self.mode, secondary);
         
+        // Don't confirm if query is just a prefix (>, #, @, :) with no actual search text
+        if self.last_query.len() == 1 && matches!(self.last_query.chars().next(), Some('>') | Some('#') | Some('@') | Some(':')) {
+            log::warn!("UnifiedPalette: Query is just a prefix, ignoring confirm");
+            return;
+        }
+        
         let Some(selected_match) = self.matches.get(self.selected_index).cloned() else {
-            log::warn!("UnifiedPalette: No match selected, dismissing");
-            self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+            log::warn!("UnifiedPalette: No match selected, ignoring confirm");
             return;
         };
         
@@ -382,7 +403,9 @@ impl Focusable for UnifiedPalette {
 
 impl Render for UnifiedPalette {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.picker.clone()
+        div()
+            .min_w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
