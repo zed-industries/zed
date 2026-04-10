@@ -3440,19 +3440,13 @@ impl EditorElement {
 
     fn layout_line_numbers(
         &self,
-        gutter_hitbox: Option<&Hitbox>,
-        gutter_dimensions: GutterDimensions,
-        line_height: Pixels,
-        scroll_position: gpui::Point<ScrollOffset>,
-        rows: Range<DisplayRow>,
-        buffer_rows: &[RowInfo],
+        gutter: &GutterArgs<'_>,
         active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
         current_selection_head: Option<DisplayRow>,
-        snapshot: &EditorSnapshot,
         window: &mut Window,
         cx: &mut App,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
-        let include_line_numbers = snapshot
+        let include_line_numbers = gutter.snapshot
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
         if !include_line_numbers {
@@ -3465,8 +3459,8 @@ impl EditorElement {
         let relative_rows = if relative_line_numbers_enabled
             && let Some(current_selection_head) = current_selection_head
         {
-            snapshot.calculate_relative_line_numbers(
-                &rows,
+            gutter.snapshot.calculate_relative_line_numbers(
+                &gutter.range,
                 current_selection_head,
                 relative.wrapped(),
             )
@@ -3475,8 +3469,8 @@ impl EditorElement {
         };
 
         let mut line_number = String::new();
-        let segments = buffer_rows.iter().enumerate().flat_map(|(ix, row_info)| {
-            let display_row = DisplayRow(rows.start.0 + ix as u32);
+        let segments = gutter.row_infos.iter().enumerate().flat_map(|(ix, row_info)| {
+            let display_row = DisplayRow(gutter.range.start.0 + ix as u32);
             line_number.clear();
             let non_relative_number = if relative.wrapped() {
                 row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
@@ -3485,7 +3479,7 @@ impl EditorElement {
             };
             let relative_number = relative_rows.get(&display_row);
             if !(relative_line_numbers_enabled && relative_number.is_some())
-                && !snapshot.number_deleted_lines
+                && !gutter.snapshot.number_deleted_lines
                 && row_info
                     .diff_status
                     .is_some_and(|status| status.is_deleted())
@@ -3508,23 +3502,19 @@ impl EditorElement {
                 .unwrap_or_else(|| cx.theme().colors().editor_line_number);
             let shaped_line =
                 self.shape_line_number(SharedString::from(&line_number), color, window);
-            let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
-            let line_origin = gutter_hitbox.map(|hitbox| {
-                hitbox.origin
-                    + point(
-                        hitbox.size.width - shaped_line.width - gutter_dimensions.right_padding,
-                        ix as f32 * line_height
-                            - Pixels::from(scroll_top % ScrollPixelOffset::from(line_height)),
-                    )
-            });
+            let scroll_top = gutter.scroll_position.y * ScrollPixelOffset::from(gutter.line_height);
+            let line_origin = gutter.gutter_hitbox.origin
+                + point(
+                    gutter.gutter_hitbox.size.width - shaped_line.width - gutter.gutter_dimensions.right_padding,
+                    ix as f32 * gutter.line_height
+                        - Pixels::from(scroll_top % ScrollPixelOffset::from(gutter.line_height)),
+                );
 
             #[cfg(not(test))]
-            let hitbox = line_origin.map(|line_origin| {
-                window.insert_hitbox(
-                    Bounds::new(line_origin, size(shaped_line.width, line_height)),
-                    HitboxBehavior::Normal,
-                )
-            });
+            let hitbox = Some(window.insert_hitbox(
+                Bounds::new(line_origin, size(shaped_line.width, gutter.line_height)),
+                HitboxBehavior::Normal,
+            ));
             #[cfg(test)]
             let hitbox = {
                 let _ = line_origin;
@@ -3536,7 +3526,7 @@ impl EditorElement {
                 hitbox,
             };
 
-            let buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
+            let buffer_row = DisplayPoint::new(display_row, 0).to_point(gutter.snapshot).row;
             let multi_buffer_row = MultiBufferRow(buffer_row);
 
             Some((multi_buffer_row, segment))
@@ -10153,17 +10143,20 @@ impl Element for EditorElement {
                         }
                     }
 
-                    // TODO gutter?
-                    let line_numbers = self.layout_line_numbers(
-                        Some(&gutter_hitbox),
-                        gutter_dimensions,
+                    let gutter = GutterArgs {
                         line_height,
+                        range: start_row..end_row,
                         scroll_position,
-                        start_row..end_row,
-                        &row_infos,
+                        gutter_dimensions: &gutter_dimensions,
+                        gutter_hitbox: &gutter_hitbox,
+                        snapshot: &snapshot,
+                        row_infos: &row_infos,
+                    };
+
+                    let line_numbers = self.layout_line_numbers(
+                        &gutter,
                         &active_rows,
                         current_selection_head,
-                        &snapshot,
                         window,
                         cx,
                     );
@@ -10776,15 +10769,6 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let gutter = GutterArgs {
-                        line_height,
-                        range: start_row..end_row,
-                        scroll_position,
-                        gutter_dimensions: &gutter_dimensions,
-                        gutter_hitbox: &gutter_hitbox,
-                        snapshot: &snapshot,
-                        row_infos: &row_infos,
-                    };
                     let test_indicators = if gutter_settings.runnables {
                         self.layout_run_indicators(&gutter, &mut breakpoint_rows, window, cx)
                     } else {
