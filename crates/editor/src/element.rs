@@ -3235,11 +3235,11 @@ impl EditorElement {
         Some((display_row, buffer_row))
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn layout_run_indicators(
         &self,
         gutter: &GutterArgs,
-        breakpoints: &mut HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
+        run_indicators: &HashSet<DisplayRow>,
+        breakpoints: &HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -3274,69 +3274,32 @@ impl EditorElement {
                     None
                 };
 
-            let offset_range_start =
-                snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left);
+            run_indicators
+                .iter()
+                .filter_map(|display_row| {
+                    // TODO("pass in the locations")
 
-            let offset_range_end =
-                snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
-
-            editor
-                .runnables
-                .all_runnables()
-                .filter_map(|tasks| {
-                    let multibuffer_point = tasks.offset.to_point(&snapshot.buffer_snapshot());
-                    if multibuffer_point < offset_range_start
-                        || multibuffer_point > offset_range_end
-                    {
-                        return None;
-                    }
-                    let multibuffer_row = MultiBufferRow(multibuffer_point.row);
-                    let buffer_folded = snapshot
-                        .buffer_snapshot()
-                        .buffer_line_for_row(multibuffer_row)
-                        .map(|(buffer_snapshot, _)| buffer_snapshot.remote_id())
-                        .map(|buffer_id| editor.is_buffer_folded(buffer_id, cx))
-                        .unwrap_or(false);
-                    if buffer_folded {
-                        return None;
-                    }
-
-                    if snapshot.is_line_folded(multibuffer_row) {
-                        // Skip folded indicators, unless it's the starting line of a fold.
-                        if multibuffer_row
-                            .0
-                            .checked_sub(1)
-                            .is_some_and(|previous_row| {
-                                snapshot.is_line_folded(MultiBufferRow(previous_row))
-                            })
-                        {
-                            return None;
-                        }
-                    }
-
-                    let display_row = multibuffer_point.to_display_point(snapshot).row();
-                    if !range.contains(&display_row) {
+                    if !range.contains(display_row) {
                         return None;
                     }
                     if row_infos
-                        .get((display_row - range.start).0 as usize)
+                        .get((*display_row - range.start).0 as usize)
                         .is_some_and(|row_info| row_info.expand_info.is_some())
                     {
                         return None;
                     }
 
-                    let removed_breakpoint = breakpoints.remove(&display_row);
                     let button = editor.render_run_indicator(
                         &self.style,
-                        Some(display_row) == active_task_indicator_row,
-                        display_row,
-                        removed_breakpoint,
+                        Some(*display_row) == active_task_indicator_row,
+                        breakpoints.get(&display_row).map(|(anchor, _, _)| *anchor),
+                        *display_row,
                         cx,
                     );
 
                     let button = gutter.prepaint_gutter_button(
                         button.into_any_element(),
-                        display_row,
+                        *display_row,
                         window,
                         cx,
                     );
@@ -3446,7 +3409,8 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
-        let include_line_numbers = gutter.snapshot
+        let include_line_numbers = gutter
+            .snapshot
             .show_line_numbers
             .unwrap_or_else(|| EditorSettings::get_global(cx).gutter.line_numbers);
         if !include_line_numbers {
@@ -3469,68 +3433,79 @@ impl EditorElement {
         };
 
         let mut line_number = String::new();
-        let segments = gutter.row_infos.iter().enumerate().flat_map(|(ix, row_info)| {
-            let display_row = DisplayRow(gutter.range.start.0 + ix as u32);
-            line_number.clear();
-            let non_relative_number = if relative.wrapped() {
-                row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
-            } else {
-                row_info.buffer_row? + 1
-            };
-            let relative_number = relative_rows.get(&display_row);
-            if !(relative_line_numbers_enabled && relative_number.is_some())
-                && !gutter.snapshot.number_deleted_lines
-                && row_info
-                    .diff_status
-                    .is_some_and(|status| status.is_deleted())
-            {
-                return None;
-            }
+        let segments = gutter
+            .row_infos
+            .iter()
+            .enumerate()
+            .flat_map(|(ix, row_info)| {
+                let display_row = DisplayRow(gutter.range.start.0 + ix as u32);
+                line_number.clear();
+                let non_relative_number = if relative.wrapped() {
+                    row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
+                } else {
+                    row_info.buffer_row? + 1
+                };
+                let relative_number = relative_rows.get(&display_row);
+                if !(relative_line_numbers_enabled && relative_number.is_some())
+                    && !gutter.snapshot.number_deleted_lines
+                    && row_info
+                        .diff_status
+                        .is_some_and(|status| status.is_deleted())
+                {
+                    return None;
+                }
 
-            let number = relative_number.unwrap_or(&non_relative_number);
-            write!(&mut line_number, "{number}").unwrap();
+                let number = relative_number.unwrap_or(&non_relative_number);
+                write!(&mut line_number, "{number}").unwrap();
 
-            let color = active_rows
-                .get(&display_row)
-                .map(|spec| {
-                    if spec.breakpoint {
-                        cx.theme().colors().debugger_accent
-                    } else {
-                        cx.theme().colors().editor_active_line_number
-                    }
-                })
-                .unwrap_or_else(|| cx.theme().colors().editor_line_number);
-            let shaped_line =
-                self.shape_line_number(SharedString::from(&line_number), color, window);
-            let scroll_top = gutter.scroll_position.y * ScrollPixelOffset::from(gutter.line_height);
-            let line_origin = gutter.gutter_hitbox.origin
-                + point(
-                    gutter.gutter_hitbox.size.width - shaped_line.width - gutter.gutter_dimensions.right_padding,
-                    ix as f32 * gutter.line_height
-                        - Pixels::from(scroll_top % ScrollPixelOffset::from(gutter.line_height)),
-                );
+                let color = active_rows
+                    .get(&display_row)
+                    .map(|spec| {
+                        if spec.breakpoint {
+                            cx.theme().colors().debugger_accent
+                        } else {
+                            cx.theme().colors().editor_active_line_number
+                        }
+                    })
+                    .unwrap_or_else(|| cx.theme().colors().editor_line_number);
+                let shaped_line =
+                    self.shape_line_number(SharedString::from(&line_number), color, window);
+                let scroll_top =
+                    gutter.scroll_position.y * ScrollPixelOffset::from(gutter.line_height);
+                let line_origin = gutter.gutter_hitbox.origin
+                    + point(
+                        gutter.gutter_hitbox.size.width
+                            - shaped_line.width
+                            - gutter.gutter_dimensions.right_padding,
+                        ix as f32 * gutter.line_height
+                            - Pixels::from(
+                                scroll_top % ScrollPixelOffset::from(gutter.line_height),
+                            ),
+                    );
 
-            #[cfg(not(test))]
-            let hitbox = Some(window.insert_hitbox(
-                Bounds::new(line_origin, size(shaped_line.width, gutter.line_height)),
-                HitboxBehavior::Normal,
-            ));
-            #[cfg(test)]
-            let hitbox = {
-                let _ = line_origin;
-                None
-            };
+                #[cfg(not(test))]
+                let hitbox = Some(window.insert_hitbox(
+                    Bounds::new(line_origin, size(shaped_line.width, gutter.line_height)),
+                    HitboxBehavior::Normal,
+                ));
+                #[cfg(test)]
+                let hitbox = {
+                    let _ = line_origin;
+                    None
+                };
 
-            let segment = LineNumberSegment {
-                shaped_line,
-                hitbox,
-            };
+                let segment = LineNumberSegment {
+                    shaped_line,
+                    hitbox,
+                };
 
-            let buffer_row = DisplayPoint::new(display_row, 0).to_point(gutter.snapshot).row;
-            let multi_buffer_row = MultiBufferRow(buffer_row);
+                let buffer_row = DisplayPoint::new(display_row, 0)
+                    .to_point(gutter.snapshot)
+                    .row;
+                let multi_buffer_row = MultiBufferRow(buffer_row);
 
-            Some((multi_buffer_row, segment))
-        });
+                Some((multi_buffer_row, segment))
+            });
 
         let mut line_numbers: HashMap<MultiBufferRow, LineNumberLayout> = HashMap::default();
         for (buffer_row, segment) in segments {
@@ -10130,13 +10105,16 @@ impl Element for EditorElement {
                         })
                     });
 
-                    let mut bookmark_rows = self.editor.update(cx, |editor, cx| {
-                        editor.active_bookmarks(start_row..end_row, window, cx)
+                    let run_indicator_rows = self.editor.update(cx, |editor, cx| {
+                        editor.active_run_indicators(start_row..end_row, window, cx)
                     });
 
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
-                        editor.active_breakpoints(start_row..end_row, window, cx)
+                        let mut rows = editor.active_breakpoints(start_row..end_row, window, cx);
+                        rows.retain(|k, _| !run_indicator_rows.contains(k));
+                        rows
                     });
+
                     for (display_row, (_, bp, state)) in &breakpoint_rows {
                         if bp.is_enabled() && state.is_none_or(|s| s.verified) {
                             active_rows.entry(*display_row).or_default().breakpoint = true;
@@ -10185,9 +10163,6 @@ impl Element for EditorElement {
                                 });
                         }
                     });
-
-                    // Don't render bookmarks on lines that already have breakpoints or phantom breakpoints
-                    bookmark_rows.retain(|row| !breakpoint_rows.contains_key(row));
 
                     let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
@@ -10770,13 +10745,27 @@ impl Element for EditorElement {
                     );
 
                     let test_indicators = if gutter_settings.runnables {
-                        self.layout_run_indicators(&gutter, &mut breakpoint_rows, window, cx)
+                        self.layout_run_indicators(
+                            &gutter,
+                            &run_indicator_rows,
+                            &breakpoint_rows,
+                            window,
+                            cx,
+                        )
                     } else {
                         Vec::new()
                     };
 
                     let show_bookmarks =
                         snapshot.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
+
+                    let bookmark_rows = self.editor.update(cx, |editor, cx| {
+                        let mut rows = editor.active_bookmarks(start_row..end_row, window, cx);
+                        rows.retain(|k| !run_indicator_rows.contains(k));
+                        rows.retain(|k| !breakpoint_rows.contains_key(k));
+                        rows
+                    });
+
                     let bookmarks = if show_bookmarks {
                         self.layout_bookmarks(&gutter, bookmark_rows, window, cx)
                     } else {
