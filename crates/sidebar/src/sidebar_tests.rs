@@ -7572,10 +7572,35 @@ mod property_test {
 
     fn validate_sidebar_properties(sidebar: &Sidebar, cx: &App) -> anyhow::Result<()> {
         verify_every_group_in_multiworkspace_is_shown(sidebar, cx)?;
+        verify_no_duplicate_threads(sidebar)?;
         verify_all_threads_are_shown(sidebar, cx)?;
         verify_active_state_matches_current_workspace(sidebar, cx)?;
         verify_all_workspaces_are_reachable(sidebar, cx)?;
         verify_workspace_group_key_integrity(sidebar, cx)?;
+        Ok(())
+    }
+
+    fn verify_no_duplicate_threads(sidebar: &Sidebar) -> anyhow::Result<()> {
+        let mut seen: HashSet<acp::SessionId> = HashSet::default();
+        let mut duplicates: Vec<(acp::SessionId, String)> = Vec::new();
+
+        for entry in &sidebar.contents.entries {
+            if let Some(session_id) = entry.session_id() {
+                if !seen.insert(session_id.clone()) {
+                    let title = match entry {
+                        ListEntry::Thread(thread) => thread.metadata.title.to_string(),
+                        _ => "<unknown>".to_string(),
+                    };
+                    duplicates.push((session_id.clone(), title));
+                }
+            }
+        }
+
+        anyhow::ensure!(
+            duplicates.is_empty(),
+            "threads appear more than once in sidebar: {:?}",
+            duplicates,
+        );
         Ok(())
     }
 

@@ -195,6 +195,144 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
 struct GlobalThreadMetadataStore(Entity<ThreadMetadataStore>);
 impl Global for GlobalThreadMetadataStore {}
 
+/// Paired worktree paths for a thread. Each folder path has a corresponding
+/// main worktree path at the same position. The two lists are always the
+/// same length and are modified together via `add_path` / `remove_main_path`.
+///
+/// For non-linked worktrees, the main path and folder path are identical.
+/// For linked worktrees, the main path is the original repo and the folder
+/// path is the linked worktree location.
+///
+/// Internally stores two `PathList`s with matching insertion order so that
+/// `ordered_paths()` on both yields positionally-paired results.
+#[derive(Debug, Clone)]
+pub struct ThreadWorktreePaths {
+    folder_paths: PathList,
+    main_worktree_paths: PathList,
+}
+
+impl PartialEq for ThreadWorktreePaths {
+    fn eq(&self, other: &Self) -> bool {
+        self.folder_paths == other.folder_paths
+            && self.main_worktree_paths == other.main_worktree_paths
+    }
+}
+
+impl ThreadWorktreePaths {
+    /// Build from a project's current state. Each visible worktree is paired
+    /// with its main repo path (resolved via git), falling back to the
+    /// worktree's own path if no git repo is found.
+    pub fn from_project(project: &project::Project, cx: &App) -> Self {
+        let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = project
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let snapshot = worktree.read(cx).snapshot();
+                let folder_path = snapshot.abs_path().to_path_buf();
+                let main_path = snapshot
+                    .root_repo_common_dir()
+                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
+                    .unwrap_or_else(|| folder_path.clone());
+                (main_path, folder_path)
+            })
+            .unzip();
+        Self {
+            folder_paths: PathList::new(&folders),
+            main_worktree_paths: PathList::new(&mains),
+        }
+    }
+
+    /// Build from two parallel `PathList`s that already share the same
+    /// insertion order. Used for deserialization from DB.
+    ///
+    /// Returns an error if the two lists have different lengths, which
+    /// indicates corrupted data from a prior migration bug.
+    pub fn from_path_lists(
+        main_worktree_paths: PathList,
+        folder_paths: PathList,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            main_worktree_paths.paths().len() == folder_paths.paths().len(),
+            "main_worktree_paths has {} entries but folder_paths has {}",
+            main_worktree_paths.paths().len(),
+            folder_paths.paths().len(),
+        );
+        Ok(Self {
+            folder_paths,
+            main_worktree_paths,
+        })
+    }
+
+    /// Build for non-linked worktrees where main == folder for every path.
+    pub fn from_folder_paths(folder_paths: &PathList) -> Self {
+        Self {
+            folder_paths: folder_paths.clone(),
+            main_worktree_paths: folder_paths.clone(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.folder_paths.is_empty()
+    }
+
+    /// The folder paths (for workspace matching / `threads_by_paths` index).
+    pub fn folder_path_list(&self) -> &PathList {
+        &self.folder_paths
+    }
+
+    /// The main worktree paths (for group key / `threads_by_main_paths` index).
+    pub fn main_worktree_path_list(&self) -> &PathList {
+        &self.main_worktree_paths
+    }
+
+    /// Iterate the (main_worktree_path, folder_path) pairs in insertion order.
+    pub fn ordered_pairs(&self) -> impl Iterator<Item = (&PathBuf, &PathBuf)> {
+        self.main_worktree_paths
+            .ordered_paths()
+            .zip(self.folder_paths.ordered_paths())
+    }
+
+    /// Add a new path pair. If the exact (main, folder) pair already exists,
+    /// this is a no-op. Rebuilds both internal `PathList`s to maintain
+    /// consistent ordering.
+    pub fn add_path(&mut self, main_path: &Path, folder_path: &Path) {
+        let already_exists = self
+            .ordered_pairs()
+            .any(|(m, f)| m.as_path() == main_path && f.as_path() == folder_path);
+        if already_exists {
+            return;
+        }
+        let (mut mains, mut folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .ordered_pairs()
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .unzip();
+        mains.push(main_path.to_path_buf());
+        folders.push(folder_path.to_path_buf());
+        self.main_worktree_paths = PathList::new(&mains);
+        self.folder_paths = PathList::new(&folders);
+    }
+
+    /// Remove all pairs whose main worktree path matches the given path.
+    /// This removes the corresponding entries from both lists.
+    pub fn remove_main_path(&mut self, main_path: &Path) {
+        let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .ordered_pairs()
+            .filter(|(m, _)| m.as_path() != main_path)
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .unzip();
+        self.main_worktree_paths = PathList::new(&mains);
+        self.folder_paths = PathList::new(&folders);
+    }
+}
+
+impl Default for ThreadWorktreePaths {
+    fn default() -> Self {
+        Self {
+            folder_paths: PathList::default(),
+            main_worktree_paths: PathList::default(),
+        }
+    }
+}
+
 /// Lightweight metadata for any thread (native or ACP), enough to populate
 /// the sidebar list and route to the correct load path when clicked.
 #[derive(Debug, Clone, PartialEq)]
@@ -2815,5 +2953,137 @@ mod tests {
             .collect();
         assert!(paths.contains(&Path::new("/projects/worktree-a")));
         assert!(paths.contains(&Path::new("/projects/worktree-b")));
+    }
+
+    // ── ThreadWorktreePaths tests ──────────────────────────────────────
+
+    /// Helper to build a `ThreadWorktreePaths` from (main, folder) pairs.
+    fn make_worktree_paths(pairs: &[(&str, &str)]) -> ThreadWorktreePaths {
+        let (mains, folders): (Vec<&Path>, Vec<&Path>) = pairs
+            .iter()
+            .map(|(m, f)| (Path::new(*m), Path::new(*f)))
+            .unzip();
+        ThreadWorktreePaths::from_path_lists(PathList::new(&mains), PathList::new(&folders))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_thread_worktree_paths_full_add_then_remove_cycle() {
+        // Full scenario from the issue:
+        //   1. Start with linked worktree selectric → zed
+        //   2. Add cloud
+        //   3. Remove zed
+
+        let mut paths = make_worktree_paths(&[("/projects/zed", "/worktrees/selectric/zed")]);
+
+        // Step 2: add cloud
+        paths.add_path(Path::new("/projects/cloud"), Path::new("/projects/cloud"));
+
+        assert_eq!(paths.ordered_pairs().count(), 2);
+        assert_eq!(
+            paths.folder_path_list(),
+            &PathList::new(&[
+                Path::new("/worktrees/selectric/zed"),
+                Path::new("/projects/cloud"),
+            ])
+        );
+        assert_eq!(
+            paths.main_worktree_path_list(),
+            &PathList::new(&[Path::new("/projects/zed"), Path::new("/projects/cloud"),])
+        );
+
+        // Step 3: remove zed
+        paths.remove_main_path(Path::new("/projects/zed"));
+
+        assert_eq!(paths.ordered_pairs().count(), 1);
+        assert_eq!(
+            paths.folder_path_list(),
+            &PathList::new(&[Path::new("/projects/cloud")])
+        );
+        assert_eq!(
+            paths.main_worktree_path_list(),
+            &PathList::new(&[Path::new("/projects/cloud")])
+        );
+    }
+
+    #[test]
+    fn test_thread_worktree_paths_add_is_idempotent() {
+        let mut paths = make_worktree_paths(&[("/projects/zed", "/projects/zed")]);
+
+        paths.add_path(Path::new("/projects/zed"), Path::new("/projects/zed"));
+
+        assert_eq!(paths.ordered_pairs().count(), 1);
+    }
+
+    #[test]
+    fn test_thread_worktree_paths_remove_nonexistent_is_noop() {
+        let mut paths = make_worktree_paths(&[("/projects/zed", "/worktrees/selectric/zed")]);
+
+        paths.remove_main_path(Path::new("/projects/nonexistent"));
+
+        assert_eq!(paths.ordered_pairs().count(), 1);
+    }
+
+    #[test]
+    fn test_thread_worktree_paths_from_path_lists_preserves_association() {
+        let folder = PathList::new(&[
+            Path::new("/worktrees/selectric/zed"),
+            Path::new("/projects/cloud"),
+        ]);
+        let main = PathList::new(&[Path::new("/projects/zed"), Path::new("/projects/cloud")]);
+
+        let paths = ThreadWorktreePaths::from_path_lists(main, folder).unwrap();
+
+        let pairs: Vec<_> = paths
+            .ordered_pairs()
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .collect();
+        assert_eq!(pairs.len(), 2);
+        assert!(pairs.contains(&(
+            PathBuf::from("/projects/zed"),
+            PathBuf::from("/worktrees/selectric/zed")
+        )));
+        assert!(pairs.contains(&(
+            PathBuf::from("/projects/cloud"),
+            PathBuf::from("/projects/cloud")
+        )));
+    }
+
+    #[test]
+    fn test_thread_worktree_paths_main_deduplicates_linked_worktrees() {
+        // Two linked worktrees of the same main repo: the main_worktree_path_list
+        // deduplicates because PathList stores unique sorted paths, but
+        // ordered_pairs still has both entries.
+        let paths = make_worktree_paths(&[
+            ("/projects/zed", "/worktrees/selectric/zed"),
+            ("/projects/zed", "/worktrees/feature/zed"),
+        ]);
+
+        // main_worktree_path_list has the duplicate main path twice
+        // (PathList keeps all entries from its input)
+        assert_eq!(paths.ordered_pairs().count(), 2);
+        assert_eq!(
+            paths.folder_path_list(),
+            &PathList::new(&[
+                Path::new("/worktrees/selectric/zed"),
+                Path::new("/worktrees/feature/zed"),
+            ])
+        );
+        assert_eq!(
+            paths.main_worktree_path_list(),
+            &PathList::new(&[Path::new("/projects/zed"), Path::new("/projects/zed"),])
+        );
+    }
+
+    #[test]
+    fn test_thread_worktree_paths_mismatched_lengths_returns_error() {
+        let folder = PathList::new(&[
+            Path::new("/worktrees/selectric/zed"),
+            Path::new("/projects/cloud"),
+        ]);
+        let main = PathList::new(&[Path::new("/projects/zed")]);
+
+        let result = ThreadWorktreePaths::from_path_lists(main, folder);
+        assert!(result.is_err());
     }
 }
