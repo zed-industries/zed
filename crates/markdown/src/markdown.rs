@@ -1353,19 +1353,27 @@ impl MarkdownElement {
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
-                        let source_index =
-                            match rendered_text.source_index_for_position(event.position) {
+                        let position_result =
+                            rendered_text.source_index_for_position(event.position);
+
+                        if let Ok(source_index) = position_result {
+                            if let Some(footnote_ref) =
+                                rendered_text.footnote_ref_for_source_index(source_index)
+                            {
+                                markdown.pressed_footnote_ref = Some(footnote_ref.clone());
+                            } else if let Some(link) =
+                                rendered_text.link_for_source_index(source_index)
+                            {
+                                markdown.pressed_link = Some(link.clone());
+                            }
+                        }
+
+                        if markdown.pressed_footnote_ref.is_none()
+                            && markdown.pressed_link.is_none()
+                        {
+                            let source_index = match position_result {
                                 Ok(ix) | Err(ix) => ix,
                             };
-                        if let Some(footnote_ref) =
-                            rendered_text.footnote_ref_for_source_index(source_index)
-                        {
-                            markdown.pressed_footnote_ref = Some(footnote_ref.clone());
-                        } else if let Some(link) =
-                            rendered_text.link_for_source_index(source_index)
-                        {
-                            markdown.pressed_link = Some(link.clone());
-                        } else {
                             if let Some(handler) = on_source_click.as_ref() {
                                 let blocked = handler(source_index, event.click_count, window, cx);
                                 if blocked {
