@@ -9,6 +9,7 @@ path = "src/csv_preview.rs"
 
 [dependencies]
 anyhow.workspace = true
+itertools.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true
 editor.workspace = true

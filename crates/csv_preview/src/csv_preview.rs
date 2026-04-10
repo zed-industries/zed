@@ -200,6 +200,19 @@ impl CsvPreviewView {
         });
     }
 
+    pub fn clear_filters(&mut self, col: types::AnyColumn) {
+        self.engine.clear_filters_for_col(col);
+        self.apply_filter_sort();
+    }
+
+    pub fn toggle_filter(&mut self, col: types::AnyColumn, value: Option<SharedString>) {
+        if let Err(err) = self.engine.toggle_filter(col, value) {
+            log::error!("Failed to toggle filter: {err}");
+            return;
+        }
+        self.apply_filter_sort();
+    }
+
     /// Update ordered indices when ordering or content changes
     pub(crate) fn apply_filter_sort(&mut self) {
         self.performance_metrics.record("Filter&sort", || {

@@ -81,6 +81,7 @@ impl CsvPreviewView {
 
                 log::debug!("Parsed {} rows", parsed_csv.rows.len());
                 view.engine.contents = parsed_csv;
+                view.engine.calculate_available_filters();
                 view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
 
