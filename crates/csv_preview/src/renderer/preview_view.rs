@@ -41,13 +41,17 @@ impl Render for CsvPreviewView {
             (render_prep_duration, std::time::Instant::now()),
         );
 
-        div()
+        let div = div()
             .relative()
             .w_full()
             .h_full()
-            .child(table_with_settings)
-            .when(self.settings.show_perf_metrics_overlay, |div| {
-                div.child(self.render_performance_metrics_overlay(cx))
-            })
+            .child(table_with_settings);
+
+        #[cfg(feature = "dev-tools")]
+        let div = div.when(self.settings.show_perf_metrics_overlay, |div| {
+            div.child(self.render_performance_metrics_overlay(cx))
+        });
+
+        div
     }
 }

@@ -1,12 +1,11 @@
 use ui::{
     ActiveTheme as _, AnyElement, ButtonSize, Context, ContextMenu, DropdownMenu, ElementId,
-    IconButton, IconName, IconPosition, IconSize, IntoElement as _, ParentElement as _,
-    PopoverMenu, Styled as _, Tooltip, Window, div, h_flex,
+    IntoElement as _, ParentElement as _, Styled as _, Tooltip, Window, div, h_flex,
 };
 
 use crate::{
     CsvPreviewView,
-    settings::{FontType, RowRenderMechanism, VerticalAlignment},
+    settings::{FontType, VerticalAlignment},
 };
 
 ///// Settings related /////
@@ -70,7 +69,7 @@ impl CsvPreviewView {
             })
         });
 
-        h_flex()
+        let panel = h_flex()
             .gap_4()
             .p_2()
             .bg(cx.theme().colors().surface_background)
@@ -120,24 +119,33 @@ impl CsvPreviewView {
                             "Choose between UI font and monospace font for better readability",
                         )),
                     ),
-            )
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child("Dev-only:"),
-                    )
-                    .child(create_dev_only_popover_menu(cx)),
-            )
-            .into_any_element()
+            );
+
+        #[cfg(feature = "dev-tools")]
+        let panel = panel.child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().colors().text_muted)
+                        .child("Dev-only:"),
+                )
+                .child(create_dev_only_popover_menu(cx)),
+        );
+
+        panel.into_any_element()
     }
 }
 
-fn create_dev_only_popover_menu(cx: &mut Context<'_, CsvPreviewView>) -> PopoverMenu<ContextMenu> {
+#[cfg(feature = "dev-tools")]
+fn create_dev_only_popover_menu(
+    cx: &mut Context<'_, CsvPreviewView>,
+) -> ui::PopoverMenu<ContextMenu> {
+    use crate::settings::RowRenderMechanism;
+    use ui::{IconButton, IconName, IconPosition, IconSize, PopoverMenu};
+
     PopoverMenu::new("debug-options-menu")
         .trigger_with_tooltip(
             IconButton::new("debug-options-trigger", IconName::Settings).icon_size(IconSize::Small),
