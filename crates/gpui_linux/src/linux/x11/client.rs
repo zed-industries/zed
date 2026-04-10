@@ -214,6 +214,8 @@ pub struct X11ClientState {
 
     pointer_device_states: BTreeMap<xinput::DeviceId, PointerDeviceState>,
 
+    pub(crate) supports_xinput_gestures: bool,
+
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
@@ -345,7 +347,8 @@ impl X11Client {
 
         // Announce to X server that XInput up to 2.4 is supported.
         // Version 2.4 is needed for gesture events (GesturePinchBegin/Update/End).
-        // If the server only supports an older version, gesture events simply won't be delivered.
+        // The server responds with the highest version it supports; if < 2.4,
+        // we must not request gesture event masks in XISelectEvents.
         let xinput_version = get_reply(
             || "XInput XiQueryVersion failed",
             xcb_connection.xinput_xi_query_version(2, 4),
@@ -353,6 +356,14 @@ impl X11Client {
         assert!(
             xinput_version.major_version >= 2,
             "XInput version >= 2 required."
+        );
+        let supports_xinput_gestures = xinput_version.major_version > 2
+            || (xinput_version.major_version == 2 && xinput_version.minor_version >= 4);
+        log::info!(
+            "XInput version: {}.{}, gesture support: {}",
+            xinput_version.major_version,
+            xinput_version.minor_version,
+            supports_xinput_gestures,
         );
 
         let pointer_device_states =
@@ -534,6 +545,8 @@ impl X11Client {
             cursor_cache: HashMap::default(),
 
             pointer_device_states,
+
+            supports_xinput_gestures,
 
             clipboard,
             clipboard_item: None,
@@ -1593,6 +1606,7 @@ impl LinuxClient for X11Client {
         let scale_factor = state.scale_factor;
         let appearance = state.common.appearance;
         let compositor_gpu = state.compositor_gpu.take();
+        let supports_xinput_gestures = state.supports_xinput_gestures;
         let window = X11Window::new(
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
@@ -1608,6 +1622,7 @@ impl LinuxClient for X11Client {
             scale_factor,
             appearance,
             parent_window,
+            supports_xinput_gestures,
         )?;
         check_reply(
             || "Failed to set XdndAware property",

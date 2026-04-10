@@ -138,7 +138,7 @@ pub(crate) struct ContainerBuild {
     context: Option<String>,
     pub(crate) args: Option<HashMap<String, String>>,
     options: Option<Vec<String>>,
-    target: Option<String>,
+    pub(crate) target: Option<String>,
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
     cache_from: Option<Vec<String>>,
 }
@@ -185,8 +185,8 @@ pub(crate) enum LifecycleCommand {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum DevContainerBuildType {
-    Image,
-    Dockerfile,
+    Image(String),
+    Dockerfile(ContainerBuild),
     DockerCompose,
     None,
 }
@@ -249,14 +249,15 @@ pub(crate) fn deserialize_devcontainer_json(json: &str) -> Result<DevContainer, 
 
 impl DevContainer {
     pub(crate) fn build_type(&self) -> DevContainerBuildType {
-        if self.image.is_some() {
-            return DevContainerBuildType::Image;
+        if let Some(image) = &self.image {
+            DevContainerBuildType::Image(image.clone())
         } else if self.docker_compose_file.is_some() {
-            return DevContainerBuildType::DockerCompose;
-        } else if self.build.is_some() {
-            return DevContainerBuildType::Dockerfile;
+            DevContainerBuildType::DockerCompose
+        } else if let Some(build) = &self.build {
+            DevContainerBuildType::Dockerfile(build.clone())
+        } else {
+            DevContainerBuildType::None
         }
-        return DevContainerBuildType::None;
     }
 }
 
@@ -911,7 +912,12 @@ mod test {
             }
         );
 
-        assert_eq!(devcontainer.build_type(), DevContainerBuildType::Image);
+        assert_eq!(
+            devcontainer.build_type(),
+            DevContainerBuildType::Image(String::from(
+                "mcr.microsoft.com/devcontainers/base:ubuntu"
+            ))
+        );
     }
 
     #[test]
@@ -1366,7 +1372,20 @@ mod test {
             }
         );
 
-        assert_eq!(devcontainer.build_type(), DevContainerBuildType::Dockerfile);
+        assert_eq!(
+            devcontainer.build_type(),
+            DevContainerBuildType::Dockerfile(ContainerBuild {
+                dockerfile: "DockerFile".to_string(),
+                context: Some("..".to_string()),
+                args: Some(HashMap::from([(
+                    "MYARG".to_string(),
+                    "MYVALUE".to_string()
+                )])),
+                options: Some(vec!["--some-option".to_string(), "--mount".to_string()]),
+                target: Some("development".to_string()),
+                cache_from: Some(vec!["some_image".to_string()]),
+            })
+        );
     }
 
     #[test]

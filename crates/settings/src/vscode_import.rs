@@ -286,6 +286,7 @@ impl VsCodeSettings {
             }),
             rounded_selection: self.read_bool("editor.roundedSelection"),
             scroll_beyond_last_line: None,
+            mouse_wheel_zoom: self.read_bool("editor.mouseWheelZoom"),
             scroll_sensitivity: self.read_f32("editor.mouseWheelScrollSensitivity"),
             scrollbar: self.scrollbar_content(),
             search: self.search_content(),

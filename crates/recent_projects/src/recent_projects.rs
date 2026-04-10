@@ -99,27 +99,40 @@ pub async fn get_recent_projects(
         .await
         .unwrap_or_default();
 
-    let entries: Vec<RecentProjectEntry> = workspaces
+    let filtered: Vec<_> = workspaces
         .into_iter()
         .filter(|(id, _, _, _)| Some(*id) != current_workspace_id)
         .filter(|(_, location, _, _)| matches!(location, SerializedWorkspaceLocation::Local))
+        .collect();
+
+    let mut all_paths: Vec<PathBuf> = filtered
+        .iter()
+        .flat_map(|(_, _, path_list, _)| path_list.paths().iter().cloned())
+        .collect();
+    all_paths.sort();
+    all_paths.dedup();
+    let path_details =
+        util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
+            project::path_suffix(path, detail)
+        });
+    let path_detail_map: std::collections::HashMap<PathBuf, usize> =
+        all_paths.into_iter().zip(path_details).collect();
+
+    let entries: Vec<RecentProjectEntry> = filtered
+        .into_iter()
         .map(|(workspace_id, _, path_list, timestamp)| {
             let paths: Vec<PathBuf> = path_list.paths().to_vec();
             let ordered_paths: Vec<&PathBuf> = path_list.ordered_paths().collect();
 
-            let name = if ordered_paths.len() == 1 {
-                ordered_paths[0]
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| ordered_paths[0].to_string_lossy().to_string())
-            } else {
-                ordered_paths
-                    .iter()
-                    .filter_map(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            };
+            let name = ordered_paths
+                .iter()
+                .map(|p| {
+                    let detail = path_detail_map.get(*p).copied().unwrap_or(0);
+                    project::path_suffix(p, detail)
+                })
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(", ");
 
             let full_path = ordered_paths
                 .iter()
@@ -155,22 +168,33 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
         return Vec::new();
     }
 
-    let active_worktree_id = workspace.active_worktree_override().or_else(|| {
-        if let Some(repo) = project.active_repository(cx) {
-            let repo = repo.read(cx);
-            let repo_path = &repo.work_directory_abs_path;
-            for worktree in project.visible_worktrees(cx) {
-                let worktree_path = worktree.read(cx).abs_path();
-                if worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()) {
-                    return Some(worktree.read(cx).id());
-                }
-            }
-        }
+    let active_worktree_id = if let Some(repo) = project.active_repository(cx) {
+        let repo = repo.read(cx);
+        let repo_path = &repo.work_directory_abs_path;
+        project.visible_worktrees(cx).find_map(|worktree| {
+            let worktree_path = worktree.read(cx).abs_path();
+            (worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref()))
+                .then(|| worktree.read(cx).id())
+        })
+    } else {
         project
             .visible_worktrees(cx)
             .next()
             .map(|wt| wt.read(cx).id())
-    });
+    };
+
+    let mut all_paths: Vec<PathBuf> = visible_worktrees
+        .iter()
+        .map(|wt| wt.read(cx).abs_path().to_path_buf())
+        .collect();
+    all_paths.sort();
+    all_paths.dedup();
+    let path_details =
+        util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
+            project::path_suffix(path, detail)
+        });
+    let path_detail_map: std::collections::HashMap<PathBuf, usize> =
+        all_paths.into_iter().zip(path_details).collect();
 
     let git_store = project.git_store().read(cx);
     let repositories: Vec<_> = git_store.repositories().values().cloned().collect();
@@ -180,8 +204,9 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
         .map(|worktree| {
             let worktree_ref = worktree.read(cx);
             let worktree_id = worktree_ref.id();
-            let name = SharedString::from(worktree_ref.root_name().as_unix_str().to_string());
             let path = worktree_ref.abs_path().to_path_buf();
+            let detail = path_detail_map.get(&path).copied().unwrap_or(0);
+            let name = SharedString::from(project::path_suffix(&path, detail));
             let branch = get_branch_for_worktree(worktree_ref, &repositories, cx);
             let is_active = active_worktree_id == Some(worktree_id);
             OpenFolderEntry {
@@ -1091,7 +1116,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let worktree_id = folder.worktree_id;
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        workspace.set_active_worktree_override(Some(worktree_id), cx);
+                        let git_store = workspace.project().read(cx).git_store().clone();
+                        git_store.update(cx, |git_store, cx| {
+                            git_store.set_active_repo_for_worktree(worktree_id, cx);
+                        });
                     });
                 }
                 cx.emit(DismissEvent);
