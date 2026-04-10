@@ -458,7 +458,6 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
         self.background_executor()
             .spawn(async move {
                 let _ = new_command("xdg-open")
-                    .arg("--")
                     .arg(path)
                     .spawn()
                     .context("invoking xdg-open")
