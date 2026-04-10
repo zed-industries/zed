@@ -3,7 +3,6 @@ use std::{
     sync::Arc,
 };
 
-use itertools::Itertools as _;
 use ui::{SharedString, table_row::TableRow};
 
 use crate::{
@@ -121,12 +120,6 @@ impl TableDataEngine {
                             }
                         };
                     (entry.clone(), state)
-                })
-                .sorted_by(|(a_entry, a_state), (b_entry, b_state)| {
-                    // Available entries first, then sort by number of occurrences descending
-                    a_state
-                        .cmp(b_state)
-                        .then_with(|| b_entry.rows.len().cmp(&a_entry.rows.len()))
                 })
                 .collect(),
         ))
