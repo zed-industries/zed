@@ -19610,8 +19610,6 @@ impl Editor {
             .filter(|selection| selection.start != selection.end)
             .flat_map(|selection| snapshot.buffer_ids_for_range(selection.range()))
             .filter_map(|buffer_id| multi_buffer.buffer(buffer_id))
-            .collect::<HashSet<_>>()
-            .into_iter()
             .any(|buffer| project.supports_range_formatting(&buffer, cx))
     }
 

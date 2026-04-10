@@ -5038,10 +5038,7 @@ impl LspStore {
             return HashSet::default();
         };
 
-        let settings = {
-            let buffer = buffer.read(cx);
-            LanguageSettings::for_buffer(&buffer, cx).into_owned()
-        };
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
         if !settings.enable_language_server {
             return HashSet::default();
         }
@@ -5103,56 +5100,43 @@ impl LspStore {
         self.check_if_any_relevant_server_matches(buffer, |_, capabilities| check(capabilities), cx)
     }
 
-    fn formatter_supports_range_formatting(
-        &self,
-        formatter: &Formatter,
-        buffer: &Entity<Buffer>,
-        settings: &LanguageSettings,
-        cx: &App,
-    ) -> bool {
-        match formatter {
-            Formatter::None => false,
-            Formatter::Auto => {
-                settings.prettier.allowed
-                    || self.check_if_capable_for_proto_request(
+    pub fn supports_range_formatting(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
+        settings.formatter.as_ref().iter().any(|formatter| {
+            match formatter {
+                Formatter::None => false,
+                Formatter::Auto => {
+                    settings.prettier.allowed
+                        || self.check_if_capable_for_proto_request(
+                            buffer,
+                            server_capabilities_support_range_formatting,
+                            cx,
+                        )
+                }
+                Formatter::Prettier => true,
+                Formatter::External { .. } => false,
+                Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current) => {
+                    self.check_if_capable_for_proto_request(
                         buffer,
                         server_capabilities_support_range_formatting,
                         cx,
                     )
-            }
-            Formatter::Prettier => true,
-            Formatter::External { .. } => false,
-            Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current) => self
-                .check_if_capable_for_proto_request(
+                }
+                Formatter::LanguageServer(
+                    settings::LanguageServerFormatterSpecifier::Specific { name },
+                ) => self.check_if_any_relevant_server_matches(
                     buffer,
-                    server_capabilities_support_range_formatting,
+                    |server_status, capabilities| {
+                        server_status.name.0.as_ref() == name
+                            && server_capabilities_support_range_formatting(capabilities)
+                    },
                     cx,
                 ),
-            Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Specific {
-                name,
-            }) => self.check_if_any_relevant_server_matches(
-                buffer,
-                |server_status, capabilities| {
-                    server_status.name.0.as_ref() == name
-                        && server_capabilities_support_range_formatting(capabilities)
-                },
-                cx,
-            ),
-            // `FormatSelections` should only surface when a formatter can honor the
-            // selected ranges. Code actions can still run as part of formatting, but
-            // they operate on the whole buffer rather than the selected text.
-            Formatter::CodeAction(_) => false,
-        }
-    }
-
-    pub fn supports_range_formatting(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
-        let settings = {
-            let buffer = buffer.read(cx);
-            LanguageSettings::for_buffer(&buffer, cx).into_owned()
-        };
-
-        settings.formatter.as_ref().iter().any(|formatter| {
-            self.formatter_supports_range_formatting(formatter, buffer, &settings, cx)
+                // `FormatSelections` should only surface when a formatter can honor the
+                // selected ranges. Code actions can still run as part of formatting, but
+                // they operate on the whole buffer rather than the selected text.
+                Formatter::CodeAction(_) => false,
+            }
         })
     }
 
@@ -5170,12 +5154,12 @@ impl LspStore {
             .filter_map(|server_id| {
                 Some((
                     server_id,
-                    self.language_server_statuses.get(&server_id)?.name.clone(),
+                    &self.language_server_statuses.get(&server_id)?.name,
                     self.lsp_server_capabilities.get(&server_id)?,
                 ))
             })
             .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
-            .map(|(server_id, server_name, _)| (server_id, server_name))
+            .map(|(server_id, server_name, _)| (server_id, server_name.clone()))
             .collect()
     }
 
