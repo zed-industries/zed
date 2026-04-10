@@ -37,6 +37,7 @@ fn run_cherry_pick(
         channel: &WorkflowInput,
     ) -> (Step<Run>, StepOutput, StepOutput, StepOutput) {
         let step = named::bash(indoc! {r#"
+            git fetch --depth 2 origin +"$COMMIT"
             git cherry-pick -n "$COMMIT"
 
             COMMIT_TITLE=$(git log -1 --pretty=format:"%s" "$COMMIT")
@@ -96,7 +97,7 @@ fn run_cherry_pick(
     named::job(
         Job::default()
             .runs_on(runners::LINUX_SMALL)
-            .add_step(steps::checkout_repo().with_full_history().with_ref(branch))
+            .add_step(steps::checkout_repo().with_ref(branch))
             .add_step(authenticate)
             .add_step(cherry_pick_step)
             .add_step(

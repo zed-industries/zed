@@ -29,7 +29,6 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-        fetch-depth: 0
         ref: ${{ inputs.branch }}
     - id: generate-token
       name: steps::authenticate_as_zippy
@@ -43,6 +42,7 @@ jobs:
     - id: cherry-pick
       name: cherry_pick::run_cherry_pick::cherry_pick
       run: |
+        git fetch --depth 2 origin +"$COMMIT"
         git cherry-pick -n "$COMMIT"
 
         COMMIT_TITLE=$(git log -1 --pretty=format:"%s" "$COMMIT")
