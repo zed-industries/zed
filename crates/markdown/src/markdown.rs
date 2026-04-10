@@ -1313,15 +1313,17 @@ impl MarkdownElement {
             return;
         }
 
-        let is_hovering_link = rendered_text
-            .link_for_position(window.mouse_position())
-            .is_some();
-        let is_hovering_footnote_ref = rendered_text
-            .footnote_ref_for_position(window.mouse_position())
-            .is_some();
         let is_hovering_clickable = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
-            && (is_hovering_link || is_hovering_footnote_ref);
+            && rendered_text
+                .source_index_for_position(window.mouse_position())
+                .ok()
+                .is_some_and(|source_index| {
+                    rendered_text.link_for_source_index(source_index).is_some()
+                        || rendered_text
+                            .footnote_ref_for_source_index(source_index)
+                            .is_some()
+                });
 
         if !self.style.prevent_mouse_interaction {
             if is_hovering_clickable {
@@ -1435,13 +1437,16 @@ impl MarkdownElement {
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
-                    let is_hovering_link =
-                        rendered_text.link_for_position(event.position).is_some();
-                    let is_hovering_footnote_ref = rendered_text
-                        .footnote_ref_for_position(event.position)
-                        .is_some();
-                    let is_hovering_clickable =
-                        hitbox.is_hovered(window) && (is_hovering_link || is_hovering_footnote_ref);
+                    let is_hovering_clickable = hitbox.is_hovered(window)
+                        && rendered_text
+                            .source_index_for_position(event.position)
+                            .ok()
+                            .is_some_and(|source_index| {
+                                rendered_text.link_for_source_index(source_index).is_some()
+                                    || rendered_text
+                                        .footnote_ref_for_source_index(source_index)
+                                        .is_some()
+                            });
                     if is_hovering_clickable != was_hovering_clickable {
                         cx.notify();
                     }
@@ -2938,18 +2943,26 @@ impl RenderedText {
         accumulator
     }
 
-    fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {
-        let source_index = self.source_index_for_position(position).ok()?;
+    fn link_for_source_index(&self, source_index: usize) -> Option<&RenderedLink> {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
     }
 
-    fn footnote_ref_for_position(&self, position: Point<Pixels>) -> Option<&RenderedFootnoteRef> {
-        let source_index = self.source_index_for_position(position).ok()?;
+    fn footnote_ref_for_source_index(&self, source_index: usize) -> Option<&RenderedFootnoteRef> {
         self.footnote_refs
             .iter()
             .find(|fref| fref.source_range.contains(&source_index))
+    }
+
+    fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {
+        let source_index = self.source_index_for_position(position).ok()?;
+        self.link_for_source_index(source_index)
+    }
+
+    fn footnote_ref_for_position(&self, position: Point<Pixels>) -> Option<&RenderedFootnoteRef> {
+        let source_index = self.source_index_for_position(position).ok()?;
+        self.footnote_ref_for_source_index(source_index)
     }
 }
 
