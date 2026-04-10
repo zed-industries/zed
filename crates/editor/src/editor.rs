@@ -3356,15 +3356,6 @@ impl Editor {
     }
 
     pub fn set_mode(&mut self, mode: EditorMode) {
-        if self.enable_lsp_data {
-            self.enable_lsp_data = mode.is_full();
-        }
-        if self.enable_runnables {
-            self.enable_runnables = mode.is_full();
-        }
-        if self.enable_mouse_wheel_zoom {
-            self.enable_mouse_wheel_zoom = mode.is_full();
-        }
         self.mode = mode;
     }
 
