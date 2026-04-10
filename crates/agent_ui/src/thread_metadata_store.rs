@@ -131,67 +131,44 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
         }
 
         let recent_workspaces = workspace_db.recent_workspaces_on_disk(fs.as_ref()).await?;
-        let mut remote_connections_by_path =
-            HashMap::<PathList, Option<RemoteConnectionOptions>>::default();
+
+        let mut local_path_lists = HashSet::<PathList>::default();
+        let mut remote_path_lists = HashMap::<PathList, RemoteConnectionOptions>::default();
+
+        recent_workspaces
+            .iter()
+            .filter(|(_, location, path_list, _)| {
+                !path_list.is_empty() && matches!(location, &SerializedWorkspaceLocation::Local)
+            })
+            .for_each(|(_, _, path_list, _)| {
+                local_path_lists.insert(path_list.clone());
+            });
 
         for (_, location, path_list, _) in recent_workspaces {
-            if path_list.is_empty() {
-                continue;
-            }
-
             match location {
-                SerializedWorkspaceLocation::Local => {
-                    remote_connections_by_path.insert(path_list, None);
+                SerializedWorkspaceLocation::Remote(remote_connection)
+                    if !local_path_lists.contains(&path_list) =>
+                {
+                    remote_path_lists.insert(path_list, remote_connection);
                 }
-                SerializedWorkspaceLocation::Remote(remote_connection) => {
-                    if let Some(existing_remote_connection) =
-                        remote_connections_by_path.get_mut(&path_list)
-                    {
-                        if existing_remote_connection.as_ref() != Some(&remote_connection) {
-                            *existing_remote_connection = None;
-                        }
-                    } else {
-                        remote_connections_by_path.insert(path_list, Some(remote_connection));
-                    }
-                }
+                _ => {}
             }
         }
 
-        let mut backfilled_count = 0;
         for metadata in db.list()? {
             if metadata.remote_connection.is_some() {
                 continue;
             }
 
-            let remote_connection = match remote_connection_backfill_for_paths(
-                &metadata.folder_paths,
-                &remote_connections_by_path,
-            ) {
-                ThreadRemoteConnectionBackfill::Remote(remote_connection) => {
-                    Some(remote_connection)
-                }
-                ThreadRemoteConnectionBackfill::Unset => None,
-                ThreadRemoteConnectionBackfill::NoMatch => {
-                    match remote_connection_backfill_for_paths(
-                        &metadata.main_worktree_paths,
-                        &remote_connections_by_path,
-                    ) {
-                        ThreadRemoteConnectionBackfill::Remote(remote_connection) => {
-                            Some(remote_connection)
-                        }
-                        ThreadRemoteConnectionBackfill::Unset
-                        | ThreadRemoteConnectionBackfill::NoMatch => None,
-                    }
-                }
-            };
-
-            if let Some(remote_connection) = remote_connection {
+            if let Some(remote_connection) = remote_path_lists
+                .get(&metadata.folder_paths)
+                .or_else(|| remote_path_lists.get(&metadata.main_worktree_paths))
+            {
                 db.save(ThreadMetadata {
-                    remote_connection: Some(remote_connection),
+                    remote_connection: Some(remote_connection.clone()),
                     ..metadata
                 })
                 .await?;
-                backfilled_count += 1;
             }
         }
 
@@ -201,35 +178,9 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
         )
         .await?;
 
-        log::info!("Backfilled remote connections for {backfilled_count} thread metadata rows");
-
         Ok(())
     })
     .detach_and_log_err(cx);
-}
-
-#[derive(Clone)]
-enum ThreadRemoteConnectionBackfill {
-    NoMatch,
-    Unset,
-    Remote(RemoteConnectionOptions),
-}
-
-fn remote_connection_backfill_for_paths(
-    path_list: &PathList,
-    remote_connections_by_path: &HashMap<PathList, Option<RemoteConnectionOptions>>,
-) -> ThreadRemoteConnectionBackfill {
-    if path_list.is_empty() {
-        return ThreadRemoteConnectionBackfill::NoMatch;
-    }
-
-    match remote_connections_by_path.get(path_list) {
-        Some(Some(remote_connection)) => {
-            ThreadRemoteConnectionBackfill::Remote(remote_connection.clone())
-        }
-        Some(None) => ThreadRemoteConnectionBackfill::Unset,
-        None => ThreadRemoteConnectionBackfill::NoMatch,
-    }
 }
 
 struct GlobalThreadMetadataStore(Entity<ThreadMetadataStore>);
