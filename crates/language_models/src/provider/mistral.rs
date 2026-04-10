@@ -652,6 +652,7 @@ impl MistralEventMapper {
 
                 if let Some(tool_id) = tool_call.id.clone()
                     && !tool_id.is_empty()
+                    && tool_id != "null"
                 {
                     entry.id = tool_id;
                 }
