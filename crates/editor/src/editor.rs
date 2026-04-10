@@ -28014,18 +28014,20 @@ impl EditorSnapshot {
 
             let is_singleton = self.buffer_snapshot().is_singleton();
 
-            let mut left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO);
-            left_padding += if !is_singleton {
-                ch_width * 4.0
-            } else if show_runnables || show_bookmarks || show_breakpoints {
-                ch_width * 3.0
-            } else if show_git_gutter && show_line_numbers {
-                ch_width * 2.0
-            } else if show_git_gutter || show_line_numbers {
-                ch_width
-            } else {
-                px(0.)
-            };
+            let left_padding = git_blame_entries_width.unwrap_or(Pixels::ZERO)
+                + if !is_singleton {
+                    ch_width * 4.0 
+                // runnables, breakpoints and bookmarks are shown in the same place
+                // if all three are there only the runnable is shown
+                } else if show_runnables || show_breakpoints || show_bookmarks {
+                    ch_width * 3.0
+                } else if show_git_gutter && show_line_numbers {
+                    ch_width * 2.0
+                } else if show_git_gutter || show_line_numbers {
+                    ch_width
+                } else {
+                    px(0.)
+                };
 
             let shows_folds = is_singleton && gutter_settings.folds;
 
