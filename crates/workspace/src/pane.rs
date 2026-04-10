@@ -4927,8 +4927,14 @@ impl Render for DraggedTab {
             window,
             cx,
         );
+        let icon = self.item.tab_icon(window, cx).map(|icon| {
+            icon.size(IconSize::Small)
+                .color(Color::Muted)
+                .into_any_element()
+        });
         Tab::new("")
             .toggle_state(self.is_active)
+            .children(icon)
             .child(label)
             .render(window, cx)
             .font(ui_font)
