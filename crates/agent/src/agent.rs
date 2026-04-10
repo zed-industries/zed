@@ -591,6 +591,7 @@ impl NativeAgent {
         let tree = worktree.read(cx);
         let root_name = tree.root_name_str().into();
         let abs_path = tree.abs_path();
+        let scan_complete = tree.as_local().map(|local| local.scan_complete());
 
         let mut context = WorktreeContext {
             root_name,
@@ -598,20 +599,24 @@ impl NativeAgent {
             rules_file: None,
         };
 
-        let rules_task = Self::load_worktree_rules_file(worktree, project, cx);
-        let Some(rules_task) = rules_task else {
-            return Task::ready((context, None));
-        };
+        cx.spawn(async move |cx| {
+            if let Some(scan_complete) = scan_complete {
+                scan_complete.await;
+            }
 
-        cx.spawn(async move |_| {
-            let (rules_file, rules_file_error) = match rules_task.await {
-                Ok(rules_file) => (Some(rules_file), None),
-                Err(err) => (
-                    None,
-                    Some(RulesLoadingError {
-                        message: format!("{err}").into(),
-                    }),
-                ),
+            let rules_task = cx.update(|cx| Self::load_worktree_rules_file(worktree, project, cx));
+
+            let (rules_file, rules_file_error) = match rules_task {
+                Some(rules_task) => match rules_task.await {
+                    Ok(rules_file) => (Some(rules_file), None),
+                    Err(err) => (
+                        None,
+                        Some(RulesLoadingError {
+                            message: format!("{err}").into(),
+                        }),
+                    ),
+                },
+                None => (None, None),
             };
             context.rules_file = rules_file;
             (context, rules_file_error)
