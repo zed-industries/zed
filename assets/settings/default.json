@@ -134,6 +134,15 @@
   //  3. Do not restore previous workspaces
   //         "restore_on_startup": "none",
   "restore_on_startup": "last_session",
+  // The default behavior when opening paths from the CLI without
+  // an explicit `-e` (existing window) or `-n` (new window) flag.
+  //
+  // May take 2 values:
+  //  1. Add to the existing Zed window
+  //         "cli_default_open_behavior": "existing_window"
+  //  2. Open a new Zed window
+  //         "cli_default_open_behavior": "new_window"
+  "cli_default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.

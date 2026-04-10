@@ -413,6 +413,7 @@ pub async fn handle_cli_connection(
                 wait,
                 wsl,
                 open_new_workspace,
+                force_existing_window,
                 reuse,
                 env,
                 user_data_dir: _,
@@ -452,6 +453,7 @@ pub async fn handle_cli_connection(
                     diff_paths,
                     diff_all,
                     open_new_workspace,
+                    force_existing_window,
                     reuse,
                     &responses,
                     wait,
@@ -474,6 +476,7 @@ async fn open_workspaces(
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_new_workspace: Option<bool>,
+    force_existing_window: bool,
     reuse: bool,
     responses: &IpcSender<CliResponse>,
     wait: bool,
@@ -536,6 +539,7 @@ async fn open_workspaces(
         };
         let open_options = workspace::OpenOptions {
             open_new_workspace,
+            force_existing_window,
             requesting_window: replace_window,
             wait,
             env: env.clone(),

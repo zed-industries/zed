@@ -1,5 +1,7 @@
+use std::ops::Range;
+
 use crate::{LabelLike, prelude::*};
-use gpui::StyleRefinement;
+use gpui::{StyleRefinement, StyledText, TextRun};
 
 /// A struct representing a label element in the UI.
 ///
@@ -33,6 +35,7 @@ use gpui::StyleRefinement;
 pub struct Label {
     base: LabelLike,
     label: SharedString,
+    render_code_spans: bool,
 }
 
 impl Label {
@@ -49,7 +52,15 @@ impl Label {
         Self {
             base: LabelLike::new(),
             label: label.into(),
+            render_code_spans: false,
         }
+    }
+
+    /// When enabled, text wrapped in backticks (e.g. `` `code` ``) will be
+    /// rendered in the buffer (monospace) font.
+    pub fn render_code_spans(mut self) -> Self {
+        self.render_code_spans = true;
+        self
     }
 
     /// Sets the text of the [`Label`].
@@ -233,9 +244,122 @@ impl LabelCommon for Label {
 }
 
 impl RenderOnce for Label {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if self.render_code_spans {
+            if let Some((stripped, code_ranges)) = parse_backtick_spans(&self.label) {
+                let mut base_style = window.text_style();
+                base_style.color = self.base.color.color(cx);
+
+                let mut code_style = base_style.clone();
+                code_style.font_family = theme::theme_settings(cx).buffer_font(cx).family.clone();
+                code_style.background_color = Some(cx.theme().colors().element_background);
+
+                let runs = build_code_span_runs(&stripped, &code_ranges, &base_style, &code_style);
+                return self.base.child(StyledText::new(stripped).with_runs(runs));
+            }
+        }
         self.base.child(self.label)
     }
+}
+
+/// Parses backtick-delimited code spans from a string.
+///
+/// Returns `None` if there are no matched backtick pairs.
+/// Otherwise returns the text with backticks stripped and the byte ranges
+/// of the code spans in the stripped string.
+fn parse_backtick_spans(text: &str) -> Option<(SharedString, Vec<Range<usize>>)> {
+    if !text.contains('`') {
+        return None;
+    }
+
+    let mut stripped = String::with_capacity(text.len());
+    let mut code_ranges = Vec::new();
+    let mut in_code = false;
+    let mut code_start = 0;
+
+    for ch in text.chars() {
+        if ch == '`' {
+            if in_code {
+                code_ranges.push(code_start..stripped.len());
+            } else {
+                code_start = stripped.len();
+            }
+            in_code = !in_code;
+        } else {
+            stripped.push(ch);
+        }
+    }
+
+    if code_ranges.is_empty() {
+        return None;
+    }
+
+    Some((SharedString::from(stripped), code_ranges))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_backtick_spans_no_backticks() {
+        assert_eq!(parse_backtick_spans("plain text"), None);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_single_span() {
+        let (text, ranges) = parse_backtick_spans("use `zed` to open").unwrap();
+        assert_eq!(text.as_ref(), "use zed to open");
+        assert_eq!(ranges, vec![4..7]);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_multiple_spans() {
+        let (text, ranges) = parse_backtick_spans("flags `-e` or `-n`").unwrap();
+        assert_eq!(text.as_ref(), "flags -e or -n");
+        assert_eq!(ranges, vec![6..8, 12..14]);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_unmatched_backtick() {
+        // A trailing unmatched backtick should not produce a code range
+        assert_eq!(parse_backtick_spans("trailing `backtick"), None);
+    }
+
+    #[test]
+    fn test_parse_backtick_spans_empty_span() {
+        let (text, ranges) = parse_backtick_spans("empty `` span").unwrap();
+        assert_eq!(text.as_ref(), "empty  span");
+        assert_eq!(ranges, vec![6..6]);
+    }
+}
+
+/// Builds a sequence of `TextRun`s that alternate between `base_style` and
+/// `code_style` based on the given code span ranges.
+fn build_code_span_runs(
+    text: &str,
+    code_ranges: &[Range<usize>],
+    base_style: &gpui::TextStyle,
+    code_style: &gpui::TextStyle,
+) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    let mut pos = 0;
+
+    for range in code_ranges {
+        if pos < range.start {
+            runs.push(base_style.to_run(range.start - pos));
+        }
+        if !range.is_empty() {
+            runs.push(code_style.to_run(range.len()));
+        }
+        pos = range.end;
+    }
+
+    if pos < text.len() {
+        runs.push(base_style.to_run(text.len() - pos));
+    }
+
+    runs
 }
 
 impl Component for Label {
