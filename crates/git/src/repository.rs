@@ -1523,27 +1523,23 @@ impl GitRepository for RealGitRepository {
     }
 
     fn tracked_paths(&self) -> Task<Result<Vec<RepoPath>>> {
-        let git = match self.git_binary() {
-            Ok(git) => git,
-            Err(e) => return Task::ready(Err(e)),
-        };
-        let args = git_tracked_paths_args();
+        let repository = self.repository.clone();
         self.executor.spawn(async move {
-            let output = git.build_command(&args).output().await?;
-            if output.status.success() {
-                output
-                    .stdout
-                    .split(|byte| *byte == b'\0')
-                    .filter(|path| !path.is_empty())
-                    .map(|path| {
-                        let path = std::str::from_utf8(path)?;
+            fn logic(repository: &git2::Repository) -> Result<Vec<RepoPath>> {
+                let mut index = repository.index()?;
+                index.read(false)?;
+
+                index
+                    .iter()
+                    .map(|entry| {
+                        let path = std::str::from_utf8(&entry.path)?;
                         RepoPath::new(path)
                     })
                     .collect()
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("git ls-files failed: {stderr}");
             }
+
+            let repository = repository.lock();
+            logic(&repository).context("loading tracked paths")
         })
     }
 
@@ -2976,14 +2972,6 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         }
     }));
     args
-}
-
-fn git_tracked_paths_args() -> Vec<OsString> {
-    vec![
-        OsString::from("ls-files"),
-        OsString::from("-z"),
-        OsString::from("--cached"),
-    ]
 }
 
 /// Temporarily git-ignore commonly ignored files and files over 2MB
