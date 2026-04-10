@@ -18,7 +18,7 @@ use db::{
     sqlez_macros::sql,
 };
 use fs::Fs;
-use futures::{FutureExt as _, future::Shared};
+use futures::{FutureExt, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
 use remote::RemoteConnectionOptions;
@@ -28,7 +28,7 @@ use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
 use crate::DEFAULT_THREAD_TITLE;
 
-const THREAD_REMOTE_CONNECTION_BACKFILL_KEY: &str = "thread-metadata-remote-connection-backfill";
+const THREAD_REMOTE_CONNECTION_MIGRATION_KEY: &str = "thread-metadata-remote-connection-backfill";
 
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
@@ -120,11 +120,11 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
     let workspace_db = WorkspaceDb::global(cx);
     let fs = <dyn Fs>::global(cx);
 
-    cx.spawn(async move |_| -> anyhow::Result<()> {
+    cx.spawn(async move |cx| -> anyhow::Result<()> {
         migration_task.await?;
 
         if kvp
-            .read_kvp(THREAD_REMOTE_CONNECTION_BACKFILL_KEY)?
+            .read_kvp(THREAD_REMOTE_CONNECTION_MIGRATION_KEY)?
             .is_some()
         {
             return Ok(());
@@ -157,6 +157,7 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
             }
         }
 
+        let mut reloaded = false;
         for metadata in db.list()? {
             if metadata.remote_connection.is_some() {
                 continue;
@@ -171,14 +172,20 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
                     ..metadata
                 })
                 .await?;
+                reloaded = true;
             }
         }
 
+        let reloaded_task = reloaded
+            .then_some(store.update(cx, |store, cx| store.reload(cx)))
+            .unwrap_or(Task::ready(()).shared());
+
         kvp.write_kvp(
-            THREAD_REMOTE_CONNECTION_BACKFILL_KEY.to_string(),
+            THREAD_REMOTE_CONNECTION_MIGRATION_KEY.to_string(),
             "1".to_string(),
         )
         .await?;
+        reloaded_task.await;
 
         Ok(())
     })
@@ -1227,16 +1234,25 @@ mod tests {
     }
 
     fn init_test(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
+            <dyn Fs>::set_global(fs, cx);
             ThreadMetadataStore::init_global(cx);
             ThreadStore::init_global(cx);
         });
         cx.run_until_parked();
     }
 
+    fn clear_thread_metadata_remote_connection_backfill(cx: &mut TestAppContext) {
+        let kvp = cx.update(|cx| KeyValueStore::global(cx));
+        smol::block_on(kvp.delete_kvp("thread-metadata-remote-connection-backfill".to_string()))
+            .unwrap();
+    }
+
     fn run_thread_metadata_migrations(cx: &mut TestAppContext) {
+        clear_thread_metadata_remote_connection_backfill(cx);
         cx.update(|cx| {
             let migration_task = migrate_thread_metadata(cx);
             migrate_thread_remote_connections(cx, migration_task);
@@ -1636,7 +1652,7 @@ mod tests {
 
                 let mut stmt = Statement::prepare(
                     conn,
-                    "INSERT INTO workspaces(workspace_id, paths, paths_order, remote_connection_id, timestamp) VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)",
+                    "UPDATE workspaces SET paths = ?2, paths_order = ?3, remote_connection_id = ?4, timestamp = CURRENT_TIMESTAMP WHERE workspace_id = ?1",
                 )?;
                 let mut next_index = stmt.bind(&workspace_id, 1)?;
                 next_index = stmt.bind(&serialized_paths.paths, next_index)?;
@@ -1647,6 +1663,7 @@ mod tests {
             .await
             .unwrap();
 
+        clear_thread_metadata_remote_connection_backfill(cx);
         cx.update(|cx| {
             migrate_thread_remote_connections(cx, Task::ready(Ok(())));
         });
