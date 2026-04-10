@@ -8,7 +8,6 @@ impl Render for CsvPreviewView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
-        self.performance_metrics.rendered_indices.clear();
         let render_prep_start = Instant::now();
         let table_with_settings = v_flex()
             .size_full()

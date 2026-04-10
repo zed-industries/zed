@@ -1,4 +1,4 @@
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Clone, Copy, PartialEq)]
 pub enum RowRenderMechanism {
     /// More correct for multiline content, but slower.
     #[allow(dead_code)] // Will be used when settings ui is added
