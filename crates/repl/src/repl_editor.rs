@@ -86,11 +86,6 @@ fn send_to_terminal_repl(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
-    let mut input = selected_text;
-    if !input.ends_with('\n') {
-        input.push('\n');
-    }
-
     let editor_id = editor.entity_id();
     let store = ReplStore::global(cx);
     let existing_terminal = store
@@ -100,7 +95,8 @@ fn send_to_terminal_repl(
 
     if let Some(existing_terminal) = existing_terminal {
         existing_terminal.update(cx, |terminal, _| {
-            terminal.input(input.into_bytes());
+            terminal.paste(&selected_text);
+            terminal.input(b"\r".to_vec());
         });
         return Ok(());
     }
@@ -138,7 +134,7 @@ fn send_to_terminal_repl(
 
     let store = store.clone();
     let language_name = language_name.to_string();
-    let bytes = input.into_bytes();
+    let text = selected_text;
     cx.spawn(async move |cx| {
         let terminal = terminal_task.await?;
         store.update(cx, |store, _| {
@@ -152,7 +148,8 @@ fn send_to_terminal_repl(
         };
 
         terminal.update(cx, |terminal, _| {
-            terminal.input(bytes);
+            terminal.paste(&text);
+            terminal.input(b"\r".to_vec());
         });
 
         anyhow::Ok(())
