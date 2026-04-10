@@ -1259,6 +1259,62 @@ impl ThreadView {
                 ThreadError::AuthenticationRequired(message) => {
                     ("authentication_required", None, message.clone())
                 }
+                ThreadError::RateLimitExceeded { provider } => (
+                    "rate_limit_exceeded",
+                    None,
+                    format!("{provider}'s rate limit was reached.").into(),
+                ),
+                ThreadError::ServerOverloaded { provider } => (
+                    "server_overloaded",
+                    None,
+                    format!("{provider}'s servers are temporarily unavailable.").into(),
+                ),
+                ThreadError::PromptTooLarge => (
+                    "prompt_too_large",
+                    None,
+                    "Context too large for the model's context window.".into(),
+                ),
+                ThreadError::NoApiKey { provider } => (
+                    "no_api_key",
+                    None,
+                    format!("No API key configured for {provider}.").into(),
+                ),
+                ThreadError::StreamError { provider } => (
+                    "stream_error",
+                    None,
+                    format!("Connection to {provider}'s API was interrupted.").into(),
+                ),
+                ThreadError::InvalidApiKey { provider } => (
+                    "invalid_api_key",
+                    None,
+                    format!("Invalid or expired API key for {provider}.").into(),
+                ),
+                ThreadError::PermissionDenied { provider } => (
+                    "permission_denied",
+                    None,
+                    format!(
+                        "{provider}'s API rejected the request due to insufficient permissions."
+                    )
+                    .into(),
+                ),
+                ThreadError::RequestFailed => (
+                    "request_failed",
+                    None,
+                    "Request could not be completed after multiple attempts.".into(),
+                ),
+                ThreadError::MaxOutputTokens => (
+                    "max_output_tokens",
+                    None,
+                    "Model reached its maximum output length.".into(),
+                ),
+                ThreadError::NoModelSelected => {
+                    ("no_model_selected", None, "No model selected.".into())
+                }
+                ThreadError::ApiError { provider } => (
+                    "api_error",
+                    None,
+                    format!("{provider}'s API returned an unexpected error.").into(),
+                ),
                 ThreadError::Other {
                     acp_error_code,
                     message,
@@ -8076,6 +8132,109 @@ impl ThreadView {
                 self.render_authentication_required_error(error.clone(), cx)
             }
             ThreadError::PaymentRequired => self.render_payment_required_error(cx),
+            ThreadError::RateLimitExceeded { provider } => self.render_error_callout(
+                "Rate Limit Reached",
+                format!(
+                    "{provider}'s rate limit was reached. Zed will retry automatically. \
+                    You can also wait a moment and try again."
+                )
+                .into(),
+                true,
+                true,
+                cx,
+            ),
+            ThreadError::ServerOverloaded { provider } => self.render_error_callout(
+                "Provider Unavailable",
+                format!(
+                    "{provider}'s servers are temporarily unavailable. Zed will retry \
+                    automatically. If the problem persists, check the provider's status page."
+                )
+                .into(),
+                true,
+                true,
+                cx,
+            ),
+            ThreadError::PromptTooLarge => self.render_prompt_too_large_error(cx),
+            ThreadError::NoApiKey { provider } => self.render_error_callout(
+                "API Key Missing",
+                format!(
+                    "No API key is configured for {provider}. \
+                    Add your key via the Agent Panel settings to continue."
+                )
+                .into(),
+                false,
+                true,
+                cx,
+            ),
+            ThreadError::StreamError { provider } => self.render_error_callout(
+                "Connection Interrupted",
+                format!(
+                    "The connection to {provider}'s API was interrupted. Zed will retry \
+                    automatically. If the problem persists, check your network connection."
+                )
+                .into(),
+                true,
+                true,
+                cx,
+            ),
+            ThreadError::InvalidApiKey { provider } => self.render_error_callout(
+                "Invalid API Key",
+                format!(
+                    "The API key for {provider} is invalid or has expired. \
+                    Update your key via the Agent Panel settings to continue."
+                )
+                .into(),
+                false,
+                false,
+                cx,
+            ),
+            ThreadError::PermissionDenied { provider } => self.render_error_callout(
+                "Permission Denied",
+                format!(
+                    "{provider}'s API rejected the request due to insufficient permissions. \
+                    Check that your API key has access to this model."
+                )
+                .into(),
+                false,
+                false,
+                cx,
+            ),
+            ThreadError::RequestFailed => self.render_error_callout(
+                "Request Failed",
+                "The request could not be completed after multiple attempts. \
+                Try again in a moment."
+                    .into(),
+                true,
+                false,
+                cx,
+            ),
+            ThreadError::MaxOutputTokens => self.render_error_callout(
+                "Output Limit Reached",
+                "The model stopped because it reached its maximum output length. \
+                You can ask it to continue where it left off."
+                    .into(),
+                false,
+                false,
+                cx,
+            ),
+            ThreadError::NoModelSelected => self.render_error_callout(
+                "No Model Selected",
+                "Select a model from the model picker below to get started.".into(),
+                false,
+                false,
+                cx,
+            ),
+            ThreadError::ApiError { provider } => self.render_error_callout(
+                "API Error",
+                format!(
+                    "{provider}'s API returned an unexpected error. \
+                    If the problem persists, try switching models or restarting Zed."
+                )
+                .into(),
+                true,
+                true,
+                cx,
+            ),
         };
 
         Some(div().child(content))
@@ -8134,6 +8293,72 @@ impl ThreadView {
                     .child(self.create_copy_button(ERROR_MESSAGE)),
             )
             .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_error_callout(
+        &self,
+        title: &'static str,
+        message: SharedString,
+        show_retry: bool,
+        show_copy: bool,
+        cx: &mut Context<Self>,
+    ) -> Callout {
+        let can_resume = show_retry && self.thread.read(cx).can_retry(cx);
+        let show_actions = can_resume || show_copy;
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title(title)
+            .description(message.clone())
+            .when(show_actions, |callout| {
+                callout.actions_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .when(can_resume, |this| this.child(self.retry_button(cx)))
+                        .when(show_copy, |this| {
+                            this.child(self.create_copy_button(message.clone()))
+                        }),
+                )
+            })
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {
+        const MESSAGE: &str = "This conversation is too long for the model's context window. \
+            Start a new thread or remove some attached files to continue.";
+
+        Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title("Context Too Large")
+            .description(MESSAGE)
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.new_thread_button(cx))
+                    .child(self.create_copy_button(MESSAGE)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn retry_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("retry", "Retry")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.retry_generation(cx);
+            }))
+    }
+
+    fn new_thread_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("new_thread", "New Thread")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(NewThread.boxed_clone(), cx);
+            }))
     }
 
     fn upgrade_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
