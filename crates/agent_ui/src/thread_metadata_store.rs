@@ -204,7 +204,7 @@ impl Global for GlobalThreadMetadataStore {}
 ///
 /// Internally stores two `PathList`s with matching insertion order so that
 /// `ordered_paths()` on both yields positionally-paired results.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct ThreadWorktreePaths {
     folder_paths: PathList,
     main_worktree_paths: PathList,
@@ -320,15 +320,6 @@ impl ThreadWorktreePaths {
             .unzip();
         self.main_worktree_paths = PathList::new(&mains);
         self.folder_paths = PathList::new(&folders);
-    }
-}
-
-impl Default for ThreadWorktreePaths {
-    fn default() -> Self {
-        Self {
-            folder_paths: PathList::default(),
-            main_worktree_paths: PathList::default(),
-        }
     }
 }
 
