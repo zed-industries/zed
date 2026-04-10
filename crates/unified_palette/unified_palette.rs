@@ -39,6 +39,7 @@ enum Match {
     File(FileMatch),
     Command(CommandMatch),
     Line(LineMatch),
+    Symbol(SymbolMatch),
 }
 
 #[derive(Clone)]
@@ -57,6 +58,11 @@ struct CommandMatch {
 #[derive(Clone)]
 struct LineMatch {
     line_number: u32,
+}
+
+#[derive(Clone)]
+struct SymbolMatch {
+    symbol: project::Symbol,
 }
 
 pub struct UnifiedPaletteDelegate {
@@ -215,14 +221,37 @@ impl UnifiedPaletteDelegate {
         self.selected_index = 0;
     }
     
-    fn search_project_symbols(&mut self, query: &str, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
-        // Project symbols search requires complex async handling
-        // For now, show a placeholder message
-        if !query.is_empty() {
-            log::info!("UnifiedPalette: Project symbols search for '{}' - full implementation pending", query);
+    fn search_project_symbols(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if query.is_empty() {
+            self.matches.clear();
+            self.selected_index = 0;
+            return;
         }
-        self.matches.clear();
-        self.selected_index = 0;
+
+        let project = self.project.clone();
+        let query_string = query.to_string();
+        
+        let symbols_task = project.update(cx, |project, cx| {
+            project.symbols(&query_string, cx)
+        });
+        
+        cx.spawn_in(window, async move |picker, cx| {
+            if let Ok(symbols) = symbols_task.await {
+                picker.update_in(cx, |picker, _window, cx| {
+                    let delegate = &mut picker.delegate;
+                    
+                    // Convert symbols to matches (limit to 100)
+                    delegate.matches = symbols
+                        .into_iter()
+                        .take(100)
+                        .map(|symbol| Match::Symbol(SymbolMatch { symbol }))
+                        .collect();
+                    
+                    delegate.selected_index = 0;
+                    cx.notify();
+                }).ok();
+            }
+        }).detach();
     }
     
     fn search_outline(&mut self, _query: &str, _cx: &mut Context<Picker<Self>>) {
@@ -388,6 +417,56 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                 log::debug!("UnifiedPalette: Dismissing modal after go-to-line");
                 self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
             }
+            Match::Symbol(symbol_match) => {
+                log::info!("UnifiedPalette: Navigating to symbol: {}", symbol_match.symbol.label.text);
+                
+                let symbol = symbol_match.symbol.clone();
+                let buffer = self.project.update(cx, |project, cx| {
+                    project.open_buffer_for_symbol(&symbol, cx)
+                });
+                
+                let workspace = self.workspace.clone();
+                let palette = self.unified_palette.clone();
+                
+                cx.spawn_in(window, async move |_, cx| {
+                    let buffer = buffer.await.log_err()?;
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        let position = buffer
+                            .read(cx)
+                            .clip_point_utf16(symbol.range.start, editor::Bias::Left);
+                        
+                        let pane = if secondary {
+                            workspace.adjacent_pane(window, cx)
+                        } else {
+                            workspace.active_pane().clone()
+                        };
+                        
+                        let editor = workspace.open_project_item::<editor::Editor>(
+                            pane, buffer, true, true, true, true, window, cx,
+                        );
+                        
+                        editor.update(cx, |editor, cx| {
+                            let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let Some(buffer_snapshot) = multibuffer_snapshot.as_singleton() else {
+                                return;
+                            };
+                            let text_anchor = buffer_snapshot.anchor_before(position);
+                            let Some(anchor) = multibuffer_snapshot.anchor_in_buffer(text_anchor) else {
+                                return;
+                            };
+                            editor.change_selections(
+                                editor::SelectionEffects::scroll(editor::scroll::Autoscroll::center()),
+                                window,
+                                cx,
+                                |s| s.select_ranges([anchor..anchor]),
+                            );
+                        });
+                    }).log_err();
+                    
+                    palette.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                    Some(())
+                }).detach();
+            }
         }
     }
 
@@ -395,22 +474,70 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         log::info!("UnifiedPalette: Modal dismissed");
     }
 
-    fn render_match(&self, ix: usize, selected: bool, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> Option<Self::ListItem> {
+    fn render_match(&self, ix: usize, selected: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<Self::ListItem> {
         let match_item = self.matches.get(ix)?;
         
-        let display_text = match match_item {
-            Match::File(file_match) => file_match.display_path.clone(),
-            Match::Command(command_match) => command_match.name.clone(),
-            Match::Line(line_match) => format!("Go to line {}", line_match.line_number),
-        };
-        
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .toggle_state(selected)
-                .child(Label::new(display_text))
-        )
+        match match_item {
+            Match::File(file_match) => {
+                Some(
+                    ListItem::new(ix)
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(Label::new(file_match.display_path.clone()))
+                )
+            }
+            Match::Command(command_match) => {
+                Some(
+                    ListItem::new(ix)
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(Label::new(command_match.name.clone()))
+                )
+            }
+            Match::Line(line_match) => {
+                Some(
+                    ListItem::new(ix)
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(Label::new(format!("Go to line {}", line_match.line_number)))
+                )
+            }
+            Match::Symbol(symbol_match) => {
+                let symbol = &symbol_match.symbol;
+                let path = match &symbol.path {
+                    project::lsp_store::SymbolLocation::InProject(path) => {
+                        format!("{:?}", path.path).trim_matches('"').to_string()
+                    }
+                    project::lsp_store::SymbolLocation::OutsideProject { abs_path, .. } => {
+                        abs_path.display().to_string()
+                    }
+                };
+                let line_number = symbol.range.start.0.row + 1;
+                
+                Some(
+                    ListItem::new(ix)
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(
+                            v_flex()
+                                .child(Label::new(symbol.label.text.clone()))
+                                .child(
+                                    h_flex()
+                                        .child(Label::new(path).size(LabelSize::Small).color(Color::Muted))
+                                        .child(
+                                            Label::new(format!(":{}", line_number))
+                                                .size(LabelSize::Small)
+                                                .color(Color::Placeholder)
+                                        )
+                                )
+                        )
+                )
+            }
+        }
     }
 }
 
