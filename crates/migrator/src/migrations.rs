@@ -316,3 +316,9 @@ pub(crate) mod m_2026_03_23 {
 
     pub(crate) use keymap::KEYMAP_PATTERNS;
 }
+
+pub(crate) mod m_2026_04_10 {
+    mod settings;
+
+    pub(crate) use settings::rename_web_search_to_search_web;
+}

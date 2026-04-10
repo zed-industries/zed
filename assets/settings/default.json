@@ -1062,7 +1062,7 @@
           "terminal": true,
           "thinking": true,
           "update_plan": true,
-          "web_search": true,
+          "search_web": true,
         },
       },
       "ask": {
@@ -1082,7 +1082,7 @@
           "spawn_agent": true,
           "thinking": true,
           "update_plan": true,
-          "web_search": true,
+          "search_web": true,
         },
       },
       "minimal": {
