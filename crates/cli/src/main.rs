@@ -25,7 +25,6 @@ use tempfile::{NamedTempFile, TempDir};
 use util::paths::PathWithPosition;
 use walkdir::WalkDir;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
 
 const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
@@ -694,6 +693,10 @@ fn main() -> Result<()> {
                             exit_status.lock().replace(status);
                             return Ok(());
                         }
+                        CliResponse::PromptOpenBehavior => {
+                            let existing_window = prompt_open_behavior().unwrap_or(true);
+                            tx.send(CliRequest::SetOpenBehavior { existing_window })?;
+                        }
                     }
                 }
 
@@ -785,6 +788,33 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         // not implemented for bsd, windows. Could be, but isn't yet
         None
     }
+}
+
+/// Shows an interactive prompt asking the user to choose the default open
+/// behavior for `zed <path>`. Returns `true` for "existing window" and
+/// `false` for "new window". Returns `None` if the prompt cannot be shown
+/// (e.g. stdin is not a terminal) or the user cancels.
+fn prompt_open_behavior() -> Option<bool> {
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+
+    let items = [
+        "Add to existing Zed window (zed -e)",
+        "Open a new window (zed -n)",
+    ];
+
+    let selection = dialoguer::Select::new()
+        .with_prompt(
+            "Configure default behavior for `zed <path>`\n  \
+             You can change this later in Zed settings",
+        )
+        .items(&items)
+        .default(0)
+        .interact()
+        .ok()?;
+
+    Some(selection == 0)
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]

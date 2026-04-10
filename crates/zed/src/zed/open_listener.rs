@@ -412,8 +412,8 @@ pub async fn handle_cli_connection(
                 diff_all,
                 wait,
                 wsl,
-                open_new_workspace,
-                force_existing_window,
+                mut open_new_workspace,
+                mut force_existing_window,
                 reuse,
                 env,
                 user_data_dir: _,
@@ -448,6 +448,26 @@ pub async fn handle_cli_connection(
                     return;
                 }
 
+                if let Some(behavior) = maybe_prompt_open_behavior(
+                    open_new_workspace,
+                    force_existing_window,
+                    &app_state,
+                    &responses,
+                    &mut requests,
+                    cx,
+                )
+                .await
+                {
+                    match behavior {
+                        settings::CliDefaultOpenBehavior::ExistingWindow => {
+                            force_existing_window = true;
+                        }
+                        settings::CliDefaultOpenBehavior::NewWindow => {
+                            open_new_workspace = Some(true);
+                        }
+                    }
+                }
+
                 let open_workspace_result = open_workspaces(
                     paths,
                     diff_paths,
@@ -467,8 +487,72 @@ pub async fn handle_cli_connection(
                 let status = if open_workspace_result.is_err() { 1 } else { 0 };
                 responses.send(CliResponse::Exit { status }).log_err();
             }
+            CliRequest::SetOpenBehavior { .. } => {}
         }
     }
+}
+
+/// Checks whether the CLI user should be prompted to configure their default
+/// open behavior. Sends `CliResponse::PromptOpenBehavior` and waits for the
+/// CLI's response if all of these are true:
+///   - No explicit flag was given (`-n`, `-e`, `-a`)
+///   - There is at least one existing Zed window
+///   - The user has not yet configured `cli_default_open_behavior` in settings
+///
+/// Returns the user's choice, or `None` if no prompt was needed or the CLI
+/// didn't respond.
+async fn maybe_prompt_open_behavior(
+    open_new_workspace: Option<bool>,
+    force_existing_window: bool,
+    app_state: &Arc<AppState>,
+    responses: &IpcSender<CliResponse>,
+    requests: &mut mpsc::Receiver<CliRequest>,
+    cx: &mut AsyncApp,
+) -> Option<settings::CliDefaultOpenBehavior> {
+    if open_new_workspace.is_some() || force_existing_window {
+        return None;
+    }
+
+    let has_existing_windows = cx.update(|cx| {
+        cx.windows()
+            .iter()
+            .any(|window| window.downcast::<MultiWorkspace>().is_some())
+    });
+
+    if !has_existing_windows {
+        return None;
+    }
+
+    let settings_text = app_state
+        .fs
+        .load(paths::settings_file())
+        .await
+        .unwrap_or_default();
+
+    if settings_text.contains("cli_default_open_behavior") {
+        return None;
+    }
+
+    responses.send(CliResponse::PromptOpenBehavior).log_err()?;
+
+    if let Some(CliRequest::SetOpenBehavior { existing_window }) = requests.next().await {
+        let behavior = if existing_window {
+            settings::CliDefaultOpenBehavior::ExistingWindow
+        } else {
+            settings::CliDefaultOpenBehavior::NewWindow
+        };
+
+        let fs = app_state.fs.clone();
+        cx.update(|cx| {
+            settings::update_settings_file(fs, cx, move |content, _cx| {
+                content.workspace.cli_default_open_behavior = Some(behavior);
+            });
+        });
+
+        return Some(behavior);
+    }
+
+    None
 }
 
 async fn open_workspaces(

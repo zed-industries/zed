@@ -25,6 +25,10 @@ pub enum CliRequest {
         user_data_dir: Option<String>,
         dev_container: bool,
     },
+    SetOpenBehavior {
+        /// true = existing window, false = new window
+        existing_window: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -33,6 +37,7 @@ pub enum CliResponse {
     Stdout { message: String },
     Stderr { message: String },
     Exit { status: i32 },
+    PromptOpenBehavior,
 }
 
 /// When Zed started not as an *.app but as a binary (e.g. local development),
