@@ -3135,7 +3135,7 @@ impl EditorElement {
 
     fn layout_bookmarks(
         &self,
-        gutter: &GutterArgs<'_>,
+        gutter: &Gutter<'_>,
         bookmarks: HashSet<DisplayRow>,
         window: &mut Window,
         cx: &mut App,
@@ -3148,7 +3148,7 @@ impl EditorElement {
             bookmarks
                 .into_iter()
                 .filter_map(|display_row| {
-                    gutter.layout_gutter_item_skipping_folds(
+                    gutter.layout_item_skipping_folds(
                         display_row,
                         |_| editor.render_bookmark().into_any_element(),
                         window,
@@ -3161,7 +3161,7 @@ impl EditorElement {
 
     fn layout_breakpoints(
         &self,
-        gutter: &GutterArgs,
+        gutter: &Gutter,
         breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
         cx: &mut App,
@@ -3174,7 +3174,7 @@ impl EditorElement {
             breakpoints
                 .into_iter()
                 .filter_map(|(display_row, (text_anchor, bp, state))| {
-                    gutter.layout_gutter_item_skipping_folds(
+                    gutter.layout_item_skipping_folds(
                         display_row,
                         |cx| {
                             editor
@@ -3237,7 +3237,7 @@ impl EditorElement {
 
     fn layout_run_indicators(
         &self,
-        gutter: &GutterArgs,
+        gutter: &Gutter,
         run_indicators: &HashSet<DisplayRow>,
         breakpoints: &HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
@@ -3270,7 +3270,7 @@ impl EditorElement {
             run_indicators
                 .iter()
                 .filter_map(|display_row| {
-                    gutter.layout_gutter_item(
+                    gutter.layout_item(
                         *display_row,
                         |cx| {
                             editor
@@ -3385,7 +3385,7 @@ impl EditorElement {
 
     fn layout_line_numbers(
         &self,
-        gutter: &GutterArgs<'_>,
+        gutter: &Gutter<'_>,
         active_rows: &BTreeMap<DisplayRow, LineHighlightSpec>,
         current_selection_head: Option<DisplayRow>,
         window: &mut Window,
@@ -3454,11 +3454,11 @@ impl EditorElement {
                     self.shape_line_number(SharedString::from(&line_number), color, window);
                 let scroll_top =
                     gutter.scroll_position.y * ScrollPixelOffset::from(gutter.line_height);
-                let line_origin = gutter.gutter_hitbox.origin
+                let line_origin = gutter.hitbox.origin
                     + point(
-                        gutter.gutter_hitbox.size.width
+                        gutter.hitbox.size.width
                             - shaped_line.width
-                            - gutter.gutter_dimensions.right_padding,
+                            - gutter.dimensions.right_padding,
                         ix as f32 * gutter.line_height
                             - Pixels::from(
                                 scroll_top % ScrollPixelOffset::from(gutter.line_height),
@@ -7885,18 +7885,18 @@ impl EditorElement {
     }
 }
 
-struct GutterArgs<'a> {
+struct Gutter<'a> {
     line_height: Pixels,
     range: Range<DisplayRow>,
     scroll_position: gpui::Point<ScrollOffset>,
-    gutter_dimensions: &'a GutterDimensions,
-    gutter_hitbox: &'a Hitbox,
+    dimensions: &'a GutterDimensions,
+    hitbox: &'a Hitbox,
     snapshot: &'a EditorSnapshot,
     row_infos: &'a [RowInfo],
 }
 
-impl GutterArgs<'_> {
-    fn layout_gutter_item_skipping_folds(
+impl Gutter<'_> {
+    fn layout_item_skipping_folds(
         &self,
         display_row: DisplayRow,
         render_item: impl Fn(&mut Context<'_, Editor>) -> AnyElement,
@@ -7912,10 +7912,10 @@ impl GutterArgs<'_> {
             return None;
         }
 
-        self.layout_gutter_item(display_row, render_item, window, cx)
+        self.layout_item(display_row, render_item, window, cx)
     }
 
-    fn layout_gutter_item(
+    fn layout_item(
         &self,
         display_row: DisplayRow,
         render_item: impl Fn(&mut Context<'_, Editor>) -> AnyElement,
@@ -7939,11 +7939,11 @@ impl GutterArgs<'_> {
             return None;
         }
 
-        let button = self.prepaint_gutter_button(render_item(cx), display_row, window, cx);
+        let button = self.prepaint_button(render_item(cx), display_row, window, cx);
         Some(button)
     }
 
-    fn prepaint_gutter_button(
+    fn prepaint_button(
         &self,
         mut button: AnyElement,
         row: DisplayRow,
@@ -7957,7 +7957,7 @@ impl GutterArgs<'_> {
         let indicator_size = button.layout_as_root(available_space, window, cx);
         let git_gutter_width = EditorElement::gutter_strip_width(self.line_height)
             + self
-                .gutter_dimensions
+                .dimensions
                 .git_blame_entries_width
                 .unwrap_or_default();
 
@@ -7969,7 +7969,7 @@ impl GutterArgs<'_> {
         y += (self.line_height - indicator_size.height) / 2.;
 
         button.prepaint_as_root(
-            self.gutter_hitbox.origin + point(x, y),
+            self.hitbox.origin + point(x, y),
             available_space,
             window,
             cx,
@@ -10113,12 +10113,12 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let gutter = GutterArgs {
+                    let gutter = Gutter {
                         line_height,
                         range: start_row..end_row,
                         scroll_position,
-                        gutter_dimensions: &gutter_dimensions,
-                        gutter_hitbox: &gutter_hitbox,
+                        dimensions: &gutter_dimensions,
+                        hitbox: &gutter_hitbox,
                         snapshot: &snapshot,
                         row_infos: &row_infos,
                     };
@@ -10816,7 +10816,7 @@ impl Element for EditorElement {
                                     .render_diff_review_button(display_row, button_width, cx)
                                     .into_any_element()
                             });
-                            gutter.prepaint_gutter_button(button, display_row, window, cx)
+                            gutter.prepaint_button(button, display_row, window, cx)
                         });
 
                     self.layout_signature_help(
