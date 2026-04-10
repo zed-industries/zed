@@ -10102,9 +10102,7 @@ impl Element for EditorElement {
                     });
 
                     let mut breakpoint_rows = self.editor.update(cx, |editor, cx| {
-                        let mut rows = editor.active_breakpoints(start_row..end_row, window, cx);
-                        rows.retain(|k, _| !run_indicator_rows.contains(k));
-                        rows
+                        editor.active_breakpoints(start_row..end_row, window, cx)
                     });
 
                     for (display_row, (_, bp, state)) in &breakpoint_rows {
@@ -10767,6 +10765,8 @@ impl Element for EditorElement {
                     let show_breakpoints = snapshot
                         .show_breakpoints
                         .unwrap_or(gutter_settings.breakpoints);
+
+                    breakpoint_rows.retain(|k, _| !run_indicator_rows.contains(k));
                     let breakpoints = if show_breakpoints {
                         self.layout_breakpoints(&gutter, breakpoint_rows, window, cx)
                     } else {
