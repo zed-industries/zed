@@ -4387,17 +4387,27 @@ impl Render for TokenUsageTooltip {
 
 impl ThreadView {
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
+        let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        let centered_container = move |content: AnyElement| {
+            h_flex()
+                .w_full()
+                .justify_center()
+                .child(div().max_w(max_content_width).w_full().child(content))
+        };
+
         list(
             self.list_state.clone(),
             cx.processor(move |this, index: usize, window, cx| {
                 let entries = this.thread.read(cx).entries();
                 if let Some(entry) = entries.get(index) {
-                    this.render_entry(index, entries.len(), entry, window, cx)
+                    let rendered = this.render_entry(index, entries.len(), entry, window, cx);
+                    centered_container(rendered.into_any_element()).into_any_element()
                 } else if this.generating_indicator_in_list {
                     let confirmation = entries
                         .last()
                         .is_some_and(|entry| Self::is_waiting_for_confirmation(entry));
-                    this.render_generating(confirmation, cx).into_any_element()
+                    let rendered = this.render_generating(confirmation, cx);
+                    centered_container(rendered.into_any_element()).into_any_element()
                 } else {
                     Empty.into_any()
                 }
@@ -8771,7 +8781,6 @@ impl ThreadView {
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
-        let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let list_state = self.list_state.clone();
 
         let conversation = v_flex()
@@ -8782,13 +8791,7 @@ impl Render for ThreadView {
                 if has_messages {
                     this.flex_1()
                         .size_full()
-                        .child(
-                            v_flex()
-                                .mx_auto()
-                                .max_w(max_content_width)
-                                .size_full()
-                                .child(self.render_entries(cx)),
-                        )
+                        .child(self.render_entries(cx))
                         .vertical_scrollbar_for(&list_state, window, cx)
                         .into_any()
                 } else {
