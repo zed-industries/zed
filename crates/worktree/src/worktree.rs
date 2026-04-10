@@ -5,7 +5,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{Context as _, Result, anyhow};
 use chardetng::EncodingDetector;
 use clock::ReplicaId;
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
 use fs::{
     Fs, MTime, PathEvent, PathEventKind, RemoveOptions, Watcher, copy_recursive, read_dir_items,
@@ -254,6 +254,10 @@ pub struct LocalSnapshot {
     /// The file handle of the worktree root
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
+    /// Maps canonical absolute paths of externally watched symlinked directories
+    /// to their relative paths within the worktree, used to translate FSEvents
+    /// canonical-path events back to worktree-relative paths.
+    external_canonical_to_relative: BTreeMap<Arc<Path>, Arc<RelPath>>,
 }
 
 struct BackgroundScannerState {
@@ -419,6 +423,7 @@ impl Worktree {
                 global_gitignore: Default::default(),
                 repo_exclude_by_work_dir_abs_path: Default::default(),
                 git_repositories: Default::default(),
+                external_canonical_to_relative: Default::default(),
                 snapshot: Snapshot::new(
                     worktree_id,
                     abs_path
@@ -2885,12 +2890,28 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
-    fn should_scan_directory(&self, entry: &Entry) -> bool {
+    fn should_scan_directory(
+        &self,
+        entry: &Entry,
+        scan_symlinks: settings::ScanSymlinksSetting,
+    ) -> bool {
+        use settings::ScanSymlinksSetting;
+
+        let scan_external = entry.is_external
+            && scan_symlinks == ScanSymlinksSetting::Always
+            && self.scanning_enabled
+            && (!entry.is_ignored || entry.is_always_included);
+
         (self.scanning_enabled && !entry.is_external && (!entry.is_ignored || entry.is_always_included))
+            || scan_external
             || entry.path.file_name() == Some(DOT_GIT)
             || entry.path.file_name() == Some(local_settings_folder_name())
             || entry.path.file_name() == Some(local_vscode_folder_name())
-            || self.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
+            // In Always mode, external directories are already covered by `scan_external` above,
+            // so we exclude them from the scanned_dirs check to avoid re-scanning them a second
+            // time via a different code path with potentially different conditions.
+            || ((!entry.is_external || scan_symlinks != ScanSymlinksSetting::Always)
+                && self.scanned_dirs.contains(&entry.id)) // If we've ever scanned it, keep scanning
             || self
                 .paths_to_scan
                 .iter()
@@ -3111,6 +3132,17 @@ impl BackgroundScannerState {
         for removed_dir_abs_path in removed_dir_abs_paths {
             watcher.remove(&removed_dir_abs_path).log_err();
         }
+
+        self.snapshot
+            .external_canonical_to_relative
+            .retain(|canonical, relative| {
+                if relative.starts_with(path) {
+                    watcher.remove(canonical.as_ref()).log_err();
+                    false
+                } else {
+                    true
+                }
+            });
 
         #[cfg(feature = "test-support")]
         self.snapshot.check_invariants(false);
@@ -4265,6 +4297,26 @@ impl BackgroundScanner {
                     && let Ok(path) = RelPath::new(path, PathStyle::local())
                 {
                     path
+                } else if let Some(path) = snapshot
+                    .external_canonical_to_relative
+                    .iter()
+                    .find_map(|(canonical, relative)| {
+                        abs_path
+                            .as_path()
+                            .strip_prefix(canonical.as_ref())
+                            .ok()
+                            .and_then(|suffix| {
+                                RelPath::new(suffix, PathStyle::local())
+                                    .ok()
+                                    .map(|suffix_rel| {
+                                        std::borrow::Cow::Owned(
+                                            relative.join(&suffix_rel).to_rel_path_buf(),
+                                        )
+                                    })
+                            })
+                    })
+                {
+                    path
                 } else {
                     if is_git_related {
                         log::debug!(
@@ -4756,13 +4808,12 @@ impl BackgroundScanner {
         }
 
         let mut state = self.state.lock().await;
-
         // Identify any subdirectories that should not be scanned.
         let mut job_ix = 0;
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(entry) {
+                if state.should_scan_directory(entry, self.settings.scan_symlinks) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
@@ -4779,7 +4830,23 @@ impl BackgroundScanner {
         }
 
         state.populate_dir(job.path.clone(), new_entries, new_ignore);
-        self.watcher.add(job.abs_path.as_ref()).log_err();
+        // `canonicalize` is an async filesystem operation that may suspend, so the lock
+        // must not be held across the await point below.
+        drop(state);
+        if job.is_external {
+            if let Ok(canonical) = self.fs.canonicalize(job.abs_path.as_ref()).await {
+                let canonical: Arc<Path> = canonical.into();
+                self.watcher.add(&canonical).log_err();
+                self.state
+                    .lock()
+                    .await
+                    .snapshot
+                    .external_canonical_to_relative
+                    .insert(canonical, job.path.clone());
+            }
+        } else {
+            self.watcher.add(job.abs_path.as_ref()).log_err();
+        }
 
         for new_job in new_jobs.into_iter().flatten() {
             job.scan_queue
@@ -4880,7 +4947,7 @@ impl BackgroundScanner {
                     fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
-                        if state.should_scan_directory(&fs_entry)
+                        if state.should_scan_directory(&fs_entry, self.settings.scan_symlinks)
                             || (fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
                         {
@@ -5171,7 +5238,7 @@ impl BackgroundScanner {
                 // Scan any directories that were previously ignored and weren't previously scanned.
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock().await;
-                    if state.should_scan_directory(&entry) {
+                    if state.should_scan_directory(&entry, self.settings.scan_symlinks) {
                         state
                             .enqueue_scan_dir(
                                 abs_path.clone(),
