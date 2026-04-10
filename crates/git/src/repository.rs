@@ -1462,7 +1462,7 @@ impl GitRepository for RealGitRepository {
                     log::debug!("indexing SHA: {sha}, path {path:?}");
 
                     let output = git
-                        .build_command(&["update-index", "--add", "--cacheinfo", mode, sha, "--"])
+                        .build_command(&["update-index", "--add", "--cacheinfo", mode, sha])
                         .envs(env.iter())
                         .arg(path.as_unix_str())
                         .output()
