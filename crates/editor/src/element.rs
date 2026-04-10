@@ -642,8 +642,6 @@ impl EditorElement {
         register_action(editor, window, Editor::restore_file);
         register_action(editor, window, Editor::git_restore);
         register_action(editor, window, Editor::restore_and_next);
-        register_action(editor, window, Editor::apply_all_diff_hunks);
-        register_action(editor, window, Editor::apply_selected_diff_hunks);
         register_action(editor, window, Editor::open_active_item_in_terminal);
         register_action(editor, window, Editor::reload_file);
         register_action(editor, window, Editor::spawn_nearest_task);

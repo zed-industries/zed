@@ -875,10 +875,7 @@ impl Item for Editor {
         }
 
         let buffers = self.buffer().clone().read(cx).all_buffers();
-        let buffers = buffers
-            .into_iter()
-            .map(|handle| handle.read(cx).base_buffer().unwrap_or(handle.clone()))
-            .collect::<HashSet<_>>();
+        let buffers = buffers.into_iter().collect::<HashSet<_>>();
 
         let buffers_to_save = if self.buffer.read(cx).is_singleton() && !options.autosave {
             buffers
