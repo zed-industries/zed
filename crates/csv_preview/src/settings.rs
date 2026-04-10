@@ -1,10 +1,10 @@
 #[derive(Default, Clone, Copy, PartialEq)]
 pub enum RowRenderMechanism {
     /// More correct for multiline content, but slower.
-    #[allow(dead_code)] // Will be used when settings ui is added
+    #[default]
     VariableList,
     /// Default behaviour for now while resizable columns are being stabilized.
-    #[default]
+    #[allow(dead_code)] // Will be used when settings ui is added
     UniformList,
 }
 
