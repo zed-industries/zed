@@ -1325,12 +1325,10 @@ impl MarkdownElement {
                             .is_some()
                 });
 
-        if !self.style.prevent_mouse_interaction {
-            if is_hovering_clickable {
-                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-            } else {
-                window.set_cursor_style(CursorStyle::IBeam, hitbox);
-            }
+        if is_hovering_clickable {
+            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+        } else {
+            window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
         let on_open_url = self.on_url_click.take();
