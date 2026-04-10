@@ -122,15 +122,8 @@ impl picker::PickerDelegate for WslPickerDelegate {
 
             let query = query.trim_start();
             let smart_case = query.chars().any(|c| c.is_uppercase());
-            self.matches = smol::block_on(fuzzy_nucleo::match_strings(
-                candidates.as_slice(),
-                query,
-                smart_case,
-                true,
-                100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ));
+            self.matches =
+                fuzzy_nucleo::match_strings_sync(&candidates, query, smart_case, true, 100);
             self.matches.sort_unstable_by_key(|m| m.candidate_id);
 
             self.selected_index = self

@@ -95,8 +95,7 @@ impl PartialOrd for StringMatch {
 impl Ord for StringMatch {
     fn cmp(&self, other: &Self) -> Ordering {
         self.score
-            .partial_cmp(&other.score)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&other.score)
             .then_with(|| self.candidate_id.cmp(&other.candidate_id))
     }
 }

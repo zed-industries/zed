@@ -66,8 +66,7 @@ impl PartialOrd for PathMatch {
 impl Ord for PathMatch {
     fn cmp(&self, other: &Self) -> Ordering {
         self.score
-            .partial_cmp(&other.score)
-            .unwrap_or(Ordering::Equal)
+            .total_cmp(&other.score)
             .then_with(|| self.worktree_id.cmp(&other.worktree_id))
             .then_with(|| {
                 other

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings_sync};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window,
@@ -235,22 +235,8 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 })
                 .collect();
         } else {
-            let mut matches = smol::block_on(fuzzy_nucleo::match_strings(
-                &candidates,
-                query,
-                smart_case,
-                true,
-                100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ));
-            matches.sort_unstable_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| a.candidate_id.cmp(&b.candidate_id))
-            });
-            self.filtered_workspaces = matches;
+            self.filtered_workspaces =
+                match_strings_sync(&candidates, query, smart_case, true, 100);
         }
 
         self.selected_index = 0;

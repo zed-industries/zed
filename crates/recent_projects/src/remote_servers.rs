@@ -868,20 +868,34 @@ struct FilteredProject {
     path_positions: Vec<usize>,
 }
 
+struct CandidateMeta {
+    server_index: usize,
+    project_index: Option<usize>,
+    host_byte_len: usize,
+}
+
 fn compute_filter_results(servers: &[ServerFilterData], query: &str) -> Vec<FilteredServer> {
     let smart_case = query.chars().any(|c| c.is_uppercase());
 
     let mut candidates = Vec::new();
-    let mut meta: Vec<(usize, Option<usize>, usize)> = Vec::new();
+    let mut meta: Vec<CandidateMeta> = Vec::new();
 
     for (server_idx, server) in servers.iter().enumerate() {
         if server.project_paths.is_empty() {
-            meta.push((server_idx, None, server.host.len()));
+            meta.push(CandidateMeta {
+                server_index: server_idx,
+                project_index: None,
+                host_byte_len: server.host.len(),
+            });
             candidates.push(StringMatchCandidate::new(candidates.len(), &server.host));
         } else {
             for (proj_idx, paths) in server.project_paths.iter().enumerate() {
                 let combined = format!("{} {paths}", server.host);
-                meta.push((server_idx, Some(proj_idx), server.host.len()));
+                meta.push(CandidateMeta {
+                    server_index: server_idx,
+                    project_index: Some(proj_idx),
+                    host_byte_len: server.host.len(),
+                });
                 candidates.push(StringMatchCandidate::from_string(candidates.len(), combined));
             }
         }
@@ -899,27 +913,28 @@ fn compute_filter_results(servers: &[ServerFilterData], query: &str) -> Vec<Filt
         (0..servers.len()).map(|_| None).collect();
 
     for m in matches {
-        let (server_idx, project_idx, host_len) = meta[m.candidate_id];
+        let meta = &meta[m.candidate_id];
 
-        let entry = server_map[server_idx].get_or_insert_with(|| FilteredServer {
-            server_index: server_idx,
-            host_positions: Vec::new(),
-            project_matches: Vec::new(),
-            score: f64::NEG_INFINITY,
-        });
+        let entry =
+            server_map[meta.server_index].get_or_insert_with(|| FilteredServer {
+                server_index: meta.server_index,
+                host_positions: Vec::new(),
+                project_matches: Vec::new(),
+                score: f64::NEG_INFINITY,
+            });
 
         entry.score = entry.score.max(m.score);
 
-        match project_idx {
+        match meta.project_index {
             None => {
                 entry.host_positions = m.positions;
             }
             Some(proj_idx) => {
                 // +1 accounts for the single-byte space separator in format!("{} {paths}", ...)
-                let host_prefix_len = host_len + 1;
+                let host_prefix_len = meta.host_byte_len + 1;
                 entry
                     .host_positions
-                    .extend(m.positions.iter().copied().filter(|&p| p < host_len));
+                    .extend(m.positions.iter().copied().filter(|&p| p < meta.host_byte_len));
                 entry.project_matches.push(FilteredProject {
                     project_index: proj_idx,
                     path_positions: m
@@ -3418,5 +3433,32 @@ mod filter_tests {
             host,
         );
         assert!(results[0].project_matches.is_empty());
+    }
+
+    #[test]
+    fn test_unicode_host_and_path_positions() {
+        let servers = [server("señor", &["/código/app"])];
+        let results = compute_filter_results(&servers, "señ app");
+
+        assert_eq!(results.len(), 1);
+        let result = &results[0];
+        let host = &servers[0].host;
+        let path = &servers[0].project_paths[0];
+
+        assert!(
+            result.host_positions.iter().all(|&p| p < host.len() && host.is_char_boundary(p)),
+            "host positions {:?} must be valid char boundaries in {:?}",
+            result.host_positions,
+            host,
+        );
+
+        assert_eq!(result.project_matches.len(), 1);
+        let proj = &result.project_matches[0];
+        assert!(
+            proj.path_positions.iter().all(|&p| p < path.len() && path.is_char_boundary(p)),
+            "path positions {:?} must be valid char boundaries in {:?}",
+            proj.path_positions,
+            path,
+        );
     }
 }
