@@ -742,6 +742,8 @@ pub trait GitRepository: Send + Sync {
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
+    fn refs(&self) -> BoxFuture<'_, Result<Arc<[SharedString]>>>;
+
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String, base_branch: Option<String>)
     -> BoxFuture<'_, Result<()>>;
@@ -1632,6 +1634,29 @@ impl GitRepository for RealGitRepository {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git status failed: {stderr}");
                 }
+            })
+            .boxed()
+    }
+
+    fn refs(&self) -> BoxFuture<'_, Result<Arc<[SharedString]>>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let git = git_binary?;
+                let output = git.build_command(&["show-ref"]).output().await?;
+
+                if !output.status.success() {
+                    return Ok(Arc::from([]));
+                }
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let refs = stdout
+                    .lines()
+                    .filter(|line| !line.is_empty())
+                    .map(|line| SharedString::from(line.to_string()))
+                    .collect::<Vec<_>>();
+
+                Ok(refs.into())
             })
             .boxed()
     }

@@ -466,6 +466,15 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn refs(&self) -> BoxFuture<'_, Result<Arc<[gpui::SharedString]>>> {
+        self.with_state_async(false, |state| {
+            let mut refs: Vec<gpui::SharedString> =
+                state.refs.keys().map(|r| r.clone().into()).collect();
+            refs.sort();
+            Ok(refs.into())
+        })
+    }
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
         let fs = self.fs.clone();
         let common_dir_path = self.common_dir_path.clone();

@@ -1148,7 +1148,9 @@ impl GitGraph {
                     }
                 }
             }
-            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
+            RepositoryEvent::HeadChanged
+            | RepositoryEvent::BranchListChanged
+            | RepositoryEvent::RefsChanged => {
                 self.pending_select_sha = None;
                 // Only invalidate if we scanned atleast once,
                 // meaning we are not inside the initial repo loading state
@@ -3933,6 +3935,122 @@ mod tests {
             commits.len(),
             "graph data should be reloaded after switching back"
         );
+    }
+
+    #[gpui::test]
+    async fn test_graph_data_reloaded_after_refs_change(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let initial_head = Oid::from_bytes(&[1; 20]).unwrap();
+        let updated_head = Oid::from_bytes(&[3; 20]).unwrap();
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: initial_head,
+                parents: smallvec![],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+            })],
+        );
+        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+            state.refs = [
+                ("HEAD".to_string(), "1".repeat(40)),
+                ("refs/heads/main".to_string(), "1".repeat(40)),
+            ]
+            .into_iter()
+            .collect();
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let initial_shas = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .graph_data
+                .commits
+                .iter()
+                .map(|commit| commit.data.sha)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(initial_shas, vec![initial_head]);
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: updated_head,
+                parents: smallvec![],
+                ref_names: vec![
+                    "HEAD".into(),
+                    "refs/heads/main".into(),
+                    "refs/tags/v1.0.0".into(),
+                ],
+            })],
+        );
+        fs.with_git_state(Path::new("/project/.git"), true, |state| {
+            state.refs = [
+                ("HEAD".to_string(), "3".repeat(40)),
+                ("refs/heads/main".to_string(), "3".repeat(40)),
+                ("refs/tags/v1.0.0".to_string(), "3".repeat(40)),
+            ]
+            .into_iter()
+            .collect();
+        })
+        .unwrap();
+
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        let reloaded_shas = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .graph_data
+                .commits
+                .iter()
+                .map(|commit| commit.data.sha)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(reloaded_shas, vec![updated_head]);
     }
 
     #[gpui::test]

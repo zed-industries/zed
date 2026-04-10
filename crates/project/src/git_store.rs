@@ -295,6 +295,7 @@ pub struct RepositorySnapshot {
     pub remote_upstream_url: Option<String>,
     pub stash_entries: GitStash,
     pub linked_worktrees: Arc<[GitWorktree]>,
+    pub refs: Arc<[SharedString]>,
 }
 
 type JobId = u64;
@@ -435,6 +436,7 @@ pub enum RepositoryEvent {
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
     GraphEvent((LogSource, LogOrder), GitGraphEvent),
+    RefsChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -3757,6 +3759,7 @@ impl RepositorySnapshot {
             remote_upstream_url: None,
             stash_entries: Default::default(),
             linked_worktrees: Arc::from([]),
+            refs: Arc::from([]),
             path_style,
         }
     }
@@ -4112,7 +4115,9 @@ impl Repository {
             .shared();
 
         cx.subscribe_self(move |this, event: &RepositoryEvent, _| match event {
-            RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
+            RepositoryEvent::HeadChanged
+            | RepositoryEvent::BranchListChanged
+            | RepositoryEvent::RefsChanged => {
                 if this.scan_id > 1 {
                     this.initial_graph_data.clear();
                 }
@@ -7501,14 +7506,15 @@ async fn compute_snapshot(
             })
         }
     };
-    let (branches, head_commit, all_worktrees) = cx
+    let (branches, head_commit, all_worktrees, refs) = cx
         .background_spawn({
             let backend = backend.clone();
             async move {
-                futures::future::try_join3(
+                futures::future::try_join4(
                     backend.branches(),
                     head_commit_future,
                     backend.worktrees(),
+                    backend.refs(),
                 )
                 .await
             }
@@ -7542,6 +7548,7 @@ async fn compute_snapshot(
             branch != this.snapshot.branch || head_commit != this.snapshot.head_commit;
         let branch_list_changed = *branch_list != *this.snapshot.branch_list;
         let worktrees_changed = *linked_worktrees != *this.snapshot.linked_worktrees;
+        let refs_changed = *refs != *this.snapshot.refs;
 
         this.snapshot = RepositorySnapshot {
             id,
@@ -7552,12 +7559,17 @@ async fn compute_snapshot(
             remote_origin_url,
             remote_upstream_url,
             linked_worktrees,
+            refs,
             scan_id: prev_snapshot.scan_id + 1,
             ..prev_snapshot
         };
 
         if head_changed {
             cx.emit(RepositoryEvent::HeadChanged);
+        }
+
+        if refs_changed {
+            cx.emit(RepositoryEvent::RefsChanged);
         }
 
         if branch_list_changed {
