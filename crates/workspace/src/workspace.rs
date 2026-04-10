@@ -9886,7 +9886,7 @@ async fn open_remote_project_inner(
         });
 
         if let Some(project_group_key) = provisional_project_group_key.clone() {
-            multi_workspace.set_provisional_project_group_key(&new_workspace, project_group_key);
+            multi_workspace.set_workspace_group_key(&new_workspace, project_group_key);
         }
         multi_workspace.activate(new_workspace.clone(), window, cx);
         new_workspace
