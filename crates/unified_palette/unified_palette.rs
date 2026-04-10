@@ -91,7 +91,7 @@ impl UnifiedPalette {
                     );
                     let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
                     
-                    let subscription = cx.subscribe(&picker, |this, _, _: &DismissEvent, cx| {
+                    let subscription = cx.subscribe(&picker, |_this, _, _: &DismissEvent, cx| {
                         cx.emit(DismissEvent);
                     });
                     
@@ -122,7 +122,7 @@ impl UnifiedPalette {
             );
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
             
-            let subscription = cx.subscribe(&picker, |this, _, _: &DismissEvent, cx| {
+            let subscription = cx.subscribe(&picker, |_this, _, _: &DismissEvent, cx| {
                 cx.emit(DismissEvent);
             });
             
@@ -214,6 +214,24 @@ impl UnifiedPaletteDelegate {
         }
         self.selected_index = 0;
     }
+    
+    fn search_project_symbols(&mut self, query: &str, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
+        // Project symbols search requires complex async handling
+        // For now, show a placeholder message
+        if !query.is_empty() {
+            log::info!("UnifiedPalette: Project symbols search for '{}' - full implementation pending", query);
+        }
+        self.matches.clear();
+        self.selected_index = 0;
+    }
+    
+    fn search_outline(&mut self, _query: &str, _cx: &mut Context<Picker<Self>>) {
+        // Outline mode requires more complex integration with editor
+        // For now, just clear matches and log
+        log::warn!("UnifiedPalette: Outline mode not fully implemented yet");
+        self.matches.clear();
+        self.selected_index = 0;
+    }
 }
 
 impl PickerDelegate for UnifiedPaletteDelegate {
@@ -280,9 +298,13 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                 self.search_line(&stripped_query, cx);
                 log::debug!("UnifiedPalette: Found {} line matches", self.matches.len());
             }
-            PaletteMode::ProjectSymbols | PaletteMode::Outline => {
-                log::warn!("UnifiedPalette: {:?} mode not yet implemented", self.mode);
-                self.matches.clear();
+            PaletteMode::ProjectSymbols => {
+                self.search_project_symbols(&stripped_query, window, cx);
+                log::debug!("UnifiedPalette: Searching for project symbols with query: '{}'", stripped_query);
+            }
+            PaletteMode::Outline => {
+                self.search_outline(&stripped_query, cx);
+                log::debug!("UnifiedPalette: Found {} outline matches", self.matches.len());
             }
         }
         
