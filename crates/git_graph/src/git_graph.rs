@@ -58,6 +58,7 @@ const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
+const ROW_HEIGHT_FONT_SIZE_MULTIPLIER: f32 = 1.75;
 
 struct CopiedState {
     copied_at: Option<Instant>,
@@ -930,7 +931,7 @@ impl GitGraph {
     fn row_height(cx: &App) -> Pixels {
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.ui_font_size(cx);
-        font_size * (1.0 + 0.75)
+        font_size * ROW_HEIGHT_FONT_SIZE_MULTIPLIER
     }
 
     fn graph_canvas_content_width(&self) -> Pixels {
