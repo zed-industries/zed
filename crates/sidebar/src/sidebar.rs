@@ -1419,7 +1419,6 @@ impl Sidebar {
                 workspace,
                 worktrees,
             } => {
-                // TODO DL: Maybe these can derived somewhere else? Maybe in update or rebuild?
                 let group_has_threads = self
                     .contents
                     .entries
@@ -3705,9 +3704,6 @@ impl Sidebar {
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), window, cx);
         });
-
-        // TODO DL: The reason why the new thread icon button doesn't create a draft item for non-activated workspaces
-        // might be here. We're only calling activate after getting the workspace?
 
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
