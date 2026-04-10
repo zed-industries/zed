@@ -1182,6 +1182,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
     use project::Project;
+    use remote::WslConnectionOptions;
     use std::path::Path;
     use std::rc::Rc;
 
@@ -1231,6 +1232,14 @@ mod tests {
             cx.set_global(settings_store);
             ThreadMetadataStore::init_global(cx);
             ThreadStore::init_global(cx);
+        });
+        cx.run_until_parked();
+    }
+
+    fn run_thread_metadata_migrations(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let migration_task = migrate_thread_metadata(cx);
+            migrate_thread_remote_connections(cx, migration_task);
         });
         cx.run_until_parked();
     }
@@ -1494,8 +1503,7 @@ mod tests {
             cx.run_until_parked();
         }
 
-        cx.update(|cx| migrate_thread_metadata(cx).detach());
-        cx.run_until_parked();
+        run_thread_metadata_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -1576,8 +1584,7 @@ mod tests {
         save_task.await.unwrap();
         cx.run_until_parked();
 
-        cx.update(|cx| migrate_thread_metadata(cx).detach());
-        cx.run_until_parked();
+        run_thread_metadata_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -1586,6 +1593,81 @@ mod tests {
 
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].session_id.0.as_ref(), "existing-session");
+    }
+
+    #[gpui::test]
+    async fn test_migrate_thread_remote_connections_backfills_from_workspace_db(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let folder_paths = PathList::new(&[Path::new("/remote-project")]);
+        let updated_at = Utc::now();
+        let metadata = make_metadata(
+            "remote-session",
+            "Remote Thread",
+            updated_at,
+            folder_paths.clone(),
+        );
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let workspace_db = cx.update(|cx| WorkspaceDb::global(cx));
+        let workspace_id = workspace_db.next_id().await.unwrap();
+        let serialized_paths = folder_paths.serialize();
+        let remote_connection_id = 1_i64;
+        workspace_db
+            .write(move |conn| {
+                let mut stmt = Statement::prepare(
+                    conn,
+                    "INSERT INTO remote_connections(id, kind, user, distro) VALUES (?1, ?2, ?3, ?4)",
+                )?;
+                let mut next_index = stmt.bind(&remote_connection_id, 1)?;
+                next_index = stmt.bind(&"wsl", next_index)?;
+                next_index = stmt.bind(&Some("anth".to_string()), next_index)?;
+                stmt.bind(&Some("Ubuntu".to_string()), next_index)?;
+                stmt.exec()?;
+
+                let mut stmt = Statement::prepare(
+                    conn,
+                    "INSERT INTO workspaces(workspace_id, paths, paths_order, remote_connection_id, timestamp) VALUES (?1, ?2, ?3, ?4, CURRENT_TIMESTAMP)",
+                )?;
+                let mut next_index = stmt.bind(&workspace_id, 1)?;
+                next_index = stmt.bind(&serialized_paths.paths, next_index)?;
+                next_index = stmt.bind(&serialized_paths.order, next_index)?;
+                stmt.bind(&Some(remote_connection_id as i32), next_index)?;
+                stmt.exec()
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            migrate_thread_remote_connections(cx, Task::ready(Ok(())));
+        });
+        cx.run_until_parked();
+
+        let metadata = cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store
+                .read(cx)
+                .entry(&acp::SessionId::new("remote-session"))
+                .cloned()
+                .expect("expected migrated metadata row")
+        });
+
+        assert_eq!(
+            metadata.remote_connection,
+            Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: Some("anth".to_string()),
+            }))
+        );
     }
 
     #[gpui::test]
@@ -1636,8 +1718,7 @@ mod tests {
             cx.run_until_parked();
         }
 
-        cx.update(|cx| migrate_thread_metadata(cx).detach());
-        cx.run_until_parked();
+        run_thread_metadata_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
