@@ -101,9 +101,13 @@ pub enum MultiWorkspaceEvent {
     ActiveWorkspaceChanged,
     WorkspaceAdded(Entity<Workspace>),
     WorkspaceRemoved(EntityId),
-    ProjectGroupKeyChanged {
-        old_key: ProjectGroupKey,
-        new_key: ProjectGroupKey,
+    WorktreePathAdded {
+        old_main_paths: PathList,
+        added_path: PathBuf,
+    },
+    WorktreePathRemoved {
+        old_main_paths: PathList,
+        removed_path: PathBuf,
     },
 }
 
@@ -682,7 +686,20 @@ impl MultiWorkspace {
 
         self.remove_stale_project_group_keys(cx);
 
-        cx.emit(MultiWorkspaceEvent::ProjectGroupKeyChanged { old_key, new_key });
+        let old_main_paths = old_key.path_list().clone();
+        for added_path in new_paths.iter().filter(|p| !old_paths.contains(p)) {
+            cx.emit(MultiWorkspaceEvent::WorktreePathAdded {
+                old_main_paths: old_main_paths.clone(),
+                added_path: added_path.clone(),
+            });
+        }
+        for removed_path in old_paths.iter().filter(|p| !new_paths.contains(p)) {
+            cx.emit(MultiWorkspaceEvent::WorktreePathRemoved {
+                old_main_paths: old_main_paths.clone(),
+                removed_path: removed_path.clone(),
+            });
+        }
+
         self.serialize(cx);
         cx.notify();
     }

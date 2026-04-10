@@ -4,7 +4,7 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentSettings;
-use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
+use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore, ThreadWorktreePaths};
 use agent_ui::thread_worktree_archive;
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
@@ -368,45 +368,17 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 /// wouldn't identify which main project it belongs to, the main project
 /// name is prefixed for disambiguation (e.g. `project:feature`).
 ///
-/// `linked_to_main` maps linked worktree abs paths to their main repo
-/// abs path, used to pick the correct prefix. Falls back to a heuristic
-/// when no mapping is available.
-fn worktree_info_from_thread_paths(
-    folder_paths: &PathList,
-    main_worktree_paths: &PathList,
-    linked_to_main: &HashMap<PathBuf, PathBuf>,
-) -> Vec<WorktreeInfo> {
-    let main_paths = main_worktree_paths.paths();
-
+fn worktree_info_from_thread_paths(worktree_paths: &ThreadWorktreePaths) -> Vec<WorktreeInfo> {
     let mut infos: Vec<WorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
+    let mut unique_main_count = HashSet::new();
 
-    for path in folder_paths.paths().iter() {
-        let is_main = main_paths.iter().any(|mp| mp.as_path() == path.as_path());
-        if is_main {
-            let Some(name) = path.file_name() else {
-                continue;
-            };
-            infos.push(WorktreeInfo {
-                name: SharedString::from(name.to_string_lossy().to_string()),
-                full_path: SharedString::from(path.display().to_string()),
-                highlight_positions: Vec::new(),
-                kind: ui::WorktreeKind::Main,
-            });
-        } else {
-            let Some(main_path) = linked_to_main
-                .get(&**path)
-                .and_then(|main| main_paths.iter().find(|mp| mp.as_path() == main.as_path()))
-                .or_else(|| {
-                    main_paths
-                        .iter()
-                        .find(|mp| mp.file_name() == path.file_name())
-                        .or(main_paths.first())
-                })
-            else {
-                continue;
-            };
-            let short_name = linked_worktree_short_name(main_path, path).unwrap_or_default();
+    for (main_path, folder_path) in worktree_paths.ordered_pairs() {
+        unique_main_count.insert(main_path.clone());
+        let is_linked = main_path != folder_path;
+
+        if is_linked {
+            let short_name = linked_worktree_short_name(main_path, folder_path).unwrap_or_default();
             let project_name = main_path
                 .file_name()
                 .map(|n| SharedString::from(n.to_string_lossy().to_string()))
@@ -414,9 +386,19 @@ fn worktree_info_from_thread_paths(
             linked_short_names.push((short_name.clone(), project_name));
             infos.push(WorktreeInfo {
                 name: short_name,
-                full_path: SharedString::from(path.display().to_string()),
+                full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Linked,
+            });
+        } else {
+            let Some(name) = folder_path.file_name() else {
+                continue;
+            };
+            infos.push(WorktreeInfo {
+                name: SharedString::from(name.to_string_lossy().to_string()),
+                full_path: SharedString::from(folder_path.display().to_string()),
+                highlight_positions: Vec::new(),
+                kind: ui::WorktreeKind::Main,
             });
         }
     }
@@ -427,7 +409,7 @@ fn worktree_info_from_thread_paths(
     // which project it belongs to.
     let all_same_name = infos.len() > 1 && infos.iter().all(|i| i.name == infos[0].name);
 
-    if main_paths.len() > 1 && !all_same_name {
+    if unique_main_count.len() > 1 && !all_same_name {
         for (info, (_short_name, project_name)) in infos
             .iter_mut()
             .filter(|i| i.kind == ui::WorktreeKind::Linked)
@@ -524,11 +506,29 @@ impl Sidebar {
                 MultiWorkspaceEvent::WorkspaceRemoved(_) => {
                     this.update_entries(cx);
                 }
-                MultiWorkspaceEvent::ProjectGroupKeyChanged { old_key, new_key } => {
+                MultiWorkspaceEvent::WorktreePathAdded {
+                    old_main_paths,
+                    added_path,
+                } => {
+                    let added_path = added_path.clone();
                     ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                        store.update_main_worktree_paths(
-                            old_key.path_list(),
-                            new_key.path_list().clone(),
+                        store.change_worktree_paths(
+                            old_main_paths,
+                            |paths| paths.add_path(&added_path, &added_path),
+                            cx,
+                        );
+                    });
+                    this.update_entries(cx);
+                }
+                MultiWorkspaceEvent::WorktreePathRemoved {
+                    old_main_paths,
+                    removed_path,
+                } => {
+                    let removed_path = removed_path.clone();
+                    ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                        store.change_worktree_paths(
+                            old_main_paths,
+                            |paths| paths.remove_main_path(&removed_path),
                             cx,
                         );
                     });
@@ -973,21 +973,6 @@ impl Sidebar {
                 .as_ref()
                 .is_some_and(|active| group_workspaces.contains(active));
 
-            // Build a mapping from linked worktree paths to their main
-            // repo path, used to correctly attribute chips.
-            let linked_to_main: HashMap<PathBuf, PathBuf> = group_workspaces
-                .iter()
-                .flat_map(|ws| root_repository_snapshots(ws, cx))
-                .flat_map(|snapshot| {
-                    let main_path = snapshot.original_repo_abs_path.to_path_buf();
-                    snapshot
-                        .linked_worktrees()
-                        .iter()
-                        .map(move |wt| (wt.path.clone(), main_path.clone()))
-                        .collect::<Vec<_>>()
-                })
-                .collect();
-
             // Collect live thread infos from all workspaces in this group.
             let live_infos: Vec<_> = group_workspaces
                 .iter()
@@ -1028,11 +1013,7 @@ impl Sidebar {
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        let worktrees = worktree_info_from_thread_paths(
-                            row.folder_paths(),
-                            row.main_worktree_paths(),
-                            &linked_to_main,
-                        );
+                        let worktrees = worktree_info_from_thread_paths(&row.worktree_paths);
                         ThreadEntry {
                             metadata: row,
                             icon,
@@ -1261,14 +1242,11 @@ impl Sidebar {
                 // Emit a DraftThread entry when the active draft belongs to this group.
                 if is_draft_for_group {
                     if let Some(ActiveEntry::Draft(draft_ws)) = &self.active_entry {
-                        let ws_path_list = workspace_path_list(draft_ws, cx);
-                        let main_worktree_paths =
-                            draft_ws.read(cx).project_group_key(cx).path_list().clone();
-                        let worktrees = worktree_info_from_thread_paths(
-                            &ws_path_list,
-                            &main_worktree_paths,
-                            &linked_to_main,
+                        let ws_worktree_paths = ThreadWorktreePaths::from_project(
+                            draft_ws.read(cx).project().read(cx),
+                            cx,
                         );
+                        let worktrees = worktree_info_from_thread_paths(&ws_worktree_paths);
                         entries.push(ListEntry::DraftThread {
                             key: group_key.clone(),
                             workspace: None,
@@ -1295,18 +1273,16 @@ impl Sidebar {
                         if Some(ws.entity_id()) == draft_ws_id {
                             continue;
                         }
-                        let ws_path_list = workspace_path_list(ws, cx);
-                        let ws_main_paths = ws.read(cx).project_group_key(cx).path_list().clone();
-                        let has_linked_worktrees = worktree_info_from_thread_paths(
-                            &ws_path_list,
-                            &ws_main_paths,
-                            &linked_to_main,
-                        )
-                        .iter()
-                        .any(|wt| wt.kind == ui::WorktreeKind::Linked);
+                        let ws_worktree_paths =
+                            ThreadWorktreePaths::from_project(ws.read(cx).project().read(cx), cx);
+                        let has_linked_worktrees =
+                            worktree_info_from_thread_paths(&ws_worktree_paths)
+                                .iter()
+                                .any(|wt| wt.kind == ui::WorktreeKind::Linked);
                         if !has_linked_worktrees {
                             continue;
                         }
+                        let ws_path_list = workspace_path_list(ws, cx);
                         let store = thread_store.read(cx);
                         let has_threads = store.entries_for_path(&ws_path_list).next().is_some()
                             || store
@@ -1316,11 +1292,7 @@ impl Sidebar {
                         if has_threads {
                             continue;
                         }
-                        let worktrees = worktree_info_from_thread_paths(
-                            &ws_path_list,
-                            &ws_main_paths,
-                            &linked_to_main,
-                        );
+                        let worktrees = worktree_info_from_thread_paths(&ws_worktree_paths);
 
                         entries.push(ListEntry::DraftThread {
                             key: group_key.clone(),

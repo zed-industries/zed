@@ -720,31 +720,49 @@ impl ThreadMetadataStore {
         }
     }
 
-    pub fn update_main_worktree_paths(
+    /// Apply a mutation to the worktree paths of all threads whose current
+    /// `main_worktree_paths` matches `current_main_paths`, then re-index.
+    pub fn change_worktree_paths(
         &mut self,
-        old_paths: &PathList,
-        new_paths: PathList,
+        current_main_paths: &PathList,
+        mutate: impl Fn(&mut ThreadWorktreePaths),
         cx: &mut Context<Self>,
     ) {
-        let session_ids = match self.threads_by_main_paths.remove(old_paths) {
-            Some(ids) if !ids.is_empty() => ids,
-            _ => return,
-        };
-
-        let new_index = self
+        let session_ids: Vec<_> = self
             .threads_by_main_paths
-            .entry(new_paths.clone())
-            .or_default();
+            .get(current_main_paths)
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect();
+
+        if session_ids.is_empty() {
+            return;
+        }
 
         for session_id in &session_ids {
-            new_index.insert(session_id.clone());
-
             if let Some(thread) = self.threads.get_mut(session_id) {
-                thread.worktree_paths = ThreadWorktreePaths::from_path_lists(
-                    new_paths.clone(),
-                    thread.folder_paths().clone(),
-                )
-                .unwrap_or_else(|_| ThreadWorktreePaths::from_folder_paths(thread.folder_paths()));
+                if let Some(ids) = self
+                    .threads_by_main_paths
+                    .get_mut(thread.main_worktree_paths())
+                {
+                    ids.remove(session_id);
+                }
+                if let Some(ids) = self.threads_by_paths.get_mut(thread.folder_paths()) {
+                    ids.remove(session_id);
+                }
+
+                mutate(&mut thread.worktree_paths);
+
+                self.threads_by_main_paths
+                    .entry(thread.main_worktree_paths().clone())
+                    .or_default()
+                    .insert(session_id.clone());
+                self.threads_by_paths
+                    .entry(thread.folder_paths().clone())
+                    .or_default()
+                    .insert(session_id.clone());
+
                 self.pending_thread_ops_tx
                     .try_send(DbOperation::Upsert(thread.clone()))
                     .log_err();

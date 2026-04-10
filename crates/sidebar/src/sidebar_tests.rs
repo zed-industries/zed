@@ -2778,6 +2778,136 @@ async fn test_worktree_add_and_remove_migrates_threads(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_worktree_add_and_remove_preserves_thread_path_associations(cx: &mut TestAppContext) {
+    // Verifies that adding/removing folders to a project correctly updates
+    // each thread's worktree_paths (both folder_paths and main_worktree_paths)
+    // while preserving per-path associations for linked worktrees.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature"),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "aaa".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    fs.insert_tree("/other-project", serde_json::json!({ ".git": {} }))
+        .await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+    // Start with a linked worktree workspace: visible root is /wt-feature,
+    // main repo is /project.
+    let project =
+        project::Project::test(fs.clone() as Arc<dyn Fs>, ["/wt-feature".as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let _sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Save a thread. It should have folder_paths=[/wt-feature], main=[/project].
+    save_named_thread_metadata("thread-1", "Thread 1", &project, cx).await;
+
+    let session_id = acp::SessionId::new(Arc::from("thread-1"));
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        let thread = store.entry(&session_id).expect("thread should exist");
+        assert_eq!(
+            thread.folder_paths().paths(),
+            &[PathBuf::from("/wt-feature")],
+            "initial folder_paths should be the linked worktree"
+        );
+        assert_eq!(
+            thread.main_worktree_paths().paths(),
+            &[PathBuf::from("/project")],
+            "initial main_worktree_paths should be the main repo"
+        );
+    });
+
+    // Add /other-project to the workspace.
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/other-project", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    // Thread should now have both paths, with correct associations.
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        let thread = store.entry(&session_id).expect("thread should exist");
+        let pairs: Vec<_> = thread
+            .worktree_paths
+            .ordered_pairs()
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .collect();
+        assert!(
+            pairs.contains(&(PathBuf::from("/project"), PathBuf::from("/wt-feature"))),
+            "linked worktree association should be preserved, got: {:?}",
+            pairs
+        );
+        assert!(
+            pairs.contains(&(
+                PathBuf::from("/other-project"),
+                PathBuf::from("/other-project")
+            )),
+            "new folder should have main == folder, got: {:?}",
+            pairs
+        );
+    });
+
+    // Remove /other-project.
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .visible_worktrees(cx)
+            .find(|wt| wt.read(cx).abs_path().as_ref() == Path::new("/other-project"))
+            .map(|wt| wt.read(cx).id())
+            .expect("should find other-project worktree")
+    });
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    // Thread should be back to original state.
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        let thread = store.entry(&session_id).expect("thread should exist");
+        assert_eq!(
+            thread.folder_paths().paths(),
+            &[PathBuf::from("/wt-feature")],
+            "folder_paths should revert to just the linked worktree"
+        );
+        assert_eq!(
+            thread.main_worktree_paths().paths(),
+            &[PathBuf::from("/project")],
+            "main_worktree_paths should revert to just the main repo"
+        );
+        let pairs: Vec<_> = thread
+            .worktree_paths
+            .ordered_pairs()
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![(PathBuf::from("/project"), PathBuf::from("/wt-feature"))],
+            "linked worktree association should be preserved through add+remove cycle"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_worktree_add_key_collision_removes_duplicate_workspace(cx: &mut TestAppContext) {
     // When a worktree is added to workspace A and the resulting key matches
     // an existing workspace B's key (and B has the same root paths), B
@@ -3078,7 +3208,6 @@ async fn test_worktree_collision_keeps_active_workspace(cx: &mut TestAppContext)
             //
             "v [project-a, project-b]",
             "  [~ Draft] (active)",
-            "  [+ New Thread {project-a:wt-feature}]",
             "  Thread A",
             "  Worktree Thread {project-a:wt-feature}",
             "  Thread B",
