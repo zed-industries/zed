@@ -203,7 +203,8 @@ impl CsvPreviewView {
             })
             .collect();
 
-        let total_value_count = column_filters.len();
+        let available_value_count = available.len();
+        let unavailable_value_count = unavailable.len();
         let selected_row_count: usize = column_filters
             .iter()
             .filter_map(|(entry, state)| {
@@ -219,14 +220,15 @@ impl CsvPreviewView {
             .collect();
 
         let summary_header: SharedString = if selected_row_count > 0 {
-            format!("{total_value_count} values · {selected_row_count} rows selected").into()
+            format!("{available_value_count} values · {selected_row_count} rows selected").into()
         } else {
-            format!("{total_value_count} values").into()
+            format!("{available_value_count} values").into()
         };
 
-        ContextMenu::build(window, cx, move |menu, _, _| {
-            let mut menu = menu.header(summary_header.clone());
+        let unavailable_header: SharedString =
+            format!("Hidden by other filters ({unavailable_value_count} values)").into();
 
+        ContextMenu::build(window, cx, move |mut menu, _, _| {
             if has_active_filters {
                 menu = menu
                     .toggleable_entry("Clear all", false, ui::IconPosition::Start, None, {
@@ -240,6 +242,8 @@ impl CsvPreviewView {
                     })
                     .separator();
             }
+
+            let mut menu = menu.header(summary_header.clone());
 
             for entry in &available_cloned {
                 let is_applied = applied_states
@@ -263,7 +267,7 @@ impl CsvPreviewView {
             }
 
             if !unavailable_cloned.is_empty() {
-                menu = menu.separator().header("Hidden by other filters");
+                menu = menu.separator().header(unavailable_header.clone());
                 for (entry, _blocked_by) in &unavailable_cloned {
                     let label: SharedString =
                         format_filter_label(entry.content.as_ref(), entry.occurred_times()).into();
