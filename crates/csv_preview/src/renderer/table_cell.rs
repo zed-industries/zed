@@ -40,11 +40,10 @@ fn create_table_cell(
             VerticalAlignment::Top => div.items_start(),
             VerticalAlignment::Center => div.items_center(),
         })
-        .map(|div| match vertical_alignment {
-            VerticalAlignment::Top => div.content_start(),
-            VerticalAlignment::Center => div.content_center(),
+        .map(|div| match font_type {
+            FontType::Ui => div.font_ui(cx),
+            FontType::Monospace => div.font_buffer(cx),
         })
-        .font_buffer(cx)
         .tooltip(Tooltip::text(cell_content.clone()))
         .child(div().child(cell_content))
 }

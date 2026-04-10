@@ -6,7 +6,7 @@ use ui::{
 
 use crate::{
     CsvPreviewView,
-    settings::RowIdentifiers,
+    settings::{FontType, RowIdentifiers, VerticalAlignment},
     types::{DataRow, DisplayRow, LineNumber},
 };
 
@@ -174,9 +174,11 @@ impl CsvPreviewView {
             .h_full()
             .text_ui(cx)
             .text_color(cx.theme().colors().text_muted)
-            // Row identifiers are always centered
-            .items_center()
             .justify_center()
+            .map(|div| match self.settings.vertical_alignment {
+                VerticalAlignment::Top => div.items_start(),
+                VerticalAlignment::Center => div.items_center(),
+            })
             .map(|div| match self.settings.font_type {
                 FontType::Ui => div.font_ui(cx),
                 FontType::Monospace => div.font_buffer(cx),
