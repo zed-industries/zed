@@ -1818,7 +1818,6 @@ impl Sidebar {
 
                         let project_group_key = project_group_key.clone();
                         let multi_workspace = multi_workspace.clone();
-                        let weak_menu = weak_menu.clone();
                         menu.separator()
                             .entry("Remove Project", None, move |window, cx| {
                                 multi_workspace
