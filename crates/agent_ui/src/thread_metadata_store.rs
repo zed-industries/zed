@@ -149,7 +149,9 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
                 SerializedWorkspaceLocation::Remote(remote_connection)
                     if !local_path_lists.contains(&path_list) =>
                 {
-                    remote_path_lists.insert(path_list, remote_connection);
+                    remote_path_lists
+                        .entry(path_list)
+                        .or_insert(remote_connection);
                 }
                 _ => {}
             }
