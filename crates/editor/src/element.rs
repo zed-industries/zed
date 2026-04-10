@@ -552,7 +552,7 @@ impl EditorElement {
                 cx.propagate();
             }
         });
-        if editor.read(cx).enable_format_selections() {
+        if editor.read(cx).can_format_selections(cx) {
             register_action(editor, window, |editor, action, window, cx| {
                 if let Some(task) = editor.format_selections(action, window, cx) {
                     editor.detach_and_notify_err(task, window, cx);

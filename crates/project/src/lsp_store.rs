@@ -3964,7 +3964,6 @@ pub struct LspStore {
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     semantic_token_config: SemanticTokenConfig,
     lsp_data: HashMap<BufferId, BufferLspData>,
-    registered_language_servers_by_buffer: HashMap<BufferId, HashSet<LanguageServerId>>,
     buffer_reload_tasks: HashMap<BufferId, Task<anyhow::Result<()>>>,
     next_hint_id: Arc<AtomicUsize>,
 }
@@ -4293,7 +4292,6 @@ impl LspStore {
             lsp_server_capabilities: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             lsp_data: HashMap::default(),
-            registered_language_servers_by_buffer: HashMap::default(),
             buffer_reload_tasks: HashMap::default(),
             next_hint_id: Arc::default(),
             active_entry: None,
@@ -4357,7 +4355,6 @@ impl LspStore {
             semantic_token_config: SemanticTokenConfig::new(cx),
             next_hint_id: Arc::default(),
             lsp_data: HashMap::default(),
-            registered_language_servers_by_buffer: HashMap::default(),
             buffer_reload_tasks: HashMap::default(),
             active_entry: None,
 
@@ -4378,7 +4375,6 @@ impl LspStore {
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
                 let buffer_id = buffer.read(cx).remote_id();
-                self.clear_language_server_registrations_for_buffer(buffer_id);
                 if let Some(local) = self.as_local_mut()
                     && let Some(old_file) = File::from_dyn(old_file.as_ref())
                 {
@@ -5021,9 +5017,6 @@ impl LspStore {
                 .copied()
                 .collect();
         }
-        if let Some(server_ids) = self.registered_language_servers_by_buffer.get(&buffer_id) {
-            return server_ids.iter().copied().collect();
-        }
 
         let relevant_language_servers = self.relevant_server_names_for_capability_check(buffer, cx);
         self.language_server_statuses
@@ -5184,22 +5177,6 @@ impl LspStore {
             .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
             .map(|(server_id, server_name, _)| (server_id, server_name))
             .collect()
-    }
-
-    fn track_language_server_registration_for_buffer(
-        &mut self,
-        buffer_id: BufferId,
-        language_server_id: LanguageServerId,
-    ) {
-        self.registered_language_servers_by_buffer
-            .entry(buffer_id)
-            .or_default()
-            .insert(language_server_id);
-    }
-
-    fn clear_language_server_registrations_for_buffer(&mut self, buffer_id: BufferId) {
-        self.registered_language_servers_by_buffer
-            .remove(&buffer_id);
     }
 
     pub fn request_lsp<R>(
@@ -9783,27 +9760,8 @@ impl LspStore {
                     lsp_store.disk_based_diagnostics_finished(language_server_id, cx)
                 }
 
-                proto::update_language_server::Variant::RegisteredForBuffer(update) => {
-                    if let Ok(buffer_id) = BufferId::new(update.buffer_id) {
-                        lsp_store.track_language_server_registration_for_buffer(
-                            buffer_id,
-                            language_server_id,
-                        );
-                    }
-                    cx.emit(LspStoreEvent::LanguageServerUpdate {
-                        language_server_id,
-                        name: envelope
-                            .payload
-                            .server_name
-                            .map(SharedString::new)
-                            .map(LanguageServerName),
-                        message: proto::update_language_server::Variant::RegisteredForBuffer(
-                            update,
-                        ),
-                    });
-                }
-
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)
+                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_)
                 | non_lsp @ proto::update_language_server::Variant::MetadataUpdated(_) => {
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
@@ -12330,11 +12288,6 @@ impl LspStore {
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.remove_server_data(for_server);
         }
-        self.registered_language_servers_by_buffer
-            .retain(|_, servers| {
-                servers.remove(&for_server);
-                !servers.is_empty()
-            });
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
             local

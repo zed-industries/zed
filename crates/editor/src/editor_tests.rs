@@ -14255,10 +14255,7 @@ async fn setup_range_format_test(
     .await
 }
 
-fn wait_for_format_selections_availability(cx: &mut VisualTestContext) {
-    cx.executor().run_until_parked();
-    cx.executor()
-        .advance_clock(FORMAT_SELECTIONS_AVAILABILITY_DEBOUNCE_TIMEOUT);
+fn refresh_editor_actions(cx: &mut VisualTestContext) {
     cx.executor().run_until_parked();
     cx.update(|window, cx| {
         let _ = window.draw(cx);
@@ -14278,7 +14275,7 @@ async fn test_format_selections_action_available_when_range_formatting_is_suppor
         });
     });
 
-    wait_for_format_selections_availability(cx);
+    refresh_editor_actions(cx);
 
     assert!(cx.update(|window, cx| { window.is_action_available(&FormatSelections, cx) }));
 }
@@ -14304,13 +14301,15 @@ async fn test_format_selections_action_hidden_without_range_formatting_support(
         });
     });
 
-    wait_for_format_selections_availability(cx);
+    refresh_editor_actions(cx);
 
     assert!(!cx.update(|window, cx| { window.is_action_available(&FormatSelections, cx) }));
 }
 
 #[gpui::test]
-async fn test_format_selections_is_noop_without_range_capable_formatter(cx: &mut TestAppContext) {
+async fn test_format_selections_action_hidden_without_range_capable_formatter(
+    cx: &mut TestAppContext,
+) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(FormatterList::Single(Formatter::External {
             command: "awk".into(),
@@ -14357,16 +14356,9 @@ async fn test_format_selections_is_noop_without_range_capable_formatter(cx: &mut
         });
     });
 
-    wait_for_format_selections_availability(cx);
+    refresh_editor_actions(cx);
 
     assert!(!cx.update(|window, cx| { window.is_action_available(&FormatSelections, cx) }));
-    assert!(
-        editor
-            .update_in(cx, |editor, window, cx| {
-                editor.format_selections(&FormatSelections, window, cx)
-            })
-            .is_none()
-    );
 }
 
 #[gpui::test]
