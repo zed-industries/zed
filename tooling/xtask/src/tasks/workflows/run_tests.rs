@@ -202,7 +202,7 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
-            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "assets" | sort -u)
           fi
 
           # Combine all changed packages
