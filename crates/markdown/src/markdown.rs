@@ -1465,9 +1465,7 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
-                    let source_index = rendered_text
-                        .source_index_for_position(event.position)
-                        .ok();
+                    let source_index = rendered_text.source_index_for_position(event.position).ok();
                     if let Some(pressed_footnote_ref) = markdown.pressed_footnote_ref.take()
                         && source_index
                             .and_then(|ix| rendered_text.footnote_ref_for_source_index(ix))
@@ -1480,8 +1478,7 @@ impl MarkdownElement {
                             cx.notify();
                         }
                     } else if let Some(pressed_link) = markdown.pressed_link.take()
-                        && source_index
-                            .and_then(|ix| rendered_text.link_for_source_index(ix))
+                        && source_index.and_then(|ix| rendered_text.link_for_source_index(ix))
                             == Some(&pressed_link)
                     {
                         if let Some(open_url) = on_open_url.as_ref() {
@@ -2968,7 +2965,6 @@ impl RenderedText {
             .iter()
             .find(|fref| fref.source_range.contains(&source_index))
     }
-
 }
 
 #[cfg(test)]
