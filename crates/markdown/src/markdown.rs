@@ -1353,17 +1353,19 @@ impl MarkdownElement {
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
+                        let source_index =
+                            match rendered_text.source_index_for_position(event.position) {
+                                Ok(ix) | Err(ix) => ix,
+                            };
                         if let Some(footnote_ref) =
-                            rendered_text.footnote_ref_for_position(event.position)
+                            rendered_text.footnote_ref_for_source_index(source_index)
                         {
                             markdown.pressed_footnote_ref = Some(footnote_ref.clone());
-                        } else if let Some(link) = rendered_text.link_for_position(event.position) {
+                        } else if let Some(link) =
+                            rendered_text.link_for_source_index(source_index)
+                        {
                             markdown.pressed_link = Some(link.clone());
                         } else {
-                            let source_index =
-                                match rendered_text.source_index_for_position(event.position) {
-                                    Ok(ix) | Err(ix) => ix,
-                                };
                             if let Some(handler) = on_source_click.as_ref() {
                                 let blocked = handler(source_index, event.click_count, window, cx);
                                 if blocked {
@@ -1455,9 +1457,13 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
+                    let source_index = rendered_text
+                        .source_index_for_position(event.position)
+                        .ok();
                     if let Some(pressed_footnote_ref) = markdown.pressed_footnote_ref.take()
-                        && Some(&pressed_footnote_ref)
-                            == rendered_text.footnote_ref_for_position(event.position)
+                        && source_index
+                            .and_then(|ix| rendered_text.footnote_ref_for_source_index(ix))
+                            == Some(&pressed_footnote_ref)
                     {
                         if let Some(source_index) =
                             markdown.footnote_definition_content_start(&pressed_footnote_ref.label)
@@ -1466,7 +1472,9 @@ impl MarkdownElement {
                             cx.notify();
                         }
                     } else if let Some(pressed_link) = markdown.pressed_link.take()
-                        && Some(&pressed_link) == rendered_text.link_for_position(event.position)
+                        && source_index
+                            .and_then(|ix| rendered_text.link_for_source_index(ix))
+                            == Some(&pressed_link)
                     {
                         if let Some(open_url) = on_open_url.as_ref() {
                             open_url(pressed_link.destination_url, window, cx);
@@ -2953,15 +2961,6 @@ impl RenderedText {
             .find(|fref| fref.source_range.contains(&source_index))
     }
 
-    fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {
-        let source_index = self.source_index_for_position(position).ok()?;
-        self.link_for_source_index(source_index)
-    }
-
-    fn footnote_ref_for_position(&self, position: Point<Pixels>) -> Option<&RenderedFootnoteRef> {
-        let source_index = self.source_index_for_position(position).ok()?;
-        self.footnote_ref_for_source_index(source_index)
-    }
 }
 
 #[cfg(test)]

@@ -1143,13 +1143,13 @@ mod tests {
 
     #[test]
     fn test_footnotes() {
+        let parsed = parse_markdown_with_options(
+            "Text with a footnote[^1] and some more text.\n\n[^1]: This is the footnote content.",
+            false,
+            false,
+        );
         assert_eq!(
-            parse_markdown_with_options(
-                "Text with a footnote[^1] and some more text.\n\n[^1]: This is the footnote content.",
-                false,
-                false
-            )
-            .events,
+            parsed.events,
             vec![
                 (0..45, RootStart),
                 (0..45, Start(Paragraph)),
@@ -1167,6 +1167,20 @@ mod tests {
                 (46..81, RootEnd(1)),
             ]
         );
+        assert_eq!(parsed.footnote_definitions.len(), 1);
+        assert_eq!(parsed.footnote_definitions.get("1").copied(), Some(52));
+    }
+
+    #[test]
+    fn test_footnote_definitions_multiple() {
+        let parsed = parse_markdown_with_options(
+            "Text[^a] and[^b].\n\n[^a]: First.\n\n[^b]: Second.",
+            false,
+            false,
+        );
+        assert_eq!(parsed.footnote_definitions.len(), 2);
+        assert!(parsed.footnote_definitions.contains_key("a"));
+        assert!(parsed.footnote_definitions.contains_key("b"));
     }
 
     #[test]
