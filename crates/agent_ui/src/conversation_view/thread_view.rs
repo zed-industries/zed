@@ -330,6 +330,7 @@ pub struct ThreadView {
     pub hovered_recent_history_item: Option<usize>,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
+    pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
     pub history: Option<Entity<ThreadHistory>>,
     pub _history_subscription: Option<Subscription>,
@@ -573,6 +574,7 @@ impl ThreadView {
             history,
             _history_subscription: history_subscription,
             show_codex_windows_warning,
+            multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
         };
 
@@ -8573,6 +8575,53 @@ impl ThreadView {
             )
     }
 
+    fn render_multi_root_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        if self.multi_root_callout_dismissed {
+            return None;
+        }
+
+        if self.as_native_connection(cx).is_some() {
+            return None;
+        }
+
+        let project = self.project.upgrade()?;
+        let worktree_count = project.read(cx).visible_worktrees(cx).count();
+        if worktree_count <= 1 {
+            return None;
+        }
+
+        let work_dirs = self.thread.read(cx).work_dirs()?;
+        let active_dir = work_dirs
+            .ordered_paths()
+            .next()
+            .and_then(|p| p.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "one folder".to_string());
+
+        let description = format!(
+            "This agent only operates on \"{}\". Other folders in this workspace are not accessible to it.",
+            active_dir
+        );
+
+        Some(
+            Callout::new()
+                .severity(Severity::Warning)
+                .icon(IconName::Warning)
+                .title("External Agents currently don't support multi-root workspaces")
+                .description(description)
+                .border_position(ui::BorderPosition::Bottom)
+                .dismiss_action(
+                    IconButton::new("dismiss-multi-root-callout", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.multi_root_callout_dismissed = true;
+                            cx.notify();
+                        })),
+                ),
+        )
+    }
+
     fn render_new_version_callout(&self, version: &SharedString, cx: &mut Context<Self>) -> Div {
         let server_view = self.server_view.clone();
         let has_version = !version.is_empty();
@@ -8976,6 +9025,7 @@ impl Render for ThreadView {
             .size_full()
             .children(self.render_subagent_titlebar(cx))
             .child(conversation)
+            .children(self.render_multi_root_callout(cx))
             .children(self.render_activity_bar(window, cx))
             .when(self.show_external_source_prompt_warning, |this| {
                 this.child(self.render_external_source_prompt_warning(cx))
