@@ -38,6 +38,7 @@ pub(crate) struct ParsedMarkdownData {
     pub root_block_starts: Vec<usize>,
     pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
+    pub footnote_definitions: HashMap<SharedString, usize>,
 }
 
 impl ParseState {
@@ -518,6 +519,7 @@ pub(crate) fn parse_markdown_with_options(
     } else {
         HashMap::default()
     };
+    let footnote_definitions = build_footnote_definitions(&state.events);
 
     ParsedMarkdownData {
         events: state.events,
@@ -526,7 +528,34 @@ pub(crate) fn parse_markdown_with_options(
         root_block_starts: state.root_block_starts,
         html_blocks,
         heading_slugs,
+        footnote_definitions,
     }
+}
+
+fn build_footnote_definitions(
+    events: &[(Range<usize>, MarkdownEvent)],
+) -> HashMap<SharedString, usize> {
+    let mut definitions = HashMap::default();
+    let mut current_label: Option<SharedString> = None;
+
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::FootnoteDefinition(label)) => {
+                current_label = Some(label.clone());
+            }
+            MarkdownEvent::End(MarkdownTagEnd::FootnoteDefinition) => {
+                current_label = None;
+            }
+            MarkdownEvent::Text if current_label.is_some() => {
+                if let Some(label) = current_label.take() {
+                    definitions.entry(label).or_insert(range.start);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    definitions
 }
 
 pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
@@ -1117,6 +1146,7 @@ mod tests {
         assert_eq!(
             parse_markdown_with_options(
                 "Text with a footnote[^1] and some more text.\n\n[^1]: This is the footnote content.",
+                false,
                 false
             )
             .events,

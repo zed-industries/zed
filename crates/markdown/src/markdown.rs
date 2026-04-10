@@ -535,19 +535,10 @@ impl Markdown {
     }
 
     fn footnote_definition_content_start(&self, label: &SharedString) -> Option<usize> {
-        let mut inside_target_def = false;
         self.parsed_markdown
-            .events
-            .iter()
-            .find_map(|(range, event)| {
-                if inside_target_def && matches!(event, MarkdownEvent::Text) {
-                    return Some(range.start);
-                }
-                if let MarkdownEvent::Start(MarkdownTag::FootnoteDefinition(def_label)) = event {
-                    inside_target_def = *def_label == *label;
-                }
-                None
-            })
+            .footnote_definitions
+            .get(label)
+            .copied()
     }
 
     pub fn set_active_root_for_source_index(
@@ -714,6 +705,7 @@ impl Markdown {
                         html_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
+                        footnote_definitions: HashMap::default(),
                     },
                     Default::default(),
                 );
@@ -727,6 +719,7 @@ impl Markdown {
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
             let heading_slugs = parsed.heading_slugs;
+            let footnote_definitions = parsed.footnote_definitions;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -794,6 +787,7 @@ impl Markdown {
                     html_blocks,
                     mermaid_diagrams,
                     heading_slugs,
+                    footnote_definitions,
                 },
                 images_by_source_offset,
             )
@@ -918,6 +912,7 @@ pub struct ParsedMarkdown {
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
+    pub footnote_definitions: HashMap<SharedString, usize>,
 }
 
 impl ParsedMarkdown {
