@@ -4333,13 +4333,10 @@ impl ThreadView {
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
         let centered_container = move |content: AnyElement| {
-            h_flex().w_full().justify_center().debug_bg_green().child(
-                div()
-                    .debug_bg_blue()
-                    .max_w(max_content_width)
-                    .w_full()
-                    .child(content),
-            )
+            h_flex()
+                .w_full()
+                .justify_center()
+                .child(div().max_w(max_content_width).w_full().child(content))
         };
 
         list(
