@@ -203,14 +203,29 @@ impl CsvPreviewView {
             })
             .collect();
 
+        let total_value_count = column_filters.len();
+        let selected_row_count: usize = column_filters
+            .iter()
+            .filter_map(|(entry, state)| {
+                matches!(state, FilterEntryState::Available { is_applied: true })
+                    .then(|| entry.occurred_times())
+            })
+            .sum();
+
         let available_cloned: Vec<FilterEntry> = available.iter().map(|e| (*e).clone()).collect();
         let unavailable_cloned: Vec<(FilterEntry, AnyColumn)> = unavailable
             .into_iter()
             .map(|(e, col)| (e.clone(), col))
             .collect();
 
+        let summary_header: SharedString = if selected_row_count > 0 {
+            format!("{total_value_count} values · {selected_row_count} rows selected").into()
+        } else {
+            format!("{total_value_count} values").into()
+        };
+
         ContextMenu::build(window, cx, move |menu, _, _| {
-            let mut menu = menu;
+            let mut menu = menu.header(summary_header.clone());
 
             if has_active_filters {
                 menu = menu
