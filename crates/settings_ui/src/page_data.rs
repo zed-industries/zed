@@ -1571,7 +1571,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn scrolling_section() -> [SettingsPageItem; 8] {
+    fn scrolling_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Scrolling"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1627,6 +1627,19 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.scroll_sensitivity.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.scroll_sensitivity = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Mouse Wheel Zoom",
+                description: "Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key.",
+                field: Box::new(SettingField {
+                    json_path: Some("mouse_wheel_zoom"),
+                    pick: |settings_content| settings_content.editor.mouse_wheel_zoom.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.mouse_wheel_zoom = value;
                     },
                 }),
                 metadata: None,
