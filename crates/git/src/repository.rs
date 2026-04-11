@@ -854,6 +854,31 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Applies the changes introduced by the given commit on top of the current HEAD.
+    ///
+    /// On conflict, the working tree is left in a cherry-pick-in-progress state, matching
+    /// the behavior of `git cherry-pick` on the command line. The caller is responsible
+    /// for resolving conflicts and calling `cherry_pick_continue` or `cherry_pick_abort`.
+    fn cherry_pick(
+        &self,
+        commit: String,
+        askpass: AskPassDelegate,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    /// Continues an in-progress cherry-pick after conflicts have been resolved.
+    fn cherry_pick_continue(
+        &self,
+        askpass: AskPassDelegate,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    /// Aborts an in-progress cherry-pick, restoring the pre-cherry-pick state.
+    fn cherry_pick_abort(
+        &self,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
     fn push(
         &self,
         branch_name: String,
