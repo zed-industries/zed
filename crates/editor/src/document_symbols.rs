@@ -885,11 +885,7 @@ mod tests {
 
         init_test(cx, |_| {});
 
-        let mut cx = EditorLspTestContext::new_rust(
-            lsp::ServerCapabilities::default(),
-            cx,
-        )
-        .await;
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         // Set the initial theme with a red keyword color and sync it to the
         // language registry so tree-sitter highlight maps are up to date.
