@@ -2184,6 +2184,15 @@ impl AgentPanel {
             self.retain_running_thread(old_view, cx);
         }
 
+        // Keep the toolbar's selected agent in sync with the active thread's agent.
+        if let ActiveView::AgentThread { conversation_view } = &self.active_view {
+            let thread_agent = conversation_view.read(cx).agent_key().clone();
+            if self.selected_agent != thread_agent {
+                self.selected_agent = thread_agent;
+                self.serialize(cx);
+            }
+        }
+
         // Subscribe to the active ThreadView's events (e.g. FirstSendRequested)
         // so the panel can intercept the first send for worktree creation.
         // Re-subscribe whenever the ConnectionView changes, since the inner
@@ -4012,11 +4021,10 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
-                                                        panel.new_agent_thread(
-                                                            Agent::NativeAgent,
-                                                            window,
-                                                            cx,
-                                                        );
+                                                        panel.selected_agent = Agent::NativeAgent;
+                                                        panel.reset_start_thread_in_to_default(cx);
+                                                        let id = panel.create_draft(window, cx);
+                                                        panel.activate_draft(id, true, window, cx);
                                                     });
                                                 }
                                             });
@@ -4097,12 +4105,15 @@ impl AgentPanel {
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.new_agent_thread(
-                                                                Agent::Custom {
-                                                                    id: agent_id.clone(),
-                                                                },
-                                                                window,
+                                                            panel.selected_agent = Agent::Custom {
+                                                                id: agent_id.clone(),
+                                                            };
+                                                            panel.reset_start_thread_in_to_default(
                                                                 cx,
+                                                            );
+                                                            let id = panel.create_draft(window, cx);
+                                                            panel.activate_draft(
+                                                                id, true, window, cx,
                                                             );
                                                         });
                                                     }

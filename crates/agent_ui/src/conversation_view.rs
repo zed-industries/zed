@@ -1229,6 +1229,10 @@ impl ConversationView {
         &self.workspace
     }
 
+    pub fn agent_key(&self) -> &Agent {
+        &self.connection_key
+    }
+
     pub fn title(&self, cx: &App) -> SharedString {
         match &self.server_state {
             ServerState::Connected(view) => view
