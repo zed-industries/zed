@@ -1,6 +1,7 @@
 mod unified_palette_tests;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{
     actions, Action, App, AppContext, Context, DismissEvent, Entity, EventEmitter,
@@ -11,11 +12,12 @@ use gpui_util::ResultExt;
 use language::{ToPointUtf16, Unclipped};
 use lsp;
 use picker::{Picker, PickerDelegate};
-use project::{ProjectPath, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use settings::Settings;
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{prelude::*, Label, ListItem, ListItemSpacing};
+use util::paths::PathWithPosition;
 use util::rel_path::RelPath;
 use workspace::{ModalView, Workspace};
 
@@ -53,6 +55,8 @@ struct FileMatch {
     worktree_id: WorktreeId,
     path: Arc<RelPath>,
     display_path: String,
+    row: Option<u32>,
+    column: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -82,6 +86,11 @@ pub struct UnifiedPaletteDelegate {
     matches: Vec<Match>,
     selected_index: usize,
     last_query: String,
+    
+    // Search management
+    search_count: usize,
+    latest_search_id: usize,
+    cancel_flag: Arc<AtomicBool>,
 }
 
 impl UnifiedPalette {
@@ -163,60 +172,139 @@ impl UnifiedPaletteDelegate {
             matches: Vec::new(),
             selected_index: 0,
             last_query: String::new(),
+            search_count: 0,
+            latest_search_id: 0,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
     
-    fn search_files(&mut self, query: &str, cx: &mut Context<Picker<Self>>) {
+    fn search_files(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
         if query.is_empty() {
             self.matches.clear();
-            return;
+            self.selected_index = 0;
+            return Task::ready(());
         }
         
-        let project = self.project.read(cx);
-        let mut files = Vec::new();
+        // Parse path with position (e.g., "file.rs:42:10")
+        let path_with_position = PathWithPosition::parse_str(query);
+        let search_query = path_with_position.path.to_string_lossy().to_string();
+        let row = path_with_position.row;
+        let column = path_with_position.column;
         
-        for worktree in project.worktrees(cx) {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            
-            for entry in worktree.files(false, 0) {
-                let path_str = format!("{:?}", entry.path).trim_matches('"').to_string();
-                if path_str.to_lowercase().contains(&query.to_lowercase()) {
-                    files.push(Match::File(FileMatch {
-                        worktree_id,
-                        path: entry.path.clone(),
-                        display_path: path_str,
-                    }));
-                    if files.len() >= 100 {
-                        break;
-                    }
+        let worktree_store = self.project.read(cx).worktree_store();
+        let worktrees = worktree_store
+            .read(cx)
+            .visible_worktrees_and_single_files(cx)
+            .collect::<Vec<_>>();
+        
+        let candidate_sets = worktrees
+            .into_iter()
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                PathMatchCandidateSet {
+                    snapshot: worktree.snapshot(),
+                    include_ignored: worktree.root_entry().is_some_and(|entry| entry.is_ignored),
+                    include_root_name: false,
+                    candidates: project::Candidates::Files,
                 }
-            }
-        }
+            })
+            .collect::<Vec<_>>();
         
-        self.matches = files;
-        self.selected_index = 0;
+        let search_id = util::post_inc(&mut self.search_count);
+        self.cancel_flag.store(true, Ordering::Release);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
+        
+        cx.spawn_in(window, async move |picker, cx| {
+            let matches = fuzzy_nucleo::match_path_sets(
+                candidate_sets.as_slice(),
+                &search_query,
+                &None,
+                false,
+                100,
+                &cancel_flag,
+                cx.background_executor().clone(),
+            )
+            .await;
+            
+            let did_cancel = cancel_flag.load(Ordering::Acquire);
+            
+            picker.update(cx, |picker, cx| {
+                if search_id >= picker.delegate.latest_search_id && !did_cancel {
+                    picker.delegate.latest_search_id = search_id;
+                    picker.delegate.matches = matches
+                        .into_iter()
+                        .map(|m| Match::File(FileMatch {
+                            worktree_id: WorktreeId::from_usize(m.worktree_id),
+                            path: m.path.clone(),
+                            display_path: format!("{:?}", m.path).trim_matches('"').to_string(),
+                            row,
+                            column,
+                        }))
+                        .collect();
+                    picker.delegate.selected_index = 0;
+                    cx.notify();
+                }
+            }).log_err();
+        })
     }
     
-    fn search_commands(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn search_commands(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
         let actions = window.available_actions(cx);
-        let mut commands = Vec::new();
+        let all_commands: Vec<_> = actions
+            .into_iter()
+            .map(|action| (action.name().to_string(), Arc::from(action)))
+            .collect();
         
-        for action in actions {
-            let name = action.name();
-            if query.is_empty() || name.to_lowercase().contains(&query.to_lowercase()) {
-                commands.push(Match::Command(CommandMatch {
-                    name: name.to_string(),
-                    action: Arc::from(action),
-                }));
-                if commands.len() >= 100 {
-                    break;
-                }
-            }
+        if query.is_empty() {
+            self.matches = all_commands
+                .into_iter()
+                .take(100)
+                .map(|(name, action)| Match::Command(CommandMatch { name, action }))
+                .collect();
+            self.selected_index = 0;
+            return Task::ready(());
         }
         
-        self.matches = commands;
-        self.selected_index = 0;
+        let query = query.to_string();
+        let search_id = util::post_inc(&mut self.search_count);
+        
+        cx.spawn_in(window, async move |picker, cx| {
+            let candidates: Vec<_> = all_commands
+                .iter()
+                .enumerate()
+                .map(|(ix, (name, _))| fuzzy::StringMatchCandidate::new(ix, name))
+                .collect();
+            
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                true,
+                false,
+                100,
+                &Default::default(),
+                cx.background_executor().clone(),
+            )
+            .await;
+            
+            picker.update(cx, |picker, cx| {
+                if search_id >= picker.delegate.latest_search_id {
+                    picker.delegate.latest_search_id = search_id;
+                    picker.delegate.matches = matches
+                        .into_iter()
+                        .map(|m| {
+                            let (name, action) = &all_commands[m.candidate_id];
+                            Match::Command(CommandMatch {
+                                name: name.clone(),
+                                action: action.clone(),
+                            })
+                        })
+                        .collect();
+                    picker.delegate.selected_index = 0;
+                    cx.notify();
+                }
+            }).log_err();
+        })
     }
     
     fn search_line(&mut self, query: &str, _cx: &mut Context<Picker<Self>>) {
@@ -433,6 +521,8 @@ impl PickerDelegate for UnifiedPaletteDelegate {
             log::info!("UnifiedPalette: Mode changed from {:?} to {:?}", self.mode, new_mode);
             self.mode = new_mode;
             self.matches.clear();
+            // Cancel any pending searches when mode changes
+            self.cancel_flag.store(true, Ordering::Release);
             cx.notify();
         }
         
@@ -441,29 +531,26 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         // Search based on mode
         match self.mode {
             PaletteMode::FileFinder => {
-                self.search_files(&stripped_query, cx);
-                log::debug!("UnifiedPalette: Found {} file matches", self.matches.len());
+                self.search_files(&stripped_query, window, cx)
             }
             PaletteMode::CommandPalette => {
-                self.search_commands(&stripped_query, window, cx);
-                log::debug!("UnifiedPalette: Found {} command matches", self.matches.len());
+                self.search_commands(&stripped_query, window, cx)
             }
             PaletteMode::GoToLine => {
                 self.search_line(&stripped_query, cx);
-                log::debug!("UnifiedPalette: Found {} line matches", self.matches.len());
+                cx.notify();
+                Task::ready(())
             }
             PaletteMode::ProjectSymbols => {
                 self.search_project_symbols(&stripped_query, window, cx);
-                log::debug!("UnifiedPalette: Searching for project symbols with query: '{}'", stripped_query);
+                Task::ready(())
             }
             PaletteMode::Outline => {
                 self.search_outline(&stripped_query, window, cx);
-                log::debug!("UnifiedPalette: Found {} outline matches", self.matches.len());
+                cx.notify();
+                Task::ready(())
             }
         }
-        
-        cx.notify();
-        Task::ready(())
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -489,17 +576,39 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                     path: file_match.path,
                 };
                 
+                let row = file_match.row;
+                let column = file_match.column;
+                
                 let open_task = workspace.update(cx, |workspace, cx| {
+                    let allow_preview = workspace::PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                     if secondary {
-                        workspace.split_path_preview(project_path, false, None, window, cx)
+                        workspace.split_path_preview(project_path, allow_preview, None, window, cx)
                     } else {
-                        workspace.open_path_preview(project_path, None, true, false, true, window, cx)
+                        workspace.open_path_preview(project_path, None, true, allow_preview, true, window, cx)
                     }
                 });
                 
                 let palette = self.unified_palette.clone();
                 cx.spawn_in(window, async move |_, cx| {
-                    open_task.await.log_err();
+                    let item = open_task.await.log_err();
+                    
+                    // Navigate to line/column if specified
+                    if let Some(row) = row
+                        && let Some(item) = item
+                        && let Some(editor) = item.downcast::<editor::Editor>()
+                    {
+                        editor.downgrade().update_in(cx, |editor, window, cx| {
+                            let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                                return;
+                            };
+                            let buffer_snapshot = buffer.read(cx).snapshot();
+                            let row = row.saturating_sub(1);
+                            let col = column.unwrap_or(0);
+                            let point = buffer_snapshot.point_from_external_input(row, col);
+                            editor.go_to_singleton_buffer_point(point, window, cx);
+                        }).log_err();
+                    }
+                    
                     log::debug!("UnifiedPalette: File opened, dismissing modal");
                     palette.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                 }).detach();
@@ -632,12 +741,27 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                 )
             }
             Match::Command(command_match) => {
+                let focus_handle = self.unified_palette
+                    .upgrade()
+                    .map(|p| p.read(cx).focus_handle(cx))
+                    .unwrap_or_else(|| cx.focus_handle());
+                
                 Some(
                     ListItem::new(ix)
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
-                        .child(Label::new(command_match.name.clone()))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .child(Label::new(command_match.name.clone()))
+                                .child(ui::KeyBinding::for_action_in(
+                                    &*command_match.action,
+                                    &focus_handle,
+                                    cx,
+                                ))
+                        )
                 )
             }
             Match::Line(line_match) => {

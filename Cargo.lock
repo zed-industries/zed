@@ -19011,6 +19011,7 @@ dependencies = [
  "editor",
  "file_finder",
  "fuzzy",
+ "fuzzy_nucleo",
  "go_to_line",
  "gpui",
  "gpui_util",
