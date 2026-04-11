@@ -1861,12 +1861,18 @@ impl Element for MarkdownElement {
                             builder.push_div(div().pl_2p5(), range, markdown_end);
                         }
                         MarkdownTag::Item => {
-                            let bullet =
-                                if let Some((task_range, MarkdownEvent::TaskListMarker(checked))) =
-                                    parsed_markdown.events.get(index.saturating_add(1))
-                                {
+                            let task_list_marker = (1..=2).find_map(|offset| match parsed_markdown
+                                .events
+                                .get(index.saturating_add(offset))
+                            {
+                                Some((range, MarkdownEvent::TaskListMarker(checked))) => {
+                                    Some((range, *checked))
+                                }
+                                _ => None,
+                            });
+
+                            let bullet = if let Some((task_range, checked)) = task_list_marker {
                                     let source = &parsed_markdown.source()[range.clone()];
-                                    let checked = *checked;
                                     let toggle_state = if checked {
                                         ToggleState::Selected
                                     } else {
