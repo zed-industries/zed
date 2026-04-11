@@ -65,11 +65,11 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, WorktreeCreationStatus};
+pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, DraftId, WorktreeCreationStatus};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
-pub(crate) use conversation_view::ConversationView;
+pub use conversation_view::ConversationView;
 pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;

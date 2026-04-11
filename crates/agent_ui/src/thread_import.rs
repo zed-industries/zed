@@ -342,9 +342,9 @@ impl Render for ThreadImportModal {
                 Modal::new("import-threads", None)
                     .header(
                         ModalHeader::new()
-                            .headline("Import ACP Threads")
+                            .headline("Import External Agent Threads")
                             .description(
-                                "Import threads from your ACP agents — whether started in Zed or another client. \
+                                "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client. \
                                 Choose which agents to include, and their threads will appear in your archive."
                             )
                             .show_dismiss_button(true),

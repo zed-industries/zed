@@ -36,6 +36,18 @@ use util::path_list::PathList;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
 
+/// Returned when the model stops because it exhausted its output token budget.
+#[derive(Debug)]
+pub struct MaxOutputTokensError;
+
+impl std::fmt::Display for MaxOutputTokensError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "output token limit reached")
+    }
+}
+
+impl std::error::Error for MaxOutputTokensError {}
+
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
 pub const TOOL_NAME_META_KEY: &str = "tool_name";
@@ -2272,17 +2284,15 @@ impl AcpThread {
                                         .is_some_and(|max| u.output_tokens >= max)
                                 });
 
-                            let message = if exceeded_max_output_tokens {
+                            if exceeded_max_output_tokens {
                                 log::error!(
                                     "Max output tokens reached. Usage: {:?}",
                                     this.token_usage
                                 );
-                                "Maximum output tokens reached"
                             } else {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
-                                "Maximum tokens reached"
-                            };
-                            return Err(anyhow!(message));
+                            }
+                            return Err(anyhow!(MaxOutputTokensError));
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
