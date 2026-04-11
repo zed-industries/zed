@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui::{
     actions, Action, App, AppContext, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, HighlightStyle, IntoElement, Render, SharedString, StyledText, 
+    FocusHandle, Focusable, IntoElement, Render, SharedString, StyledText, 
     Task, TextStyle, Window, WeakEntity, prelude::*, relative,
 };
 use gpui_util::ResultExt;
@@ -20,9 +20,6 @@ use util::rel_path::RelPath;
 use workspace::{ModalView, Workspace};
 
 actions!(unified_palette, [ToggleUnifiedPalette]);
-
-// Type marker for outline row highlights
-struct OutlineRowHighlights;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(UnifiedPalette::register).detach();
