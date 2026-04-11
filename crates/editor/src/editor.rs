@@ -21332,6 +21332,7 @@ impl Editor {
             self.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project,
@@ -21378,6 +21379,7 @@ impl Editor {
             self.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project,

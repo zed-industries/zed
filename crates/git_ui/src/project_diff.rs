@@ -1974,6 +1974,7 @@ mod tests {
             buffer_editor.save(
                 SaveOptions {
                     format: false,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
