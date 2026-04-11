@@ -25,6 +25,7 @@ anyhow.workspace = true
 askpass.workspace = true
 clap.workspace = true
 collections.workspace = true
+console = "0.16"
 dialoguer.workspace = true
 ipc-channel = "0.19"
 parking_lot.workspace = true

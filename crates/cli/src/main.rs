@@ -9,7 +9,7 @@
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
+use cli::{CliRequest, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -669,7 +669,7 @@ fn main() -> Result<()> {
                 #[cfg(not(target_os = "windows"))]
                 let wsl = None;
 
-                tx.send(CliRequest::Open {
+                let open_request = CliRequest::Open {
                     paths,
                     urls,
                     diff_paths,
@@ -682,24 +682,18 @@ fn main() -> Result<()> {
                     env,
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
-                })?;
+                };
 
-                while let Ok(response) = rx.recv() {
-                    match response {
-                        CliResponse::Ping => {}
-                        CliResponse::Stdout { message } => println!("{message}"),
-                        CliResponse::Stderr { message } => eprintln!("{message}"),
-                        CliResponse::Exit { status } => {
-                            exit_status.lock().replace(status);
-                            return Ok(());
-                        }
-                        CliResponse::PromptOpenBehavior => {
-                            let existing_window = prompt_open_behavior().unwrap_or(true);
-                            tx.send(CliRequest::SetOpenBehavior { existing_window })?;
-                        }
-                    }
-                }
+                let status = cli::run_cli_response_loop(
+                    |req| tx.send(req).map_err(|e| anyhow::anyhow!("{e}")),
+                    || rx.recv().map_err(|e| anyhow::anyhow!("{e}")),
+                    open_request,
+                    prompt_open_behavior,
+                    |message| println!("{message}"),
+                    |message| eprintln!("{message}"),
+                )?;
 
+                exit_status.lock().replace(status);
                 Ok(())
             }
         })
@@ -799,16 +793,20 @@ fn prompt_open_behavior() -> Option<bool> {
         return None;
     }
 
+    let blue = console::Style::new().blue();
     let items = [
-        "Add to existing Zed window (zed -e)",
-        "Open a new window (zed -n)",
+        format!("Add to existing Zed window ({})", blue.apply_to("zed -e")),
+        format!("Open a new window ({})", blue.apply_to("zed -n")),
     ];
 
+    let prompt = format!(
+        "Configure default behavior for {}\n{}",
+        blue.apply_to("zed <path>"),
+        console::style("You can change this later in Zed settings"),
+    );
+
     let selection = dialoguer::Select::new()
-        .with_prompt(
-            "Configure default behavior for `zed <path>`\n  \
-             You can change this later in Zed settings",
-        )
+        .with_prompt(&prompt)
         .items(&items)
         .default(0)
         .interact()
