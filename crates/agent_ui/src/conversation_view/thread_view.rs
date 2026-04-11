@@ -1510,6 +1510,9 @@ impl ThreadView {
         let Some(queued) = self.remove_from_queue(index, cx) else {
             return;
         };
+
+        self.message_editor.focus_handle(cx).focus(window, cx);
+
         let content = queued.content;
         let tracked_buffers = queued.tracked_buffers;
 
