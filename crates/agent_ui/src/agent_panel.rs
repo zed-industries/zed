@@ -90,6 +90,7 @@ use zed_actions::{
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
+const MIN_PANEL_WIDTH: Pixels = px(300.);
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
@@ -3543,6 +3544,13 @@ impl Panel for AgentPanel {
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => settings.default_width,
             DockPosition::Bottom => settings.default_height,
+        }
+    }
+
+    fn min_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        match self.position(window, cx) {
+            DockPosition::Left | DockPosition::Right => Some(MIN_PANEL_WIDTH),
+            DockPosition::Bottom => None,
         }
     }
 
