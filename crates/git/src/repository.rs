@@ -1064,6 +1064,25 @@ impl RealGitRepository {
         *self.any_git_binary_help_output.lock() = Some(output.clone());
         output
     }
+
+    async fn resolve_log_source<'a>(
+        &self,
+        log_source: &'a LogSource,
+    ) -> Result<(&'a str, Option<Vec<String>>)> {
+        match log_source {
+            LogSource::All => match crate::jj::visible_heads(&self.working_directory()?).await {
+                Ok(Some(head_revisions)) => return Ok(("--stdin", Some(head_revisions))),
+                Ok(None) => {}
+                Err(error) => {
+                    log::warn!(
+                        "resolve_log_source: failed to read visible heads from jj: {error:#}"
+                    );
+                }
+            },
+            LogSource::Branch(_) | LogSource::Sha(_) => {}
+        }
+        Ok((log_source.get_arg()?, None))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2874,17 +2893,27 @@ impl GitRepository for RealGitRepository {
 
         async move {
             let git = git_binary?;
+            let (log_source_arg, revisions) = self.resolve_log_source(&log_source).await?;
 
             let mut command = git.build_command(&[
                 "log",
                 GRAPH_COMMIT_FORMAT,
                 log_order.as_arg(),
-                log_source.get_arg()?,
+                log_source_arg,
             ]);
+            command.stdin(Stdio::piped());
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
 
             let mut child = command.spawn()?;
+            if let Some(revisions) = revisions {
+                let mut stdin = child.stdin.take().context("failed to get stdin")?;
+                for revision in revisions {
+                    stdin.write_all(revision.as_bytes()).await?;
+                    stdin.write_all(b"\n").await?;
+                }
+                stdin.flush().await?;
+            }
             let stdout = child.stdout.take().context("failed to get stdout")?;
             let stderr = child.stderr.take().context("failed to get stderr")?;
             let mut reader = BufReader::new(stdout);
@@ -2950,8 +2979,9 @@ impl GitRepository for RealGitRepository {
 
         async move {
             let git = git_binary?;
+            let (log_source_arg, revisions) = self.resolve_log_source(&log_source).await?;
 
-            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?];
+            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source_arg];
 
             args.push("--fixed-strings");
 
@@ -2963,10 +2993,19 @@ impl GitRepository for RealGitRepository {
             args.push(search_args.query.as_str());
 
             let mut command = git.build_command(&args);
+            command.stdin(Stdio::piped());
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
 
             let mut child = command.spawn()?;
+            if let Some(revisions) = revisions {
+                let mut stdin = child.stdin.take().context("failed to get stdin")?;
+                for revision in revisions {
+                    stdin.write_all(revision.as_bytes()).await?;
+                    stdin.write_all(b"\n").await?;
+                }
+                stdin.flush().await?;
+            }
             let stdout = child.stdout.take().context("failed to get stdout")?;
             let mut reader = BufReader::new(stdout);
 
