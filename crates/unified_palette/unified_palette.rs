@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use file_icons::FileIcons;
+use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, Action, App, AppContext, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, SharedString, StyledText, 
@@ -58,12 +59,14 @@ struct FileMatch {
     display_path: String,
     row: Option<u32>,
     column: Option<u32>,
+    match_positions: Vec<usize>,
 }
 
 #[derive(Clone)]
 struct CommandMatch {
     name: String,
     action: Arc<dyn Action>,
+    match_positions: Vec<usize>,
 }
 
 #[derive(Clone)]
@@ -87,6 +90,9 @@ pub struct UnifiedPaletteDelegate {
     matches: Vec<Match>,
     selected_index: usize,
     last_query: String,
+    
+    // File history
+    file_history: Vec<ProjectPath>,
     
     // Search management
     search_count: usize,
@@ -173,6 +179,7 @@ impl UnifiedPaletteDelegate {
             matches: Vec::new(),
             selected_index: 0,
             last_query: String::new(),
+            file_history: Vec::new(),
             search_count: 0,
             latest_search_id: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -181,7 +188,19 @@ impl UnifiedPaletteDelegate {
     
     fn search_files(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
         if query.is_empty() {
-            self.matches.clear();
+            // Show recent files on empty query
+            self.matches = self.file_history
+                .iter()
+                .take(10)
+                .map(|path| Match::File(FileMatch {
+                    worktree_id: path.worktree_id,
+                    path: path.path.clone(),
+                    display_path: format!("{:?}", path.path).trim_matches('"').to_string(),
+                    row: None,
+                    column: None,
+                    match_positions: Vec::new(),
+                }))
+                .collect();
             self.selected_index = 0;
             return Task::ready(());
         }
@@ -241,6 +260,7 @@ impl UnifiedPaletteDelegate {
                             display_path: format!("{:?}", m.path).trim_matches('"').to_string(),
                             row,
                             column,
+                            match_positions: m.positions,
                         }))
                         .collect();
                     picker.delegate.selected_index = 0;
@@ -261,7 +281,11 @@ impl UnifiedPaletteDelegate {
             self.matches = all_commands
                 .into_iter()
                 .take(100)
-                .map(|(name, action)| Match::Command(CommandMatch { name, action }))
+                .map(|(name, action)| Match::Command(CommandMatch { 
+                    name, 
+                    action,
+                    match_positions: Vec::new(),
+                }))
                 .collect();
             self.selected_index = 0;
             return Task::ready(());
@@ -298,6 +322,7 @@ impl UnifiedPaletteDelegate {
                             Match::Command(CommandMatch {
                                 name: name.clone(),
                                 action: action.clone(),
+                                match_positions: m.positions,
                             })
                         })
                         .collect();
@@ -318,9 +343,12 @@ impl UnifiedPaletteDelegate {
     }
     
     fn search_project_symbols(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let search_id = util::post_inc(&mut self.search_count);
+        
         if query.is_empty() {
             self.matches.clear();
             self.selected_index = 0;
+            self.latest_search_id = search_id;
             return;
         }
 
@@ -336,28 +364,35 @@ impl UnifiedPaletteDelegate {
                 picker.update_in(cx, |picker, _window, cx| {
                     let delegate = &mut picker.delegate;
                     
-                    // Convert symbols to matches (limit to 100)
-                    delegate.matches = symbols
-                        .into_iter()
-                        .take(100)
-                        .map(|symbol| Match::Symbol(SymbolMatch { 
-                            symbol,
-                            highlight_ranges: Vec::new(), // Project symbols don't have highlights
-                        }))
-                        .collect();
-                    
-                    delegate.selected_index = 0;
-                    cx.notify();
+                    if search_id >= delegate.latest_search_id {
+                        delegate.latest_search_id = search_id;
+                        
+                        // Convert symbols to matches (limit to 100)
+                        delegate.matches = symbols
+                            .into_iter()
+                            .take(100)
+                            .map(|symbol| Match::Symbol(SymbolMatch { 
+                                symbol,
+                                highlight_ranges: Vec::new(), // Project symbols don't have highlights
+                            }))
+                            .collect();
+                        
+                        delegate.selected_index = 0;
+                        cx.notify();
+                    }
                 }).ok();
             }
         }).detach();
     }
     
     fn search_outline(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let search_id = util::post_inc(&mut self.search_count);
+        
         // Get active editor from workspace
         let Some(workspace) = self.workspace.upgrade() else {
             self.matches.clear();
             self.selected_index = 0;
+            self.latest_search_id = search_id;
             return;
         };
         
@@ -368,6 +403,7 @@ impl UnifiedPaletteDelegate {
             log::warn!("UnifiedPalette: No active editor for outline mode");
             self.matches.clear();
             self.selected_index = 0;
+            self.latest_search_id = search_id;
             return;
         };
         
@@ -392,59 +428,88 @@ impl UnifiedPaletteDelegate {
         cx.spawn_in(window, async move |picker, cx| {
             let items = outline_task.await;
             
-            picker.update_in(cx, |picker, _window, cx| {
-                let delegate = &mut picker.delegate;
-                let buffer_snapshot = multibuffer.as_singleton();
-                
-                // Filter items by query and convert to Symbol matches
-                delegate.matches = items
-                    .into_iter()
-                    .filter(|item| {
-                        query_lower.is_empty() || item.text.to_lowercase().contains(&query_lower)
-                    })
-                    .take(100)
-                    .filter_map(|item| {
-                        let buffer_snapshot = buffer_snapshot.as_ref()?;
-                        let file_path = file_path.as_ref()?;
-                        
-                        // Convert anchor range to PointUtf16
-                        let start_point = item.range.start.to_point_utf16(buffer_snapshot);
-                        let end_point = item.range.end.to_point_utf16(buffer_snapshot);
-                        
-                        // Get worktree_id from project
-                        let worktree_id = project.read(cx)
-                            .worktrees(cx)
-                            .next()?
-                            .read(cx)
-                            .id();
-                        
-                        // Create a Symbol from the outline item
-                        let symbol = project::Symbol {
-                            language_server_name: language::LanguageServerName(SharedString::from("outline")),
-                            source_worktree_id: worktree_id,
-                            source_language_server_id: language::LanguageServerId(0),
-                            path: project::lsp_store::SymbolLocation::InProject(ProjectPath {
-                                worktree_id,
-                                path: file_path.clone(),
-                            }),
-                            label: language::CodeLabel {
-                                text: item.text.clone(),
-                                runs: Vec::new(),
-                                filter_range: 0..item.text.len(),
-                            },
-                            name: item.text.clone(),
-                            kind: lsp::SymbolKind::FUNCTION,
-                            range: Unclipped(start_point)..Unclipped(end_point),
-                            container_name: None,
-                        };
-                        Some(Match::Symbol(SymbolMatch { 
-                            symbol,
-                            highlight_ranges: item.highlight_ranges.clone(), // Preserve syntax highlighting
-                        }))
-                    })
+            // Use fuzzy matching for outline items
+            let filtered_items = if query_lower.is_empty() {
+                items.into_iter().take(100).collect::<Vec<_>>()
+            } else {
+                let candidates: Vec<StringMatchCandidate> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(id, item)| StringMatchCandidate::new(id, item.text.as_ref()))
                     .collect();
                 
-                delegate.selected_index = 0;
+                let matches = fuzzy::match_strings(
+                    &candidates,
+                    &query_lower,
+                    false,
+                    false,
+                    100,
+                    &Default::default(),
+                    cx.background_executor().clone(),
+                )
+                .await;
+                
+                matches
+                    .into_iter()
+                    .map(|m| items[m.candidate_id].clone())
+                    .collect()
+            };
+            
+            picker.update_in(cx, |picker, _window, cx| {
+                let delegate = &mut picker.delegate;
+                
+                if search_id >= delegate.latest_search_id {
+                    delegate.latest_search_id = search_id;
+                    
+                    let buffer_snapshot = multibuffer.as_singleton();
+                    
+                    // Convert filtered items to Symbol matches
+                    delegate.matches = filtered_items
+                        .into_iter()
+                        .filter_map(|item| {
+                            let buffer_snapshot = buffer_snapshot.as_ref()?;
+                            let file_path = file_path.as_ref()?;
+                            
+                            // Convert anchor range to PointUtf16
+                            let start_point = item.range.start.to_point_utf16(buffer_snapshot);
+                            let end_point = item.range.end.to_point_utf16(buffer_snapshot);
+                            
+                            // Get worktree_id from project
+                            let worktree_id = project.read(cx)
+                                .worktrees(cx)
+                                .next()?
+                                .read(cx)
+                                .id();
+                            
+                            // Create a Symbol from the outline item
+                            let symbol = project::Symbol {
+                                language_server_name: language::LanguageServerName(SharedString::from("outline")),
+                                source_worktree_id: worktree_id,
+                                source_language_server_id: language::LanguageServerId(0),
+                                path: project::lsp_store::SymbolLocation::InProject(ProjectPath {
+                                    worktree_id,
+                                    path: file_path.clone(),
+                                }),
+                                label: language::CodeLabel {
+                                    text: item.text.clone(),
+                                    runs: Vec::new(),
+                                    filter_range: 0..item.text.len(),
+                                },
+                                name: item.text.clone(),
+                                kind: lsp::SymbolKind::FUNCTION,
+                                range: Unclipped(start_point)..Unclipped(end_point),
+                                container_name: None,
+                            };
+                            Some(Match::Symbol(SymbolMatch { 
+                                symbol,
+                                highlight_ranges: item.highlight_ranges.clone(), // Preserve syntax highlighting
+                            }))
+                        })
+                        .collect();
+                    
+                    delegate.selected_index = 0;
+                    cx.notify();
+                }
             }).ok();
         }).detach();
     }
@@ -574,8 +639,13 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                 log::info!("UnifiedPalette: Opening file: {}", file_match.display_path);
                 let project_path = ProjectPath {
                     worktree_id: file_match.worktree_id,
-                    path: file_match.path,
+                    path: file_match.path.clone(),
                 };
+                
+                // Track in history (most recent first)
+                self.file_history.retain(|p| p != &project_path);
+                self.file_history.insert(0, project_path.clone());
+                self.file_history.truncate(10); // Keep last 10
                 
                 let row = file_match.row;
                 let column = file_match.column;
@@ -744,7 +814,12 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
                         .start_slot::<Icon>(icon)
-                        .child(Label::new(file_match.display_path.clone()))
+                        .child(
+                            ui::HighlightedLabel::new(
+                                file_match.display_path.clone(),
+                                file_match.match_positions.clone()
+                            )
+                        )
                 )
             }
             Match::Command(command_match) => {
@@ -762,7 +837,12 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                             h_flex()
                                 .w_full()
                                 .justify_between()
-                                .child(Label::new(command_match.name.clone()))
+                                .child(
+                                    ui::HighlightedLabel::new(
+                                        command_match.name.clone(),
+                                        command_match.match_positions.clone()
+                                    )
+                                )
                                 .child(ui::KeyBinding::for_action_in(
                                     &*command_match.action,
                                     &focus_handle,
