@@ -2831,17 +2831,56 @@ impl Sidebar {
             (group_key.path_list() != folder_paths).then_some(workspace)
         });
 
-        if let Some(workspace_to_remove) = workspace_to_remove {
+        // Also find workspaces for root plans that aren't covered by
+        // workspace_to_remove. This handles edge cases where the thread's
+        // folder_paths don't exactly match any workspace's root paths
+        // (e.g. after a folder was added/removed), but a linked worktree
+        // workspace does contain the worktree that needs to be removed
+        // from disk. Without removing these workspaces first, their open
+        // editors hold Entity<Worktree> references (through File structs
+        // in buffers), preventing the worktree entity from being released
+        // and blocking git worktree removal indefinitely.
+        let mut workspaces_to_remove: Vec<Entity<Workspace>> = Vec::new();
+        if let Some(ws) = workspace_to_remove {
+            workspaces_to_remove.push(ws);
+        }
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            let mw = multi_workspace.read(cx);
+            for root in &roots_to_archive {
+                for workspace in mw.workspaces() {
+                    if workspaces_to_remove.contains(workspace) {
+                        continue;
+                    }
+                    let has_worktree = workspace
+                        .read(cx)
+                        .project()
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .any(|wt| wt.read(cx).abs_path().as_ref() == root.root_path.as_path());
+                    if !has_worktree {
+                        continue;
+                    }
+                    let group_key = workspace.read(cx).project_group_key(cx);
+                    let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
+                    if root_paths != *group_key.path_list() {
+                        workspaces_to_remove.push(workspace.clone());
+                    }
+                }
+            }
+        }
+
+        if !workspaces_to_remove.is_empty() {
             let multi_workspace = self.multi_workspace.upgrade().unwrap();
             let session_id = session_id.clone();
 
             // For the workspace-removal fallback, use the neighbor's workspace
-            // paths if available, otherwise fall back to the project group key.
+            // paths if available, otherwise fall back to the project group key
+            // of the first workspace being removed.
             let fallback_paths = neighbor
                 .as_ref()
                 .map(|(_, paths)| paths.clone())
                 .unwrap_or_else(|| {
-                    workspace_to_remove
+                    workspaces_to_remove[0]
                         .read(cx)
                         .project_group_key(cx)
                         .path_list()
@@ -2850,7 +2889,7 @@ impl Sidebar {
 
             let remove_task = multi_workspace.update(cx, |mw, cx| {
                 mw.remove(
-                    [workspace_to_remove],
+                    workspaces_to_remove,
                     move |this, window, cx| {
                         this.find_or_create_local_workspace(fallback_paths, window, cx)
                     },
