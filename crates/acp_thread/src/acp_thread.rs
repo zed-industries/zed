@@ -2261,6 +2261,19 @@ impl AcpThread {
                     Ok(r) => {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
 
+                        if let Some(usage) = &r.usage {
+                            this.update_token_usage(
+                                Some(TokenUsage {
+                                    max_tokens: 0,
+                                    used_tokens: usage.total_tokens,
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                    max_output_tokens: None,
+                                }),
+                                cx,
+                            );
+                        }
+
                         if r.stop_reason == acp::StopReason::MaxTokens {
                             this.had_error = true;
                             cx.emit(AcpThreadEvent::Error);
@@ -5246,5 +5259,81 @@ mod tests {
             connection.set_title_calls.borrow().is_empty(),
             "session info title update should not propagate back to the connection"
         );
+    }
+
+    #[gpui::test]
+    async fn test_token_usage_from_prompt_response(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |_, _, _| {
+                async move {
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)
+                        .usage(acp::Usage::new(1500, 1000, 500)))
+                }
+                .boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            thread.read_with(cx, |thread, _| thread.token_usage().cloned()).is_none(),
+            "token_usage should be None before any turn"
+        );
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Hello!", cx))
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread.token_usage().expect("token_usage should be set after a turn");
+            assert_eq!(usage.used_tokens, 1500);
+            assert_eq!(usage.input_tokens, 1000);
+            assert_eq!(usage.output_tokens, 500);
+            assert_eq!(usage.max_tokens, 0);
+            assert_eq!(usage.max_output_tokens, None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_token_usage_absent_when_response_has_no_usage(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |_, _, _| {
+                async move { Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)) }
+                    .boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Hello!", cx))
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.token_usage().is_none(),
+                "token_usage should remain None when PromptResponse has no usage"
+            );
+        });
     }
 }

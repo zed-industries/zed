@@ -3448,6 +3448,23 @@ impl ThreadView {
     fn render_token_usage(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         let thread = self.thread.read(cx);
         let usage = thread.token_usage()?;
+
+        if usage.max_tokens == 0 {
+            let label = crate::humanize_token_count(usage.used_tokens);
+            return Some(
+                h_flex()
+                    .id("token_count_label")
+                    .mt_px()
+                    .mr_1()
+                    .child(
+                        Label::new(format!("{label} tokens"))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .into_any_element(),
+            );
+        }
+
         let show_split = self.supports_split_token_display(cx);
 
         let progress_color = |ratio: f32| -> Hsla {
