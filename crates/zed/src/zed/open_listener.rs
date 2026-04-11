@@ -1882,11 +1882,8 @@ mod tests {
         let (response_tx, response_rx) = std::sync::mpsc::channel::<CliResponse>();
         let response_sink: Box<dyn CliResponseSink> = Box::new(SyncResponseSender(response_tx));
 
-        cx.spawn({
-            let app_state = app_state.clone();
-            |mut cx| async move {
-                handle_cli_connection((request_rx, response_sink), app_state, &mut cx).await;
-            }
+        cx.spawn(|mut cx| async move {
+            handle_cli_connection((request_rx, response_sink), app_state, &mut cx).await;
         })
         .detach();
 
