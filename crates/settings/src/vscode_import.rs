@@ -974,6 +974,7 @@ impl VsCodeSettings {
             }),
             bottom_dock_layout: None,
             centered_layout: None,
+            cli_default_open_behavior: None,
             close_on_file_delete: None,
             close_panel_on_toggle: None,
             command_aliases: Default::default(),

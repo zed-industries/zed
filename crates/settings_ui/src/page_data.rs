@@ -80,7 +80,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 }
 
 fn general_page() -> SettingsPage {
-    fn general_settings_section() -> [SettingsPageItem; 8] {
+    fn general_settings_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -138,6 +138,27 @@ fn general_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "CLI Default Open Behavior",
+                description: "How `zed <path>` opens directories when no `-e` or `-n` flag is specified.",
+                field: Box::new(SettingField {
+                    json_path: Some("cli_default_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .cli_default_open_behavior
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.cli_default_open_behavior = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
