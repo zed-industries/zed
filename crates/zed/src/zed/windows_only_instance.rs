@@ -189,7 +189,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
                         }
                         CliResponse::PromptOpenBehavior => {
                             tx.send(CliRequest::SetOpenBehavior {
-                                existing_window: true,
+                                behavior: cli::CliOpenBehavior::ExistingWindow,
                             })?;
                         }
                     }

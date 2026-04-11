@@ -500,6 +500,7 @@ pub async fn handle_cli_connection(
                 if let Some(behavior) = maybe_prompt_open_behavior(
                     open_new_workspace,
                     force_existing_window,
+                    reuse,
                     &paths,
                     &app_state,
                     responses.as_ref(),
@@ -558,13 +559,14 @@ pub async fn handle_cli_connection(
 async fn maybe_prompt_open_behavior(
     open_new_workspace: Option<bool>,
     force_existing_window: bool,
+    reuse: bool,
     paths: &[String],
     app_state: &Arc<AppState>,
     responses: &dyn CliResponseSink,
     requests: &mut mpsc::UnboundedReceiver<CliRequest>,
     cx: &mut AsyncApp,
 ) -> Option<settings::CliDefaultOpenBehavior> {
-    if open_new_workspace.is_some() || force_existing_window {
+    if open_new_workspace.is_some() || force_existing_window || reuse {
         return None;
     }
 
@@ -604,6 +606,18 @@ async fn maybe_prompt_open_behavior(
         }
     }
 
+    if !paths.is_empty() {
+        let has_directory =
+            futures::future::join_all(paths.iter().map(|p| app_state.fs.is_dir(Path::new(p))))
+                .await
+                .into_iter()
+                .any(|is_dir| is_dir);
+
+        if !has_directory {
+            return None;
+        }
+    }
+
     let settings_text = app_state
         .fs
         .load(paths::settings_file())
@@ -616,11 +630,12 @@ async fn maybe_prompt_open_behavior(
 
     responses.send(CliResponse::PromptOpenBehavior).log_err()?;
 
-    if let Some(CliRequest::SetOpenBehavior { existing_window }) = requests.next().await {
-        let behavior = if existing_window {
-            settings::CliDefaultOpenBehavior::ExistingWindow
-        } else {
-            settings::CliDefaultOpenBehavior::NewWindow
+    if let Some(CliRequest::SetOpenBehavior { behavior }) = requests.next().await {
+        let behavior = match behavior {
+            cli::CliOpenBehavior::ExistingWindow => {
+                settings::CliDefaultOpenBehavior::ExistingWindow
+            }
+            cli::CliOpenBehavior::NewWindow => settings::CliDefaultOpenBehavior::NewWindow,
         };
 
         let fs = app_state.fs.clone();
@@ -1874,7 +1889,7 @@ mod tests {
         cx: &mut TestAppContext,
         app_state: Arc<AppState>,
         open_request: CliRequest,
-        prompt_response: Option<bool>,
+        prompt_response: Option<cli::CliOpenBehavior>,
     ) -> (i32, bool) {
         cx.executor().allow_parking();
 
@@ -1890,26 +1905,28 @@ mod tests {
         let prompt_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let prompt_called_for_thread = prompt_called.clone();
 
-        let cli_thread = std::thread::spawn(move || {
-            cli::run_cli_response_loop(
-                |req| {
-                    request_tx
-                        .unbounded_send(req)
-                        .map_err(|error| anyhow::anyhow!("{error}"))
-                },
-                || {
-                    response_rx
-                        .recv()
-                        .map_err(|error| anyhow::anyhow!("{error}"))
-                },
-                open_request,
-                move || {
-                    prompt_called_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
-                    prompt_response
-                },
-                |_| {},
-                |_| {},
-            )
+        let cli_thread = std::thread::spawn(move || -> anyhow::Result<i32> {
+            request_tx
+                .unbounded_send(open_request)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+            while let Ok(response) = response_rx.recv() {
+                match response {
+                    CliResponse::Ping => {}
+                    CliResponse::Stdout { .. } | CliResponse::Stderr { .. } => {}
+                    CliResponse::Exit { status } => return Ok(status),
+                    CliResponse::PromptOpenBehavior => {
+                        prompt_called_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+                        let behavior =
+                            prompt_response.unwrap_or(cli::CliOpenBehavior::ExistingWindow);
+                        request_tx
+                            .unbounded_send(CliRequest::SetOpenBehavior { behavior })
+                            .map_err(|error| anyhow::anyhow!("{error}"))?;
+                    }
+                }
+            }
+
+            anyhow::bail!("CLI response channel closed without Exit")
         });
 
         while !cli_thread.is_finished() {
@@ -1975,8 +1992,8 @@ mod tests {
         let (status, prompt_shown) = run_cli_with_zed_handler(
             cx,
             app_state.clone(),
-            make_cli_open_request(vec![path!("/project_b/file.txt").to_string()], None, false),
-            Some(true), // user picks "existing window"
+            make_cli_open_request(vec![path!("/project_b").to_string()], None, false),
+            Some(cli::CliOpenBehavior::ExistingWindow),
         );
 
         assert_eq!(status, 0);
@@ -2016,8 +2033,8 @@ mod tests {
         let (status, prompt_shown) = run_cli_with_zed_handler(
             cx,
             app_state.clone(),
-            make_cli_open_request(vec![path!("/project_b/file.txt").to_string()], None, false),
-            Some(false), // user picks "new window"
+            make_cli_open_request(vec![path!("/project_b").to_string()], None, false),
+            Some(cli::CliOpenBehavior::NewWindow),
         );
 
         assert_eq!(status, 0);

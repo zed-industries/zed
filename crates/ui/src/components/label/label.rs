@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{LabelLike, prelude::*};
-use gpui::{StyleRefinement, StyledText, TextRun};
+use gpui::{HighlightStyle, StyleRefinement, StyledText};
 
 /// A struct representing a label element in the UI.
 ///
@@ -244,18 +244,31 @@ impl LabelCommon for Label {
 }
 
 impl RenderOnce for Label {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         if self.render_code_spans {
             if let Some((stripped, code_ranges)) = parse_backtick_spans(&self.label) {
-                let mut base_style = window.text_style();
-                base_style.color = self.base.color.color(cx);
+                let buffer_font_family = theme::theme_settings(cx).buffer_font(cx).family.clone();
+                let background_color = cx.theme().colors().element_background;
 
-                let mut code_style = base_style.clone();
-                code_style.font_family = theme::theme_settings(cx).buffer_font(cx).family.clone();
-                code_style.background_color = Some(cx.theme().colors().element_background);
+                let highlights = code_ranges.iter().map(|range| {
+                    (
+                        range.clone(),
+                        HighlightStyle {
+                            background_color: Some(background_color),
+                            ..Default::default()
+                        },
+                    )
+                });
 
-                let runs = build_code_span_runs(&stripped, &code_ranges, &base_style, &code_style);
-                return self.base.child(StyledText::new(stripped).with_runs(runs));
+                let font_overrides = code_ranges
+                    .iter()
+                    .map(|range| (range.clone(), buffer_font_family.clone()));
+
+                return self.base.child(
+                    StyledText::new(stripped)
+                        .with_highlights(highlights)
+                        .with_font_family_overrides(font_overrides),
+                );
             }
         }
         self.base.child(self.label)
@@ -332,34 +345,6 @@ mod tests {
         assert_eq!(text.as_ref(), "empty  span");
         assert_eq!(ranges, vec![6..6]);
     }
-}
-
-/// Builds a sequence of `TextRun`s that alternate between `base_style` and
-/// `code_style` based on the given code span ranges.
-fn build_code_span_runs(
-    text: &str,
-    code_ranges: &[Range<usize>],
-    base_style: &gpui::TextStyle,
-    code_style: &gpui::TextStyle,
-) -> Vec<TextRun> {
-    let mut runs = Vec::new();
-    let mut pos = 0;
-
-    for range in code_ranges {
-        if pos < range.start {
-            runs.push(base_style.to_run(range.start - pos));
-        }
-        if !range.is_empty() {
-            runs.push(code_style.to_run(range.len()));
-        }
-        pos = range.end;
-    }
-
-    if pos < text.len() {
-        runs.push(base_style.to_run(text.len() - pos));
-    }
-
-    runs
 }
 
 impl Component for Label {
