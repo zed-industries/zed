@@ -7396,7 +7396,7 @@ mod tests {
 
         // Open a different thread (stub agent) — this navigates away from the draft.
         let connection = StubAgentConnection::new();
-        let stub_agent = Agent::Custom { id: "stub".into() };
+        let stub_agent = Agent::Custom { id: "Test".into() };
         open_thread_with_connection(&panel, connection.clone(), &mut cx);
         let other_session_id = active_session_id(&panel, &cx);
 
