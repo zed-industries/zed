@@ -3,6 +3,7 @@ mod unified_palette_tests;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use file_icons::FileIcons;
 use gpui::{
     actions, Action, App, AppContext, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, SharedString, StyledText, 
@@ -16,7 +17,7 @@ use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use settings::Settings;
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
-use ui::{prelude::*, Label, ListItem, ListItemSpacing};
+use ui::{prelude::*, Icon, Label, ListItem, ListItemSpacing};
 use util::paths::PathWithPosition;
 use util::rel_path::RelPath;
 use workspace::{ModalView, Workspace};
@@ -732,11 +733,17 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         
         match match_item {
             Match::File(file_match) => {
+                use std::path::Path;
+                let path = Path::new(&file_match.display_path);
+                let icon = FileIcons::get_icon(path, cx)
+                    .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted));
+                
                 Some(
                     ListItem::new(ix)
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
+                        .start_slot::<Icon>(icon)
                         .child(Label::new(file_match.display_path.clone()))
                 )
             }

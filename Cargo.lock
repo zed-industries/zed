@@ -19010,6 +19010,7 @@ dependencies = [
  "ctor",
  "editor",
  "file_finder",
+ "file_icons",
  "fuzzy",
  "fuzzy_nucleo",
  "go_to_line",
