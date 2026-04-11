@@ -1182,6 +1182,7 @@ pub struct Editor {
     delegate_stage_and_restore: bool,
     delegate_open_excerpts: bool,
     enable_lsp_data: bool,
+    needs_initial_lsp_data: bool,
     enable_runnables: bool,
     enable_mouse_wheel_zoom: bool,
     show_line_numbers: Option<bool>,
@@ -1975,6 +1976,7 @@ impl Editor {
             self.buffers_with_disabled_indent_guides.clone();
         clone.enable_mouse_wheel_zoom = self.enable_mouse_wheel_zoom;
         clone.enable_lsp_data = self.enable_lsp_data;
+        clone.needs_initial_lsp_data = self.enable_lsp_data;
         clone.enable_runnables = self.enable_runnables;
         clone
     }
@@ -2424,6 +2426,7 @@ impl Editor {
             delegate_stage_and_restore: false,
             delegate_open_excerpts: false,
             enable_lsp_data: full_mode,
+            needs_initial_lsp_data: full_mode,
             enable_runnables: full_mode,
             enable_mouse_wheel_zoom: full_mode,
             show_git_diff_gutter: None,
@@ -26096,7 +26099,8 @@ impl Editor {
         self.register_visible_buffers(cx);
         self.colorize_brackets(false, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-        if !self.buffer().read(cx).is_singleton() {
+        if !self.buffer().read(cx).is_singleton() || self.needs_initial_lsp_data {
+            self.needs_initial_lsp_data = false;
             self.update_lsp_data(None, window, cx);
             self.refresh_runnables(None, window, cx);
         }
