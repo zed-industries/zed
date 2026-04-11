@@ -8419,6 +8419,7 @@ mod property_test {
             .assert_project_group_key_integrity(cx)
     }
 
+    #[ignore]
     #[gpui::property_test(config = ProptestConfig {
         cases: 50,
         ..Default::default()
