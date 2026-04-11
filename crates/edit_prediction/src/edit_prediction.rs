@@ -3,8 +3,8 @@ use client::{Client, EditPredictionUsage, NeedsLlmTokenRefresh, UserStore, globa
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{OrganizationId, SubmitEditPredictionFeedbackBody};
 use cloud_llm_client::predict_edits_v3::{
-    PredictEditsMode, PredictEditsV3Request, PredictEditsV3Response, RawCompletionRequest,
-    RawCompletionResponse,
+    PREDICT_EDITS_MODE_HEADER_NAME, PredictEditsMode, PredictEditsV3Request,
+    PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection,
@@ -2597,11 +2597,7 @@ impl EditPredictionStore {
             .http_client()
             .build_zed_llm_url("/predict_edits/v3", &[])?;
 
-        let request = PredictEditsV3Request {
-            input,
-            trigger,
-            mode,
-        };
+        let request = PredictEditsV3Request { input, trigger };
 
         let json_bytes = serde_json::to_vec(&request)?;
         let compressed = zstd::encode_all(&json_bytes[..], 3)?;
@@ -2611,6 +2607,7 @@ impl EditPredictionStore {
                 let req = builder
                     .uri(url.as_ref())
                     .header("Content-Encoding", "zstd")
+                    .header(PREDICT_EDITS_MODE_HEADER_NAME, mode.as_ref())
                     .body(compressed.clone().into());
                 Ok(req?)
             },
