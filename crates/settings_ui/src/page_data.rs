@@ -80,7 +80,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 }
 
 fn general_page() -> SettingsPage {
-    fn general_settings_section() -> [SettingsPageItem; 8] {
+    fn general_settings_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -138,6 +138,27 @@ fn general_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "CLI Default Open Behavior",
+                description: "How `zed <path>` opens directories when no `-e` or `-n` flag is specified.",
+                field: Box::new(SettingField {
+                    json_path: Some("cli_default_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .cli_default_open_behavior
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.cli_default_open_behavior = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1571,7 +1592,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn scrolling_section() -> [SettingsPageItem; 8] {
+    fn scrolling_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Scrolling"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1627,6 +1648,19 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.scroll_sensitivity.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.scroll_sensitivity = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Mouse Wheel Zoom",
+                description: "Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key.",
+                field: Box::new(SettingField {
+                    json_path: Some("mouse_wheel_zoom"),
+                    pick: |settings_content| settings_content.editor.mouse_wheel_zoom.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.mouse_wheel_zoom = value;
                     },
                 }),
                 metadata: None,

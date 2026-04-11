@@ -1325,7 +1325,6 @@ pub struct Workspace {
     bottom_dock: Entity<Dock>,
     right_dock: Entity<Dock>,
     panes: Vec<Entity<Pane>>,
-    active_worktree_override: Option<WorktreeId>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
     active_pane: Entity<Pane>,
     last_active_center_pane: Option<WeakEntity<Pane>>,
@@ -1758,7 +1757,6 @@ impl Workspace {
             modal_layer,
             toast_layer,
             titlebar_item: None,
-            active_worktree_override: None,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
             left_dock,
@@ -2949,27 +2947,6 @@ impl Workspace {
 
     pub fn titlebar_item(&self) -> Option<AnyView> {
         self.titlebar_item.clone()
-    }
-
-    /// Returns the worktree override set by the user (e.g., via the project dropdown).
-    /// When set, git-related operations should use this worktree instead of deriving
-    /// the active worktree from the focused file.
-    pub fn active_worktree_override(&self) -> Option<WorktreeId> {
-        self.active_worktree_override
-    }
-
-    pub fn set_active_worktree_override(
-        &mut self,
-        worktree_id: Option<WorktreeId>,
-        cx: &mut Context<Self>,
-    ) {
-        self.active_worktree_override = worktree_id;
-        cx.notify();
-    }
-
-    pub fn clear_active_worktree_override(&mut self, cx: &mut Context<Self>) {
-        self.active_worktree_override = None;
-        cx.notify();
     }
 
     /// Call the given callback with a workspace whose project is local or remote via WSL (allowing host access).
@@ -9340,6 +9317,7 @@ pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
+    pub force_existing_window: bool,
     pub wait: bool,
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
     pub open_mode: OpenMode,
@@ -9524,31 +9502,42 @@ pub fn open_paths(
         }
 
         // Fallback for directories: when no flag is specified and no existing
-        // workspace matched, add the directory as a new workspace in the
-        // active window's MultiWorkspace (instead of opening a new window).
+        // workspace matched, check the user's setting to decide whether to add
+        // the directory as a new workspace in the active window's MultiWorkspace
+        // or open a new window.
         if open_options.open_new_workspace.is_none() && existing.is_none() {
-            let target_window = cx.update(|cx| {
-                let windows = workspace_windows_for_location(
-                    &SerializedWorkspaceLocation::Local,
-                    cx,
-                );
-                let window = cx
-                    .active_window()
-                    .and_then(|window| window.downcast::<MultiWorkspace>())
-                    .filter(|window| windows.contains(window))
-                    .or_else(|| windows.into_iter().next());
-                window.filter(|window| {
-                    window.read(cx).is_ok_and(|mw| mw.multi_workspace_enabled(cx))
-                })
-            });
+            let use_existing_window = open_options.force_existing_window
+                || cx.update(|cx| {
+                    WorkspaceSettings::get_global(cx).cli_default_open_behavior
+                        == settings::CliDefaultOpenBehavior::ExistingWindow
+                });
 
-            if let Some(window) = target_window {
-                open_options.requesting_window = Some(window);
-                window
-                    .update(cx, |multi_workspace, _, cx| {
-                        multi_workspace.open_sidebar(cx);
+            if use_existing_window {
+                let target_window = cx.update(|cx| {
+                    let windows = workspace_windows_for_location(
+                        &SerializedWorkspaceLocation::Local,
+                        cx,
+                    );
+                    let window = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<MultiWorkspace>())
+                        .filter(|window| windows.contains(window))
+                        .or_else(|| windows.into_iter().next());
+                    window.filter(|window| {
+                        window
+                            .read(cx)
+                            .is_ok_and(|mw| mw.multi_workspace_enabled(cx))
                     })
-                    .log_err();
+                });
+
+                if let Some(window) = target_window {
+                    open_options.requesting_window = Some(window);
+                    window
+                        .update(cx, |multi_workspace, _, cx| {
+                            multi_workspace.open_sidebar(cx);
+                        })
+                        .log_err();
+                }
             }
         }
 

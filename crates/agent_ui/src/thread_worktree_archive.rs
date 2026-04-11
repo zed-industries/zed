@@ -139,16 +139,6 @@ pub fn build_root_plan(
             .then_some((snapshot, repo))
         });
 
-    let matching_worktree_snapshot = workspaces.iter().find_map(|workspace| {
-        workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .visible_worktrees(cx)
-            .find(|worktree| worktree.read(cx).abs_path().as_ref() == path.as_path())
-            .map(|worktree| worktree.read(cx).snapshot())
-    });
-
     let (main_repo_path, worktree_repo, branch_name) =
         if let Some((linked_snapshot, repo)) = linked_repo {
             (
@@ -160,12 +150,11 @@ pub fn build_root_plan(
                     .map(|branch| branch.name().to_string()),
             )
         } else {
-            let main_repo_path = matching_worktree_snapshot
-                .as_ref()?
-                .root_repo_common_dir()
-                .and_then(|dir| dir.parent())?
-                .to_path_buf();
-            (main_repo_path, None, None)
+            // Not a linked worktree — nothing to archive from disk.
+            // `remove_root` would try to remove the main worktree from
+            // the project and then run `git worktree remove`, both of
+            // which fail for main working trees.
+            return None;
         };
 
     Some(RootPlan {

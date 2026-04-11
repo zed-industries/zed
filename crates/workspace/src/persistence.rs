@@ -1804,16 +1804,12 @@ impl WorkspaceDb {
         }
     }
 
-    async fn all_paths_exist_with_a_directory(
-        paths: &[PathBuf],
-        fs: &dyn Fs,
-        timestamp: Option<DateTime<Utc>>,
-    ) -> bool {
+    async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
         let mut any_dir = false;
         for path in paths {
             match fs.metadata(path).await.ok().flatten() {
                 None => {
-                    return timestamp.is_some_and(|t| Utc::now() - t < chrono::Duration::days(7));
+                    return false;
                 }
                 Some(meta) => {
                     if meta.is_dir {
@@ -1839,9 +1835,9 @@ impl WorkspaceDb {
         )>,
     > {
         let mut result = Vec::new();
-        let mut delete_tasks = Vec::new();
+        let mut workspaces_to_delete = Vec::new();
         let remote_connections = self.remote_connections()?;
-
+        let now = Utc::now();
         for (id, paths, remote_connection_id, timestamp) in self.recent_workspaces()? {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
@@ -1852,34 +1848,40 @@ impl WorkspaceDb {
                         timestamp,
                     ));
                 } else {
-                    delete_tasks.push(self.delete_workspace_by_id(id));
+                    workspaces_to_delete.push(id);
                 }
                 continue;
             }
 
-            let has_wsl_path = if cfg!(windows) {
-                paths
+            // Delete the workspace if any of the paths are WSL paths. If a
+            // local workspace points to WSL, attempting to read its metadata
+            // will wait for the WSL VM and file server to boot up. This can
+            // block for many seconds. Supported scenarios use remote
+            // workspaces.
+            if cfg!(windows) {
+                let has_wsl_path = paths
                     .paths()
                     .iter()
-                    .any(|path| util::paths::WslPath::from_path(path).is_some())
-            } else {
-                false
-            };
+                    .any(|path| util::paths::WslPath::from_path(path).is_some());
+                if has_wsl_path {
+                    workspaces_to_delete.push(id);
+                    continue;
+                }
+            }
 
-            // Delete the workspace if any of the paths are WSL paths.
-            // If a local workspace points to WSL, this check will cause us to wait for the
-            // WSL VM and file server to boot up. This can block for many seconds.
-            // Supported scenarios use remote workspaces.
-            if !has_wsl_path
-                && Self::all_paths_exist_with_a_directory(paths.paths(), fs, Some(timestamp)).await
-            {
+            if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
                 result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
-            } else {
-                delete_tasks.push(self.delete_workspace_by_id(id));
+            } else if now - timestamp >= chrono::Duration::days(7) {
+                workspaces_to_delete.push(id);
             }
         }
 
-        futures::future::join_all(delete_tasks).await;
+        futures::future::join_all(
+            workspaces_to_delete
+                .into_iter()
+                .map(|id| self.delete_workspace_by_id(id)),
+        )
+        .await;
         Ok(result)
     }
 
@@ -1932,7 +1934,7 @@ impl WorkspaceDb {
                     window_id,
                 });
             } else {
-                if Self::all_paths_exist_with_a_directory(paths.paths(), fs, None).await {
+                if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
                     workspaces.push(SessionWorkspace {
                         workspace_id,
                         location: SerializedWorkspaceLocation::Local,

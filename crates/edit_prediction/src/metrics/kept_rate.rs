@@ -13,12 +13,33 @@ pub enum TokenAnnotation {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct KeptRateResult {
-    pub predicted_new_chars: usize,
-    pub final_new_chars: usize,
+    /// Characters newly introduced by the candidate
+    pub candidate_new_chars: usize,
+    /// Characters newly introduced by the reference
+    pub reference_new_chars: usize,
+    /// Characters from `base` that are deleted by the candidate.
+    pub candidate_deleted_chars: usize,
+    /// Characters from `base` that are deleted by the reference.
+    pub reference_deleted_chars: usize,
+    /// Candidate new characters that are also present in the reference.
     pub kept_chars: usize,
+    /// Base characters deleted by both the candidate and the reference.
+    pub correctly_deleted_chars: usize,
+    /// Candidate new characters that are not kept in the reference.
     pub discarded_chars: usize,
+    /// Candidate characters treated as unchanged context
     pub context_chars: usize,
+    /// Fraction of candidate edit characters that match the reference edit.
+    ///
+    /// This includes both kept newly introduced characters and correctly
+    /// deleted base characters.
     pub kept_rate: f64,
+    /// Fraction of reference edit characters covered by the candidate edit.
+    ///
+    /// This includes both kept newly introduced characters and correctly
+    /// deleted base characters.
+    pub recall_rate: f64,
+    /// Per-token classification for candidate tokens used by tests.
     #[cfg(test)]
     pub token_annotations: Vec<TokenAnnotation>,
 }
@@ -188,89 +209,127 @@ fn analyze_masked_tokens<'a>(tokens: &[&'a str], mask: &[bool]) -> (Vec<&'a str>
     (unmasked_tokens, unmasked_chars, masked_chars)
 }
 
-fn should_bail_for_dirty_final(base: &str, predicted: &str, final_text: &str) -> bool {
-    let predicted_delta_chars = predicted.len().abs_diff(base.len());
-    let final_delta_chars = final_text.len().abs_diff(base.len());
-    predicted_delta_chars.abs_diff(final_delta_chars) > MAX_DIRTY_LENGTH_DELTA_CHARS
+fn count_unmasked_chars(tokens: &[&str], mask: &[bool]) -> usize {
+    tokens
+        .iter()
+        .zip(mask.iter())
+        .filter_map(|(&token, &is_masked)| (!is_masked).then_some(token.len()))
+        .sum()
 }
 
-pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptRateResult {
-    if base == predicted && predicted == final_text {
-        let predicted_tokens = tokenize(predicted);
-        let context_chars = predicted_tokens.iter().map(|token| token.len()).sum();
+fn should_bail_for_dirty_final(base: &str, candidate: &str, reference: &str) -> bool {
+    let candidate_delta_chars = candidate.len().abs_diff(base.len());
+    let reference_delta_chars = reference.len().abs_diff(base.len());
+    candidate_delta_chars.abs_diff(reference_delta_chars) > MAX_DIRTY_LENGTH_DELTA_CHARS
+}
+
+pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRateResult {
+    if base == candidate && candidate == reference {
+        let candidate_tokens = tokenize(candidate);
+        let context_chars = candidate_tokens.iter().map(|token| token.len()).sum();
         return KeptRateResult {
-            predicted_new_chars: 0,
-            final_new_chars: 0,
+            candidate_new_chars: 0,
+            reference_new_chars: 0,
+            candidate_deleted_chars: 0,
+            reference_deleted_chars: 0,
             kept_chars: 0,
+            correctly_deleted_chars: 0,
             discarded_chars: 0,
             context_chars,
             kept_rate: 1.0,
+            recall_rate: 1.0,
             #[cfg(test)]
-            token_annotations: vec![TokenAnnotation::Context; predicted_tokens.len()],
+            token_annotations: vec![TokenAnnotation::Context; candidate_tokens.len()],
         };
     }
 
-    if should_bail_for_dirty_final(base, predicted, final_text) {
-        let predicted_new_chars = predicted.len().abs_diff(base.len());
-        let final_new_chars = final_text.len().abs_diff(base.len());
+    if should_bail_for_dirty_final(base, candidate, reference) {
+        let candidate_new_chars = candidate.len().abs_diff(base.len());
+        let reference_new_chars = reference.len().abs_diff(base.len());
         return KeptRateResult {
-            predicted_new_chars,
-            final_new_chars,
+            candidate_new_chars,
+            reference_new_chars,
+            candidate_deleted_chars: 0,
+            reference_deleted_chars: 0,
             kept_chars: 0,
-            discarded_chars: predicted_new_chars,
+            correctly_deleted_chars: 0,
+            discarded_chars: candidate_new_chars,
             context_chars: 0,
             kept_rate: 0.0,
+            recall_rate: 0.0,
             #[cfg(test)]
-            token_annotations: vec![TokenAnnotation::Discarded; tokenize(predicted).len()],
+            token_annotations: vec![TokenAnnotation::Discarded; tokenize(candidate).len()],
         };
     }
 
     let base_tokens = tokenize(base);
-    let predicted_tokens = tokenize(predicted);
-    let final_tokens = tokenize(final_text);
+    let candidate_tokens = tokenize(candidate);
+    let reference_tokens = tokenize(reference);
 
-    let pred_base_mask = lcs_keep_mask(&predicted_tokens, &base_tokens);
-    let (pred_final_mask, final_pred_mask) = lcs_keep_masks(&predicted_tokens, &final_tokens);
-    let context_mask: Vec<bool> = pred_base_mask
+    let (candidate_base_mask, base_candidate_mask) =
+        lcs_keep_masks(&candidate_tokens, &base_tokens);
+    let (candidate_reference_mask, reference_candidate_mask) =
+        lcs_keep_masks(&candidate_tokens, &reference_tokens);
+    let context_mask: Vec<bool> = candidate_base_mask
         .iter()
-        .zip(pred_final_mask.iter())
-        .map(|(&in_base, &in_final)| in_base && in_final)
+        .zip(candidate_reference_mask.iter())
+        .map(|(&in_base, &in_reference)| in_base && in_reference)
         .collect();
 
-    let (stripped_predicted, predicted_new_chars, context_chars) =
-        analyze_masked_tokens(&predicted_tokens, &context_mask);
+    let (stripped_candidate, candidate_new_chars, context_chars) =
+        analyze_masked_tokens(&candidate_tokens, &context_mask);
 
-    let final_base_mask = lcs_keep_mask(&final_tokens, &base_tokens);
-    let final_context_mask: Vec<bool> = final_base_mask
+    let (reference_base_mask, base_reference_mask) =
+        lcs_keep_masks(&reference_tokens, &base_tokens);
+    let reference_context_mask: Vec<bool> = reference_base_mask
         .iter()
-        .zip(final_pred_mask.iter())
-        .map(|(&in_base, &in_predicted)| in_base && in_predicted)
+        .zip(reference_candidate_mask.iter())
+        .map(|(&in_base, &in_candidate)| in_base && in_candidate)
         .collect();
 
-    let (stripped_final, final_new_chars, _) =
-        analyze_masked_tokens(&final_tokens, &final_context_mask);
+    let (stripped_reference, reference_new_chars, _) =
+        analyze_masked_tokens(&reference_tokens, &reference_context_mask);
 
-    let keep_mask = lcs_keep_mask(&stripped_predicted, &stripped_final);
+    let keep_mask = lcs_keep_mask(&stripped_candidate, &stripped_reference);
 
-    let kept_chars: usize = stripped_predicted
+    let kept_chars: usize = stripped_candidate
         .iter()
         .zip(keep_mask.iter())
         .filter_map(|(&token, &is_kept)| is_kept.then_some(token.len()))
         .sum();
 
-    let discarded_chars = predicted_new_chars - kept_chars;
+    let candidate_deleted_chars = count_unmasked_chars(&base_tokens, &base_candidate_mask);
+    let reference_deleted_chars = count_unmasked_chars(&base_tokens, &base_reference_mask);
+    let correctly_deleted_chars: usize = base_tokens
+        .iter()
+        .zip(base_candidate_mask.iter().zip(base_reference_mask.iter()))
+        .filter_map(|(&token, (&in_candidate, &in_reference))| {
+            (!in_candidate && !in_reference).then_some(token.len())
+        })
+        .sum();
 
-    let kept_rate = if predicted_new_chars == 0 {
-        if final_new_chars == 0 { 1.0 } else { 0.0 }
+    let discarded_chars = candidate_new_chars - kept_chars;
+    let matched_edit_chars = kept_chars + correctly_deleted_chars;
+    let candidate_edit_chars = candidate_new_chars + candidate_deleted_chars;
+    let reference_edit_chars = reference_new_chars + reference_deleted_chars;
+
+    let kept_rate = if candidate_edit_chars == 0 {
+        if reference_edit_chars == 0 { 1.0 } else { 0.0 }
     } else {
-        kept_chars as f64 / predicted_new_chars as f64
+        matched_edit_chars as f64 / candidate_edit_chars as f64
+    };
+
+    let recall_rate = if reference_edit_chars == 0 {
+        if candidate_edit_chars == 0 { 1.0 } else { 0.0 }
+    } else {
+        matched_edit_chars as f64 / reference_edit_chars as f64
     };
 
     #[cfg(test)]
     let token_annotations = {
-        let mut token_annotations = Vec::with_capacity(predicted_tokens.len());
+        let mut token_annotations = Vec::with_capacity(candidate_tokens.len());
         let mut new_index = 0;
-        for (token_index, _token) in predicted_tokens.iter().enumerate() {
+        for (token_index, _token) in candidate_tokens.iter().enumerate() {
             if context_mask[token_index] {
                 token_annotations.push(TokenAnnotation::Context);
             } else {
@@ -288,12 +347,16 @@ pub fn compute_kept_rate(base: &str, predicted: &str, final_text: &str) -> KeptR
     };
 
     KeptRateResult {
-        predicted_new_chars,
-        final_new_chars,
+        candidate_new_chars,
+        reference_new_chars,
+        candidate_deleted_chars,
+        reference_deleted_chars,
         kept_chars,
+        correctly_deleted_chars,
         discarded_chars,
         context_chars,
         kept_rate,
+        recall_rate,
         #[cfg(test)]
         token_annotations,
     }
@@ -327,7 +390,8 @@ mod test_kept_rate {
     fn test_rate_extremes() {
         let no_change = compute_kept_rate("foo bar", "foo bar", "foo bar");
         assert!((no_change.kept_rate - 1.0).abs() < 1e-6);
-        assert_eq!(no_change.predicted_new_chars, 0);
+        assert!((no_change.recall_rate - 1.0).abs() < 1e-6);
+        assert_eq!(no_change.candidate_new_chars, 0);
         assert!(
             no_change
                 .token_annotations
@@ -337,15 +401,17 @@ mod test_kept_rate {
 
         let accepted = compute_kept_rate("old", "new", "new");
         assert!((accepted.kept_rate - 1.0).abs() < 1e-6);
+        assert!((accepted.recall_rate - 1.0).abs() < 1e-6);
 
         let discarded = compute_kept_rate("old", "old", "new");
         assert!((discarded.kept_rate - 0.0).abs() < 1e-6);
+        assert!((discarded.recall_rate - 0.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_pure_addition() {
         let kept = compute_kept_rate("", "brand new line\n", "brand new line\n");
-        assert_eq!(kept.kept_chars, kept.predicted_new_chars);
+        assert_eq!(kept.kept_chars, kept.candidate_new_chars);
         assert!(
             kept.token_annotations
                 .iter()
@@ -354,26 +420,28 @@ mod test_kept_rate {
 
         let discarded =
             compute_kept_rate("", "brand new line\n", "something completely different\n");
-        assert!(discarded.kept_chars < discarded.predicted_new_chars);
+        assert!(discarded.kept_chars < discarded.candidate_new_chars);
     }
 
     #[test]
     fn test_decoy_when_base_excluded() {
         let base = "    decoy.when(mock_sync_hardware_api.sp()).then_return(SpeedStatus.IDLE)\n";
-        let predicted = "    decoy.when(mock_sync_module_hardware.speed_status).then_return(SpeedStatus.IDLE)\n";
-        let final_text = "    decoy.when(mock_sync_module_hardware.speed_status).then_return(SpeedStatus.IDLE)\n";
-        let result = compute_kept_rate(base, predicted, final_text);
+        let candidate = "    decoy.when(mock_sync_module_hardware.speed_status).then_return(SpeedStatus.IDLE)\n";
+        let reference = "    decoy.when(mock_sync_module_hardware.speed_status).then_return(SpeedStatus.IDLE)\n";
+        let result = compute_kept_rate(base, candidate, reference);
         let expected_new = "mock_sync_module_hardware".len() + "speed_status".len();
-        assert_eq!(result.predicted_new_chars, expected_new);
+        assert_eq!(result.candidate_new_chars, expected_new);
+        assert!(result.correctly_deleted_chars > 0);
         assert!((result.kept_rate - 1.0).abs() < 1e-6);
+        assert!((result.recall_rate - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_missing_deletion() {
         let base = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\n";
-        let predicted = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\neprintln!(\"\");\n";
-        let final_text = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
-        let result = compute_kept_rate(base, predicted, final_text);
+        let candidate = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\neprintln!(\"\");\n";
+        let reference = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
+        let result = compute_kept_rate(base, candidate, reference);
         assert!(
             result.kept_rate < 0.85,
             "expected kept_rate < 0.85, got {}",
@@ -385,7 +453,12 @@ mod test_kept_rate {
     #[test]
     fn test_empty_prediction() {
         let result = compute_kept_rate("old line\n", "", "new line\n");
-        assert!((result.kept_rate - 0.0).abs() < 1e-6);
+        assert_eq!(result.candidate_new_chars, 0);
+        assert!(result.candidate_deleted_chars > 0);
+        assert!(result.correctly_deleted_chars > 0);
+        assert!(result.correctly_deleted_chars < result.candidate_deleted_chars);
+        assert!(result.kept_rate > 0.0 && result.kept_rate < 1.0);
+        assert!(result.recall_rate > 0.0 && result.recall_rate < 1.0);
     }
 
     #[test]
@@ -399,24 +472,25 @@ mod test_kept_rate {
     #[test]
     fn test_bails_for_dirty_final() {
         let base = "fn example() {\n    work();\n}\n";
-        let predicted = "fn example() {\n    work();\n    predicted();\n}\n";
-        let final_text = format!(
+        let candidate = "fn example() {\n    work();\n    predicted();\n}\n";
+        let reference = format!(
             "fn example() {{\n    work();\n    {}\n}}\n",
             "settled();\n    ".repeat(MAX_DIRTY_LENGTH_DELTA_CHARS / 8 + 64)
         );
 
-        let result = compute_kept_rate(base, predicted, &final_text);
+        let result = compute_kept_rate(base, candidate, &reference);
         assert_eq!(result.kept_rate, 0.0);
+        assert_eq!(result.recall_rate, 0.0);
         assert_eq!(result.kept_chars, 0);
-        assert_eq!(result.discarded_chars, result.predicted_new_chars);
+        assert_eq!(result.discarded_chars, result.candidate_new_chars);
     }
 
     #[test]
     fn test_eprintln_token_alignment() {
         let base = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\n";
-        let predicted = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"hello world!\");\n";
-        let final_text = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
-        let result = compute_kept_rate(base, predicted, final_text);
+        let candidate = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"hello world!\");\n";
+        let reference = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
+        let result = compute_kept_rate(base, candidate, reference);
         assert!(result.discarded_chars > 0);
         assert!(result.kept_chars > 0);
         assert!(result.kept_rate > 0.0 && result.kept_rate < 1.0);
@@ -427,14 +501,18 @@ mod test_kept_rate {
     #[test]
     fn test_annotations_rename() {
         let base = "    foo(old_name)\n";
-        let predicted = "    foo(new_name)\n";
-        let final_text = "    foo(new_name)\n";
-        let result = compute_kept_rate(base, predicted, final_text);
+        let candidate = "    foo(new_name)\n";
+        let reference = "    foo(new_name)\n";
+        let result = compute_kept_rate(base, candidate, reference);
 
-        assert_eq!(result.predicted_new_chars, "new_name".len());
-        assert_eq!(result.token_annotations.len(), tokenize(predicted).len());
+        assert_eq!(result.candidate_new_chars, "new_name".len());
+        assert_eq!(result.candidate_deleted_chars, "old_name".len());
+        assert_eq!(result.reference_deleted_chars, "old_name".len());
+        assert_eq!(result.correctly_deleted_chars, "old_name".len());
+        assert!((result.recall_rate - 1.0).abs() < 1e-6);
+        assert_eq!(result.token_annotations.len(), tokenize(candidate).len());
 
-        for (&token, &annotation) in tokenize(predicted).iter().zip(&result.token_annotations) {
+        for (&token, &annotation) in tokenize(candidate).iter().zip(&result.token_annotations) {
             if token == "new_name" {
                 assert_eq!(annotation, TokenAnnotation::Kept);
             } else {
@@ -446,12 +524,12 @@ mod test_kept_rate {
     #[test]
     fn test_annotations_eprintln_coloring() {
         let base = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\n";
-        let predicted = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"hello world!\");\n";
-        let final_text = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
-        let result = compute_kept_rate(base, predicted, final_text);
-        let predicted_tokens = tokenize(predicted);
+        let candidate = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"hello world!\");\n";
+        let reference = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
+        let result = compute_kept_rate(base, candidate, reference);
+        let candidate_tokens = tokenize(candidate);
 
-        let eprintln_index = predicted_tokens
+        let eprintln_index = candidate_tokens
             .iter()
             .position(|&token| token == "eprintln")
             .expect("eprintln token not found");
@@ -485,12 +563,15 @@ mod test_kept_rate {
     #[test]
     fn test_repetitive_tokens_remain_discarded() {
         let base = "foo + foo + foo + foo + foo\n".repeat(16);
-        let predicted = "foo + foo + prediction_token + foo + foo\n".repeat(16);
-        let final_text = "foo + foo + kept_token + foo + foo\n".repeat(16);
-        let result = compute_kept_rate(&base, &predicted, &final_text);
+        let candidate = "foo + foo + prediction_token + foo + foo\n".repeat(16);
+        let reference = "foo + foo + kept_token + foo + foo\n".repeat(16);
+        let result = compute_kept_rate(&base, &candidate, &reference);
 
         assert_eq!(result.kept_chars, 0);
-        assert_eq!(result.discarded_chars, result.predicted_new_chars);
-        assert_eq!(result.predicted_new_chars, "prediction_token".len() * 16);
+        assert_eq!(result.correctly_deleted_chars, "foo".len() * 16);
+        assert_eq!(result.discarded_chars, result.candidate_new_chars);
+        assert_eq!(result.candidate_new_chars, "prediction_token".len() * 16);
+        assert!(result.kept_rate > 0.0);
+        assert!(result.recall_rate > 0.0);
     }
 }

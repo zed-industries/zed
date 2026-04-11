@@ -56,7 +56,7 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
-    DismissEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    DismissEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable, Global,
     KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
     pulsating_between,
 };
@@ -204,21 +204,12 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
-                .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
+                .register_action(|workspace, _action: &NewExternalAgentThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            let initial_content = panel.take_active_draft_initial_content(cx);
-                            panel.external_thread(
-                                action.agent.clone(),
-                                None,
-                                None,
-                                None,
-                                initial_content,
-                                true,
-                                window,
-                                cx,
-                            )
+                            let id = panel.create_draft(window, cx);
+                            panel.activate_draft(id, true, window, cx);
                         });
                     }
                 })
@@ -602,6 +593,25 @@ fn build_conflicted_files_resolution_prompt(
     content
 }
 
+/// Unique identifier for a sidebar draft thread. Not persisted across restarts.
+/// IDs are globally unique across all AgentPanel instances within the same app.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DraftId(pub usize);
+
+#[derive(Default)]
+struct DraftIdCounter(usize);
+
+impl Global for DraftIdCounter {}
+
+impl DraftId {
+    fn next(cx: &mut App) -> Self {
+        let counter = cx.default_global::<DraftIdCounter>();
+        let id = counter.0;
+        counter.0 += 1;
+        Self(id)
+    }
+}
+
 enum ActiveView {
     Uninitialized,
     AgentThread {
@@ -803,6 +813,7 @@ pub struct AgentPanel {
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
     background_threads: HashMap<acp::SessionId, Entity<ConversationView>>,
+    draft_threads: HashMap<DraftId, Entity<ConversationView>>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     start_thread_in_menu_handle: PopoverMenuHandle<ThreadWorktreePicker>,
     thread_branch_menu_handle: PopoverMenuHandle<ThreadBranchPicker>,
@@ -1181,6 +1192,7 @@ impl AgentPanel {
             context_server_registry,
             previous_view: None,
             background_threads: HashMap::default(),
+            draft_threads: HashMap::default(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             start_thread_in_menu_handle: PopoverMenuHandle::default(),
             thread_branch_menu_handle: PopoverMenuHandle::default(),
@@ -1306,9 +1318,96 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.reset_start_thread_in_to_default(cx);
-        let initial_content = self.take_active_draft_initial_content(cx);
-        self.external_thread(None, None, None, None, initial_content, true, window, cx);
+        let id = self.create_draft(window, cx);
+        self.activate_draft(id, true, window, cx);
+    }
+
+    /// Creates a new empty draft thread and stores it. Returns the DraftId.
+    /// The draft is NOT activated — call `activate_draft` to show it.
+    pub fn create_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) -> DraftId {
+        let id = DraftId::next(cx);
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        let fs = self.fs.clone();
+        let thread_store = self.thread_store.clone();
+        let agent = if self.project.read(cx).is_via_collab() {
+            Agent::NativeAgent
+        } else {
+            self.selected_agent.clone()
+        };
+        let server = agent.server(fs, thread_store);
+        let conversation_view = self.create_agent_thread(
+            server, None, None, None, None, workspace, project, agent, window, cx,
+        );
+        self.draft_threads.insert(id, conversation_view);
+        id
+    }
+
+    pub fn activate_draft(
+        &mut self,
+        id: DraftId,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(conversation_view) = self.draft_threads.get(&id).cloned() else {
+            return;
+        };
+        self.set_active_view(
+            ActiveView::AgentThread { conversation_view },
+            focus,
+            window,
+            cx,
+        );
+    }
+
+    /// Removes a draft thread. If it's currently active, does nothing to
+    /// the active view — the caller should activate something else first.
+    pub fn remove_draft(&mut self, id: DraftId) {
+        self.draft_threads.remove(&id);
+    }
+
+    /// Returns the DraftId of the currently active draft, if the active
+    /// view is a draft thread tracked in `draft_threads`.
+    pub fn active_draft_id(&self) -> Option<DraftId> {
+        let active_cv = self.active_conversation_view()?;
+        self.draft_threads
+            .iter()
+            .find_map(|(id, cv)| (cv.entity_id() == active_cv.entity_id()).then_some(*id))
+    }
+
+    /// Returns all draft IDs, sorted newest-first.
+    pub fn draft_ids(&self) -> Vec<DraftId> {
+        let mut ids: Vec<DraftId> = self.draft_threads.keys().copied().collect();
+        ids.sort_by_key(|id| std::cmp::Reverse(id.0));
+        ids
+    }
+
+    /// Returns the text from a draft's message editor, or `None` if the
+    /// draft doesn't exist or has no text.
+    pub fn draft_editor_text(&self, id: DraftId, cx: &App) -> Option<String> {
+        let cv = self.draft_threads.get(&id)?;
+        let tv = cv.read(cx).active_thread()?;
+        let text = tv.read(cx).message_editor.read(cx).text(cx);
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+
+    /// Clears the message editor text of a tracked draft.
+    pub fn clear_draft_editor(&self, id: DraftId, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(cv) = self.draft_threads.get(&id) else {
+            return;
+        };
+        let Some(tv) = cv.read(cx).active_thread() else {
+            return;
+        };
+        let editor = tv.read(cx).message_editor.clone();
+        editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+        });
     }
 
     fn take_active_draft_initial_content(
@@ -1410,7 +1509,7 @@ impl AgentPanel {
         });
 
         let server = agent.server(fs, thread_store);
-        self.create_agent_thread(
+        let conversation_view = self.create_agent_thread(
             server,
             resume_session_id,
             work_dirs,
@@ -1419,6 +1518,11 @@ impl AgentPanel {
             workspace,
             project,
             agent,
+            window,
+            cx,
+        );
+        self.set_active_view(
+            ActiveView::AgentThread { conversation_view },
             focus,
             window,
             cx,
@@ -1982,6 +2086,16 @@ impl AgentPanel {
             return;
         };
 
+        // If this ConversationView is a tracked draft, it's already
+        // stored in `draft_threads` — don't drop it.
+        let is_tracked_draft = self
+            .draft_threads
+            .values()
+            .any(|cv| cv.entity_id() == conversation_view.entity_id());
+        if is_tracked_draft {
+            return;
+        }
+
         let Some(thread_view) = conversation_view.read(cx).root_thread(cx) else {
             return;
         };
@@ -2188,6 +2302,12 @@ impl AgentPanel {
                         this.handle_first_send_requested(view.clone(), content.clone(), window, cx);
                     }
                     AcpThreadViewEvent::MessageSentOrQueued => {
+                        // When a draft sends its first message it becomes a
+                        // real thread. Remove it from `draft_threads` so the
+                        // sidebar stops showing a stale draft entry.
+                        if let Some(draft_id) = this.active_draft_id() {
+                            this.draft_threads.remove(&draft_id);
+                        }
                         let session_id = view.read(cx).thread.read(cx).session_id().clone();
                         cx.emit(AgentPanelEvent::MessageSentOrQueued { session_id });
                     }
@@ -2528,10 +2648,9 @@ impl AgentPanel {
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
         agent: Agent,
-        focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Entity<ConversationView> {
         if self.selected_agent != agent {
             self.selected_agent = agent.clone();
             self.serialize(cx);
@@ -2586,12 +2705,7 @@ impl AgentPanel {
         })
         .detach();
 
-        self.set_active_view(
-            ActiveView::AgentThread { conversation_view },
-            focus,
-            window,
-            cx,
-        );
+        conversation_view
     }
 
     fn active_thread_has_messages(&self, cx: &App) -> bool {
@@ -3457,8 +3571,8 @@ impl Panel for AgentPanel {
                 Some((_, WorktreeCreationStatus::Creating))
             )
         {
-            let selected_agent = self.selected_agent.clone();
-            self.new_agent_thread_inner(selected_agent, false, window, cx);
+            let id = self.create_draft(window, cx);
+            self.activate_draft(id, false, window, cx);
         }
     }
 
@@ -4745,8 +4859,14 @@ impl AgentPanel {
             id: server.agent_id(),
         };
 
-        self.create_agent_thread(
-            server, None, None, None, None, workspace, project, ext_agent, true, window, cx,
+        let conversation_view = self.create_agent_thread(
+            server, None, None, None, None, workspace, project, ext_agent, window, cx,
+        );
+        self.set_active_view(
+            ActiveView::AgentThread { conversation_view },
+            true,
+            window,
+            cx,
         );
     }
 

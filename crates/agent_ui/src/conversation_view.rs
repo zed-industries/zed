@@ -1,12 +1,15 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentSessionInfo, AgentThreadEntry, AssistantMessage,
-    AssistantMessageChunk, AuthRequired, LoadError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
-    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AssistantMessageChunk, AuthRequired, LoadError, MaxOutputTokensError, MentionUri,
+    PermissionOptionChoice, PermissionOptions, PermissionPattern, RetryStatus,
+    SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    UserMessageId,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
-use agent::{NativeAgentServer, NativeAgentSessionList, SharedThread, ThreadStore};
+use agent::{
+    NativeAgentServer, NativeAgentSessionList, NoModelConfiguredError, SharedThread, ThreadStore,
+};
 use agent_client_protocol as acp;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
@@ -34,7 +37,7 @@ use gpui::{
     list, point, pulsating_between,
 };
 use language::Buffer;
-use language_model::LanguageModelRegistry;
+use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
@@ -113,6 +116,31 @@ pub(crate) enum ThreadError {
     PaymentRequired,
     Refusal,
     AuthenticationRequired(SharedString),
+    RateLimitExceeded {
+        provider: SharedString,
+    },
+    ServerOverloaded {
+        provider: SharedString,
+    },
+    PromptTooLarge,
+    NoApiKey {
+        provider: SharedString,
+    },
+    StreamError {
+        provider: SharedString,
+    },
+    InvalidApiKey {
+        provider: SharedString,
+    },
+    PermissionDenied {
+        provider: SharedString,
+    },
+    RequestFailed,
+    MaxOutputTokens,
+    NoModelSelected,
+    ApiError {
+        provider: SharedString,
+    },
     Other {
         message: SharedString,
         acp_error_code: Option<SharedString>,
@@ -121,12 +149,57 @@ pub(crate) enum ThreadError {
 
 impl From<anyhow::Error> for ThreadError {
     fn from(error: anyhow::Error) -> Self {
-        if error.is::<language_model::PaymentRequiredError>() {
+        if error.is::<MaxOutputTokensError>() {
+            Self::MaxOutputTokens
+        } else if error.is::<NoModelConfiguredError>() {
+            Self::NoModelSelected
+        } else if error.is::<language_model::PaymentRequiredError>() {
             Self::PaymentRequired
         } else if let Some(acp_error) = error.downcast_ref::<acp::Error>()
             && acp_error.code == acp::ErrorCode::AuthRequired
         {
             Self::AuthenticationRequired(acp_error.message.clone().into())
+        } else if let Some(lm_error) = error.downcast_ref::<LanguageModelCompletionError>() {
+            use LanguageModelCompletionError::*;
+            match lm_error {
+                RateLimitExceeded { provider, .. } => Self::RateLimitExceeded {
+                    provider: provider.to_string().into(),
+                },
+                ServerOverloaded { provider, .. } | ApiInternalServerError { provider, .. } => {
+                    Self::ServerOverloaded {
+                        provider: provider.to_string().into(),
+                    }
+                }
+                PromptTooLarge { .. } => Self::PromptTooLarge,
+                NoApiKey { provider } => Self::NoApiKey {
+                    provider: provider.to_string().into(),
+                },
+                StreamEndedUnexpectedly { provider }
+                | ApiReadResponseError { provider, .. }
+                | DeserializeResponse { provider, .. }
+                | HttpSend { provider, .. } => Self::StreamError {
+                    provider: provider.to_string().into(),
+                },
+                AuthenticationError { provider, .. } => Self::InvalidApiKey {
+                    provider: provider.to_string().into(),
+                },
+                PermissionError { provider, .. } => Self::PermissionDenied {
+                    provider: provider.to_string().into(),
+                },
+                UpstreamProviderError { .. } => Self::RequestFailed,
+                BadRequestFormat { provider, .. }
+                | HttpResponseError { provider, .. }
+                | ApiEndpointNotFound { provider } => Self::ApiError {
+                    provider: provider.to_string().into(),
+                },
+                _ => {
+                    let message: SharedString = format!("{:#}", error).into();
+                    Self::Other {
+                        message,
+                        acp_error_code: None,
+                    }
+                }
+            }
         } else {
             let message: SharedString = format!("{:#}", error).into();
 
@@ -6625,19 +6698,11 @@ pub(crate) mod tests {
         conversation_view.read_with(cx, |conversation_view, cx| {
             let state = conversation_view.active_thread().unwrap();
             let error = &state.read(cx).thread_error;
-            match error {
-                Some(ThreadError::Other { message, .. }) => {
-                    assert!(
-                        message.contains("Maximum tokens reached"),
-                        "Expected 'Maximum tokens reached' error, got: {}",
-                        message
-                    );
-                }
-                other => panic!(
-                    "Expected ThreadError::Other with 'Maximum tokens reached', got: {:?}",
-                    other.is_some()
-                ),
-            }
+            assert!(
+                matches!(error, Some(ThreadError::MaxOutputTokens)),
+                "Expected ThreadError::MaxOutputTokens, got: {:?}",
+                error.is_some()
+            );
         });
     }
 

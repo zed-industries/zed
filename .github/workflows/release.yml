@@ -307,7 +307,7 @@ jobs:
         cache: rust
         path: ~/.rustup
     - id: run-compliance-check
-      name: release::run_compliance_check
+      name: release::add_compliance_steps::run_compliance_check
       run: |
         cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
@@ -328,7 +328,7 @@ jobs:
             STATUS="✅ Compliance check passed for $COMPLIANCE_TAG"
             MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
         else
-            STATUS="❌ Compliance check failed for $COMPLIANCE_TAG"
+            STATUS="❌ Preliminary compliance check failed (but this can still be fixed while the builds are running!) for $COMPLIANCE_TAG"
             MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
         fi
 
@@ -340,6 +340,8 @@ jobs:
         COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
         COMPLIANCE_TAG: ${{ github.ref_name }}
         ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
+    outputs:
+      outcome: ${{ steps.run-compliance-check.outputs.outcome }}
     timeout-minutes: 60
   bundle_linux_aarch64:
     needs:
@@ -641,6 +643,7 @@ jobs:
   validate_release_assets:
     needs:
     - upload_release_assets
+    - compliance_check
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: release::validate_release_assets
@@ -673,13 +676,12 @@ jobs:
         cache: rust
         path: ~/.rustup
     - id: run-compliance-check
-      name: release::run_compliance_check
+      name: release::add_compliance_steps::run_compliance_check
       run: |
         cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-      continue-on-error: true
     - name: '@actions/upload-artifact compliance-report-${GITHUB_REF_NAME}.md'
       if: always()
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
@@ -689,7 +691,7 @@ jobs:
         if-no-files-found: error
         overwrite: true
     - name: send_compliance_slack_notification
-      if: always()
+      if: failure() || needs.compliance_check.outputs.outcome != 'success'
       run: |
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
             STATUS="✅ Compliance check passed for $COMPLIANCE_TAG"

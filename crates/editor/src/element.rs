@@ -7673,22 +7673,21 @@ impl EditorElement {
 
             move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    if event.modifiers.secondary() {
+                    delta = delta.coalesce(event.delta);
+
+                    if event.modifiers.secondary()
+                        && editor.read(cx).enable_mouse_wheel_zoom
+                        && EditorSettings::get_global(cx).mouse_wheel_zoom
+                    {
                         let delta_y = match event.delta {
                             ScrollDelta::Pixels(pixels) => pixels.y.into(),
                             ScrollDelta::Lines(lines) => lines.y,
                         };
 
                         if delta_y > 0.0 {
-                            window.dispatch_action(
-                                Box::new(zed_actions::IncreaseBufferFontSize { persist: false }),
-                                cx,
-                            );
+                            theme_settings::increase_buffer_font_size(cx);
                         } else if delta_y < 0.0 {
-                            window.dispatch_action(
-                                Box::new(zed_actions::DecreaseBufferFontSize { persist: false }),
-                                cx,
-                            );
+                            theme_settings::decrease_buffer_font_size(cx);
                         }
 
                         cx.stop_propagation();
@@ -7701,10 +7700,7 @@ impl EditorElement {
                             }
                         };
 
-                        delta = delta.coalesce(event.delta);
                         editor.update(cx, |editor, cx| {
-                            let position_map: &PositionMap = &position_map;
-
                             let line_height = position_map.line_height;
                             let glyph_width = position_map.em_layout_width;
                             let (delta, axis) = match delta {

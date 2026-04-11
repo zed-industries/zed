@@ -553,7 +553,6 @@ impl ThreadsArchiveView {
                     base.status(AgentThreadStatus::Running)
                         .action_slot(
                             IconButton::new("cancel-restore", IconName::Close)
-                                .style(ButtonStyle::Filled)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .tooltip(Tooltip::text("Cancel Restore"))
@@ -568,12 +567,11 @@ impl ThreadsArchiveView {
                                     })
                                 }),
                         )
-                        .tooltip(Tooltip::text("Restoring\u{2026}"))
+                        .tooltip(Tooltip::text("Restoring…"))
                         .into_any_element()
                 } else {
                     base.action_slot(
                         IconButton::new("delete-thread", IconName::Trash)
-                            .style(ButtonStyle::Filled)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .tooltip({
