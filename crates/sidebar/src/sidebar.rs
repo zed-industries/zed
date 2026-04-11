@@ -1718,11 +1718,6 @@ impl Sidebar {
                                 // shown, so the user returns to whatever
                                 // thread/draft they were looking at.
                                 this.activate_workspace(&workspace, window, cx);
-                                if AgentPanel::is_visible(&workspace, cx) {
-                                    workspace.update(cx, |workspace, cx| {
-                                        workspace.focus_panel::<AgentPanel>(window, cx);
-                                    });
-                                }
                             } else {
                                 this.open_workspace_for_group(&key, window, cx);
                             }
@@ -2181,6 +2176,9 @@ impl Sidebar {
                     }
                 } else if let Some(workspace) = workspace {
                     self.activate_workspace(&workspace, window, cx);
+                    workspace.update(cx, |ws, cx| {
+                        ws.focus_panel::<AgentPanel>(window, cx);
+                    });
                 } else {
                     self.open_workspace_for_group(&key, window, cx);
                 }
@@ -4152,11 +4150,9 @@ impl Sidebar {
                     // Placeholder with an open workspace — just
                     // activate it. The panel remembers its last view.
                     this.activate_workspace(workspace, window, cx);
-                    if AgentPanel::is_visible(workspace, cx) {
-                        workspace.update(cx, |ws, cx| {
-                            ws.focus_panel::<AgentPanel>(window, cx);
-                        });
-                    }
+                    workspace.update(cx, |ws, cx| {
+                        ws.focus_panel::<AgentPanel>(window, cx);
+                    });
                 } else {
                     // No workspace at all — just open one. The
                     // panel's load fallback will create a draft.
