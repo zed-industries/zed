@@ -1346,6 +1346,7 @@ pub struct Workspace {
     database_id: Option<WorkspaceId>,
     app_state: Arc<AppState>,
     dispatching_keystrokes: Rc<RefCell<DispatchingKeystrokes>>,
+    pub(crate) file_history: Vec<ProjectPath>,
     _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
@@ -1773,6 +1774,7 @@ impl Workspace {
             active_call,
             database_id: workspace_id,
             app_state,
+            file_history: Vec::new(),
             _observe_current_user,
             _apply_leader_updates,
             _schedule_serialize_workspace: None,
@@ -2477,6 +2479,16 @@ impl Workspace {
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
+    }
+
+    pub fn file_history(&self) -> &[ProjectPath] {
+        &self.file_history
+    }
+
+    pub fn add_to_file_history(&mut self, path: ProjectPath) {
+        self.file_history.retain(|p| p != &path);
+        self.file_history.insert(0, path);
+        self.file_history.truncate(10);
     }
 
     pub fn path_style(&self, cx: &App) -> PathStyle {

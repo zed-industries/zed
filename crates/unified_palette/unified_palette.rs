@@ -7,8 +7,8 @@ use file_icons::FileIcons;
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, Action, App, AppContext, Context, DismissEvent, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, SharedString, StyledText, 
-    Task, TextStyle, Window, WeakEntity, prelude::*, relative,
+    FocusHandle, Focusable, IntoElement, Render, SharedString, 
+    Task, Window, WeakEntity, prelude::*,
 };
 use gpui_util::ResultExt;
 use language::{ToPointUtf16, Unclipped};
@@ -16,8 +16,6 @@ use lsp;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use settings::Settings;
-use theme::ActiveTheme;
-use theme_settings::ThemeSettings;
 use ui::{prelude::*, Icon, Label, ListItem, ListItemSpacing};
 use util::paths::PathWithPosition;
 use util::rel_path::RelPath;
@@ -78,6 +76,7 @@ struct LineMatch {
 struct SymbolMatch {
     symbol: project::Symbol,
     highlight_ranges: Vec<(std::ops::Range<usize>, gpui::HighlightStyle)>,
+    match_positions: Vec<usize>,
 }
 
 pub struct UnifiedPaletteDelegate {
@@ -169,8 +168,13 @@ impl UnifiedPaletteDelegate {
         workspace: WeakEntity<Workspace>,
         project: Entity<project::Project>,
         unified_palette: WeakEntity<UnifiedPalette>,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Self {
+        let file_history = workspace
+            .upgrade()
+            .map(|ws| ws.read(cx).file_history().to_vec())
+            .unwrap_or_default();
+        
         Self {
             mode: PaletteMode::FileFinder,
             workspace,
@@ -179,7 +183,7 @@ impl UnifiedPaletteDelegate {
             matches: Vec::new(),
             selected_index: 0,
             last_query: String::new(),
-            file_history: Vec::new(),
+            file_history,
             search_count: 0,
             latest_search_id: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -352,6 +356,10 @@ impl UnifiedPaletteDelegate {
             return;
         }
 
+        self.cancel_flag.store(true, Ordering::Release);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
+
         let project = self.project.clone();
         let query_string = query.to_string();
         
@@ -361,10 +369,12 @@ impl UnifiedPaletteDelegate {
         
         cx.spawn_in(window, async move |picker, cx| {
             if let Ok(symbols) = symbols_task.await {
+                let did_cancel = cancel_flag.load(Ordering::Acquire);
+                
                 picker.update_in(cx, |picker, _window, cx| {
                     let delegate = &mut picker.delegate;
                     
-                    if search_id >= delegate.latest_search_id {
+                    if search_id >= delegate.latest_search_id && !did_cancel {
                         delegate.latest_search_id = search_id;
                         
                         // Convert symbols to matches (limit to 100)
@@ -373,7 +383,8 @@ impl UnifiedPaletteDelegate {
                             .take(100)
                             .map(|symbol| Match::Symbol(SymbolMatch { 
                                 symbol,
-                                highlight_ranges: Vec::new(), // Project symbols don't have highlights
+                                highlight_ranges: Vec::new(),
+                                match_positions: Vec::new(),
                             }))
                             .collect();
                         
@@ -416,6 +427,10 @@ impl UnifiedPaletteDelegate {
             return;
         };
         
+        self.cancel_flag.store(true, Ordering::Release);
+        self.cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag = self.cancel_flag.clone();
+        
         let buffer_id = buffer_snapshot.remote_id();
         let file_path = buffer_snapshot.file().map(|f| f.path().clone());
         let outline_task = editor.update(cx, |editor, cx| {
@@ -428,9 +443,14 @@ impl UnifiedPaletteDelegate {
         cx.spawn_in(window, async move |picker, cx| {
             let items = outline_task.await;
             
+            let did_cancel = cancel_flag.load(Ordering::Acquire);
+            if did_cancel {
+                return;
+            }
+            
             // Use fuzzy matching for outline items
-            let filtered_items = if query_lower.is_empty() {
-                items.into_iter().take(100).collect::<Vec<_>>()
+            let filtered_items: Vec<_> = if query_lower.is_empty() {
+                items.into_iter().take(100).map(|item| (item, Vec::new())).collect()
             } else {
                 let candidates: Vec<StringMatchCandidate> = items
                     .iter()
@@ -451,14 +471,15 @@ impl UnifiedPaletteDelegate {
                 
                 matches
                     .into_iter()
-                    .map(|m| items[m.candidate_id].clone())
+                    .map(|m| (items[m.candidate_id].clone(), m.positions))
                     .collect()
             };
             
             picker.update_in(cx, |picker, _window, cx| {
                 let delegate = &mut picker.delegate;
                 
-                if search_id >= delegate.latest_search_id {
+                let did_cancel = cancel_flag.load(Ordering::Acquire);
+                if search_id >= delegate.latest_search_id && !did_cancel {
                     delegate.latest_search_id = search_id;
                     
                     let buffer_snapshot = multibuffer.as_singleton();
@@ -466,7 +487,7 @@ impl UnifiedPaletteDelegate {
                     // Convert filtered items to Symbol matches
                     delegate.matches = filtered_items
                         .into_iter()
-                        .filter_map(|item| {
+                        .filter_map(|(item, match_positions)| {
                             let buffer_snapshot = buffer_snapshot.as_ref()?;
                             let file_path = file_path.as_ref()?;
                             
@@ -502,7 +523,8 @@ impl UnifiedPaletteDelegate {
                             };
                             Some(Match::Symbol(SymbolMatch { 
                                 symbol,
-                                highlight_ranges: item.highlight_ranges.clone(), // Preserve syntax highlighting
+                                highlight_ranges: item.highlight_ranges.clone(),
+                                match_positions,
                             }))
                         })
                         .collect();
@@ -642,10 +664,15 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                     path: file_match.path.clone(),
                 };
                 
-                // Track in history (most recent first)
+                // Update workspace file history
+                workspace.update(cx, |workspace, _cx| {
+                    workspace.add_to_file_history(project_path.clone());
+                });
+                
+                // Also update delegate's local copy
                 self.file_history.retain(|p| p != &project_path);
                 self.file_history.insert(0, project_path.clone());
-                self.file_history.truncate(10); // Keep last 10
+                self.file_history.truncate(10);
                 
                 let row = file_match.row;
                 let column = file_match.column;
@@ -802,125 +829,135 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         let match_item = self.matches.get(ix)?;
         
         match match_item {
-            Match::File(file_match) => {
-                use std::path::Path;
-                let path = Path::new(&file_match.display_path);
-                let icon = FileIcons::get_icon(path, cx)
-                    .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted));
-                
-                Some(
-                    ListItem::new(ix)
-                        .inset(true)
-                        .spacing(ListItemSpacing::Sparse)
-                        .toggle_state(selected)
-                        .start_slot::<Icon>(icon)
+            Match::File(m) => self.render_file_match(ix, selected, m, cx),
+            Match::Command(m) => self.render_command_match(ix, selected, m, cx),
+            Match::Line(m) => self.render_line_match(ix, selected, m, cx),
+            Match::Symbol(m) if self.mode == PaletteMode::Outline => 
+                self.render_outline_match(ix, selected, m, cx),
+            Match::Symbol(m) => self.render_project_symbol_match(ix, selected, m, cx),
+        }
+    }
+}
+
+impl UnifiedPaletteDelegate {
+    fn render_file_match(&self, ix: usize, selected: bool, file_match: &FileMatch, cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        use std::path::Path;
+        let path = Path::new(&file_match.display_path);
+        let icon = FileIcons::get_icon(path, cx)
+            .map(|icon_path| Icon::from_path(icon_path).color(Color::Muted));
+        
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .start_slot::<Icon>(icon)
+                .child(
+                    ui::HighlightedLabel::new(
+                        file_match.display_path.clone(),
+                        file_match.match_positions.clone()
+                    )
+                )
+        )
+    }
+
+    fn render_command_match(&self, ix: usize, selected: bool, command_match: &CommandMatch, cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        let focus_handle = self.unified_palette
+            .upgrade()
+            .map(|p| p.read(cx).focus_handle(cx))
+            .unwrap_or_else(|| cx.focus_handle());
+        
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .justify_between()
                         .child(
                             ui::HighlightedLabel::new(
-                                file_match.display_path.clone(),
-                                file_match.match_positions.clone()
+                                command_match.name.clone(),
+                                command_match.match_positions.clone()
                             )
                         )
+                        .child(ui::KeyBinding::for_action_in(
+                            &*command_match.action,
+                            &focus_handle,
+                            cx,
+                        ))
                 )
+        )
+    }
+
+    fn render_line_match(&self, ix: usize, selected: bool, line_match: &LineMatch, _cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(Label::new(format!("Go to line {}", line_match.line_number)))
+        )
+    }
+
+    fn render_outline_match(&self, ix: usize, selected: bool, symbol_match: &SymbolMatch, _cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    ui::HighlightedLabel::new(
+                        symbol_match.symbol.label.text.clone(),
+                        symbol_match.match_positions.clone()
+                    )
+                )
+        )
+    }
+
+    fn render_project_symbol_match(&self, ix: usize, selected: bool, symbol_match: &SymbolMatch, _cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        let symbol = &symbol_match.symbol;
+        
+        let path = match &symbol.path {
+            project::lsp_store::SymbolLocation::InProject(path) => {
+                format!("{:?}", path.path).trim_matches('"').to_string()
             }
-            Match::Command(command_match) => {
-                let focus_handle = self.unified_palette
-                    .upgrade()
-                    .map(|p| p.read(cx).focus_handle(cx))
-                    .unwrap_or_else(|| cx.focus_handle());
-                
-                Some(
-                    ListItem::new(ix)
-                        .inset(true)
-                        .spacing(ListItemSpacing::Sparse)
-                        .toggle_state(selected)
+            project::lsp_store::SymbolLocation::OutsideProject { abs_path, .. } => {
+                abs_path.display().to_string()
+            }
+        };
+        
+        // Truncate long paths with middle elision
+        let display_path = if path.len() > 60 {
+            let start = &path[..25];
+            let end = &path[path.len().saturating_sub(30)..];
+            format!("{}...{}", start, end)
+        } else {
+            path
+        };
+        
+        let line_number = symbol.range.start.0.row + 1;
+        
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    v_flex()
+                        .child(Label::new(symbol.label.text.clone()))
                         .child(
                             h_flex()
-                                .w_full()
-                                .justify_between()
+                                .child(Label::new(display_path).size(LabelSize::Small).color(Color::Muted))
                                 .child(
-                                    ui::HighlightedLabel::new(
-                                        command_match.name.clone(),
-                                        command_match.match_positions.clone()
-                                    )
+                                    Label::new(format!(":{}", line_number))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Placeholder)
                                 )
-                                .child(ui::KeyBinding::for_action_in(
-                                    &*command_match.action,
-                                    &focus_handle,
-                                    cx,
-                                ))
                         )
                 )
-            }
-            Match::Line(line_match) => {
-                Some(
-                    ListItem::new(ix)
-                        .inset(true)
-                        .spacing(ListItemSpacing::Sparse)
-                        .toggle_state(selected)
-                        .child(Label::new(format!("Go to line {}", line_match.line_number)))
-                )
-            }
-            Match::Symbol(symbol_match) => {
-                let symbol = &symbol_match.symbol;
-                
-                // For outline mode, show simple single-line format with syntax highlighting
-                if self.mode == PaletteMode::Outline {
-                    let settings = ThemeSettings::get_global(cx);
-                    let text_style = TextStyle {
-                        color: cx.theme().colors().text,
-                        font_family: settings.buffer_font.family.clone(),
-                        font_features: settings.buffer_font.features.clone(),
-                        font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                        font_size: settings.buffer_font_size(cx).into(),
-                        font_weight: settings.buffer_font.weight,
-                        line_height: relative(1.),
-                        ..Default::default()
-                    };
-                    
-                    Some(
-                        ListItem::new(ix)
-                            .inset(true)
-                            .spacing(ListItemSpacing::Sparse)
-                            .toggle_state(selected)
-                            .child(
-                                StyledText::new(symbol.label.text.clone())
-                                    .with_default_highlights(&text_style, symbol_match.highlight_ranges.iter().cloned())
-                            )
-                    )
-                } else {
-                    // For project symbols, show two-line format with path and line number
-                    let path = match &symbol.path {
-                        project::lsp_store::SymbolLocation::InProject(path) => {
-                            format!("{:?}", path.path).trim_matches('"').to_string()
-                        }
-                        project::lsp_store::SymbolLocation::OutsideProject { abs_path, .. } => {
-                            abs_path.display().to_string()
-                        }
-                    };
-                    let line_number = symbol.range.start.0.row + 1;
-                    
-                    Some(
-                        ListItem::new(ix)
-                            .inset(true)
-                            .spacing(ListItemSpacing::Sparse)
-                            .toggle_state(selected)
-                            .child(
-                                v_flex()
-                                    .child(Label::new(symbol.label.text.clone()))
-                                    .child(
-                                        h_flex()
-                                            .child(Label::new(path).size(LabelSize::Small).color(Color::Muted))
-                                            .child(
-                                                Label::new(format!(":{}", line_number))
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Placeholder)
-                                            )
-                                    )
-                            )
-                    )
-                }
-            }
-        }
+        )
     }
 }
 
