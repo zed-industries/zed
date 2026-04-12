@@ -5,7 +5,7 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, SizingBehavior, ToPoint,
+    MultiBufferSnapshot, RowExt, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::EditorDb,
@@ -680,16 +680,7 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.register_visible_buffers(cx);
-                        editor.colorize_brackets(false, cx);
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                        editor.update_lsp_data(None, window, cx);
-                    })
-                    .ok();
-            });
+            self.update_data_on_scroll(false, window, cx);
         }
     }
 

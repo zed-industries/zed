@@ -1182,6 +1182,7 @@ pub struct Editor {
     delegate_stage_and_restore: bool,
     delegate_open_excerpts: bool,
     enable_lsp_data: bool,
+    needs_initial_data_update: bool,
     enable_runnables: bool,
     enable_mouse_wheel_zoom: bool,
     show_line_numbers: Option<bool>,
@@ -1975,6 +1976,7 @@ impl Editor {
             self.buffers_with_disabled_indent_guides.clone();
         clone.enable_mouse_wheel_zoom = self.enable_mouse_wheel_zoom;
         clone.enable_lsp_data = self.enable_lsp_data;
+        clone.needs_initial_data_update = self.enable_lsp_data;
         clone.enable_runnables = self.enable_runnables;
         clone
     }
@@ -2424,6 +2426,7 @@ impl Editor {
             delegate_stage_and_restore: false,
             delegate_open_excerpts: false,
             enable_lsp_data: full_mode,
+            needs_initial_data_update: full_mode,
             enable_runnables: full_mode,
             enable_mouse_wheel_zoom: full_mode,
             show_git_diff_gutter: None,
@@ -2652,16 +2655,7 @@ impl Editor {
                             );
                         });
 
-                        editor.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
-                            cx.background_executor()
-                                .timer(Duration::from_millis(50))
-                                .await;
-                            editor
-                                .update_in(cx, |editor, window, cx| {
-                                    editor.update_data_on_scroll(window, cx)
-                                })
-                                .ok();
-                        });
+                        editor.update_data_on_scroll(true, window, cx);
                     }
                     editor.refresh_sticky_headers(&editor.snapshot(window, cx), cx);
                 }
@@ -20860,7 +20854,7 @@ impl Editor {
         cx.notify();
 
         self.scrollbar_marker_state.dirty = true;
-        self.update_data_on_scroll(window, cx);
+        self.update_data_on_scroll(false, window, cx);
         self.folds_did_change(cx);
     }
 
@@ -26092,11 +26086,35 @@ impl Editor {
         self.enable_mouse_wheel_zoom = false;
     }
 
-    fn update_data_on_scroll(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn update_data_on_scroll(
+        &mut self,
+        debounce: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if debounce {
+            self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.do_update_data_on_scroll(window, cx);
+                    })
+                    .ok();
+            });
+        } else {
+            self.post_scroll_update = Task::ready(());
+            self.do_update_data_on_scroll(window, cx);
+        }
+    }
+
+    fn do_update_data_on_scroll(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.register_visible_buffers(cx);
         self.colorize_brackets(false, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-        if !self.buffer().read(cx).is_singleton() {
+        if !self.buffer().read(cx).is_singleton() || self.needs_initial_data_update {
+            self.needs_initial_data_update = false;
             self.update_lsp_data(None, window, cx);
             self.refresh_runnables(None, window, cx);
         }
