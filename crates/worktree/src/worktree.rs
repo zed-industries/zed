@@ -257,7 +257,7 @@ pub struct LocalSnapshot {
 
 struct BackgroundScannerState {
     snapshot: LocalSnapshot,
-    external_symlink_paths_by_target: HashMap<Arc<Path>, SmallVec<[Arc<RelPath>; 1]>>,
+    symlink_paths_by_target: HashMap<Arc<Path>, SmallVec<[Arc<RelPath>; 1]>>,
     scanned_dirs: HashSet<ProjectEntryId>,
     watched_dir_abs_paths_by_entry_id: HashMap<ProjectEntryId, Arc<Path>>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
@@ -1123,7 +1123,7 @@ impl LocalWorktree {
                     state: async_lock::Mutex::new(BackgroundScannerState {
                         prev_snapshot: snapshot.snapshot.clone(),
                         snapshot,
-                        external_symlink_paths_by_target: Default::default(),
+                        symlink_paths_by_target: Default::default(),
                         scanned_dirs: Default::default(),
                         watched_dir_abs_paths_by_entry_id: Default::default(),
                         scanning_enabled,
@@ -4083,6 +4083,7 @@ impl BackgroundScanner {
 
         self.send_status_update(scanning, request.done, &[]).await
     }
+
     fn normalized_events_for_worktree(
         state: &BackgroundScannerState,
         root_canonical_path: &SanitizedPath,
@@ -4092,14 +4093,11 @@ impl BackgroundScanner {
 
         for event in events {
             let abs_path = SanitizedPath::new(&event.path);
-            if abs_path.starts_with(root_canonical_path) {
-                normalized_events.push(event);
-                continue;
-            }
+            normalized_events.push(event.clone());
 
             let mut best_target_root: Option<&Arc<Path>> = None;
             let mut best_depth = 0;
-            for target_root in state.external_symlink_paths_by_target.keys() {
+            for target_root in state.symlink_paths_by_target.keys() {
                 if abs_path.as_path().starts_with(target_root.as_ref()) {
                     let depth = target_root.as_ref().components().count();
                     if depth > best_depth {
@@ -4110,22 +4108,16 @@ impl BackgroundScanner {
             }
 
             let Some(target_root) = best_target_root else {
-                normalized_events.push(event);
                 continue;
             };
 
-            let Some(symlink_paths) = state.external_symlink_paths_by_target.get(target_root)
-            else {
-                normalized_events.push(event);
+            let Some(symlink_paths) = state.symlink_paths_by_target.get(target_root) else {
                 continue;
             };
 
             let Ok(suffix) = abs_path.as_path().strip_prefix(target_root.as_ref()) else {
-                normalized_events.push(event);
                 continue;
             };
-
-            let mut added_any = false;
 
             for symlink_path in symlink_paths {
                 let mapped_path = if suffix.as_os_str().is_empty() {
@@ -4138,14 +4130,12 @@ impl BackgroundScanner {
                         .join(symlink_path.as_std_path())
                         .join(suffix)
                 };
-                normalized_events.push(PathEvent {
-                    path: mapped_path,
-                    kind: event.kind,
-                });
-                added_any = true;
-            }
-            if !added_any {
-                normalized_events.push(event);
+                if mapped_path != event.path {
+                    normalized_events.push(PathEvent {
+                        path: mapped_path,
+                        kind: event.kind,
+                    });
+                }
             }
         }
         normalized_events
@@ -4747,10 +4737,10 @@ impl BackgroundScanner {
                     },
                 };
 
-                if !canonical_path.starts_with(root_canonical_path) && child_metadata.is_dir {
+                if child_metadata.is_dir {
                     let mut state = self.state.lock().await;
                     let paths = state
-                        .external_symlink_paths_by_target
+                        .symlink_paths_by_target
                         .entry(Arc::from(canonical_path.clone()))
                         .or_default();
                     if !paths.iter().any(|path| path == &child_path) {
