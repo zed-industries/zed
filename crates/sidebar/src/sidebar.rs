@@ -441,7 +441,7 @@ pub struct Sidebar {
     thread_last_message_sent_or_queued: HashMap<agent_ui::ThreadId, DateTime<Utc>>,
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
-    pending_remote_thread_activation: Option<agent_ui::ThreadId>,
+    pending_thread_activation: Option<agent_ui::ThreadId>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
@@ -535,7 +535,7 @@ impl Sidebar {
             thread_last_message_sent_or_queued: HashMap::new(),
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
-            pending_remote_thread_activation: None,
+            pending_thread_activation: None,
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -780,7 +780,14 @@ impl Sidebar {
             window,
             |this, _agent_panel, event: &AgentPanelEvent, window, cx| match event {
                 AgentPanelEvent::ActiveViewChanged => {
-                    this.sync_active_entry_from_panel(_agent_panel, cx);
+                    let resolved_pending_activation =
+                        this.sync_active_entry_from_panel(_agent_panel, cx);
+                    if resolved_pending_activation {
+                        let active_workspace = this.active_workspace(cx);
+                        if let Some(active_workspace) = active_workspace {
+                            this.clear_empty_group_drafts(&active_workspace, cx);
+                        }
+                    }
                     this.observe_draft_editors(cx);
                     this.update_entries(cx);
                     this.reconcile_groups(window, cx);
@@ -813,11 +820,11 @@ impl Sidebar {
     /// Called from `ActiveViewChanged` — the panel has settled into its
     /// new view, so we can safely read it without race conditions.
     ///
-    /// Also resolves `pending_remote_thread_activation` when the panel's
+    /// Also resolves `pending_thread_activation` when the panel's
     /// active thread matches the pending activation.
-    fn sync_active_entry_from_panel(&mut self, agent_panel: &Entity<AgentPanel>, cx: &App) {
+    fn sync_active_entry_from_panel(&mut self, agent_panel: &Entity<AgentPanel>, cx: &App) -> bool {
         let Some(active_workspace) = self.active_workspace(cx) else {
-            return;
+            return false;
         };
 
         // Only sync when the event comes from the active workspace's panel.
@@ -826,12 +833,12 @@ impl Sidebar {
             .panel::<AgentPanel>(cx)
             .is_some_and(|p| p == *agent_panel);
         if !is_active_panel {
-            return;
+            return false;
         }
 
         let panel = agent_panel.read(cx);
 
-        if let Some(pending_thread_id) = self.pending_remote_thread_activation {
+        if let Some(pending_thread_id) = self.pending_thread_activation {
             let panel_thread_id = panel
                 .active_conversation_view()
                 .and_then(|cv| cv.read(cx).parent_id(cx));
@@ -845,11 +852,11 @@ impl Sidebar {
                     session_id,
                     workspace: active_workspace,
                 });
-                self.pending_remote_thread_activation = None;
-                return;
+                self.pending_thread_activation = None;
+                return true;
             }
             // Pending activation not yet resolved — keep current active_entry.
-            return;
+            return false;
         }
 
         if let Some(thread_id) = panel.active_thread_id() {
@@ -862,6 +869,8 @@ impl Sidebar {
                 workspace: active_workspace,
             });
         }
+
+        false
     }
 
     fn observe_docks(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
@@ -1491,7 +1500,7 @@ impl Sidebar {
     /// available for panel mutations.
     fn reconcile_groups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.reconciling
-            || self.pending_remote_thread_activation.is_some()
+            || self.pending_thread_activation.is_some()
             || !self.restoring_tasks.is_empty()
         {
             return;
@@ -2433,13 +2442,15 @@ impl Sidebar {
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, _cx| panel.begin_loading_thread());
-                workspace.reveal_panel::<AgentPanel>(window, cx);
                 existing_panel = Some(panel);
             }
         });
 
         if let Some(agent_panel) = existing_panel {
             load_thread(agent_panel, metadata, focus, window, cx);
+            workspace.update(cx, |workspace, cx| {
+                workspace.reveal_panel::<AgentPanel>(window, cx);
+            });
             return;
         }
 
@@ -2455,8 +2466,8 @@ impl Sidebar {
                     panel.clone()
                 });
                 panel.update(cx, |panel, _cx| panel.begin_loading_thread());
-                workspace.reveal_panel::<AgentPanel>(window, cx);
                 load_thread(panel, &metadata, focus, window, cx);
+                workspace.reveal_panel::<AgentPanel>(window, cx);
             })?;
 
             anyhow::Ok(())
@@ -2524,6 +2535,10 @@ impl Sidebar {
         });
         self.record_thread_access(&metadata.session_id);
 
+        if metadata.session_id.is_some() {
+            self.pending_thread_activation = Some(metadata.thread_id);
+        }
+
         multi_workspace.update(cx, |multi_workspace, cx| {
             multi_workspace.activate(workspace.clone(), window, cx);
             if retain {
@@ -2543,6 +2558,7 @@ impl Sidebar {
                 }
                 ws.focus_panel::<AgentPanel>(window, cx);
             });
+            self.pending_thread_activation = None;
             self.observe_draft_editors(cx);
         } else {
             Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
@@ -2582,7 +2598,7 @@ impl Sidebar {
                 .and_then(|sidebar| sidebar.downcast::<Self>().ok())
             {
                 target_sidebar.update(cx, |sidebar, cx| {
-                    sidebar.pending_remote_thread_activation = Some(metadata_thread_id);
+                    sidebar.pending_thread_activation = Some(metadata_thread_id);
                     sidebar.active_entry = Some(ActiveEntry {
                         thread_id: metadata_thread_id,
                         session_id: target_session_id.clone(),
@@ -2635,9 +2651,9 @@ impl Sidebar {
 
         let pending_thread_id = metadata.thread_id;
         // Mark the pending thread activation so rebuild_contents
-        // preserves the Thread active_entry during loading (prevents
-        // spurious draft flash).
-        self.pending_remote_thread_activation = Some(pending_thread_id);
+        // preserves the Thread active_entry during loading and
+        // reconciliation cannot synthesize an empty fallback draft.
+        self.pending_thread_activation = Some(pending_thread_id);
 
         let host = project_group_key.host();
         let provisional_key = Some(project_group_key.clone());
@@ -2663,8 +2679,8 @@ impl Sidebar {
 
             if result.is_err() {
                 this.update(cx, |this, _cx| {
-                    if this.pending_remote_thread_activation == Some(pending_thread_id) {
-                        this.pending_remote_thread_activation = None;
+                    if this.pending_thread_activation == Some(pending_thread_id) {
+                        this.pending_thread_activation = None;
                     }
                 })
                 .ok();

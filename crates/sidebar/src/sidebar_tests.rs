@@ -2263,6 +2263,141 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
 }
 
 #[gpui::test]
+async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_thread(
+    cx: &mut TestAppContext,
+) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
+    let project_b = project::Project::test(fs.clone(), ["/project-b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let project_b_key = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(ProjectGroup {
+            key: project_b_key.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+            visible_thread_count: None,
+        });
+    });
+
+    let session_id = acp::SessionId::new(Arc::from("historical-new-project-group"));
+    save_thread_metadata(
+        session_id.clone(),
+        Some("Historical Thread in New Group".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
+        None,
+        &project_b,
+        cx,
+    );
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    let entries_before = visible_entries_as_strings(&sidebar, cx);
+    assert_eq!(
+        entries_before,
+        vec![
+            "v [project-a]",
+            "v [project-b]",
+            "  Historical Thread in New Group",
+        ],
+        "expected the closed project group to show the historical thread before first open"
+    );
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        1,
+        "should start without an open workspace for the new project group"
+    );
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.selection = Some(2);
+        sidebar.confirm(&Confirm, window, cx);
+    });
+    cx.run_until_parked();
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        2,
+        "confirming the historical thread should open a workspace for the new project group"
+    );
+
+    let workspace_b = multi_workspace.read_with(cx, |mw, cx| {
+        mw.workspaces()
+            .find(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)) == project_b_key.path_list().clone())
+            .cloned()
+            .expect("expected workspace for project-b after opening the historical thread")
+    });
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_b,
+        "opening the historical thread should activate the new project's workspace"
+    );
+
+    let panel = workspace_b.read_with(cx, |workspace, cx| {
+        workspace
+            .panel::<AgentPanel>(cx)
+            .expect("expected first-open activation to bootstrap the agent panel")
+    });
+
+    let expected_thread_id = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .thread_id_for_session(&session_id)
+            .expect("metadata should still map session id to thread id")
+    });
+
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.active_thread_id()),
+        Some(expected_thread_id),
+        "expected the agent panel to activate the real historical thread rather than a draft"
+    );
+
+    let entries_after = visible_entries_as_strings(&sidebar, cx);
+    let matching_rows: Vec<_> = entries_after
+        .iter()
+        .filter(|entry| entry.contains("Historical Thread in New Group") || entry.contains("Draft"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        matching_rows.len(),
+        1,
+        "expected only one matching row after first open into a new project group, got entries: {entries_after:?}"
+    );
+    assert!(
+        matching_rows[0].contains("Historical Thread in New Group"),
+        "expected the surviving row to be the real historical thread, got entries: {entries_after:?}"
+    );
+    assert!(
+        !matching_rows[0].contains("Draft"),
+        "expected no draft row after first open into a new project group, got entries: {entries_after:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -6095,6 +6230,355 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
     assert_eq!(
         draft_count, 0,
         "expected no drafts after unarchiving, got entries: {entries:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_pending_thread_activation_suppresses_reconcile_draft_creation(
+    cx: &mut TestAppContext,
+) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
+    let project_b = project::Project::test(fs.clone(), ["/project-b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx)
+    });
+    let panel_b = add_agent_panel(&workspace_b, cx);
+    cx.run_until_parked();
+
+    let preexisting_empty_draft_ids = panel_b.read_with(cx, |panel, cx| {
+        panel
+            .draft_thread_ids(cx)
+            .into_iter()
+            .filter(|id| panel.editor_text(*id, cx).is_none())
+            .collect::<Vec<_>>()
+    });
+    if !preexisting_empty_draft_ids.is_empty() {
+        panel_b.update(cx, |panel, cx| {
+            for draft_id in &preexisting_empty_draft_ids {
+                panel.remove_thread(*draft_id, cx);
+            }
+        });
+        cx.run_until_parked();
+    }
+
+    let project_b_key = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        assert!(
+            panel_b.read(cx).draft_thread_ids(cx).is_empty(),
+            "expected target panel to start without drafts after clearing setup state"
+        );
+
+        sidebar.pending_thread_activation = Some(ThreadId::new());
+        sidebar.reconcile_groups(window, cx);
+
+        assert!(
+            panel_b.read(cx).draft_thread_ids(cx).is_empty(),
+            "expected pending_thread_activation to suppress reconcile-driven fallback draft creation"
+        );
+
+        sidebar.pending_thread_activation = None;
+        sidebar.update_entries(cx);
+        sidebar.reconcile_groups(window, cx);
+
+        let created_draft_ids = panel_b.read(cx).draft_thread_ids(cx);
+        assert_eq!(
+            created_draft_ids.len(),
+            1,
+            "expected reconcile_groups to create a fallback draft again once the activation guard is cleared for the empty group {project_b_key:?}"
+        );
+        assert!(
+            panel_b.read(cx).editor_text(created_draft_ids[0], cx).is_none(),
+            "expected the reconciled draft to be empty"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_draft(
+    cx: &mut TestAppContext,
+) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
+    let project_b = project::Project::test(fs.clone(), ["/project-b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx)
+    });
+    let _panel_b = add_agent_panel(&workspace_b, cx);
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_a.clone(), window, cx);
+    });
+    cx.run_until_parked();
+
+    let session_id = acp::SessionId::new(Arc::from("unarchive-into-inactive-existing-workspace"));
+    let thread_id = ThreadId::new();
+    cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save_manually(
+                ThreadMetadata {
+                    thread_id,
+                    session_id: Some(session_id.clone()),
+                    agent_id: agent::ZED_AGENT_ID.clone(),
+                    title: Some("Restored In Inactive Workspace".into()),
+                    updated_at: Utc::now(),
+                    created_at: None,
+                    worktree_paths: ThreadWorktreePaths::from_folder_paths(&PathList::new(&[
+                        PathBuf::from("/project-b"),
+                    ])),
+                    archived: true,
+                    remote_connection: None,
+                },
+                cx,
+            )
+        });
+    });
+    cx.run_until_parked();
+
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .cloned()
+            .expect("archived metadata should exist before restore")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+
+    let panel_b_before_settle = workspace_b.read_with(cx, |workspace, cx| {
+        workspace
+            .panel::<AgentPanel>(cx)
+            .expect("target workspace should still have an agent panel immediately after activation")
+    });
+    let immediate_active_thread_id = panel_b_before_settle.read_with(cx, |panel, _| panel.active_thread_id());
+    let immediate_draft_ids = panel_b_before_settle.read_with(cx, |panel, cx| panel.draft_thread_ids(cx));
+
+    cx.run_until_parked();
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_active_thread(
+            sidebar,
+            &session_id,
+            "unarchiving into an inactive existing workspace should end on the restored thread",
+        );
+    });
+
+    let panel_b = workspace_b.read_with(cx, |workspace, cx| {
+        workspace
+            .panel::<AgentPanel>(cx)
+            .expect("target workspace should still have an agent panel")
+    });
+    assert_eq!(
+        panel_b.read_with(cx, |panel, _| panel.active_thread_id()),
+        Some(thread_id),
+        "expected target panel to activate the restored thread id"
+    );
+    assert!(
+        immediate_active_thread_id.is_none() || immediate_active_thread_id == Some(thread_id),
+        "expected immediate panel state to be either still loading or already on the restored thread, got active_thread_id={immediate_active_thread_id:?}, draft_ids={immediate_draft_ids:?}"
+    );
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    let target_rows: Vec<_> = entries
+        .iter()
+        .filter(|entry| {
+            entry.contains("Restored In Inactive Workspace") || entry.contains("Draft")
+        })
+        .cloned()
+        .collect();
+    assert_eq!(
+        target_rows.len(),
+        1,
+        "expected only the restored row and no surviving draft in the target group, got entries: {entries:?}"
+    );
+    assert!(
+        target_rows[0].contains("Restored In Inactive Workspace"),
+        "expected the remaining row to be the restored thread, got entries: {entries:?}"
+    );
+    assert!(
+        !target_rows[0].contains("Draft"),
+        "expected no surviving draft row after unarchive into inactive existing workspace, got entries: {entries:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_unarchive_after_removing_parent_project_group_restores_real_thread(
+    cx: &mut TestAppContext,
+) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
+    let project_b = project::Project::test(fs.clone(), ["/project-b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx)
+    });
+    let panel_b = add_agent_panel(&workspace_b, cx);
+    cx.run_until_parked();
+
+    let connection = acp_thread::StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    agent_ui::test_support::open_thread_with_connection(&panel_b, connection, cx);
+    agent_ui::test_support::send_message(&panel_b, cx);
+    let session_id = agent_ui::test_support::active_session_id(&panel_b, cx);
+    save_test_thread_metadata(&session_id, &project_b, cx).await;
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&session_id, window, cx);
+    });
+    cx.run_until_parked();
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    let archived_metadata = cx.update(|_, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        let thread_id = store
+            .thread_id_for_session(&session_id)
+            .expect("archived thread should still exist in metadata store");
+        let metadata = store
+            .entry(thread_id)
+            .cloned()
+            .expect("archived metadata should still exist after archive");
+        assert!(metadata.archived, "thread should be archived before project removal");
+        metadata
+    });
+
+    let group_key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let remove_task = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.remove_project_group(&group_key_b, window, cx)
+    });
+    remove_task.await.expect("remove project group task should complete");
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        1,
+        "removing the archived thread's parent project group should remove its workspace"
+    );
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(archived_metadata.clone(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    let restored_workspace = multi_workspace.read_with(cx, |mw, cx| {
+        mw.workspaces()
+            .find(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)) == PathList::new(&[PathBuf::from("/project-b")]))
+            .cloned()
+            .expect("expected unarchive to recreate the removed project workspace")
+    });
+    let restored_panel = restored_workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .panel::<AgentPanel>(cx)
+            .expect("expected restored workspace to bootstrap an agent panel")
+    });
+
+    let restored_thread_id = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .thread_id_for_session(&session_id)
+            .expect("session should still map to restored thread id")
+    });
+    assert_eq!(
+        restored_panel.read_with(cx, |panel, _| panel.active_thread_id()),
+        Some(restored_thread_id),
+        "expected unarchive after project removal to activate the restored real thread"
+    );
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_active_thread(
+            sidebar,
+            &session_id,
+            "expected sidebar active entry to track the restored thread after project removal",
+        );
+    });
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    let restored_title = archived_metadata.display_title().to_string();
+    let matching_rows: Vec<_> = entries
+        .iter()
+        .filter(|entry| entry.contains(&restored_title) || entry.contains("Draft"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        matching_rows.len(),
+        1,
+        "expected only one restored row and no surviving draft after unarchive following project removal, got entries: {entries:?}"
+    );
+    assert!(
+        !matching_rows[0].contains("Draft"),
+        "expected no draft row after unarchive following project removal, got entries: {entries:?}"
     );
 }
 
