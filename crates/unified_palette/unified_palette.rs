@@ -84,6 +84,7 @@ pub struct UnifiedPaletteDelegate {
     workspace: WeakEntity<Workspace>,
     project: Entity<project::Project>,
     unified_palette: WeakEntity<UnifiedPalette>,
+    focus_handle: FocusHandle,
     
     // Match data
     matches: Vec<Match>,
@@ -109,12 +110,16 @@ impl UnifiedPalette {
             |workspace, _action: &workspace::ToggleFileFinder, window, cx| {
                 let project = workspace.project().clone();
                 let workspace_handle = cx.entity().downgrade();
+                let file_history = workspace.file_history().to_vec();
                 
                 workspace.toggle_modal(window, cx, move |window, cx| {
+                    let focus_handle = cx.focus_handle();
                     let delegate = UnifiedPaletteDelegate::new(
                         workspace_handle.clone(),
                         project,
                         cx.entity().downgrade(),
+                        file_history.clone(),
+                        focus_handle,
                         cx,
                     );
                     let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
@@ -140,12 +145,16 @@ impl UnifiedPalette {
     ) -> Entity<Self> {
         let workspace_handle = cx.entity().downgrade();
         let project = workspace.project().clone();
+        let file_history = workspace.file_history().to_vec();
         
         cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
             let delegate = UnifiedPaletteDelegate::new(
                 workspace_handle.clone(),
                 project,
                 cx.entity().downgrade(),
+                file_history,
+                focus_handle,
                 cx,
             );
             let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
@@ -168,18 +177,16 @@ impl UnifiedPaletteDelegate {
         workspace: WeakEntity<Workspace>,
         project: Entity<project::Project>,
         unified_palette: WeakEntity<UnifiedPalette>,
+        file_history: Vec<ProjectPath>,
+        focus_handle: FocusHandle,
         cx: &mut App,
     ) -> Self {
-        let file_history = workspace
-            .upgrade()
-            .map(|ws| ws.read(cx).file_history().to_vec())
-            .unwrap_or_default();
-        
         Self {
             mode: PaletteMode::FileFinder,
             workspace,
             project,
             unified_palette,
+            focus_handle,
             matches: Vec::new(),
             selected_index: 0,
             last_query: String::new(),
@@ -862,11 +869,6 @@ impl UnifiedPaletteDelegate {
     }
 
     fn render_command_match(&self, ix: usize, selected: bool, command_match: &CommandMatch, cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
-        let focus_handle = self.unified_palette
-            .upgrade()
-            .map(|p| p.read(cx).focus_handle(cx))
-            .unwrap_or_else(|| cx.focus_handle());
-        
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -884,7 +886,7 @@ impl UnifiedPaletteDelegate {
                         )
                         .child(ui::KeyBinding::for_action_in(
                             &*command_match.action,
-                            &focus_handle,
+                            &self.focus_handle,
                             cx,
                         ))
                 )
@@ -901,17 +903,43 @@ impl UnifiedPaletteDelegate {
         )
     }
 
-    fn render_outline_match(&self, ix: usize, selected: bool, symbol_match: &SymbolMatch, _cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+    fn render_outline_match(&self, ix: usize, selected: bool, symbol_match: &SymbolMatch, cx: &mut Context<Picker<Self>>) -> Option<ListItem> {
+        use gpui::{StyledText, HighlightStyle, TextStyle, relative};
+        use theme_settings::ThemeSettings;
+        
+        let highlight_style = HighlightStyle {
+            background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
+            ..Default::default()
+        };
+        let custom_highlights = symbol_match.match_positions
+            .windows(2)
+            .map(|w| (w[0]..w[1], highlight_style));
+
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(1.),
+            ..Default::default()
+        };
+        
+        let highlights = gpui::combine_highlights(
+            custom_highlights,
+            symbol_match.highlight_ranges.iter().cloned(),
+        );
+        
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(
-                    ui::HighlightedLabel::new(
-                        symbol_match.symbol.label.text.clone(),
-                        symbol_match.match_positions.clone()
-                    )
+                    StyledText::new(symbol_match.symbol.label.text.clone())
+                        .with_default_highlights(&text_style, highlights)
                 )
         )
     }

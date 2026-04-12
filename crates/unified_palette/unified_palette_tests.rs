@@ -725,11 +725,13 @@ fn build_unified_picker(
             
             // Create picker in the same context where we have window
             let picker = workspace.update(cx, |_, cx| {
+                let focus_handle = cx.focus_handle();
                 let delegate = UnifiedPaletteDelegate {
                     mode: PaletteMode::FileFinder,
                     workspace: cx.entity().downgrade(),
                     project: project.clone(),
                     unified_palette: WeakEntity::new_invalid(),
+                    focus_handle,
                     matches: Vec::new(),
                     selected_index: 0,
                     last_query: String::new(),
