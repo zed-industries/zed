@@ -5739,33 +5739,6 @@ mod tests {
         (panel, cx)
     }
 
-    fn retained_threads_contain_session(
-        retained: &HashMap<ThreadId, Entity<ConversationView>>,
-        session_id: &acp::SessionId,
-        cx: &App,
-    ) -> bool {
-        retained.values().any(|cv| {
-            cv.read(cx)
-                .active_thread()
-                .is_some_and(|t| t.read(cx).thread.read(cx).session_id() == session_id)
-        })
-    }
-
-    fn find_retained_by_session(
-        retained: &HashMap<ThreadId, Entity<ConversationView>>,
-        session_id: &acp::SessionId,
-        cx: &App,
-    ) -> Option<Entity<ConversationView>> {
-        retained
-            .values()
-            .find(|cv| {
-                cv.read(cx)
-                    .active_thread()
-                    .is_some_and(|t| t.read(cx).thread.read(cx).session_id() == session_id)
-            })
-            .cloned()
-    }
-
     #[gpui::test]
     async fn test_draft_thread_retained_when_navigating_away(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
