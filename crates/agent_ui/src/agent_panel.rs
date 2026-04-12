@@ -2160,6 +2160,7 @@ impl AgentPanel {
 
     fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
         let new_work_dirs = self.project.read(cx).default_path_list(cx);
+        let new_worktree_paths = ThreadWorktreePaths::from_project(self.project.read(cx), cx);
 
         if let Some(conversation_view) = self.active_conversation_view() {
             conversation_view.update(cx, |conversation_view, cx| {
@@ -2170,6 +2171,20 @@ impl AgentPanel {
         for conversation_view in self.retained_threads.values() {
             conversation_view.update(cx, |conversation_view, cx| {
                 conversation_view.set_work_dirs(new_work_dirs.clone(), cx);
+            });
+        }
+
+        // Update metadata store so threads' path lists stay in sync with
+        // the project's current worktrees. Without this, threads saved
+        // before a worktree was added would have stale paths and not
+        // appear under the correct sidebar group.
+        let mut thread_ids: Vec<ThreadId> = self.retained_threads.keys().copied().collect();
+        if let Some(active_id) = self.active_thread_id() {
+            thread_ids.push(active_id);
+        }
+        if !thread_ids.is_empty() {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.update_worktree_paths(&thread_ids, new_worktree_paths, cx);
             });
         }
     }
@@ -2850,9 +2865,7 @@ impl AgentPanel {
             thread_id,
             session_id: resume_session_id.clone(),
             agent_id: agent.id(),
-            title: title
-                .clone()
-                .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into()),
+            title: title.clone(),
             updated_at: chrono::Utc::now(),
             created_at: Some(chrono::Utc::now()),
             worktree_paths,
@@ -5081,10 +5094,11 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let active_id = self.active_thread_id();
         let empty_draft_ids: Vec<ThreadId> = self
             .draft_thread_ids(cx)
             .into_iter()
-            .filter(|id| self.editor_text(*id, cx).is_none())
+            .filter(|id| Some(*id) != active_id && self.editor_text(*id, cx).is_none())
             .collect();
         for id in empty_draft_ids {
             self.remove_thread(id, cx);

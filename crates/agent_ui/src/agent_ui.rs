@@ -80,7 +80,7 @@ pub(crate) use thread_history_view::*;
 pub use thread_import::{AcpThreadImportOnboarding, ThreadImportModal};
 use zed_actions;
 
-pub const DEFAULT_THREAD_TITLE: &str = "New Thread";
+pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
 actions!(
     agent,

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::agent_connection_store::AgentConnectionStore;
 
 use crate::thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore};
-use crate::{Agent, RemoveSelectedThread};
+use crate::{Agent, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol as acp;
@@ -255,7 +255,7 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                match fuzzy_match_positions(&query, &session.title) {
+                match fuzzy_match_positions(&query, session.title.as_ref().map(|t| t.as_ref()).unwrap_or(DEFAULT_THREAD_TITLE)) {
                     Some(positions) => positions,
                     None => continue,
                 }
@@ -530,7 +530,7 @@ impl ThreadsArchiveView {
 
                 let is_restoring = self.restoring.contains(&thread.thread_id);
 
-                let base = ThreadItem::new(id, thread.title.clone())
+                let base = ThreadItem::new(id, thread.display_title())
                     .icon(icon)
                     .when_some(icon_from_external_svg, |this, svg| {
                         this.custom_icon_from_external_svg(svg)
@@ -1009,7 +1009,7 @@ impl PickerDelegate for ProjectPickerDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        format!("Associate the \"{}\" thread with...", self.thread.title).into()
+        format!("Associate the \"{}\" thread with...", self.thread.title.as_ref().map(|t| t.as_ref()).unwrap_or(DEFAULT_THREAD_TITLE)).into()
     }
 
     fn render_editor(

@@ -524,9 +524,7 @@ fn collect_importable_threads(
                 thread_id: ThreadId::new(),
                 session_id: Some(session.session_id),
                 agent_id: agent_id.clone(),
-                title: session
-                    .title
-                    .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into()),
+                title: session.title,
                 updated_at: session.updated_at.unwrap_or_else(|| Utc::now()),
                 created_at: session.created_at,
                 worktree_paths: ThreadWorktreePaths::from_folder_paths(&folder_paths),
@@ -587,7 +585,7 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].session_id.as_ref().unwrap().0.as_ref(), "new-1");
-        assert_eq!(result[0].title.as_ref(), "Brand New");
+        assert_eq!(result[0].display_title(), "Brand New");
     }
 
     #[test]

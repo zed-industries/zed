@@ -91,7 +91,11 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         thread_id: ThreadId::new(),
                         session_id: Some(entry.id),
                         agent_id: ZED_AGENT_ID.clone(),
-                        title: entry.title,
+                        title: if entry.title.is_empty() || entry.title.as_ref() == DEFAULT_THREAD_TITLE {
+                            None
+                        } else {
+                            Some(entry.title)
+                        },
                         updated_at: entry.updated_at,
                         created_at: entry.created_at,
                         worktree_paths: ThreadWorktreePaths::from_folder_paths(&entry.folder_paths),
@@ -389,7 +393,7 @@ pub struct ThreadMetadata {
     pub thread_id: ThreadId,
     pub session_id: Option<acp::SessionId>,
     pub agent_id: AgentId,
-    pub title: SharedString,
+    pub title: Option<SharedString>,
     pub updated_at: DateTime<Utc>,
     pub created_at: Option<DateTime<Utc>>,
     pub worktree_paths: ThreadWorktreePaths,
@@ -398,6 +402,16 @@ pub struct ThreadMetadata {
 }
 
 impl ThreadMetadata {
+    pub fn is_draft(&self) -> bool {
+        self.session_id.is_none()
+    }
+
+    pub fn display_title(&self) -> SharedString {
+        self.title
+            .clone()
+            .unwrap_or_else(|| crate::DEFAULT_THREAD_TITLE.into())
+    }
+
     pub fn folder_paths(&self) -> &PathList {
         self.worktree_paths.folder_path_list()
     }
@@ -415,7 +429,7 @@ impl From<&ThreadMetadata> for acp_thread::AgentSessionInfo {
         Self {
             session_id,
             work_dirs: Some(meta.folder_paths().clone()),
-            title: Some(meta.title.clone()),
+            title: meta.title.clone(),
             updated_at: Some(meta.updated_at),
             created_at: meta.created_at,
             meta: None,
@@ -717,6 +731,31 @@ impl ThreadMetadataStore {
                 .unwrap_or_else(|_| ThreadWorktreePaths::from_folder_paths(&work_dirs)),
                 ..thread.clone()
             });
+            cx.notify();
+        }
+    }
+
+    pub fn update_worktree_paths(
+        &mut self,
+        thread_ids: &[ThreadId],
+        worktree_paths: ThreadWorktreePaths,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        for &thread_id in thread_ids {
+            let Some(thread) = self.threads.get(&thread_id) else {
+                continue;
+            };
+            if thread.worktree_paths == worktree_paths {
+                continue;
+            }
+            self.save_internal(ThreadMetadata {
+                worktree_paths: worktree_paths.clone(),
+                ..thread.clone()
+            });
+            changed = true;
+        }
+        if changed {
             cx.notify();
         }
     }
@@ -1094,9 +1133,7 @@ impl ThreadMetadataStore {
 
                 let existing_thread = self.entry_by_session(thread_ref.session_id());
                 let session_id = Some(thread_ref.session_id().clone());
-                let title = thread_ref
-                    .title()
-                    .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
+                let title = thread_ref.title();
 
                 let updated_at = Utc::now();
 
@@ -1264,7 +1301,7 @@ impl ThreadMetadataDb {
         } else {
             Some(row.agent_id.to_string())
         };
-        let title = row.title.to_string();
+        let title = row.title.as_ref().map(|t| t.to_string()).unwrap_or_default();
         let updated_at = row.updated_at.to_rfc3339();
         let created_at = row.created_at.map(|dt| dt.to_rfc3339());
         let serialized = row.folder_paths().serialize();
@@ -1498,7 +1535,11 @@ impl Column for ThreadMetadata {
                 thread_id,
                 session_id: id.map(acp::SessionId::new),
                 agent_id,
-                title: title.into(),
+                title: if title.is_empty() || title == DEFAULT_THREAD_TITLE {
+                    None
+                } else {
+                    Some(title.into())
+                },
                 updated_at,
                 created_at,
                 worktree_paths,
@@ -1582,7 +1623,7 @@ mod tests {
             archived: false,
             session_id: Some(acp::SessionId::new(session_id)),
             agent_id: agent::ZED_AGENT_ID.clone(),
-            title: title.to_string().into(),
+            title: if title.is_empty() { None } else { Some(title.to_string().into()) },
             updated_at,
             created_at: Some(updated_at),
             worktree_paths: ThreadWorktreePaths::from_folder_paths(&folder_paths),
@@ -1742,7 +1783,7 @@ mod tests {
             thread_id: session1_thread_id,
             session_id: Some(acp::SessionId::new("session-1")),
             agent_id: agent::ZED_AGENT_ID.clone(),
-            title: "First Thread".into(),
+            title: Some("First Thread".into()),
             updated_at: updated_time,
             created_at: Some(updated_time),
             worktree_paths: ThreadWorktreePaths::from_folder_paths(&second_paths),
@@ -1825,7 +1866,7 @@ mod tests {
             thread_id: ThreadId::new(),
             session_id: Some(acp::SessionId::new("a-session-0")),
             agent_id: agent::ZED_AGENT_ID.clone(),
-            title: "Existing Metadata".into(),
+            title: Some("Existing Metadata".into()),
             updated_at: now - chrono::Duration::seconds(10),
             created_at: Some(now - chrono::Duration::seconds(10)),
             worktree_paths: ThreadWorktreePaths::from_folder_paths(&project_a_paths),
@@ -1909,7 +1950,7 @@ mod tests {
                     .is_some_and(|s| s.0.as_ref() == "a-session-0")
             })
             .unwrap();
-        assert_eq!(existing_metadata.title.as_ref(), "Existing Metadata");
+        assert_eq!(existing_metadata.display_title(), "Existing Metadata");
         assert!(!existing_metadata.archived);
 
         let migrated_session_ids: Vec<_> = list
@@ -1945,7 +1986,7 @@ mod tests {
             thread_id: ThreadId::new(),
             session_id: Some(acp::SessionId::new("existing-session")),
             agent_id: agent::ZED_AGENT_ID.clone(),
-            title: "Existing Metadata".into(),
+            title: Some("Existing Metadata".into()),
             updated_at: existing_updated_at,
             created_at: Some(existing_updated_at),
             worktree_paths: ThreadWorktreePaths::from_folder_paths(&project_paths),
@@ -2406,7 +2447,7 @@ mod tests {
             list.len(),
         );
         assert_eq!(list[0].session_id.as_ref().unwrap(), &regular_session_id);
-        assert_eq!(list[0].title.as_ref(), "Regular Thread");
+        assert_eq!(list[0].display_title(), "Regular Thread");
     }
 
     #[test]
