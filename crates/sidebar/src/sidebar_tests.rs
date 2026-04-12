@@ -7482,6 +7482,110 @@ async fn test_activating_workspace_with_draft_does_not_create_extras(cx: &mut Te
     });
 }
 
+#[gpui::test]
+async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &mut TestAppContext) {
+    // Historical threads (not open in any agent panel) should have their
+    // worktree paths updated when a folder is added to or removed from the
+    // project.
+    let (_fs, project) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Save two threads directly into the metadata store (not via the agent
+    // panel), so they are purely historical — no open views hold them.
+    save_named_thread_metadata("hist-1", "Historical 1", &project, cx).await;
+    save_named_thread_metadata("hist-2", "Historical 2", &project, cx).await;
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // Sanity-check: both threads exist under the initial key [/project-a].
+    let old_key_paths = PathList::new(&[PathBuf::from("/project-a")]);
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            2,
+            "should have 2 historical threads under old key before worktree add"
+        );
+    });
+
+    // Add a second worktree to the project.
+    // TODO: Should there be different behavior for calling Project::find_or_create_worktree,
+    //       or MultiWorkspace::add_folders_to_project_group?
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project-b", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    // The historical threads should now be indexed under the new combined
+    // key [/project-a, /project-b].
+    let new_key_paths = PathList::new(&[PathBuf::from("/project-a"), PathBuf::from("/project-b")]);
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            0,
+            "should have 0 historical threads under old key after worktree add"
+        );
+        assert_eq!(
+            store.entries_for_main_worktree_path(&new_key_paths).count(),
+            2,
+            "should have 2 historical threads under new key after worktree add"
+        );
+    });
+
+    // Sidebar should show threads under the new header.
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [project-a, project-b]",
+            "  Historical 2",
+            "  Historical 1",
+        ]
+    );
+
+    // Now remove the second worktree.
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .visible_worktrees(cx)
+            .find(|wt| wt.read(cx).abs_path().as_ref() == Path::new("/project-b"))
+            .map(|wt| wt.read(cx).id())
+            .expect("should find project-b worktree")
+    });
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    // Historical threads should migrate back to the original key.
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_main_worktree_path(&new_key_paths).count(),
+            0,
+            "should have 0 historical threads under new key after worktree remove"
+        );
+        assert_eq!(
+            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            2,
+            "should have 2 historical threads under old key after worktree remove"
+        );
+    });
+
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project-a]", "  Historical 2", "  Historical 1",]
+    );
+}
+
 mod property_test {
     use super::*;
     use gpui::proptest::prelude::*;
