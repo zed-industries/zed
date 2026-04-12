@@ -5043,24 +5043,12 @@ impl LspStore {
             return HashSet::default();
         }
 
-        let mut available_language_servers = self
+        let available_language_servers = self
             .languages
             .lsp_adapters(&language.name())
             .into_iter()
             .map(|lsp_adapter| lsp_adapter.name())
             .collect::<Vec<_>>();
-
-        for configured_language_server in &settings.language_servers {
-            if configured_language_server == "..." || configured_language_server.starts_with('!') {
-                continue;
-            }
-
-            let configured_language_server =
-                LanguageServerName(configured_language_server.clone().into());
-            if !available_language_servers.contains(&configured_language_server) {
-                available_language_servers.push(configured_language_server);
-            }
-        }
 
         settings
             .customized_language_servers(&available_language_servers)
