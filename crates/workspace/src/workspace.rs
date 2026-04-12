@@ -33,8 +33,9 @@ pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace,
     MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject, PreviousThread,
-    ProjectGroup, ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent, SidebarHandle,
-    SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
+    ProjectGroup, SerializedProjectGroupState, ShowFewerThreads, ShowMoreThreads, Sidebar,
+    SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide, ToggleWorkspaceSidebar,
+    sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -8807,9 +8808,13 @@ pub async fn apply_restored_multiworkspace_state(
     if !project_groups.is_empty() {
         // Resolve linked worktree paths to their main repo paths so
         // stale keys from previous sessions get normalized and deduped.
-        let mut resolved_groups: Vec<(ProjectGroupKey, bool, Option<usize>)> = Vec::new();
+        let mut resolved_groups: Vec<SerializedProjectGroupState> = Vec::new();
         for serialized in project_groups.iter().cloned() {
-            let (key, expanded, visible_thread_count) = serialized.into_key_and_state();
+            let SerializedProjectGroupState {
+                key,
+                expanded,
+                visible_thread_count,
+            } = serialized.into_restored_state();
             if key.path_list().paths().is_empty() {
                 continue;
             }
@@ -8826,8 +8831,12 @@ pub async fn apply_restored_multiworkspace_state(
                 }
             }
             let resolved = ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths));
-            if !resolved_groups.iter().any(|(k, _, _)| *k == resolved) {
-                resolved_groups.push((resolved, expanded, visible_thread_count));
+            if !resolved_groups.iter().any(|g| g.key == resolved) {
+                resolved_groups.push(SerializedProjectGroupState {
+                    key: resolved,
+                    expanded,
+                    visible_thread_count,
+                });
             }
         }
 

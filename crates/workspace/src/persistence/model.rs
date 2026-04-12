@@ -1,7 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
     Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
-    path_list::PathList,
+    multi_workspace::SerializedProjectGroupState, path_list::PathList,
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -90,24 +90,23 @@ impl SerializedProjectGroup {
         }
     }
 
-    pub fn into_key_and_state(self) -> (ProjectGroupKey, bool, Option<usize>) {
+    pub fn into_restored_state(self) -> SerializedProjectGroupState {
         let path_list = PathList::deserialize(&self.path_list);
         let host = match self.location {
             SerializedWorkspaceLocation::Local => None,
             SerializedWorkspaceLocation::Remote(opts) => Some(opts),
         };
-        (
-            ProjectGroupKey::new(host, path_list),
-            self.expanded,
-            self.visible_thread_count,
-        )
+        SerializedProjectGroupState {
+            key: ProjectGroupKey::new(host, path_list),
+            expanded: self.expanded,
+            visible_thread_count: self.visible_thread_count,
+        }
     }
 }
 
 impl From<SerializedProjectGroup> for ProjectGroupKey {
     fn from(value: SerializedProjectGroup) -> Self {
-        let (key, _, _) = value.into_key_and_state();
-        key
+        value.into_restored_state().key
     }
 }
 
