@@ -562,6 +562,8 @@ impl MultiWorkspace {
             return;
         }
 
+        // WIP: This is a bad heuristic based approach. Going to try to consolidate a precise solution
+        //      with other work in a follow up
         // Before the old group state gets pruned, carry over its UI
         // state (collapse/expand) to the new key.
         let predecessor_state = self
