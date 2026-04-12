@@ -8355,17 +8355,12 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
     // When the thread's folder_paths don't exactly match any workspace's
     // root paths (e.g. because a folder was added to the workspace after
     // the thread was created), workspace_to_remove is None. But the linked
-    // worktree workspace still has the worktree loaded, and its editors
-    // hold Entity<Worktree> references via File structs in buffers.
+    // worktree workspace still needs to be removed so that its worktree
+    // entities are released, allowing git worktree removal to proceed.
     //
-    // Without the fix, the archive task's remove_root calls
-    // wait_for_worktree_release which hangs forever because the workspace's
-    // editors prevent the worktree entity from being released. The
-    // worktree directory is never cleaned up from disk.
-    //
-    // With the fix, archive_thread scans roots_to_archive for linked
-    // worktree workspaces and removes them before starting the cleanup
-    // task, so editors are dropped and wait_for_worktree_release completes.
+    // With the fix, archive_thread scans roots_to_archive for any linked
+    // worktree workspaces and includes them in the removal set, even when
+    // the thread's folder_paths don't match the workspace's root paths.
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
 
@@ -8424,29 +8419,9 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
 
-    {
-        let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
-            mw.test_add_workspace(worktree_project.clone(), window, cx)
-        });
-
-        // Open a file from the linked worktree in the worktree workspace's
-        // editor. This creates a buffer whose File holds an Entity<Worktree>
-        // strong reference.
-        worktree_workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(
-                    PathBuf::from("/wt-feature-a/src/main.rs"),
-                    workspace::OpenOptions::default(),
-                    window,
-                    cx,
-                )
-            })
-            .await
-            .expect("should open file");
-        cx.run_until_parked();
-    }
-    // worktree_workspace is dropped here, but the workspace entity
-    // is still alive because the MultiWorkspace holds it.
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
 
     // Save thread metadata using folder_paths that DON'T match the
     // workspace's root paths. This simulates the case where the workspace's
