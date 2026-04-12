@@ -48,8 +48,7 @@ use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
     NextProject, NextThread, Open, PreviousProject, PreviousThread, SerializedProjectGroup,
     ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
-    ToggleWorkspaceSidebar, Workspace,
-    notifications::NotificationId, sidebar_side_context_menu,
+    ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -84,7 +83,6 @@ const DEFAULT_WIDTH: Pixels = px(300.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 const DEFAULT_THREADS_SHOWN: usize = 5;
-
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SerializedSidebarView {
@@ -674,11 +672,7 @@ impl Sidebar {
     ///
     /// Also resolves `pending_remote_thread_activation` when the panel's
     /// active thread matches the pending activation.
-    fn sync_active_entry_from_panel(
-        &mut self,
-        agent_panel: &Entity<AgentPanel>,
-        cx: &App,
-    ) {
+    fn sync_active_entry_from_panel(&mut self, agent_panel: &Entity<AgentPanel>, cx: &App) {
         let Some(active_workspace) = self.active_workspace(cx) else {
             return;
         };
@@ -929,7 +923,6 @@ impl Sidebar {
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
         let mut seen_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
-
 
         let has_open_projects = workspaces
             .iter()
@@ -1200,7 +1193,11 @@ impl Sidebar {
 
                 let mut matched_threads: Vec<ThreadEntry> = Vec::new();
                 for mut thread in threads {
-                    let title: &str = thread.metadata.title.as_ref().map_or(DEFAULT_THREAD_TITLE, |t| t.as_ref());
+                    let title: &str = thread
+                        .metadata
+                        .title
+                        .as_ref()
+                        .map_or(DEFAULT_THREAD_TITLE, |t| t.as_ref());
                     if let Some(positions) = fuzzy_match_positions(&query, title) {
                         thread.highlight_positions = positions;
                     }
@@ -1263,8 +1260,8 @@ impl Sidebar {
                     // title (panel considers them drafts even if they
                     // have a session_id).
                     for thread in &mut threads {
-                        let needs_title_override = thread.is_draft
-                            || thread.metadata.title.is_none();
+                        let needs_title_override =
+                            thread.is_draft || thread.metadata.title.is_none();
                         if needs_title_override {
                             if let ThreadEntryWorkspace::Open(workspace) = &thread.workspace {
                                 if let Some(text) =
@@ -2221,7 +2218,6 @@ impl Sidebar {
                     self.expand_thread_group(&key, cx);
                 }
             }
-
         }
     }
 
@@ -2366,8 +2362,7 @@ impl Sidebar {
                 .and_then(|sidebar| sidebar.downcast::<Self>().ok())
             {
                 target_sidebar.update(cx, |sidebar, cx| {
-                    sidebar.pending_remote_thread_activation =
-                        Some(metadata_thread_id);
+                    sidebar.pending_remote_thread_activation = Some(metadata_thread_id);
                     sidebar.active_entry = Some(ActiveEntry {
                         thread_id: metadata_thread_id,
                         session_id: target_session_id.clone(),
@@ -2686,9 +2681,7 @@ impl Sidebar {
                     self.update_entries(cx);
                 }
             }
-            Some(
-                ListEntry::Thread(_) | ListEntry::ViewMore { .. },
-            ) => {
+            Some(ListEntry::Thread(_) | ListEntry::ViewMore { .. }) => {
                 for i in (0..ix).rev() {
                     if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(i)
                     {
@@ -2714,9 +2707,7 @@ impl Sidebar {
         // Find the group header for the current selection.
         let header_ix = match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { .. }) => Some(ix),
-            Some(
-                ListEntry::Thread(_) | ListEntry::ViewMore { .. },
-            ) => (0..ix).rev().find(|&i| {
+            Some(ListEntry::Thread(_) | ListEntry::ViewMore { .. }) => (0..ix).rev().find(|&i| {
                 matches!(
                     self.contents.entries.get(i),
                     Some(ListEntry::ProjectHeader { .. })
@@ -2787,10 +2778,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         let store = ThreadMetadataStore::global(cx);
-        let metadata = store
-            .read(cx)
-            .entry_by_session(session_id)
-            .cloned();
+        let metadata = store.read(cx).entry_by_session(session_id).cloned();
         let active_workspace = metadata.as_ref().and_then(|metadata| {
             self.active_entry.as_ref().and_then(|entry| {
                 if entry.is_active_thread(&metadata.thread_id) {
@@ -2870,7 +2858,9 @@ impl Sidebar {
                 .iter()
                 .chain(self.contents.entries[..pos].iter().rev())
                 .find_map(|entry| match entry {
-                    ListEntry::Thread(t) if !t.is_draft && t.metadata.session_id.as_ref() != Some(session_id) => {
+                    ListEntry::Thread(t)
+                        if !t.is_draft && t.metadata.session_id.as_ref() != Some(session_id) =>
+                    {
                         let workspace_paths = match &t.workspace {
                             ThreadEntryWorkspace::Open(ws) => {
                                 PathList::new(&ws.read(cx).root_paths(cx))
@@ -3684,13 +3674,7 @@ impl Sidebar {
                     this.selection = None;
                     match &thread_workspace {
                         ThreadEntryWorkspace::Open(workspace) => {
-                            this.activate_thread(
-                                metadata.clone(),
-                                workspace,
-                                false,
-                                window,
-                                cx,
-                            );
+                            this.activate_thread(metadata.clone(), workspace, false, window, cx);
                         }
                         ThreadEntryWorkspace::Closed {
                             folder_paths,

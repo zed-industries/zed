@@ -255,7 +255,14 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                match fuzzy_match_positions(&query, session.title.as_ref().map(|t| t.as_ref()).unwrap_or(DEFAULT_THREAD_TITLE)) {
+                match fuzzy_match_positions(
+                    &query,
+                    session
+                        .title
+                        .as_ref()
+                        .map(|t| t.as_ref())
+                        .unwrap_or(DEFAULT_THREAD_TITLE),
+                ) {
                     Some(positions) => positions,
                     None => continue,
                 }
@@ -1009,7 +1016,15 @@ impl PickerDelegate for ProjectPickerDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        format!("Associate the \"{}\" thread with...", self.thread.title.as_ref().map(|t| t.as_ref()).unwrap_or(DEFAULT_THREAD_TITLE)).into()
+        format!(
+            "Associate the \"{}\" thread with...",
+            self.thread
+                .title
+                .as_ref()
+                .map(|t| t.as_ref())
+                .unwrap_or(DEFAULT_THREAD_TITLE)
+        )
+        .into()
     }
 
     fn render_editor(

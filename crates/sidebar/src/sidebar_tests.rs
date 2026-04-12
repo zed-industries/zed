@@ -142,7 +142,8 @@ fn assert_remote_project_integration_sidebar_state(
             ListEntry::Thread(thread) => {
                 let title = thread.metadata.display_title();
                 panic!(
-                    "unexpected sidebar thread while simulating remote project integration flicker: title=`{}`", title
+                    "unexpected sidebar thread while simulating remote project integration flicker: title=`{}`",
+                    title
                 );
             }
             ListEntry::ViewMore { .. } => {
@@ -2645,7 +2646,10 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     let entries = visible_entries_as_strings(&sidebar, cx);
     // After adding a worktree, the thread migrates to the new group key.
     // A reconciliation draft may appear during the transition.
-    assert!(entries.contains(&"  Hello *".to_string()), "thread should still be present after adding folder: {entries:?}");
+    assert!(
+        entries.contains(&"  Hello *".to_string()),
+        "thread should still be present after adding folder: {entries:?}"
+    );
     assert_eq!(entries[0], "v [project-a, project-b]");
 
     // The "New Thread" button must still be clickable (not stuck in
@@ -2862,7 +2866,11 @@ async fn test_draft_title_updates_across_two_groups(cx: &mut TestAppContext) {
             })
             .collect()
     });
-    assert_eq!(draft_titles.len(), 2, "should have two drafts, one per group");
+    assert_eq!(
+        draft_titles.len(),
+        2,
+        "should have two drafts, one per group"
+    );
 
     // Open a thread in each group's panel to get Connected state.
     let workspace_a =
@@ -2956,10 +2964,14 @@ async fn test_draft_title_survives_folder_addition(cx: &mut TestAppContext) {
     // The thread without a title should show the editor text via
     // the draft title override.
     sidebar.read_with(cx, |sidebar, _cx| {
-        let thread = sidebar.contents.entries.iter().find_map(|entry| match entry {
-            ListEntry::Thread(t) if t.metadata.thread_id == thread_id => Some(t),
-            _ => None,
-        });
+        let thread = sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(t) if t.metadata.thread_id == thread_id => Some(t),
+                _ => None,
+            });
         assert_eq!(
             thread.and_then(|t| t.metadata.title.as_ref().map(|s| s.as_ref())),
             Some("Initial text"),
@@ -2987,10 +2999,14 @@ async fn test_draft_title_survives_folder_addition(cx: &mut TestAppContext) {
     // if its metadata was saved under the old path list. If it IS
     // found, verify the title was overridden.
     sidebar.read_with(cx, |sidebar, _cx| {
-        let thread = sidebar.contents.entries.iter().find_map(|entry| match entry {
-            ListEntry::Thread(t) if t.metadata.thread_id == thread_id => Some(t),
-            _ => None,
-        });
+        let thread = sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(t) if t.metadata.thread_id == thread_id => Some(t),
+                _ => None,
+            });
         if let Some(thread) = thread {
             assert_eq!(
                 thread.metadata.title.as_ref().map(|s| s.as_ref()),
@@ -4162,7 +4178,8 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                         .map(|wt| wt.name.as_ref())
                         .unwrap_or("<none>");
                     panic!(
-                        "unexpected sidebar thread while opening linked worktree thread: title=`{}`, worktree=`{}`", title, worktree_name
+                        "unexpected sidebar thread while opening linked worktree thread: title=`{}`, worktree=`{}`",
+                        title, worktree_name
                     );
                 }
                 ListEntry::ViewMore { .. } => {
@@ -5360,7 +5377,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         assert!(last_accessed.contains(&session_id_c));
         assert!(
             is_active_session(&sidebar, &session_id_c),
-                        "active_entry should be Thread({session_id_c:?})"
+            "active_entry should be Thread({session_id_c:?})"
         );
     });
 
@@ -5397,7 +5414,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         assert!(last_accessed.contains(&session_id_a));
         assert!(
             is_active_session(&sidebar, &session_id_a),
-                        "active_entry should be Thread({session_id_a:?})"
+            "active_entry should be Thread({session_id_a:?})"
         );
     });
 
@@ -5441,7 +5458,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         assert!(last_accessed.contains(&session_id_b));
         assert!(
             is_active_session(&sidebar, &session_id_b),
-                        "active_entry should be Thread({session_id_b:?})"
+            "active_entry should be Thread({session_id_b:?})"
         );
     });
 
@@ -7778,7 +7795,7 @@ mod property_test {
             if let Some(session_id) = entry.session_id() {
                 if !seen.insert(session_id.clone()) {
                     let title = match entry {
-                    ListEntry::Thread(thread) => thread.metadata.display_title().to_string(),
+                        ListEntry::Thread(thread) => thread.metadata.display_title().to_string(),
                         _ => "<unknown>".to_string(),
                     };
                     duplicates.push((session_id.clone(), title));
@@ -8026,12 +8043,31 @@ mod property_test {
             .filter(|e| entry.matches_entry(e))
             .count();
         if matching_count != 1 {
-            let thread_entries: Vec<_> = sidebar.contents.entries.iter().filter_map(|e| match e {
-                ListEntry::Thread(t) => Some(format!("tid={:?} sid={:?} draft={}", t.metadata.thread_id, t.metadata.session_id, t.is_draft)),
-                _ => None,
-            }).collect();
+            let thread_entries: Vec<_> = sidebar
+                .contents
+                .entries
+                .iter()
+                .filter_map(|e| match e {
+                    ListEntry::Thread(t) => Some(format!(
+                        "tid={:?} sid={:?} draft={}",
+                        t.metadata.thread_id, t.metadata.session_id, t.is_draft
+                    )),
+                    _ => None,
+                })
+                .collect();
             let store = agent_ui::thread_metadata_store::ThreadMetadataStore::global(cx).read(cx);
-            let store_entries: Vec<_> = store.entries().map(|m| format!("tid={:?} sid={:?} archived={} paths={:?}", m.thread_id, m.session_id, m.archived, m.folder_paths())).collect();
+            let store_entries: Vec<_> = store
+                .entries()
+                .map(|m| {
+                    format!(
+                        "tid={:?} sid={:?} archived={} paths={:?}",
+                        m.thread_id,
+                        m.session_id,
+                        m.archived,
+                        m.folder_paths()
+                    )
+                })
+                .collect();
             anyhow::bail!(
                 "expected exactly 1 sidebar entry matching active_entry {:?}, found {}. sidebar threads: {:?}. store: {:?}",
                 entry,

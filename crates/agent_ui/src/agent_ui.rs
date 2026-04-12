@@ -824,6 +824,7 @@ mod tests {
         .unwrap();
 
         cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             AgentSettings::register(cx);

@@ -91,7 +91,9 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         thread_id: ThreadId::new(),
                         session_id: Some(entry.id),
                         agent_id: ZED_AGENT_ID.clone(),
-                        title: if entry.title.is_empty() || entry.title.as_ref() == DEFAULT_THREAD_TITLE {
+                        title: if entry.title.is_empty()
+                            || entry.title.as_ref() == DEFAULT_THREAD_TITLE
+                        {
                             None
                         } else {
                             Some(entry.title)
@@ -1301,7 +1303,11 @@ impl ThreadMetadataDb {
         } else {
             Some(row.agent_id.to_string())
         };
-        let title = row.title.as_ref().map(|t| t.to_string()).unwrap_or_default();
+        let title = row
+            .title
+            .as_ref()
+            .map(|t| t.to_string())
+            .unwrap_or_default();
         let updated_at = row.updated_at.to_rfc3339();
         let created_at = row.created_at.map(|dt| dt.to_rfc3339());
         let serialized = row.folder_paths().serialize();
@@ -1623,7 +1629,11 @@ mod tests {
             archived: false,
             session_id: Some(acp::SessionId::new(session_id)),
             agent_id: agent::ZED_AGENT_ID.clone(),
-            title: if title.is_empty() { None } else { Some(title.to_string().into()) },
+            title: if title.is_empty() {
+                None
+            } else {
+                Some(title.to_string().into())
+            },
             updated_at,
             created_at: Some(updated_at),
             worktree_paths: ThreadWorktreePaths::from_folder_paths(&folder_paths),
