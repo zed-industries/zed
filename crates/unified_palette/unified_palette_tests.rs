@@ -3,9 +3,8 @@
 use super::*;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use editor::Editor;
 use gpui::{TestAppContext, VisualTestContext, Entity};
-use menu::{Confirm, SelectNext, SelectPrevious};
+use menu::Confirm;
 use project::Project;
 use serde_json::json;
 use settings::SettingsStore;

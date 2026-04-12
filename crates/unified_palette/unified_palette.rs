@@ -179,7 +179,7 @@ impl UnifiedPaletteDelegate {
         unified_palette: WeakEntity<UnifiedPalette>,
         file_history: Vec<ProjectPath>,
         focus_handle: FocusHandle,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> Self {
         Self {
             mode: PaletteMode::FileFinder,
@@ -588,15 +588,13 @@ impl PickerDelegate for UnifiedPaletteDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        let text = match self.mode {
+        match self.mode {
             PaletteMode::FileFinder => "Go to file...".into(),
             PaletteMode::CommandPalette => "Execute a command...".into(),
             PaletteMode::ProjectSymbols => "Go to symbol...".into(),
             PaletteMode::Outline => "Go to symbol in editor...".into(),
             PaletteMode::GoToLine => "Go to line...".into(),
-        };
-        log::trace!("UnifiedPalette: Placeholder text for {:?}: {}", self.mode, text);
-        text
+        }
     }
 
     fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
@@ -613,15 +611,12 @@ impl PickerDelegate for UnifiedPaletteDelegate {
         
         // Switch mode if changed
         if new_mode != self.mode {
-            log::info!("UnifiedPalette: Mode changed from {:?} to {:?}", self.mode, new_mode);
             self.mode = new_mode;
             self.matches.clear();
             // Cancel any pending searches when mode changes
             self.cancel_flag.store(true, Ordering::Release);
             cx.notify();
         }
-        
-        log::debug!("UnifiedPalette: Searching in {:?} mode with query: '{}'", self.mode, stripped_query);
         
         // Search based on mode
         match self.mode {
@@ -649,23 +644,18 @@ impl PickerDelegate for UnifiedPaletteDelegate {
     }
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        log::info!("UnifiedPalette: Confirm called in {:?} mode (secondary: {})", self.mode, secondary);
-        
         // Don't confirm if there are no matches
         let Some(selected_match) = self.matches.get(self.selected_index).cloned() else {
-            log::warn!("UnifiedPalette: No match selected, ignoring confirm");
             return;
         };
         
         let Some(workspace) = self.workspace.upgrade() else {
-            log::error!("UnifiedPalette: Workspace no longer exists, dismissing");
             self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
             return;
         };
         
         match selected_match {
             Match::File(file_match) => {
-                log::info!("UnifiedPalette: Opening file: {}", file_match.display_path);
                 let project_path = ProjectPath {
                     worktree_id: file_match.worktree_id,
                     path: file_match.path.clone(),
@@ -714,18 +704,14 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                         }).log_err();
                     }
                     
-                    log::debug!("UnifiedPalette: File opened, dismissing modal");
                     palette.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                 }).detach();
             }
             Match::Command(command_match) => {
-                log::info!("UnifiedPalette: Executing command: {}", command_match.name);
                 window.dispatch_action(command_match.action.as_ref().boxed_clone(), cx);
-                log::debug!("UnifiedPalette: Command dispatched, dismissing modal");
                 self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
             }
             Match::Line(line_match) => {
-                log::info!("UnifiedPalette: Going to line {}", line_match.line_number);
                 workspace.update(cx, |workspace, cx| {
                     if let Some(active_item) = workspace.active_item(cx) {
                         if let Some(editor) = active_item.downcast::<editor::Editor>() {
@@ -739,21 +725,13 @@ impl PickerDelegate for UnifiedPaletteDelegate {
                                         s.select_ranges([point..point]);
                                     },
                                 );
-                                log::debug!("UnifiedPalette: Selection changed to line {}", line_match.line_number);
                             });
-                        } else {
-                            log::warn!("UnifiedPalette: Active item is not an editor");
                         }
-                    } else {
-                        log::warn!("UnifiedPalette: No active item in workspace");
                     }
                 });
-                log::debug!("UnifiedPalette: Dismissing modal after go-to-line");
                 self.unified_palette.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
             }
             Match::Symbol(symbol_match) => {
-                log::info!("UnifiedPalette: Navigating to symbol: {}", symbol_match.symbol.label.text);
-                
                 // Check if this is an outline symbol (from current file)
                 if self.mode == PaletteMode::Outline {
                     // For outline mode, navigate within the current editor
@@ -829,7 +807,7 @@ impl PickerDelegate for UnifiedPaletteDelegate {
     }
 
     fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {
-        log::info!("UnifiedPalette: Modal dismissed");
+        // Modal dismissed
     }
 
     fn render_match(&self, ix: usize, selected: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<Self::ListItem> {
