@@ -567,9 +567,12 @@ fn main() -> Result<()> {
 
         #[cfg(target_os = "windows")]
         {
-            // On Windows, by default, a child process inherits a copy of the environment block of the parent process.
-            // So we don't need to pass env vars explicitly.
-            None
+            use collections::HashMap;
+
+            // Child-process inheritance does not help when the request is forwarded into an
+            // already-running Zed instance. In that case we need to serialize the launching
+            // process environment explicitly.
+            Some(std::env::vars().collect::<HashMap<_, _>>())
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "windows")))]

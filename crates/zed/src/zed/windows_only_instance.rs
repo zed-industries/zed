@@ -161,7 +161,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             open_new_workspace: None,
             force_existing_window: false,
             reuse: false,
-            env: None,
+            env: Some(std::env::vars().collect()),
             user_data_dir: args.user_data_dir.clone(),
             dev_container: args.dev_container,
         }
