@@ -11,8 +11,8 @@ use dev_container::{
 };
 use editor::Editor;
 use extension_host::ExtensionStore;
-use fuzzy_nucleo::StringMatchCandidate;
 use futures::{FutureExt, channel::oneshot, future::Shared};
+use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
@@ -35,13 +35,13 @@ use smol::stream::StreamExt as _;
 use std::{
     borrow::Cow,
     collections::BTreeSet,
-    time::Duration,
     path::PathBuf,
     rc::Rc,
     sync::{
         Arc,
         atomic::{self, AtomicUsize},
     },
+    time::Duration,
 };
 
 use ui::{
@@ -693,7 +693,7 @@ struct DefaultState {
     add_new_wsl: NavigableEntry,
     servers: Vec<RemoteEntry>,
     filtered_servers: Option<Vec<RemoteEntry>>,
-    filter_data: Arc<[ServerFilterData]>,
+    filter_data: Arc<FilterData>,
 }
 
 impl DefaultState {
@@ -778,18 +778,7 @@ impl DefaultState {
             }));
         }
 
-        let filter_data: Arc<[ServerFilterData]> = servers
-            .iter()
-            .map(|entry| ServerFilterData {
-                host: entry.host_name().to_string(),
-                project_paths: match entry {
-                    RemoteEntry::Project { projects, .. } => {
-                        projects.iter().map(|p| p.project.paths.join(", ")).collect()
-                    }
-                    RemoteEntry::SshConfig { .. } => vec![],
-                },
-            })
-            .collect();
+        let filter_data = Arc::new(FilterData::build(&servers));
         Self {
             scroll_handle: handle,
             add_new_server,
@@ -806,38 +795,38 @@ impl DefaultState {
     }
 
     fn apply_filter_results(&mut self, results: &[FilteredServer]) {
-        self.filtered_servers = Some(results
-            .iter()
-            .filter(|r| r.server_index < self.servers.len())
-            .map(|result| {
-                let mut entry = self.servers[result.server_index].clone();
-                match &mut entry {
-                    RemoteEntry::Project {
-                        projects,
-                        host_positions,
-                        ..
-                    } => {
-                        *host_positions = result.host_positions.clone();
-                        let all_projects = std::mem::take(projects);
-                        *projects = result
-                            .project_matches
-                            .iter()
-                            .filter(|pm| pm.project_index < all_projects.len())
-                            .map(|pm| ProjectEntry {
-                                highlight_positions: pm.path_positions.clone(),
-                                ..all_projects[pm.project_index].clone()
-                            })
-                            .collect();
+        self.filtered_servers = Some(
+            results
+                .iter()
+                .filter(|r| r.server_index < self.servers.len())
+                .map(|result| {
+                    let mut entry = self.servers[result.server_index].clone();
+                    match &mut entry {
+                        RemoteEntry::Project {
+                            projects,
+                            host_positions,
+                            ..
+                        } => {
+                            *host_positions = result.host_positions.clone();
+                            let all_projects = std::mem::take(projects);
+                            *projects = result
+                                .project_matches
+                                .iter()
+                                .filter(|pm| pm.project_index < all_projects.len())
+                                .map(|pm| ProjectEntry {
+                                    highlight_positions: pm.path_positions.clone(),
+                                    ..all_projects[pm.project_index].clone()
+                                })
+                                .collect();
+                        }
+                        RemoteEntry::SshConfig { host_positions, .. } => {
+                            *host_positions = result.host_positions.clone();
+                        }
                     }
-                    RemoteEntry::SshConfig {
-                        host_positions, ..
-                    } => {
-                        *host_positions = result.host_positions.clone();
-                    }
-                }
-                entry
-            })
-            .collect());
+                    entry
+                })
+                .collect(),
+        );
     }
 
     fn filter_sync(&mut self, query: &str) {
@@ -851,11 +840,54 @@ impl DefaultState {
     }
 }
 
-struct ServerFilterData {
-    host: String,
-    project_paths: Vec<String>,
+#[derive(Debug)]
+struct FilterData {
+    candidates: Vec<StringMatchCandidate>,
+    meta: Vec<CandidateMeta>,
+    server_count: usize,
 }
 
+impl FilterData {
+    fn build(servers: &[RemoteEntry]) -> Self {
+        let mut candidates = Vec::new();
+        let mut meta = Vec::new();
+        for (server_index, server) in servers.iter().enumerate() {
+            let host = server.host_name();
+            let host_byte_len = host.len();
+            match server {
+                RemoteEntry::Project { projects, .. } if !projects.is_empty() => {
+                    for (project_index, entry) in projects.iter().enumerate() {
+                        let combined = format!("{host} {}", entry.project.paths.join(", "));
+                        meta.push(CandidateMeta {
+                            server_index,
+                            project_index: Some(project_index),
+                            host_byte_len,
+                        });
+                        candidates.push(StringMatchCandidate::from_string(
+                            candidates.len(),
+                            combined,
+                        ));
+                    }
+                }
+                RemoteEntry::Project { .. } | RemoteEntry::SshConfig { .. } => {
+                    meta.push(CandidateMeta {
+                        server_index,
+                        project_index: None,
+                        host_byte_len,
+                    });
+                    candidates.push(StringMatchCandidate::new(candidates.len(), host));
+                }
+            }
+        }
+        Self {
+            candidates,
+            meta,
+            server_count: servers.len(),
+        }
+    }
+}
+
+#[derive(Debug)]
 struct FilteredServer {
     server_index: usize,
     host_positions: Vec<usize>,
@@ -863,65 +895,41 @@ struct FilteredServer {
     score: f64,
 }
 
+#[derive(Debug)]
 struct FilteredProject {
     project_index: usize,
     path_positions: Vec<usize>,
 }
 
+#[derive(Debug)]
 struct CandidateMeta {
     server_index: usize,
     project_index: Option<usize>,
     host_byte_len: usize,
 }
 
-fn compute_filter_results(servers: &[ServerFilterData], query: &str) -> Vec<FilteredServer> {
+fn compute_filter_results(filter_data: &FilterData, query: &str) -> Vec<FilteredServer> {
     let smart_case = query.chars().any(|c| c.is_uppercase());
-
-    let mut candidates = Vec::new();
-    let mut meta: Vec<CandidateMeta> = Vec::new();
-
-    for (server_idx, server) in servers.iter().enumerate() {
-        if server.project_paths.is_empty() {
-            meta.push(CandidateMeta {
-                server_index: server_idx,
-                project_index: None,
-                host_byte_len: server.host.len(),
-            });
-            candidates.push(StringMatchCandidate::new(candidates.len(), &server.host));
-        } else {
-            for (proj_idx, paths) in server.project_paths.iter().enumerate() {
-                let combined = format!("{} {paths}", server.host);
-                meta.push(CandidateMeta {
-                    server_index: server_idx,
-                    project_index: Some(proj_idx),
-                    host_byte_len: server.host.len(),
-                });
-                candidates.push(StringMatchCandidate::from_string(candidates.len(), combined));
-            }
-        }
-    }
-
     let matches = fuzzy_nucleo::match_strings_sync(
-        &candidates,
+        &filter_data.candidates,
         query,
         smart_case,
         false,
-        candidates.len(),
+        filter_data.candidates.len(),
     );
 
     let mut server_map: Vec<Option<FilteredServer>> =
-        (0..servers.len()).map(|_| None).collect();
+        (0..filter_data.server_count).map(|_| None).collect();
 
     for m in matches {
-        let meta = &meta[m.candidate_id];
+        let meta = &filter_data.meta[m.candidate_id];
 
-        let entry =
-            server_map[meta.server_index].get_or_insert_with(|| FilteredServer {
-                server_index: meta.server_index,
-                host_positions: Vec::new(),
-                project_matches: Vec::new(),
-                score: f64::NEG_INFINITY,
-            });
+        let entry = server_map[meta.server_index].get_or_insert_with(|| FilteredServer {
+            server_index: meta.server_index,
+            host_positions: Vec::new(),
+            project_matches: Vec::new(),
+            score: f64::NEG_INFINITY,
+        });
 
         entry.score = entry.score.max(m.score);
 
@@ -929,14 +937,17 @@ fn compute_filter_results(servers: &[ServerFilterData], query: &str) -> Vec<Filt
             None => {
                 entry.host_positions = m.positions;
             }
-            Some(proj_idx) => {
-                // +1 accounts for the single-byte space separator in format!("{} {paths}", ...)
+            Some(project_index) => {
+                // +1 accounts for the single-byte space separator in format!("{host} {paths}").
                 let host_prefix_len = meta.host_byte_len + 1;
-                entry
-                    .host_positions
-                    .extend(m.positions.iter().copied().filter(|&p| p < meta.host_byte_len));
+                entry.host_positions.extend(
+                    m.positions
+                        .iter()
+                        .copied()
+                        .filter(|&p| p < meta.host_byte_len),
+                );
                 entry.project_matches.push(FilteredProject {
-                    project_index: proj_idx,
+                    project_index,
                     path_positions: m
                         .positions
                         .into_iter()
@@ -1561,11 +1572,7 @@ impl RemoteServerProjects {
         );
     }
 
-    fn recompute_filter_debounced(
-        &mut self,
-        debounce: Duration,
-        cx: &mut Context<Self>,
-    ) {
+    fn recompute_filter_debounced(&mut self, debounce: Duration, cx: &mut Context<Self>) {
         let Mode::Default(state) = &mut self.mode else {
             return;
         };
@@ -1762,7 +1769,9 @@ impl RemoteServerProjects {
                                 ),
                         )
                 }
-                RemoteEntry::SshConfig { open_folder, host, .. } => List::new().child(
+                RemoteEntry::SshConfig {
+                    open_folder, host, ..
+                } => List::new().child(
                     h_flex()
                         .id(("new-remote-project-container", ix))
                         .track_focus(&open_folder.focus_handle)
@@ -1908,7 +1917,7 @@ impl RemoteServerProjects {
                             entry.project.paths.join(", "),
                             entry.highlight_positions.clone(),
                         )
-                        .truncate(),
+                        .truncate_start(),
                     )
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                         let secondary_confirm = e.modifiers().platform;
@@ -2901,6 +2910,10 @@ impl RemoteServerProjects {
         }
 
         if should_rebuild {
+            // Any in-flight debounced filter was built against the pre-rebuild
+            // FilterData. Dropping the task cancels it so stale positions never
+            // land on the freshly built state.
+            self._filter_task = Task::ready(());
             self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
             if let Mode::Default(new_state) = &mut self.mode {
                 let query = self.filter_editor.read(cx).text(cx);
@@ -3112,12 +3125,7 @@ impl RemoteServerProjects {
                         .min_h(rems(20.))
                         .size_full()
                         .relative()
-                        .child(
-                            div()
-                                .px_2()
-                                .py_1()
-                                .child(filter_editor),
-                        )
+                        .child(div().px_2().py_1().child(filter_editor))
                         .child(ListSeparator)
                         .child(
                             canvas(
@@ -3333,17 +3341,56 @@ impl Render for RemoteServerProjects {
 mod filter_tests {
     use super::*;
 
-    fn server(host: &str, projects: &[&str]) -> ServerFilterData {
-        ServerFilterData {
+    struct MockServer {
+        host: String,
+        project_paths: Vec<String>,
+    }
+
+    fn mock(host: &str, project_paths: &[&str]) -> MockServer {
+        MockServer {
             host: host.to_string(),
-            project_paths: projects.iter().map(|p| p.to_string()).collect(),
+            project_paths: project_paths.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    fn build(servers: &[MockServer]) -> FilterData {
+        let mut candidates = Vec::new();
+        let mut meta = Vec::new();
+        for (server_index, server) in servers.iter().enumerate() {
+            let host_byte_len = server.host.len();
+            if server.project_paths.is_empty() {
+                meta.push(CandidateMeta {
+                    server_index,
+                    project_index: None,
+                    host_byte_len,
+                });
+                candidates.push(StringMatchCandidate::new(candidates.len(), &server.host));
+            } else {
+                for (project_index, path) in server.project_paths.iter().enumerate() {
+                    let combined = format!("{} {path}", server.host);
+                    meta.push(CandidateMeta {
+                        server_index,
+                        project_index: Some(project_index),
+                        host_byte_len,
+                    });
+                    candidates.push(StringMatchCandidate::from_string(
+                        candidates.len(),
+                        combined,
+                    ));
+                }
+            }
+        }
+        FilterData {
+            candidates,
+            meta,
+            server_count: servers.len(),
         }
     }
 
     #[test]
     fn test_filter_host_only() {
-        let servers = [server("myhost", &[])];
-        let results = compute_filter_results(&servers, "myh");
+        let servers = [mock("myhost", &[])];
+        let results = compute_filter_results(&build(&servers), "myh");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].server_index, 0);
         assert!(!results[0].host_positions.is_empty());
@@ -3351,15 +3398,15 @@ mod filter_tests {
 
     #[test]
     fn test_filter_no_match() {
-        let servers = [server("myhost", &["/home/project"])];
-        let results = compute_filter_results(&servers, "zzz");
+        let servers = [mock("myhost", &["/home/project"])];
+        let results = compute_filter_results(&build(&servers), "zzz");
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_filter_project_path_match() {
-        let servers = [server("myhost", &["/home/user/project"])];
-        let results = compute_filter_results(&servers, "project");
+        let servers = [mock("myhost", &["/home/user/project"])];
+        let results = compute_filter_results(&build(&servers), "project");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].project_matches.len(), 1);
         assert_eq!(results[0].project_matches[0].project_index, 0);
@@ -3367,27 +3414,24 @@ mod filter_tests {
 
     #[test]
     fn test_filter_host_match_includes_all_projects() {
-        let servers = [server("myhost", &["/path/a", "/path/b"])];
-        let results = compute_filter_results(&servers, "myhost");
+        let servers = [mock("myhost", &["/path/a", "/path/b"])];
+        let results = compute_filter_results(&build(&servers), "myhost");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].project_matches.len(), 2);
     }
 
     #[test]
     fn test_filter_excludes_non_matching_servers() {
-        let servers = [
-            server("alpha", &["/path/a"]),
-            server("beta", &["/path/b"]),
-        ];
-        let results = compute_filter_results(&servers, "alpha");
+        let servers = [mock("alpha", &["/path/a"]), mock("beta", &["/path/b"])];
+        let results = compute_filter_results(&build(&servers), "alpha");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].server_index, 0);
     }
 
     #[test]
     fn test_position_mapping_splits_host_and_path() {
-        let servers = [server("dev", &["/src/app"])];
-        let results = compute_filter_results(&servers, "dev app");
+        let servers = [mock("dev", &["/src/app"])];
+        let results = compute_filter_results(&build(&servers), "dev app");
 
         assert_eq!(results.len(), 1);
         let result = &results[0];
@@ -3413,16 +3457,20 @@ mod filter_tests {
             path.len(),
         );
 
-        // "dev" should highlight characters in the host
-        assert!(!result.host_positions.is_empty(), "query 'dev' should match host 'dev'");
-        // "app" should highlight characters in the path
-        assert!(!proj.path_positions.is_empty(), "query 'app' should match path '/src/app'");
+        assert!(
+            !result.host_positions.is_empty(),
+            "query 'dev' should match host 'dev'"
+        );
+        assert!(
+            !proj.path_positions.is_empty(),
+            "query 'app' should match path '/src/app'"
+        );
     }
 
     #[test]
     fn test_position_mapping_host_only_server() {
-        let servers = [server("myhost", &[])];
-        let results = compute_filter_results(&servers, "myh");
+        let servers = [mock("myhost", &[])];
+        let results = compute_filter_results(&build(&servers), "myh");
 
         assert_eq!(results.len(), 1);
         let host = &servers[0].host;
@@ -3437,8 +3485,8 @@ mod filter_tests {
 
     #[test]
     fn test_unicode_host_and_path_positions() {
-        let servers = [server("señor", &["/código/app"])];
-        let results = compute_filter_results(&servers, "señ app");
+        let servers = [mock("señor", &["/código/app"])];
+        let results = compute_filter_results(&build(&servers), "señ app");
 
         assert_eq!(results.len(), 1);
         let result = &results[0];
@@ -3446,7 +3494,10 @@ mod filter_tests {
         let path = &servers[0].project_paths[0];
 
         assert!(
-            result.host_positions.iter().all(|&p| p < host.len() && host.is_char_boundary(p)),
+            result
+                .host_positions
+                .iter()
+                .all(|&p| p < host.len() && host.is_char_boundary(p)),
             "host positions {:?} must be valid char boundaries in {:?}",
             result.host_positions,
             host,
@@ -3455,10 +3506,92 @@ mod filter_tests {
         assert_eq!(result.project_matches.len(), 1);
         let proj = &result.project_matches[0];
         assert!(
-            proj.path_positions.iter().all(|&p| p < path.len() && path.is_char_boundary(p)),
+            proj.path_positions
+                .iter()
+                .all(|&p| p < path.len() && path.is_char_boundary(p)),
             "path positions {:?} must be valid char boundaries in {:?}",
             proj.path_positions,
             path,
         );
+    }
+
+    #[gpui::test]
+    async fn test_filter_data_build_from_real_entries(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let handle = ScrollHandle::new();
+            let entries = vec![
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    host: SharedString::new_static("alpha"),
+                    host_positions: Vec::new(),
+                },
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    host: SharedString::new_static("beta"),
+                    host_positions: Vec::new(),
+                },
+            ];
+
+            let filter_data = FilterData::build(&entries);
+            assert_eq!(filter_data.server_count, 2);
+            assert_eq!(filter_data.candidates.len(), 2);
+            assert_eq!(filter_data.candidates[0].string, "alpha");
+            assert_eq!(filter_data.candidates[1].string, "beta");
+
+            let results = compute_filter_results(&filter_data, "alp");
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].server_index, 0);
+            assert!(!results[0].host_positions.is_empty());
+
+            let empty = compute_filter_results(&filter_data, "zzz");
+            assert!(empty.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_filter_sync_repopulates_after_rebuild(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let handle = ScrollHandle::new();
+            let entries = vec![
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    host: SharedString::new_static("alpha"),
+                    host_positions: Vec::new(),
+                },
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    host: SharedString::new_static("beta"),
+                    host_positions: Vec::new(),
+                },
+            ];
+
+            let mut state = DefaultState {
+                scroll_handle: handle.clone(),
+                add_new_server: NavigableEntry::new(&handle, cx),
+                add_new_devcontainer: NavigableEntry::new(&handle, cx),
+                add_new_wsl: NavigableEntry::new(&handle, cx),
+                filter_data: Arc::new(FilterData::build(&entries)),
+                servers: entries,
+                filtered_servers: None,
+            };
+
+            state.filter_sync("alp");
+            let filtered = state.filtered_servers.as_ref().expect("should filter");
+            assert_eq!(filtered.len(), 1);
+            match &filtered[0] {
+                RemoteEntry::SshConfig {
+                    host,
+                    host_positions,
+                    ..
+                } => {
+                    assert_eq!(host.as_ref(), "alpha");
+                    assert!(!host_positions.is_empty());
+                }
+                _ => panic!("expected SshConfig"),
+            }
+
+            state.filter_sync("");
+            assert!(state.filtered_servers.is_none());
+        });
     }
 }

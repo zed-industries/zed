@@ -144,7 +144,7 @@ where
                     let segment_start = segment_idx * segment_size;
                     let segment_end = (segment_start + segment_size).min(candidates.len());
 
-                    _ = match_string_candidates(
+                    match_string_candidates(
                         &candidates[segment_start..segment_end],
                         query_bag,
                         atoms,
@@ -152,7 +152,8 @@ where
                         penalize_length,
                         results,
                         cancel_flag,
-                    );
+                    )
+                    .ok();
                 });
             }
         })

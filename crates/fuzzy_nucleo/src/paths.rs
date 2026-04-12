@@ -13,8 +13,8 @@ use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 
 use util::char_bag::CharBag;
 
-use crate::matcher::{self, LENGTH_PENALTY};
 use crate::Cancelled;
+use crate::matcher::{self, LENGTH_PENALTY};
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {

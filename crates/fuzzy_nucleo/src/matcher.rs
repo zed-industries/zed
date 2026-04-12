@@ -16,7 +16,10 @@ pub fn get_matcher(config: nucleo::Config) -> nucleo::Matcher {
 }
 
 pub fn return_matcher(matcher: nucleo::Matcher) {
-    MATCHERS.lock().unwrap_or_else(|e| e.into_inner()).push(matcher);
+    MATCHERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(matcher);
 }
 
 pub fn get_matchers(n: usize, config: nucleo::Config) -> Vec<nucleo::Matcher> {
@@ -35,5 +38,8 @@ pub fn get_matchers(n: usize, config: nucleo::Config) -> Vec<nucleo::Matcher> {
 }
 
 pub fn return_matchers(mut matchers: Vec<nucleo::Matcher>) {
-    MATCHERS.lock().unwrap_or_else(|e| e.into_inner()).append(&mut matchers);
+    MATCHERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .append(&mut matchers);
 }

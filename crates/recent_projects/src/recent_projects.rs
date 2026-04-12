@@ -988,8 +988,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let recent_matches =
-            match_strings_sync(&recent_candidates, query, smart_case, true, 100);
+        let recent_matches = match_strings_sync(&recent_candidates, query, smart_case, true, 100);
 
         let mut entries = Vec::new();
 
