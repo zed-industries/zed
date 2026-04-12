@@ -5794,6 +5794,82 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
 }
 
 #[gpui::test]
+async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppContext) {
+    // When a workspace already exists with an empty draft (from
+    // reconcile_groups) and a thread is unarchived into it, the draft
+    // should be replaced — not kept alongside the loaded thread.
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/my-project", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project = project::Project::test(fs.clone(), ["/my-project".as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    // Create a thread and send a message so it's no longer a draft.
+    let connection = acp_thread::StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
+    agent_ui::test_support::send_message(&panel, cx);
+    let session_id = agent_ui::test_support::active_session_id(&panel, cx);
+    cx.run_until_parked();
+
+    // Archive the thread — this creates a draft to replace it.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&session_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Verify the draft exists before unarchive.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries.iter().any(|e| e.contains("Draft")),
+        "expected a draft after archiving, got: {entries:?}"
+    );
+
+    // Un-archive the thread.
+    let thread_id = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .thread_id_for_session(&session_id)
+            .expect("thread should exist in store")
+    });
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .cloned()
+            .expect("metadata should exist")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+    cx.run_until_parked();
+
+    // The draft should be gone — only the unarchived thread remains.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
+    assert_eq!(
+        draft_count, 0,
+        "expected no drafts after unarchiving, got entries: {entries:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_switch_to_workspace_with_archived_thread_shows_draft(cx: &mut TestAppContext) {
     // When a thread is archived while the user is in a different workspace,
     // the archiving code replaces the thread with a tracked draft in its
