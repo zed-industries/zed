@@ -58,6 +58,43 @@ mod tests {
         fs.unpause_events_and_flush();
         assert_eq!(rx.next().await.as_deref(), Some("A"));
     }
+
+    #[gpui::test]
+    async fn test_watch_config_file_reloads_when_parent_dir_is_symlink (cx: &mut TestAppContext){
+
+        cx.executor().allow_parking();
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let config_settings_path = PathBuf::from("/root/.config/zed/settings.json");
+        let target_settings_path = PathBuf::from("/root/dotfiles/zed/settings.json");
+
+        fs.insert_tree(
+            Path::new("/root"),
+            json!({
+                ".config": {},
+                "dotfiles": {
+                    "zed": {
+                        "settings.json": "A"
+                    }
+                }
+            })
+        )
+        .await;
+
+        fs.create_symlink(
+            Path::new("/root/.config/zed"),
+            PathBuf::from("/root/dotfiles/zed"),
+        )
+        .await
+        .unwrap();
+
+        let (mut rx, _task) =
+            watch_config_file(&cx.background_executor, fs.clone(), config_settings_path);
+        assert_eq!(rx.next().await.as_deref(), Some("A"));
+
+        fs.insert_file(&target_settings_path, b"B".to_vec()).await;
+        assert_eq!(rx.next().await.as_deref(), Some("B"));
+
+    }
 }
 
 pub const EMPTY_THEME_NAME: &str = "empty-theme";
