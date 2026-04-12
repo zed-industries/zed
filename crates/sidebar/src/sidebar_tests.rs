@@ -34,7 +34,7 @@ fn init_test(cx: &mut TestAppContext) {
 #[track_caller]
 fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
     assert!(
-        matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { identity, .. }) if identity.matches_session(session_id)),
+        matches!(&sidebar.active_entry, Some(ActiveEntry { identity, .. }) if identity.matches_session(session_id)),
         "{msg}: expected active_entry to be Thread({session_id:?}), got {:?}",
         sidebar.active_entry,
     );
@@ -43,7 +43,7 @@ fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &st
 #[track_caller]
 fn assert_active_draft(sidebar: &Sidebar, workspace: &Entity<Workspace>, msg: &str) {
     assert!(
-        matches!(&sidebar.active_entry, Some(ActiveEntry::Draft { workspace: ws, .. }) if ws == workspace),
+        matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == workspace),
         "{msg}: expected active_entry to be Draft for workspace {:?}, got {:?}",
         workspace.entity_id(),
         sidebar.active_entry,
@@ -229,8 +229,12 @@ fn save_thread_metadata(
 ) {
     cx.update(|cx| {
         let worktree_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
+        let thread_id = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .thread_id_for_session(&session_id)
+            .unwrap_or_else(ThreadId::new);
         let metadata = ThreadMetadata {
-            thread_id: ThreadId::new(),
+            thread_id,
             session_id: Some(session_id),
             agent_id: agent::ZED_AGENT_ID.clone(),
             title,
@@ -255,8 +259,14 @@ fn save_thread_metadata_with_main_paths(
 ) {
     let session_id = acp::SessionId::new(Arc::from(session_id));
     let title = SharedString::from(title.to_string());
+    let thread_id = cx.update(|cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .thread_id_for_session(&session_id)
+            .unwrap_or_else(ThreadId::new)
+    });
     let metadata = ThreadMetadata {
-        thread_id: ThreadId::new(),
+        thread_id,
         session_id: Some(session_id),
         agent_id: agent::ZED_AGENT_ID.clone(),
         title,
@@ -369,7 +379,7 @@ fn visible_entries_as_strings(
                         };
                         let notified = if sidebar
                             .contents
-                            .is_thread_notified(thread.metadata.session_id.as_ref().unwrap())
+                            .is_thread_notified(&thread.metadata.thread_id)
                         {
                             " (!)"
                         } else {
@@ -829,9 +839,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     sidebar.update_in(cx, |s, _window, _cx| {
         s.collapsed_groups
             .insert(project::ProjectGroupKey::new(None, collapsed_path.clone()));
-        s.contents
-            .notified_threads
-            .insert(acp::SessionId::new(Arc::from("t-5")));
+        s.contents.notified_threads.insert(ThreadId::new());
         s.contents.entries = vec![
             // Expanded project header
             ListEntry::ProjectHeader {
@@ -2573,7 +2581,7 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // because the panel has a thread with messages.
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { .. })),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { .. })),
             "Panel has a thread with messages, so active_entry should be Thread, got {:?}",
             sidebar.active_entry,
         );
@@ -2608,7 +2616,7 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
     // false — the panel still has the old thread with messages.
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { .. })),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { .. })),
             "After adding a folder the panel still has a thread with messages, \
                  so active_entry should be Thread, got {:?}",
             sidebar.active_entry,
@@ -3683,9 +3691,9 @@ async fn test_sending_message_from_draft_removes_draft(cx: &mut TestAppContext) 
     // the NativeAgentServer in tests, so replicate the key steps:
     // remove the draft, open a real thread with a stub connection,
     // and send.
-    let draft_id = panel.read_with(cx, |panel, _| panel.active_draft_id().unwrap());
-    panel.update_in(cx, |panel, _window, _cx| {
-        panel.remove_draft(draft_id);
+    let thread_id = panel.read_with(cx, |panel, _| panel.active_thread_id().unwrap());
+    panel.update_in(cx, |panel, _window, cx| {
+        panel.remove_thread(thread_id, cx);
     });
     let draft_connection = StubAgentConnection::new();
     draft_connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
@@ -5140,7 +5148,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
     );
     sidebar.read_with(cx_a, |sidebar, _| {
             assert!(
-                !matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { identity, .. }) if identity.matches_session(&session_id)),
+                !matches!(&sidebar.active_entry, Some(ActiveEntry { identity, .. }) if identity.matches_session(&session_id)),
                 "source window's sidebar should not eagerly claim focus for a thread opened in another window"
             );
         });
@@ -5220,7 +5228,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
     );
     sidebar_a.read_with(cx_a, |sidebar, _| {
             assert!(
-                !matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { identity, .. }) if identity.matches_session(&session_id)),
+                !matches!(&sidebar.active_entry, Some(ActiveEntry { identity, .. }) if identity.matches_session(&session_id)),
                 "source window's sidebar should not eagerly claim focus for a thread opened in another window"
             );
         });
@@ -5863,7 +5871,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         assert_eq!(last_accessed.len(), 1);
         assert!(last_accessed.contains(&session_id_c));
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { identity, .. }) if identity.matches_session(&session_id_c)),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { identity, .. }) if identity.matches_session(&session_id_c)),
             "active_entry should be Thread({session_id_c:?})"
         );
     });
@@ -5900,7 +5908,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         assert!(last_accessed.contains(&session_id_c));
         assert!(last_accessed.contains(&session_id_a));
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { identity, .. }) if identity.matches_session(&session_id_a)),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { identity, .. }) if identity.matches_session(&session_id_a)),
             "active_entry should be Thread({session_id_a:?})"
         );
     });
@@ -5944,7 +5952,7 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         assert!(last_accessed.contains(&session_id_a));
         assert!(last_accessed.contains(&session_id_b));
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { identity, .. }) if identity.matches_session(&session_id_b)),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { identity, .. }) if identity.matches_session(&session_id_b)),
             "active_entry should be Thread({session_id_b:?})"
         );
     });
@@ -6141,7 +6149,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // active_entry should still be a draft on workspace_b (the active one).
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Draft { workspace: ws, .. }) if ws == &workspace_b),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == &workspace_b),
             "expected Draft(workspace_b) after archiving non-active thread, got: {:?}",
             sidebar.active_entry,
         );
@@ -6162,7 +6170,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
 
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Thread { identity, .. }) if identity.matches_session(&thread_b)),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { identity, .. }) if identity.matches_session(&thread_b)),
             "expected active_entry to be Thread({thread_b}), got: {:?}",
             sidebar.active_entry,
         );
@@ -6176,7 +6184,7 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
     // Should fall back to a draft on the same workspace.
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Draft { workspace: ws, .. }) if ws == &workspace_b),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == &workspace_b),
             "expected Draft(workspace_b) after archiving active thread, got: {:?}",
             sidebar.active_entry,
         );
@@ -6248,7 +6256,7 @@ async fn test_switch_to_workspace_with_archived_thread_shows_draft(cx: &mut Test
 
     sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Draft { workspace: ws, .. }) if ws == &workspace_a),
+            matches!(&sidebar.active_entry, Some(ActiveEntry { workspace: ws, .. }) if ws == &workspace_a),
             "expected Draft(workspace_a) after switching to workspace with archived thread, got: {:?}",
             sidebar.active_entry,
         );
@@ -7532,17 +7540,17 @@ async fn test_delete_last_draft_in_empty_group_shows_placeholder(cx: &mut TestAp
     );
 
     // Delete the active (first) draft. The second should become active.
-    let active_draft_id = sidebar.read_with(cx, |_sidebar, cx| {
+    let active_thread_id = sidebar.read_with(cx, |_sidebar, cx| {
         workspace
             .read(cx)
             .panel::<AgentPanel>(cx)
             .unwrap()
             .read(cx)
-            .active_draft_id()
+            .active_thread_id()
             .unwrap()
     });
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.remove_draft(active_draft_id, &workspace, window, cx);
+        sidebar.remove_draft(active_thread_id, &workspace, window, cx);
     });
     cx.run_until_parked();
 
@@ -7552,17 +7560,17 @@ async fn test_delete_last_draft_in_empty_group_shows_placeholder(cx: &mut TestAp
     assert_eq!(draft_count, 1, "one draft should remain after deleting one");
 
     // Delete the last remaining draft.
-    let last_draft_id = sidebar.read_with(cx, |_sidebar, cx| {
+    let last_thread_id = sidebar.read_with(cx, |_sidebar, cx| {
         workspace
             .read(cx)
             .panel::<AgentPanel>(cx)
             .unwrap()
             .read(cx)
-            .active_draft_id()
+            .active_thread_id()
             .unwrap()
     });
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.remove_draft(last_draft_id, &workspace, window, cx);
+        sidebar.remove_draft(last_thread_id, &workspace, window, cx);
     });
     cx.run_until_parked();
 
@@ -8483,7 +8491,7 @@ mod property_test {
         //    when the workspace just changed and the new panel has no
         //    content yet.
         let panel = active_workspace.read(cx).panel::<AgentPanel>(cx).unwrap();
-        let panel_has_content = panel.read(cx).active_draft_id().is_some()
+        let panel_has_content = panel.read(cx).active_thread_id().is_some()
             || panel.read(cx).active_conversation_view().is_some();
 
         let Some(entry) = sidebar.active_entry.as_ref() else {
@@ -8510,9 +8518,9 @@ mod property_test {
         );
 
         // 3. The entry must match the agent panel's current state.
-        if panel.read(cx).active_draft_id().is_some() {
+        if panel.read(cx).active_thread_id().is_some() {
             anyhow::ensure!(
-                matches!(entry, ActiveEntry::Draft { .. }),
+                matches!(entry, ActiveEntry { .. }),
                 "panel shows a tracked draft but active_entry is {:?}",
                 entry,
             );
@@ -8522,7 +8530,7 @@ mod property_test {
             .and_then(|cv| cv.read(cx).parent_id(cx))
         {
             anyhow::ensure!(
-                matches!(entry, ActiveEntry::Thread { identity, .. } if identity.thread_id == thread_id),
+                matches!(entry, ActiveEntry { identity, .. } if identity.thread_id == thread_id),
                 "panel has thread {:?} but active_entry is {:?}",
                 thread_id,
                 entry,
