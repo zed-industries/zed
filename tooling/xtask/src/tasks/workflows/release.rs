@@ -158,6 +158,8 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
 }
 
 pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report-${GITHUB_REF_NAME}.md";
+pub(crate) const COMPLIANCE_REPORT_ARTIFACT_PATH: &str =
+    "compliance-report-${{ github.ref_name }}.md";
 pub(crate) const COMPLIANCE_STEP_ID: &str = "run-compliance-check";
 const NEEDS_REVIEW_PULLS_URL: &str = "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22";
 
@@ -206,7 +208,7 @@ pub(crate) fn add_compliance_steps(
         (job, result)
     }
 
-    let upload_step = upload_artifact(COMPLIANCE_REPORT_PATH)
+    let upload_step = upload_artifact(COMPLIANCE_REPORT_ARTIFACT_PATH)
         .if_condition(Expression::new("always()"))
         .when(
             matches!(context, ComplianceContext::Release { .. }),

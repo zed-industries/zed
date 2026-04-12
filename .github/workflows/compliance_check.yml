@@ -42,12 +42,12 @@ jobs:
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
         LATEST_TAG: ${{ steps.determine-version.outputs.tag }}
       continue-on-error: true
-    - name: '@actions/upload-artifact compliance-report-${GITHUB_REF_NAME}.md'
+    - name: '@actions/upload-artifact compliance-report-${{ github.ref_name }}.md'
       if: always()
       uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
       with:
-        name: compliance-report-${GITHUB_REF_NAME}.md
-        path: compliance-report-${GITHUB_REF_NAME}.md
+        name: compliance-report-${{ github.ref_name }}.md
+        path: compliance-report-${{ github.ref_name }}.md
         if-no-files-found: error
     - name: send_compliance_slack_notification
       if: always()
