@@ -6180,7 +6180,7 @@ impl ProjectGroupKey {
         path_detail_map: &std::collections::HashMap<PathBuf, usize>,
     ) -> SharedString {
         let mut names = Vec::with_capacity(self.paths.paths().len());
-        for abs_path in self.paths.paths() {
+        for abs_path in self.paths.ordered_paths() {
             let detail = path_detail_map.get(abs_path).copied().unwrap_or(0);
             let suffix = path_suffix(abs_path, detail);
             if !suffix.is_empty() {
