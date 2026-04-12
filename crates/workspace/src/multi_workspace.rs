@@ -562,7 +562,30 @@ impl MultiWorkspace {
             return;
         }
 
-        self.ensure_project_group_state(new_key);
+        // Before the old group state gets pruned, carry over its UI
+        // state (collapse/expand) to the new key.
+        let predecessor_state = self
+            .project_groups
+            .iter()
+            .find(|g| {
+                g.key != new_key
+                    && g.key
+                        .path_list()
+                        .paths()
+                        .iter()
+                        .any(|p| new_key.path_list().paths().contains(p))
+            })
+            .map(|g| (g.expanded, g.visible_thread_count));
+
+        self.ensure_project_group_state(new_key.clone());
+
+        if let Some((expanded, visible_thread_count)) = predecessor_state {
+            if let Some(state) = self.group_state_by_key_mut(&new_key) {
+                state.expanded = expanded;
+                state.visible_thread_count = visible_thread_count;
+            }
+        }
+
         self.merge_groups_with_duplicate_keys();
         self.prune_empty_project_groups(cx);
         self.serialize(cx);
@@ -619,11 +642,14 @@ impl MultiWorkspace {
     }
 
     fn prune_empty_project_groups(&mut self, cx: &App) {
-        self.project_groups.retain(|group| {
-            self.retained_workspaces
-                .iter()
-                .any(|workspace| workspace.read(cx).project_group_key(cx) == group.key)
-        });
+        let active_keys: Vec<ProjectGroupKey> = self
+            .retained_workspaces
+            .iter()
+            .map(|ws| ws.read(cx).project_group_key(cx))
+            .collect();
+
+        self.project_groups
+            .retain(|group| active_keys.contains(&group.key));
     }
 
     pub(crate) fn retain_workspace(
@@ -754,6 +780,18 @@ impl MultiWorkspace {
         self.project_groups
             .iter_mut()
             .find(|group| group.key == *key)
+    }
+
+    pub fn set_all_groups_expanded(&mut self, expanded: bool) {
+        for group in &mut self.project_groups {
+            group.expanded = expanded;
+        }
+    }
+
+    pub fn set_all_groups_visible_thread_count(&mut self, count: Option<usize>) {
+        for group in &mut self.project_groups {
+            group.visible_thread_count = count;
+        }
     }
 
     pub fn workspaces_for_project_group(
@@ -1212,7 +1250,7 @@ impl MultiWorkspace {
         }
     }
 
-    pub(crate) fn serialize(&mut self, cx: &mut Context<Self>) {
+    pub fn serialize(&mut self, cx: &mut Context<Self>) {
         self._serialize_task = Some(cx.spawn(async move |this, cx| {
             let Some((window_id, state)) = this
                 .read_with(cx, |this, cx| {
@@ -1362,6 +1400,12 @@ impl MultiWorkspace {
             .filter(|task| !task.is_ready())
             .collect();
         tasks
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_expand_all_groups(&mut self) {
+        self.set_all_groups_expanded(true);
+        self.set_all_groups_visible_thread_count(Some(10_000));
     }
 
     #[cfg(any(test, feature = "test-support"))]

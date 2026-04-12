@@ -375,7 +375,7 @@ fn visible_entries_as_strings(
     sidebar: &Entity<Sidebar>,
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<String> {
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.read_with(cx, |sidebar, cx| {
         sidebar
             .contents
             .entries
@@ -394,7 +394,7 @@ fn visible_entries_as_strings(
                         highlight_positions: _,
                         ..
                     } => {
-                        let icon = if sidebar.collapsed_groups.contains(key) {
+                        let icon = if sidebar.is_group_collapsed(key, cx) {
                             ">"
                         } else {
                             "v"
@@ -461,7 +461,6 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
         sidebar.toggle_collapse(&project_group_key, window, cx);
-        sidebar.expanded_groups.insert(project_group_key.clone(), 2);
     });
     cx.run_until_parked();
 
@@ -480,27 +479,11 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // Assert all serialized fields match.
-    let (width1, collapsed1, expanded1) = sidebar.read_with(cx, |s, _| {
-        (
-            s.width,
-            s.collapsed_groups.clone(),
-            s.expanded_groups.clone(),
-        )
-    });
-    let (width2, collapsed2, expanded2) = sidebar2.read_with(cx, |s, _| {
-        (
-            s.width,
-            s.collapsed_groups.clone(),
-            s.expanded_groups.clone(),
-        )
-    });
+    let width1 = sidebar.read_with(cx, |s, _| s.width);
+    let width2 = sidebar2.read_with(cx, |s, _| s.width);
 
     assert_eq!(width1, width2);
-    assert_eq!(collapsed1, collapsed2);
-    assert_eq!(expanded1, expanded2);
     assert_eq!(width1, px(420.0));
-    assert!(collapsed1.contains(&project_group_key));
-    assert_eq!(expanded1.get(&project_group_key), Some(&2));
 }
 
 #[gpui::test]
@@ -516,8 +499,6 @@ async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppCon
 
     let serialized = serde_json::to_string(&SerializedSidebar {
         width: Some(400.0),
-        collapsed_groups: Vec::new(),
-        expanded_groups: Vec::new(),
         active_view: SerializedSidebarView::Archive,
     })
     .expect("serialization should succeed");
@@ -758,14 +739,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Expand again by one batch
     sidebar.update_in(cx, |s, _window, cx| {
-        let current = s
-            .expanded_groups
-            .get(&project_group_key)
-            .copied()
-            .unwrap_or(0);
-        s.expanded_groups
-            .insert(project_group_key.clone(), current + 1);
-        s.update_entries(cx);
+        s.expand_thread_group(&project_group_key, cx);
     });
     cx.run_until_parked();
 
@@ -776,14 +750,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Expand one more time - should show all 17 threads with Collapse button
     sidebar.update_in(cx, |s, _window, cx| {
-        let current = s
-            .expanded_groups
-            .get(&project_group_key)
-            .copied()
-            .unwrap_or(0);
-        s.expanded_groups
-            .insert(project_group_key.clone(), current + 1);
-        s.update_entries(cx);
+        s.expand_thread_group(&project_group_key, cx);
     });
     cx.run_until_parked();
 
@@ -795,8 +762,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Click collapse - should go back to showing 5 threads
     sidebar.update_in(cx, |s, _window, cx| {
-        s.expanded_groups.remove(&project_group_key);
-        s.update_entries(cx);
+        s.reset_thread_group_expansion(&project_group_key, cx);
     });
     cx.run_until_parked();
 
@@ -921,9 +887,17 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     let expanded_path = PathList::new(&[std::path::PathBuf::from("/expanded")]);
     let collapsed_path = PathList::new(&[std::path::PathBuf::from("/collapsed")]);
 
+    // Set the collapsed group state through multi_workspace
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(ProjectGroup {
+            key: project::ProjectGroupKey::new(None, collapsed_path.clone()),
+            workspaces: Vec::new(),
+            expanded: false,
+            visible_thread_count: None,
+        });
+    });
+
     sidebar.update_in(cx, |s, _window, _cx| {
-        s.collapsed_groups
-            .insert(project::ProjectGroupKey::new(None, collapsed_path.clone()));
         let notified_thread_id = ThreadId::new();
         s.contents.notified_threads.insert(notified_thread_id);
         s.contents.entries = vec![
@@ -7136,18 +7110,8 @@ async fn test_linked_worktree_workspace_reachable_after_adding_unrelated_project
 
     // Force a full sidebar rebuild with all groups expanded.
     sidebar.update_in(cx, |sidebar, _window, cx| {
-        sidebar.collapsed_groups.clear();
-        let group_keys: Vec<project::ProjectGroupKey> = sidebar
-            .contents
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
-                ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
-                _ => None,
-            })
-            .collect();
-        for group_key in group_keys {
-            sidebar.expanded_groups.insert(group_key, 10_000);
+        if let Some(mw) = sidebar.multi_workspace.upgrade() {
+            mw.update(cx, |mw, _cx| mw.test_expand_all_groups());
         }
         sidebar.update_entries(cx);
     });
@@ -8090,18 +8054,8 @@ mod property_test {
 
     fn update_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
         sidebar.update_in(cx, |sidebar, _window, cx| {
-            sidebar.collapsed_groups.clear();
-            let group_keys: Vec<project::ProjectGroupKey> = sidebar
-                .contents
-                .entries
-                .iter()
-                .filter_map(|entry| match entry {
-                    ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
-                    _ => None,
-                })
-                .collect();
-            for group_key in group_keys {
-                sidebar.expanded_groups.insert(group_key, 10_000);
+            if let Some(mw) = sidebar.multi_workspace.upgrade() {
+                mw.update(cx, |mw, _cx| mw.test_expand_all_groups());
             }
             sidebar.update_entries(cx);
         });
