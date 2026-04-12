@@ -296,6 +296,7 @@ impl McpServer {
                             Err(err) => CallToolResponse {
                                 content: vec![ToolResponseContent::Text {
                                     text: err.to_string(),
+                                    annotations: None,
                                 }],
                                 is_error: Some(true),
                                 meta: None,

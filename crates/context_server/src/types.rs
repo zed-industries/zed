@@ -690,7 +690,7 @@ impl CallToolResponse {
     pub fn text_contents(&self) -> String {
         let mut text = String::new();
         for chunk in &self.content {
-            if let ToolResponseContent::Text { text: chunk } = chunk {
+            if let ToolResponseContent::Text { text: chunk, .. } = chunk {
                 text.push_str(chunk)
             };
         }
@@ -702,21 +702,76 @@ impl CallToolResponse {
 #[serde(tag = "type")]
 pub enum ToolResponseContent {
     #[serde(rename = "text")]
-    Text { text: String },
+    Text {
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
     #[serde(rename = "image", rename_all = "camelCase")]
-    Image { data: String, mime_type: String },
+    Image {
+        data: String,
+        mime_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
     #[serde(rename = "audio", rename_all = "camelCase")]
-    Audio { data: String, mime_type: String },
+    Audio {
+        data: String,
+        mime_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
     #[serde(rename = "resource")]
-    Resource { resource: ResourceContents },
+    Resource {
+        resource: ResourceContents,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
 }
 
 impl ToolResponseContent {
     pub fn text(&self) -> Option<&str> {
-        if let ToolResponseContent::Text { text } = self {
+        if let ToolResponseContent::Text { text, .. } = self {
             Some(text)
         } else {
             None
+        }
+    }
+
+    /// Returns the audience annotation for this content block, if present.
+    ///
+    /// MCP spec (2025-03-26) `Annotations.audience`: an array of `Role`
+    /// values indicating the intended recipients of this content block.
+    /// <https://modelcontextprotocol.io/specification/2025-03-26/server/tools>
+    pub fn audience(&self) -> Option<&Vec<Role>> {
+        let annotations = match self {
+            Self::Text { annotations, .. }
+            | Self::Image { annotations, .. }
+            | Self::Audio { annotations, .. }
+            | Self::Resource { annotations, .. } => annotations,
+        };
+        annotations.as_ref().and_then(|a| a.audience.as_ref())
+    }
+
+    /// Returns `true` if this content block is intended only for the user —
+    /// i.e. the audience contains `User` but not `Assistant`.
+    ///
+    /// Per the MCP spec, absent or empty `audience` means the content is
+    /// for both user and model (returns `false`).  `["user"]` means
+    /// display-only (returns `true`).  `["user", "assistant"]` means both
+    /// (returns `false`).
+    ///
+    /// Used by `ContextServerTool::run()` to partition tool response blocks.
+    /// See `crates/agent/src/tests/test_mcp_audience.rs` for the full
+    /// routing table and integration tests.
+    pub fn is_user_only(&self) -> bool {
+        match self.audience() {
+            None => false,
+            Some(roles) => {
+                let has_user = roles.iter().any(|r| matches!(r, Role::User));
+                let has_assistant = roles.iter().any(|r| matches!(r, Role::Assistant));
+                has_user && !has_assistant
+            }
         }
     }
 }
@@ -755,4 +810,175 @@ pub struct Root {
     pub uri: Url,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn text_block(text: &str) -> ToolResponseContent {
+        ToolResponseContent::Text {
+            text: text.to_string(),
+            annotations: None,
+        }
+    }
+
+    fn text_block_with_audience(text: &str, audience: Vec<Role>) -> ToolResponseContent {
+        ToolResponseContent::Text {
+            text: text.to_string(),
+            annotations: Some(MessageAnnotations {
+                audience: Some(audience),
+                priority: None,
+            }),
+        }
+    }
+
+    fn image_block_with_audience(audience: Vec<Role>) -> ToolResponseContent {
+        ToolResponseContent::Image {
+            data: "fake".to_string(),
+            mime_type: "image/png".to_string(),
+            annotations: Some(MessageAnnotations {
+                audience: Some(audience),
+                priority: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn test_no_annotations_is_not_user_only() {
+        let block = text_block("hello");
+        assert!(!block.is_user_only());
+        assert!(block.audience().is_none());
+    }
+
+    #[test]
+    fn test_empty_audience_is_not_user_only() {
+        let block = ToolResponseContent::Text {
+            text: "hello".into(),
+            annotations: Some(MessageAnnotations {
+                audience: Some(vec![]),
+                priority: None,
+            }),
+        };
+        assert!(!block.is_user_only());
+    }
+
+    #[test]
+    fn test_user_only_audience() {
+        let block = text_block_with_audience("secret", vec![Role::User]);
+        assert!(block.is_user_only());
+        assert_eq!(block.audience().unwrap(), &vec![Role::User]);
+    }
+
+    #[test]
+    fn test_assistant_only_is_not_user_only() {
+        let block = text_block_with_audience("model-only", vec![Role::Assistant]);
+        assert!(!block.is_user_only());
+    }
+
+    #[test]
+    fn test_both_roles_is_not_user_only() {
+        let block = text_block_with_audience("shared", vec![Role::User, Role::Assistant]);
+        assert!(!block.is_user_only());
+    }
+
+    #[test]
+    fn test_both_roles_reversed_is_not_user_only() {
+        let block = text_block_with_audience("shared", vec![Role::Assistant, Role::User]);
+        assert!(!block.is_user_only());
+    }
+
+    #[test]
+    fn test_image_block_user_only() {
+        let block = image_block_with_audience(vec![Role::User]);
+        assert!(block.is_user_only());
+    }
+
+    #[test]
+    fn test_image_block_both_is_not_user_only() {
+        let block = image_block_with_audience(vec![Role::User, Role::Assistant]);
+        assert!(!block.is_user_only());
+    }
+
+    #[test]
+    fn test_resource_block_audience() {
+        let block = ToolResponseContent::Resource {
+            resource: ResourceContents {
+                uri: Url::parse("file:///test").unwrap(),
+                mime_type: None,
+            },
+            annotations: Some(MessageAnnotations {
+                audience: Some(vec![Role::User]),
+                priority: None,
+            }),
+        };
+        assert!(block.is_user_only());
+    }
+
+    #[test]
+    fn test_audio_block_no_annotations() {
+        let block = ToolResponseContent::Audio {
+            data: "audio-data".to_string(),
+            mime_type: "audio/wav".to_string(),
+            annotations: None,
+        };
+        assert!(!block.is_user_only());
+        assert!(block.audience().is_none());
+    }
+
+    #[test]
+    fn test_annotations_with_only_priority_is_not_user_only() {
+        let block = ToolResponseContent::Text {
+            text: "hello".into(),
+            annotations: Some(MessageAnnotations {
+                audience: None,
+                priority: Some(0.5),
+            }),
+        };
+        assert!(!block.is_user_only());
+        assert!(block.audience().is_none());
+    }
+
+    #[test]
+    fn test_tool_response_content_text_accessor() {
+        let block = text_block_with_audience("hello", vec![Role::User]);
+        assert_eq!(block.text(), Some("hello"));
+
+        let image = image_block_with_audience(vec![Role::User]);
+        assert_eq!(image.text(), None);
+    }
+
+    #[test]
+    fn test_serde_round_trip_with_annotations() {
+        let block = text_block_with_audience("test", vec![Role::User]);
+        let json = serde_json::to_string(&block).unwrap();
+        let deserialized: ToolResponseContent = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.is_user_only());
+        assert_eq!(deserialized.text(), Some("test"));
+    }
+
+    #[test]
+    fn test_serde_round_trip_without_annotations() {
+        let block = text_block("plain");
+        let json = serde_json::to_string(&block).unwrap();
+        assert!(!json.contains("annotations"));
+        let deserialized: ToolResponseContent = serde_json::from_str(&json).unwrap();
+        assert!(!deserialized.is_user_only());
+    }
+
+    #[test]
+    fn test_deserialize_from_mcp_wire_format() {
+        let json = r#"{"type":"text","text":"preview data","annotations":{"audience":["user"]}}"#;
+        let block: ToolResponseContent = serde_json::from_str(json).unwrap();
+        assert!(block.is_user_only());
+        assert_eq!(block.text(), Some("preview data"));
+    }
+
+    #[test]
+    fn test_deserialize_without_annotations_field() {
+        let json = r#"{"type":"text","text":"plain"}"#;
+        let block: ToolResponseContent = serde_json::from_str(json).unwrap();
+        assert!(!block.is_user_only());
+        assert!(block.audience().is_none());
+    }
 }

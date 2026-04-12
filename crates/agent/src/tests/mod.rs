@@ -54,6 +54,7 @@ use std::{
 use util::path;
 
 mod edit_file_thread_test;
+mod test_mcp_audience;
 mod test_tools;
 use test_tools::*;
 
@@ -1493,6 +1494,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         .send(context_server::types::CallToolResponse {
             content: vec![context_server::types::ToolResponseContent::Text {
                 text: "test".into(),
+                annotations: None,
             }],
             is_error: None,
             meta: None,
@@ -1545,7 +1547,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
     assert_eq!(tool_call_params.arguments, Some(json!({"text": "mcp"})));
     tool_call_response
         .send(context_server::types::CallToolResponse {
-            content: vec![context_server::types::ToolResponseContent::Text { text: "mcp".into() }],
+            content: vec![context_server::types::ToolResponseContent::Text { text: "mcp".into(), annotations: None }],
             is_error: None,
             meta: None,
             structured_content: None,
@@ -1577,6 +1579,8 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
     fake_model.end_last_completion_stream();
     events.collect::<Vec<_>>().await;
 }
+
+// Audience annotation tests are in test_mcp_audience.rs
 
 #[gpui::test]
 async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAppContext) {
@@ -1671,6 +1675,7 @@ async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAp
         .send(context_server::types::CallToolResponse {
             content: vec![context_server::types::ToolResponseContent::Text {
                 text: expected_tool_output.into(),
+                annotations: None,
             }],
             is_error: None,
             meta: None,

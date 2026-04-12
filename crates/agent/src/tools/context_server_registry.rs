@@ -1,5 +1,5 @@
 use crate::{AgentToolOutput, AnyAgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::ToolKind;
+use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
 use context_server::{ContextServerId, client::NotificationSubscription};
@@ -304,8 +304,8 @@ impl AnyAgentTool for ContextServerTool {
         self.tool.description.clone().unwrap_or_default().into()
     }
 
-    fn kind(&self) -> ToolKind {
-        ToolKind::Other
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
     }
 
     fn initial_title(&self, _input: serde_json::Value, _cx: &mut App) -> SharedString {
@@ -370,7 +370,7 @@ impl AnyAgentTool for ContextServerTool {
 
             let request = protocol.request::<context_server::types::requests::CallTool>(
                 context_server::types::CallToolParams {
-                    name: tool_name,
+                    name: tool_name.clone(),
                     arguments,
                     meta: None,
                 },
@@ -389,10 +389,25 @@ impl AnyAgentTool for ContextServerTool {
                 return Err(AgentToolOutput::from_error(error_message));
             }
 
+            // Partition content blocks by MCP audience annotation.
+            //
+            // MCP spec (2025-03-26) defines `annotations.audience` on tool
+            // response content blocks as an array of Role ("user" / "assistant").
+            // Blocks with audience: ["user"] are displayed to the human but
+            // excluded from model context.  When all blocks are user-only the
+            // model receives "[output displayed to user]" as a placeholder.
+            //
+            // Spec: https://modelcontextprotocol.io/specification/2025-03-26/server/tools
+            // Tests: crates/agent/src/tests/test_mcp_audience.rs
+            let (user_only, model_facing): (Vec<_>, Vec<_>) =
+                response.content.into_iter().partition(|c| c.is_user_only());
+
+            let user_only_count = user_only.len();
+
             let mut result = String::new();
-            for content in response.content {
+            for content in model_facing {
                 match content {
-                    context_server::types::ToolResponseContent::Text { text } => {
+                    context_server::types::ToolResponseContent::Text { text, .. } => {
                         result.push_str(&text);
                     }
                     context_server::types::ToolResponseContent::Image { .. } => {
@@ -406,6 +421,36 @@ impl AnyAgentTool for ContextServerTool {
                     }
                 }
             }
+
+            if !user_only.is_empty() {
+                let user_content: Vec<acp::ToolCallContent> = user_only
+                    .into_iter()
+                    .filter_map(|c| {
+                        if let context_server::types::ToolResponseContent::Text { text, .. } = c {
+                            Some(acp::ToolCallContent::Content(acp::Content::new(text)))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if !user_content.is_empty() {
+                    event_stream.update_fields(
+                        acp::ToolCallUpdateFields::new().content(user_content),
+                    );
+                }
+
+                log::debug!(
+                    "MCP tool {}: audience filtering excluded {} user-only content block(s) from model context",
+                    tool_name,
+                    user_only_count
+                );
+
+                if result.is_empty() {
+                    result = "[output displayed to user]".to_string();
+                }
+            }
+
             Ok(AgentToolOutput {
                 raw_output: result.clone().into(),
                 llm_output: result.into(),
