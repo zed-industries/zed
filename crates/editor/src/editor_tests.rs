@@ -35742,6 +35742,70 @@ async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_tsx_nested_jsx_member_expression_highlights(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let test_cases = [
+        (
+            "TSX",
+            "tsx",
+            include_str!("../../grammars/src/tsx/highlights.scm"),
+        ),
+        (
+            "JavaScript",
+            "jsx",
+            include_str!("../../grammars/src/javascript/highlights.scm"),
+        ),
+    ];
+
+    for (language_name, path_suffix, highlights_query) in test_cases {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state("const x = <A.B.C></A.B.C>;\nconst y = <A.B.C />;ˇ");
+
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: language_name.into(),
+                    matcher: LanguageMatcher {
+                        path_suffixes: vec![path_suffix.to_string()],
+                        ..LanguageMatcher::default()
+                    },
+                    ..LanguageConfig::default()
+                },
+                Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+            )
+            .with_highlights_query(highlights_query)
+            .unwrap(),
+        );
+        let component_color = Hsla::green();
+        let type_color = Hsla::blue();
+        let theme = Arc::new(SyntaxTheme::new_test(vec![
+            ("tag.component.jsx", component_color),
+            ("type", type_color),
+            ("punctuation.bracket", Hsla::default()),
+            ("punctuation.delimiter", Hsla::default()),
+        ]));
+        setup_syntax_highlighting_with_theme(language, theme.clone(), &mut cx);
+
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(
+                vec![
+                    (11..14, HighlightStyle::color(component_color)),
+                    (15..16, HighlightStyle::color(component_color)),
+                    (19..22, HighlightStyle::color(component_color)),
+                    (23..24, HighlightStyle::color(component_color)),
+                    (38..41, HighlightStyle::color(component_color)),
+                    (42..43, HighlightStyle::color(component_color)),
+                ],
+                snapshot.combined_highlights(MultiBufferOffset(0)..snapshot.buffer().len(), &theme),
+                "expected nested JSX member-expression highlights for {language_name}",
+            );
+        });
+    }
+}
+
 fn setup_syntax_highlighting(
     language: Arc<Language>,
     cx: &mut EditorTestContext,
@@ -35756,6 +35820,15 @@ fn setup_syntax_highlighting(
         ("punctuation.delimiter", Hsla::default()),
     ]));
 
+    setup_syntax_highlighting_with_theme(language, syntax.clone(), cx);
+    syntax
+}
+
+fn setup_syntax_highlighting_with_theme(
+    language: Arc<Language>,
+    syntax: Arc<SyntaxTheme>,
+    cx: &mut EditorTestContext,
+) {
     language.set_theme(&syntax);
 
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
@@ -35763,13 +35836,11 @@ fn setup_syntax_highlighting(
     cx.update_editor(|editor, window, cx| {
         editor.set_style(
             EditorStyle {
-                syntax: syntax.clone(),
+                syntax,
                 ..EditorStyle::default()
             },
             window,
             cx,
         );
     });
-
-    syntax
 }
