@@ -1016,7 +1016,7 @@ fn subscribe_for_terminal_events(
 
                 Event::Bell => {
                     terminal_view.has_bell = true;
-                    if TerminalSettings::get_global(cx).audible_bell {
+                    if TerminalSettings::get_global(cx).bell.system {
                         window.play_system_bell();
                     }
                     cx.emit(Event::Wakeup);

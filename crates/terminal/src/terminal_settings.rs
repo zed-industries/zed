@@ -52,7 +52,7 @@ pub struct TerminalSettings {
     pub path_hyperlink_regexes: Vec<String>,
     pub path_hyperlink_timeout_ms: u64,
     pub show_count_badge: bool,
-    pub audible_bell: bool,
+    pub bell: TerminalBellSettings,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -61,6 +61,11 @@ pub struct ScrollbarSettings {
     ///
     /// Default: inherits editor scrollbar settings
     pub show: Option<ShowScrollbar>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct TerminalBellSettings {
+    pub system: bool,
 }
 
 fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
@@ -134,7 +139,9 @@ impl settings::Settings for TerminalSettings {
                 .collect(),
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
             show_count_badge: user_content.show_count_badge.unwrap(),
-            audible_bell: user_content.audible_bell.unwrap(),
+            bell: TerminalBellSettings {
+                system: user_content.bell.unwrap().system.unwrap(),
+            },
         }
     }
 }

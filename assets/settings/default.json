@@ -1766,8 +1766,6 @@
     "keep_selection_on_copy": true,
     // Whether to show the terminal button in the status bar
     "button": true,
-    // Whether to play a sound when the terminal bell (BEL character) is received.
-    "audible_bell": true,
     // Any key-value pairs added to this list will be added to the terminal's
     // environment. Use `:` to separate multiple values.
     "env": {
@@ -1910,6 +1908,10 @@
     "path_hyperlink_timeout_ms": 1,
     // Whether to show a badge on the terminal panel icon with the count of open terminals.
     "show_count_badge": false,
+    "bell": {
+      // Whether to invoke the OS-default alert sound when the terminal bell (BEL character) is printed.
+      "system": true,
+    },
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

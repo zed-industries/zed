@@ -6562,17 +6562,25 @@ fn terminal_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Audible Bell",
-                description: "Whether to play a sound when the BEL character (`\\a`) is printed",
+                description: "Whether to play a sound when the BEL character (`\\a`, `0x07`) is printed",
                 field: Box::new(SettingField {
-                    json_path: Some("terminal.audible_bell"),
+                    json_path: Some("terminal.bell.system"),
                     pick: |settings_content| {
-                        settings_content.terminal.as_ref()?.audible_bell.as_ref()
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .bell
+                            .as_ref()?
+                            .system
+                            .as_ref()
                     },
                     write: |settings_content, value| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
-                            .audible_bell = value;
+                            .bell
+                            .get_or_insert_default()
+                            .system = value;
                     },
                 }),
                 metadata: None,

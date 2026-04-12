@@ -182,7 +182,7 @@ pub struct TerminalSettingsContent {
     /// Whether to play a system-defined sound when the `BEL` character (`\a`) is printed to terminal.
     ///
     /// Default: true
-    pub audible_bell: Option<bool>,
+    pub bell: Option<TerminalBell>,
 }
 
 /// Shell configuration to open the terminal with.
@@ -396,6 +396,16 @@ pub struct TerminalToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct TerminalBell {
+    /// Whether to invoke an OS-defined bell (usually an audible alert sound) when a
+    /// BEL character (`\a`, `\x07`) is printed to the terminal.
+    ///
+    /// Default: true
+    pub system: Option<bool>,
 }
 
 #[derive(
