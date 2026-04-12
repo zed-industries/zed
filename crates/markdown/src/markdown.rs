@@ -263,6 +263,7 @@ pub struct Markdown {
     mermaid_state: MermaidState,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
+    context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<String>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
@@ -434,6 +435,7 @@ impl Markdown {
             mermaid_state: MermaidState::default(),
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
+            context_menu_link: None,
             context_menu_selected_text: None,
             search_highlights: Vec::new(),
             active_search_highlight: None,
@@ -656,8 +658,16 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn capture_selection_for_context_menu(&mut self) {
+    fn capture_for_context_menu(&mut self, link: Option<SharedString>) {
         self.context_menu_selected_text = self.selected_text();
+        self.context_menu_link = link;
+    }
+
+    /// Returns the URL of the link that was most recently right-clicked, if any.
+    /// This is set during a right-click mouse-down event and can be read by parent
+    /// views to include a "Copy Link" item in their context menus.
+    pub fn context_menu_link(&self) -> Option<&SharedString> {
+        self.context_menu_link.as_ref()
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -1336,13 +1346,18 @@ impl MarkdownElement {
 
         self.on_mouse_event(window, cx, {
             let hitbox = hitbox.clone();
-            move |markdown, event: &MouseDownEvent, phase, window, _| {
+            let rendered_text = rendered_text.clone();
+            move |markdown, event: &MouseDownEvent, phase, window, _cx| {
                 if phase.capture()
                     && event.button == MouseButton::Right
                     && hitbox.is_hovered(window)
                 {
-                    // Capture selected text so it survives until menu item is clicked
-                    markdown.capture_selection_for_context_menu();
+                    let link = rendered_text
+                        .source_index_for_position(event.position)
+                        .ok()
+                        .and_then(|ix| rendered_text.link_for_source_index(ix))
+                        .map(|link| link.destination_url.clone());
+                    markdown.capture_for_context_menu(link);
                 }
             }
         });
@@ -1352,7 +1367,7 @@ impl MarkdownElement {
             let hitbox = hitbox.clone();
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
-                    if phase.bubble() {
+                    if phase.bubble() && event.button != MouseButton::Right {
                         let position_result =
                             rendered_text.source_index_for_position(event.position);
 
