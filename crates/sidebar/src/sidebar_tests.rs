@@ -7639,6 +7639,134 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
     );
 }
 
+#[gpui::test]
+async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut TestAppContext) {
+    // When two workspaces share the same project group (same main path)
+    // but have different folder paths (main repo vs linked worktree),
+    // adding a worktree to the main workspace should only migrate threads
+    // whose folder paths match that workspace — not the linked worktree's
+    // threads.
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", serde_json::json!({ ".git": {}, "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ ".git": {}, "src": {} }))
+        .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: std::path::PathBuf::from("/wt-feature"),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "aaa".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    // Workspace A: main repo at /project.
+    let main_project =
+        project::Project::test(fs.clone() as Arc<dyn fs::Fs>, ["/project".as_ref()], cx).await;
+    // Workspace B: linked worktree of the same repo (same group, different folder).
+    let worktree_project =
+        project::Project::test(fs.clone() as Arc<dyn fs::Fs>, ["/wt-feature".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let _sidebar = setup_sidebar(&multi_workspace, cx);
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Save a thread for each workspace's folder paths.
+    let time_main = chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap();
+    let time_wt = chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 2).unwrap();
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-main")),
+        Some("Main Thread".into()),
+        time_main,
+        Some(time_main),
+        &main_project,
+        cx,
+    );
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-wt")),
+        Some("Worktree Thread".into()),
+        time_wt,
+        Some(time_wt),
+        &worktree_project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    let folder_paths_main = PathList::new(&[PathBuf::from("/project")]);
+    let folder_paths_wt = PathList::new(&[PathBuf::from("/wt-feature")]);
+
+    // Sanity-check: each thread is indexed under its own folder paths.
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_path(&folder_paths_main).count(),
+            1,
+            "one thread under [/project]"
+        );
+        assert_eq!(
+            store.entries_for_path(&folder_paths_wt).count(),
+            1,
+            "one thread under [/wt-feature]"
+        );
+    });
+
+    // Add /project-b to the main project only.
+    main_project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project-b", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    // Main Thread (folder paths [/project]) should have migrated to
+    // [/project, /project-b]. Worktree Thread should be unchanged.
+    let folder_paths_main_b =
+        PathList::new(&[PathBuf::from("/project"), PathBuf::from("/project-b")]);
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_path(&folder_paths_main).count(),
+            0,
+            "main thread should no longer be under old folder paths [/project]"
+        );
+        assert_eq!(
+            store.entries_for_path(&folder_paths_main_b).count(),
+            1,
+            "main thread should now be under [/project, /project-b]"
+        );
+        assert_eq!(
+            store.entries_for_path(&folder_paths_wt).count(),
+            1,
+            "worktree thread should remain unchanged under [/wt-feature]"
+        );
+    });
+}
+
 mod property_test {
     use super::*;
     use gpui::proptest::prelude::*;

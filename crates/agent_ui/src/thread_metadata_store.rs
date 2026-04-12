@@ -386,6 +386,18 @@ impl ThreadWorktreePaths {
         self.main_worktree_paths = PathList::new(&mains);
         self.folder_paths = PathList::new(&folders);
     }
+
+    /// Remove all pairs whose folder path matches the given path.
+    /// This removes the corresponding entries from both lists.
+    pub fn remove_folder_path(&mut self, folder_path: &Path) {
+        let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .ordered_pairs()
+            .filter(|(_, f)| f.as_path() != folder_path)
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .unzip();
+        self.main_worktree_paths = PathList::new(&mains);
+        self.folder_paths = PathList::new(&folders);
+    }
 }
 
 /// Lightweight metadata for any thread (native or ACP), enough to populate
@@ -859,16 +871,16 @@ impl ThreadMetadataStore {
     }
 
     /// Apply a mutation to the worktree paths of all threads whose current
-    /// `main_worktree_paths` matches `current_main_paths`, then re-index.
+    /// `folder_paths` matches `current_folder_paths`, then re-index.
     pub fn change_worktree_paths(
         &mut self,
-        current_main_paths: &PathList,
+        current_folder_paths: &PathList,
         mutate: impl Fn(&mut ThreadWorktreePaths),
         cx: &mut Context<Self>,
     ) {
         let thread_ids: Vec<_> = self
-            .threads_by_main_paths
-            .get(current_main_paths)
+            .threads_by_paths
+            .get(current_folder_paths)
             .into_iter()
             .flatten()
             .copied()

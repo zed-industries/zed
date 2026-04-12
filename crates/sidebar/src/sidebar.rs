@@ -16,7 +16,7 @@ use agent_ui::{
 use chrono::{DateTime, Utc};
 use editor::Editor;
 use gpui::{
-    Action as _, AnyElement, App, Context, DismissEvent, Entity, FocusHandle, Focusable,
+    Action as _, AnyElement, App, Context, DismissEvent, Entity, EntityId, FocusHandle, Focusable,
     KeyContext, ListState, Pixels, Render, SharedString, Task, WeakEntity, Window, WindowHandle,
     linear_color_stop, linear_gradient, list, prelude::*, px,
 };
@@ -454,6 +454,7 @@ pub struct Sidebar {
     _subscriptions: Vec<gpui::Subscription>,
     _draft_observations: Vec<gpui::Subscription>,
     reconciling: bool,
+    project_worktree_paths: HashMap<EntityId, ThreadWorktreePaths>,
 }
 
 impl Sidebar {
@@ -548,6 +549,7 @@ impl Sidebar {
             _subscriptions: Vec::new(),
             _draft_observations: Vec::new(),
             reconciling: false,
+            project_worktree_paths: HashMap::new(),
         }
     }
 
@@ -568,13 +570,34 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         let project = workspace.read(cx).project().clone();
+
+        let initial_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
+        self.project_worktree_paths
+            .insert(project.entity_id(), initial_paths);
+
+        let project_entity_id = project.entity_id();
+        cx.observe_release(&project, move |this, _project, _cx| {
+            this.project_worktree_paths.remove(&project_entity_id);
+        })
+        .detach();
+
         cx.subscribe_in(
             &project,
             window,
-            |this, _project, event, window, cx| match event {
-                ProjectEvent::WorktreeAdded(_)
-                | ProjectEvent::WorktreeRemoved(_)
-                | ProjectEvent::WorktreeOrderChanged => {
+            |this, project, event, window, cx| match event {
+                ProjectEvent::WorktreeAdded(_) => {
+                    this.migrate_worktree_paths_on_add(project, cx);
+                    this.observe_draft_editors(cx);
+                    this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
+                }
+                ProjectEvent::WorktreeRemoved(_) => {
+                    this.migrate_worktree_paths_on_remove(project, cx);
+                    this.observe_draft_editors(cx);
+                    this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
+                }
+                ProjectEvent::WorktreeOrderChanged => {
                     this.observe_draft_editors(cx);
                     this.update_entries(cx);
                     this.reconcile_groups(window, cx);
@@ -624,6 +647,83 @@ impl Sidebar {
             self.subscribe_to_agent_panel(&agent_panel, window, cx);
             self.observe_draft_editors(cx);
         }
+    }
+
+    fn migrate_worktree_paths_on_add(
+        &mut self,
+        project: &Entity<project::Project>,
+        cx: &mut Context<Self>,
+    ) {
+        let project_id = project.entity_id();
+        let new_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
+
+        if let Some(old_paths) = self.project_worktree_paths.get(&project_id) {
+            let old_folder_paths = old_paths.folder_path_list().clone();
+            let added_pairs: Vec<_> = new_paths
+                .ordered_pairs()
+                .filter(|(main, folder)| {
+                    !old_paths
+                        .ordered_pairs()
+                        .any(|(old_main, old_folder)| old_main == *main && old_folder == *folder)
+                })
+                .map(|(m, f)| (m.clone(), f.clone()))
+                .collect();
+
+            if !added_pairs.is_empty() {
+                ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+                    store.change_worktree_paths(
+                        &old_folder_paths,
+                        |paths| {
+                            for (main_path, folder_path) in &added_pairs {
+                                paths.add_path(main_path, folder_path);
+                            }
+                        },
+                        store_cx,
+                    );
+                });
+            }
+        }
+
+        self.project_worktree_paths.insert(project_id, new_paths);
+    }
+
+    fn migrate_worktree_paths_on_remove(
+        &mut self,
+        project: &Entity<project::Project>,
+        cx: &mut Context<Self>,
+    ) {
+        let project_id = project.entity_id();
+        let new_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
+
+        if let Some(old_paths) = self.project_worktree_paths.get(&project_id) {
+            let old_folder_paths = old_paths.folder_path_list().clone();
+            let new_folder_paths = new_paths.folder_path_list();
+
+            if old_folder_paths != *new_folder_paths {
+                let removed_paths: Vec<PathBuf> = old_folder_paths
+                    .paths()
+                    .iter()
+                    .filter(|p| !new_folder_paths.paths().contains(p))
+                    .cloned()
+                    .collect();
+
+                if !removed_paths.is_empty() {
+                    ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+                        store.change_worktree_paths(
+                            &old_folder_paths,
+                            |paths| {
+                                for path in &removed_paths {
+                                    paths.remove_folder_path(path);
+                                }
+                            },
+                            store_cx,
+                        );
+                    });
+                }
+            }
+        }
+
+        self.project_worktree_paths.insert(project_id, new_paths);
     }
 
     fn subscribe_to_agent_panel(
