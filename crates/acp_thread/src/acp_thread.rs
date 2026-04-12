@@ -256,6 +256,7 @@ pub struct ToolCall {
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
+    pub pending_terminal_id: Option<acp::TerminalId>,
 }
 
 impl ToolCall {
@@ -277,15 +278,24 @@ impl ToolCall {
             tool_call.title
         };
         let mut content = Vec::with_capacity(tool_call.content.len());
+        let mut pending_terminal_id = None;
         for item in tool_call.content {
-            if let Some(item) = ToolCallContent::from_acp(
+            let unresolved_terminal_id =
+                if let acp::ToolCallContent::Terminal(acp::Terminal { terminal_id, .. }) = &item {
+                    Some(terminal_id.clone())
+                } else {
+                    None
+                };
+            if let Some(resolved) = ToolCallContent::from_acp(
                 item,
                 language_registry.clone(),
                 path_style,
                 terminals,
                 cx,
             )? {
-                content.push(item);
+                content.push(resolved);
+            } else if unresolved_terminal_id.is_some() {
+                pending_terminal_id = unresolved_terminal_id;
             }
         }
 
@@ -312,6 +322,7 @@ impl ToolCall {
             raw_output: tool_call.raw_output,
             tool_name,
             subagent_session_info,
+            pending_terminal_id,
         };
         Ok(result)
     }
@@ -810,18 +821,16 @@ impl ToolCallContent {
                     cx,
                 )
             })))),
-            acp::ToolCallContent::Terminal(acp::Terminal { terminal_id, .. }) => terminals
-                .get(&terminal_id)
-                .cloned()
-                .map(|terminal| Some(Self::Terminal(terminal)))
-                .ok_or_else(|| {
+            acp::ToolCallContent::Terminal(acp::Terminal { terminal_id, .. }) => {
+                if !terminals.contains_key(&terminal_id) {
                     log::warn!(
                         "ToolCallContent::from_acp: terminal {:?} not found ({} registered)",
                         terminal_id,
                         terminals.len(),
                     );
-                    anyhow::anyhow!("Terminal with id `{}` not found", terminal_id)
-                }),
+                }
+                Ok(terminals.get(&terminal_id).cloned().map(Self::Terminal))
+            }
             _ => Ok(None),
         }
     }
@@ -1801,6 +1810,7 @@ impl AcpThread {
                     raw_output: None,
                     tool_name: None,
                     subagent_session_info: None,
+                    pending_terminal_id: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -3198,6 +3208,55 @@ mod tests {
         assert!(
             content.contains("pre-exit data"),
             "expected pre-exit data to render, got: {content}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_request_tool_call_authorization_succeeds_with_unknown_terminal(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project,
+                    PathList::new(&[std::path::Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new("nonexistent-terminal");
+        let tool_call_id = acp::ToolCallId::new("test-bash-tool");
+
+        let result = thread.update(cx, |thread, cx| {
+            thread.request_tool_call_authorization(
+                acp::ToolCallUpdate::new(
+                    tool_call_id.clone(),
+                    acp::ToolCallUpdateFields::new()
+                        .title("odin test .".to_string())
+                        .kind(acp::ToolKind::Execute)
+                        .content(vec![acp::ToolCallContent::Terminal(
+                            acp::Terminal::new(terminal_id.clone()),
+                        )]),
+                ),
+                PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                    "allow",
+                    "Allow",
+                    acp::PermissionOptionKind::AllowOnce,
+                )]),
+                cx,
+            )
+        });
+
+        assert!(
+            result.is_ok(),
+            "Should succeed even though the terminal doesn't exist yet"
         );
     }
 
