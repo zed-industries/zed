@@ -5,7 +5,8 @@ use url::Url;
 
 use crate::client::RequestId;
 
-pub const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+pub const VERSION_2025_03_26: &str = "2025-03-26";
 pub const VERSION_2024_11_05: &str = "2024-11-05";
 
 pub mod requests {
@@ -77,6 +78,25 @@ pub mod requests {
         ListResourceTemplatesResponse
     );
     request!("roots/list", ListRoots, (), ListRootsResponse);
+
+    // Task-augmented tool call: same JSON-RPC method as CallTool, but the
+    // response is a CreateTaskResult instead of CallToolResponse. The caller
+    // chooses which request type to use based on task support negotiation.
+    request!(
+        "tools/call",
+        CallToolAsTask,
+        CallToolParams,
+        CreateTaskResult
+    );
+    request!("tasks/get", TasksGet, TasksGetParams, Task);
+    request!(
+        "tasks/result",
+        TasksResult,
+        TasksResultParams,
+        serde_json::Value
+    );
+    request!("tasks/list", TasksList, TasksListParams, TasksListResponse);
+    request!("tasks/cancel", TasksCancel, TasksCancelParams, Task);
 }
 
 pub trait Request {
@@ -116,6 +136,11 @@ pub mod notifications {
     notification!("notifications/tools/list_changed", ToolsListChanged, ());
     notification!("notifications/prompts/list_changed", PromptsListChanged, ());
     notification!("notifications/roots/list_changed", RootsListChanged, ());
+    notification!(
+        "notifications/tasks/status",
+        TaskStatus,
+        TaskStatusNotificationParams
+    );
 }
 
 pub trait Notification {
@@ -159,6 +184,8 @@ pub struct CallToolParams {
     pub arguments: Option<serde_json::Value>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskParams>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -446,6 +473,8 @@ pub struct ClientCapabilities {
     pub sampling: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roots: Option<RootsCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<ClientTasksCapabilities>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -463,6 +492,8 @@ pub struct ServerCapabilities {
     pub resources: Option<ResourcesCapabilities>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolsCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tasks: Option<ServerTasksCapabilities>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -506,6 +537,8 @@ pub struct Tool {
     pub output_schema: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ToolExecution>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -638,6 +671,16 @@ pub struct CancelledParams {
 pub enum ProgressToken {
     String(String),
     Number(f64),
+}
+
+impl PartialEq for ProgressToken {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ProgressToken::String(a), ProgressToken::String(b)) => a == b,
+            (ProgressToken::Number(a), ProgressToken::Number(b)) => a.to_bits() == b.to_bits(),
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -812,6 +855,190 @@ pub struct Root {
     pub name: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// MCP Task types (spec version 2025-11-25, experimental)
+// ---------------------------------------------------------------------------
+
+/// Parameters for task augmentation, included in the request params.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<u64>,
+}
+
+/// A task represents the execution state of a request.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Task {
+    pub task_id: String,
+    pub status: TaskStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_message: Option<String>,
+    pub created_at: String,
+    pub last_updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub poll_interval: Option<u64>,
+}
+
+/// Task status values per the MCP spec state machine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Working,
+    InputRequired,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+/// `_meta` key for model-immediate-response per MCP Tasks spec (2025-11-25).
+/// When present in a `CreateTaskResult`, the value is a provisional
+/// `CallToolResponse` that can be returned to the model immediately while
+/// the task continues running in the background.
+pub const MODEL_IMMEDIATE_RESPONSE_KEY: &str = "io.modelcontextprotocol/model-immediate-response";
+
+/// Response to a task-augmented request. Contains task metadata and optional
+/// `_meta` (which may include `io.modelcontextprotocol/model-immediate-response`).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateTaskResult {
+    pub task: Task,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// Parameters for `tasks/get`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasksGetParams {
+    pub task_id: String,
+}
+
+/// Parameters for `tasks/result`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasksResultParams {
+    pub task_id: String,
+}
+
+/// Parameters for `tasks/list`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasksListParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+/// Response for `tasks/list`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasksListResponse {
+    pub tasks: Vec<Task>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+}
+
+/// Parameters for `tasks/cancel`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TasksCancelParams {
+    pub task_id: String,
+}
+
+/// Parameters for `notifications/tasks/status`. The notification carries the
+/// full Task state inline.
+pub type TaskStatusNotificationParams = Task;
+
+// ---------------------------------------------------------------------------
+// MCP Task capability types
+// ---------------------------------------------------------------------------
+
+/// Server-side tasks capabilities declared during initialization.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerTasksCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requests: Option<ServerTaskRequestsCapabilities>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerTaskRequestsCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<ServerTaskToolsCapabilities>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerTaskToolsCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call: Option<serde_json::Value>,
+}
+
+/// Client-side tasks capabilities declared during initialization.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientTasksCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub list: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancel: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requests: Option<ClientTaskRequestsCapabilities>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientTaskRequestsCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sampling: Option<ClientTaskSamplingCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elicitation: Option<ClientTaskElicitationCapabilities>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientTaskSamplingCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create_message: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientTaskElicitationCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub create: Option<serde_json::Value>,
+}
+
+// ---------------------------------------------------------------------------
+// Tool execution metadata
+// ---------------------------------------------------------------------------
+
+/// Execution metadata on a Tool, controlling task support negotiation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolExecution {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_support: Option<TaskSupport>,
+}
+
+/// Per-tool task support level.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskSupport {
+    Required,
+    Optional,
+    Forbidden,
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -967,6 +1194,56 @@ mod tests {
     }
 
     #[test]
+    fn test_create_task_result_with_model_immediate_response() {
+        // Exact JSON the Python MCP server sends over the wire when
+        // model-immediate-response is injected into _meta.
+        let json = r#"{"_meta":{"io.modelcontextprotocol/model-immediate-response":{"content":[{"type":"text","text":"Task started — the full result will arrive in about 5 seconds. You can continue working."}],"isError":false}},"task":{"taskId":"t1","status":"working","createdAt":"2026-04-12T04:44:45.818973Z","lastUpdatedAt":"2026-04-12T04:44:45.819731Z","ttl":300000,"pollInterval":2000}}"#;
+        let result: CreateTaskResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.task.task_id, "t1");
+        assert_eq!(result.task.status, TaskStatus::Working);
+        assert!(result.meta.is_some());
+        let meta = result.meta.as_ref().unwrap();
+        assert!(meta.contains_key(MODEL_IMMEDIATE_RESPONSE_KEY));
+
+        // The provisional response should parse as CallToolResponse.
+        let provisional_value = &meta[MODEL_IMMEDIATE_RESPONSE_KEY];
+        let provisional: CallToolResponse =
+            serde_json::from_value(provisional_value.clone()).unwrap();
+        assert_eq!(provisional.content.len(), 1);
+        assert_eq!(
+            provisional.content[0].text(),
+            Some("Task started — the full result will arrive in about 5 seconds. You can continue working.")
+        );
+    }
+
+    #[test]
+    fn test_create_task_result_with_model_immediate_response_string() {
+        // Per the spec (2025-11-25), the value "should be a string intended
+        // to be passed as an immediate tool result to the model."
+        let json = r#"{"_meta":{"io.modelcontextprotocol/model-immediate-response":"Task accepted, running in background."},"task":{"taskId":"t2","status":"working","createdAt":"2026-01-01T00:00:00Z","lastUpdatedAt":"2026-01-01T00:00:01Z","ttl":300000,"pollInterval":2000}}"#;
+        let result: CreateTaskResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.task.task_id, "t2");
+        let meta = result.meta.as_ref().unwrap();
+        let value = &meta[MODEL_IMMEDIATE_RESPONSE_KEY];
+
+        // The value is a plain JSON string, not a CallToolResponse object.
+        assert!(value.is_string());
+        assert_eq!(
+            value.as_str().unwrap(),
+            "Task accepted, running in background."
+        );
+
+        // Our Zed-side code wraps this into a CallToolResponse with a single
+        // text content block. Verify the string can't accidentally parse as
+        // a CallToolResponse (it shouldn't — it's just a string).
+        assert!(
+            serde_json::from_value::<CallToolResponse>(value.clone()).is_err(),
+            "a plain string should not parse as CallToolResponse"
+        );
+    }
+
+    #[test]
+
     fn test_deserialize_from_mcp_wire_format() {
         let json = r#"{"type":"text","text":"preview data","annotations":{"audience":["user"]}}"#;
         let block: ToolResponseContent = serde_json::from_str(json).unwrap();
@@ -981,4 +1258,199 @@ mod tests {
         assert!(!block.is_user_only());
         assert!(block.audience().is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // MCP Task type tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_task_status_serde_round_trip() {
+        let statuses = vec![
+            (TaskStatus::Working, "\"working\""),
+            (TaskStatus::InputRequired, "\"input_required\""),
+            (TaskStatus::Completed, "\"completed\""),
+            (TaskStatus::Failed, "\"failed\""),
+            (TaskStatus::Cancelled, "\"cancelled\""),
+        ];
+        for (status, expected_json) in statuses {
+            let json = serde_json::to_string(&status).unwrap();
+            assert_eq!(json, expected_json);
+            let deserialized: TaskStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(deserialized, status);
+        }
+    }
+
+    #[test]
+    fn test_task_serde_round_trip() {
+        let task = Task {
+            task_id: "abc-123".to_string(),
+            status: TaskStatus::Working,
+            status_message: Some("Processing...".to_string()),
+            created_at: "2025-11-25T10:30:00Z".to_string(),
+            last_updated_at: "2025-11-25T10:40:00Z".to_string(),
+            ttl: Some(60000),
+            poll_interval: Some(5000),
+        };
+        let json = serde_json::to_string(&task).unwrap();
+        let deserialized: Task = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.task_id, "abc-123");
+        assert_eq!(deserialized.status, TaskStatus::Working);
+        assert_eq!(deserialized.status_message.as_deref(), Some("Processing..."));
+        assert_eq!(deserialized.ttl, Some(60000));
+        assert_eq!(deserialized.poll_interval, Some(5000));
+    }
+
+    #[test]
+    fn test_task_deserialize_from_wire_format() {
+        let json = r#"{
+            "taskId": "786512e2-9e0d-44bd-8f29-789f320fe840",
+            "status": "completed",
+            "createdAt": "2025-11-25T10:30:00Z",
+            "lastUpdatedAt": "2025-11-25T10:50:00Z",
+            "ttl": 60000,
+            "pollInterval": 5000
+        }"#;
+        let task: Task = serde_json::from_str(json).unwrap();
+        assert_eq!(task.task_id, "786512e2-9e0d-44bd-8f29-789f320fe840");
+        assert_eq!(task.status, TaskStatus::Completed);
+        assert!(task.status_message.is_none());
+        assert_eq!(task.ttl, Some(60000));
+    }
+
+    #[test]
+    fn test_create_task_result_serde() {
+        let json = r#"{
+            "task": {
+                "taskId": "test-task-1",
+                "status": "working",
+                "statusMessage": "Starting...",
+                "createdAt": "2025-01-01T00:00:00Z",
+                "lastUpdatedAt": "2025-01-01T00:00:00Z",
+                "ttl": 30000,
+                "pollInterval": 1000
+            },
+            "_meta": {
+                "io.modelcontextprotocol/model-immediate-response": "Task started, result will be available shortly."
+            }
+        }"#;
+        let result: CreateTaskResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.task.task_id, "test-task-1");
+        assert_eq!(result.task.status, TaskStatus::Working);
+        assert!(result.meta.is_some());
+        let meta = result.meta.unwrap();
+        assert!(meta.contains_key("io.modelcontextprotocol/model-immediate-response"));
+    }
+
+    #[test]
+    fn test_task_support_serde() {
+        assert_eq!(
+            serde_json::to_string(&TaskSupport::Required).unwrap(),
+            r#""required""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskSupport::Optional).unwrap(),
+            r#""optional""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskSupport::Forbidden).unwrap(),
+            r#""forbidden""#
+        );
+        let deserialized: TaskSupport = serde_json::from_str(r#""optional""#).unwrap();
+        assert_eq!(deserialized, TaskSupport::Optional);
+    }
+
+    #[test]
+    fn test_tool_with_execution_field() {
+        let json = r#"{
+            "name": "long_running_tool",
+            "description": "A tool that takes a while",
+            "inputSchema": {"type": "object"},
+            "execution": {
+                "taskSupport": "required"
+            }
+        }"#;
+        let tool: Tool = serde_json::from_str(json).unwrap();
+        assert_eq!(tool.name, "long_running_tool");
+        let execution = tool.execution.unwrap();
+        assert_eq!(execution.task_support, Some(TaskSupport::Required));
+    }
+
+    #[test]
+    fn test_tool_without_execution_field_backwards_compat() {
+        let json = r#"{
+            "name": "simple_tool",
+            "inputSchema": {"type": "object"}
+        }"#;
+        let tool: Tool = serde_json::from_str(json).unwrap();
+        assert!(tool.execution.is_none());
+    }
+
+    #[test]
+    fn test_server_capabilities_with_tasks() {
+        let json = r#"{
+            "tools": {"listChanged": true},
+            "tasks": {
+                "list": {},
+                "cancel": {},
+                "requests": {
+                    "tools": {
+                        "call": {}
+                    }
+                }
+            }
+        }"#;
+        let caps: ServerCapabilities = serde_json::from_str(json).unwrap();
+        assert!(caps.tools.is_some());
+        let tasks = caps.tasks.unwrap();
+        assert!(tasks.list.is_some());
+        assert!(tasks.cancel.is_some());
+        let requests = tasks.requests.unwrap();
+        assert!(requests.tools.unwrap().call.is_some());
+    }
+
+    #[test]
+    fn test_server_capabilities_without_tasks_backwards_compat() {
+        let json = r#"{"tools": {"listChanged": true}}"#;
+        let caps: ServerCapabilities = serde_json::from_str(json).unwrap();
+        assert!(caps.tasks.is_none());
+    }
+
+    #[test]
+    fn test_call_tool_params_with_task_augmentation() {
+        let json = r#"{
+            "name": "get_weather",
+            "arguments": {"city": "New York"},
+            "task": {"ttl": 60000}
+        }"#;
+        let params: CallToolParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.name, "get_weather");
+        let task = params.task.unwrap();
+        assert_eq!(task.ttl, Some(60000));
+    }
+
+    #[test]
+    fn test_call_tool_params_without_task_backwards_compat() {
+        let json = r#"{"name": "echo", "arguments": {"text": "hi"}}"#;
+        let params: CallToolParams = serde_json::from_str(json).unwrap();
+        assert!(params.task.is_none());
+    }
+
+    #[test]
+    fn test_progress_token_partial_eq() {
+        assert_eq!(
+            ProgressToken::String("abc".to_string()),
+            ProgressToken::String("abc".to_string())
+        );
+        assert_ne!(
+            ProgressToken::String("abc".to_string()),
+            ProgressToken::String("def".to_string())
+        );
+        assert_eq!(ProgressToken::Number(42.0), ProgressToken::Number(42.0));
+        assert_ne!(ProgressToken::Number(1.0), ProgressToken::Number(2.0));
+        assert_ne!(
+            ProgressToken::String("42".to_string()),
+            ProgressToken::Number(42.0)
+        );
+    }
+
 }

@@ -102,6 +102,11 @@ pub struct LanguageModelToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub tool_name: Arc<str>,
     pub is_error: bool,
+    /// When true, the tool result is a provisional/immediate response and the
+    /// tool is still running in the background. The UI should NOT mark this
+    /// tool call as Completed — the background task will send the final status.
+    #[serde(default)]
+    pub is_provisional: bool,
     /// The tool output formatted for presenting to the model
     pub content: LanguageModelToolResultContent,
     /// The raw tool output, if available, often for debugging or extra state for replay

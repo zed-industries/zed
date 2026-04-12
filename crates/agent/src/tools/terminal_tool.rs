@@ -34,6 +34,8 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
 ///
 /// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
+/// When you don't need the output to continue (e.g. builds, test suites, deployments), set `background: true` to return immediately while the command runs.
+/// WARNING: with `background: true` you will NOT receive the command output — only a confirmation that it started. Do not use background mode if you need to read, parse, or act on the command's output.
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
@@ -47,6 +49,20 @@ pub struct TerminalToolInput {
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
+    /// When true, the command runs in the background: the model receives a
+    /// provisional result immediately ("Running `command`...") and continues
+    /// its turn while the command executes. The user sees live output in the
+    /// tool card. When the command finishes, the tool card updates to
+    /// Completed/Failed.
+    ///
+    /// Use this for long-running commands where you don't need the output
+    /// to continue (e.g. builds, deployments, test suites you'll check later).
+    /// You will NOT receive the command output in background mode — only a
+    /// confirmation that the command started. The user can see the live
+    /// output in the tool card. Default is false — the model blocks until
+    /// the command finishes and receives the full output.
+    #[serde(default)]
+    pub background: bool,
 }
 
 pub struct TerminalTool {
@@ -91,6 +107,7 @@ impl AgentTool for TerminalTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output, Self::Output>> {
+        let foreground = cx.foreground_executor().clone();
         cx.spawn(async move |cx| {
             let input = input
                 .recv()
@@ -146,6 +163,36 @@ impl AgentTool for TerminalTool {
                 acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
             ]));
 
+            // Background mode: return a provisional result immediately and
+            // let the command run in a detached task. The user sees live
+            // output in the tool card; when the command finishes the tool
+            // card updates to Completed/Failed.
+            if input.background {
+                event_stream.set_provisional();
+
+                let background_event_stream = event_stream.clone();
+                let command = input.command.clone();
+                let timeout = input.timeout_ms.map(Duration::from_millis);
+
+                foreground
+                    .spawn(terminal_background_waiter(
+                        terminal,
+                        command,
+                        timeout,
+                        background_event_stream,
+                        cx.clone(),
+                    ))
+                    .detach();
+
+                return Ok(format!(
+                    "Running `{}` in the background. \
+                     Output is visible in the tool card.",
+                    input.command,
+                ));
+            }
+
+            // Foreground (default): block until the command finishes and
+            // return the full output to the model.
             let timeout = input.timeout_ms.map(Duration::from_millis);
 
             let mut timed_out = false;
@@ -202,6 +249,70 @@ impl AgentTool for TerminalTool {
             ))
         })
     }
+}
+
+/// Background waiter for terminal commands with `background: true`.
+///
+/// Waits for the command to finish (with optional timeout), then updates the
+/// tool card status. Does NOT use `cancelled_by_user()` because it outlives
+/// the turn — same rationale as `mcp_task_background_poller`.
+async fn terminal_background_waiter(
+    terminal: Rc<dyn crate::TerminalHandle>,
+    command: String,
+    timeout: Option<Duration>,
+    event_stream: ToolCallEventStream,
+    cx: gpui::AsyncApp,
+) {
+    let wait_for_exit = match terminal.wait_for_exit(&cx) {
+        Ok(future) => future,
+        Err(e) => {
+            log::error!("Background terminal `{command}`: failed to wait for exit: {e}");
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Failed),
+            );
+            return;
+        }
+    };
+
+    let timed_out = if let Some(timeout) = timeout {
+        futures::select! {
+            _ = wait_for_exit.clone().fuse() => false,
+            _ = smol::Timer::after(timeout).fuse() => {
+                if let Err(e) = terminal.kill(&cx) {
+                    log::error!("Background terminal `{command}`: failed to kill after timeout: {e}");
+                }
+                wait_for_exit.await;
+                true
+            }
+        }
+    } else {
+        wait_for_exit.await;
+        false
+    };
+
+    let output = match terminal.current_output(&cx) {
+        Ok(output) => output,
+        Err(e) => {
+            log::error!("Background terminal `{command}`: failed to read output: {e}");
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Failed),
+            );
+            return;
+        }
+    };
+    let summary = process_content(output, &command, timed_out, false);
+
+    let status = if timed_out || summary.starts_with("Command failed") {
+        acp::ToolCallStatus::Failed
+    } else {
+        acp::ToolCallStatus::Completed
+    };
+
+    event_stream.update_fields(
+        acp::ToolCallUpdateFields::new()
+            .status(status)
+            .raw_output(Some(serde_json::Value::String(summary))),
+    );
 }
 
 fn process_content(
@@ -332,6 +443,7 @@ mod tests {
                 .to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
+            background: false,
         };
 
         let title = format_initial_title(Ok(input));
@@ -391,6 +503,7 @@ mod tests {
                 command: cmd.to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
+                background: false,
             };
 
             let title = format_initial_title(Ok(input));
@@ -428,6 +541,7 @@ mod tests {
             command: "echo 'hello world'".to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
+            background: false,
         };
 
         let title = format_initial_title(Ok(input));
@@ -457,6 +571,7 @@ mod tests {
             command: long_command,
             cd: ".".to_string(),
             timeout_ms: None,
+            background: false,
         };
 
         let title = format_initial_title(Ok(input));
@@ -663,6 +778,7 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -730,6 +846,7 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -791,6 +908,7 @@ mod tests {
                     command: "echo $(rm -rf /)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -860,6 +978,7 @@ mod tests {
                     command: "PAGER=blah git log --oneline".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -933,6 +1052,7 @@ mod tests {
                     command: "PAGER=blah git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -1040,6 +1160,7 @@ mod tests {
                     command: command.to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -1207,6 +1328,7 @@ mod tests {
                     command: "echo $(whoami)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -1279,6 +1401,7 @@ mod tests {
                     command: "PAGER=other git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -1345,6 +1468,7 @@ mod tests {
                     command: "A=1 B=2 git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -1422,6 +1546,7 @@ mod tests {
                     command: "PAGER=\"less -R\" git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,

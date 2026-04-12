@@ -78,6 +78,29 @@ impl FakeTransport {
         );
         self
     }
+
+    pub fn send_notification(&self, method: &str, params: serde_json::Value) -> anyhow::Result<()> {
+        let notification = serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+        });
+        self.tx
+            .unbounded_send(notification.to_string())
+            .context("sending notification")?;
+        Ok(())
+    }
+
+    pub fn send_typed_notification<T: crate::types::Notification>(
+        &self,
+        params: T::Params,
+    ) -> anyhow::Result<()>
+    where
+        T::Params: serde::Serialize,
+    {
+        let params = serde_json::to_value(params)?;
+        self.send_notification(T::METHOD, params)
+    }
 }
 
 #[async_trait::async_trait]

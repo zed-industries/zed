@@ -169,6 +169,7 @@ async fn run_audience_test(
             input_schema: json!({"type": "object", "properties": {}}),
             output_schema: None,
             annotations: None,
+            execution: None,
         }],
         &context_server_store,
         cx,
@@ -220,6 +221,7 @@ fn expected_tool_result(tool_name: &str, text: &str) -> Vec<MessageContent> {
         tool_use_id: "tool_1".into(),
         tool_name: tool_name.into(),
         is_error: false,
+        is_provisional: false,
         content: text.into(),
         output: Some(text.into()),
     })]

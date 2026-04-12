@@ -1249,6 +1249,19 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
+
+                                // Background tasks (terminal with background:true,
+                                // MCP task background pollers) may still send
+                                // ToolCallUpdate events after the turn ends.
+                                // Spawn a detached task that continues draining
+                                // the event channel so those updates reach the
+                                // AcpThread and the tool cards update correctly.
+                                let bg_acp_thread = acp_thread.clone();
+                                let mut bg_cx = cx.clone();
+                                cx.foreground_executor().spawn(async move {
+                                    Self::drain_background_events(events, bg_acp_thread, &mut bg_cx).await;
+                                }).detach();
+
                                 return Ok(acp::PromptResponse::new(stop_reason));
                             }
                         }
@@ -1263,6 +1276,44 @@ impl NativeAgentConnection {
             log::debug!("Response stream completed");
             anyhow::Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
         })
+    }
+
+    /// Drains remaining events from a turn's event channel after the turn
+    /// has completed. Background tasks (terminal `background: true`, MCP
+    /// task background pollers) may send `ToolCallUpdate` events after the
+    /// `Stop` event. This function processes those updates so tool cards
+    /// transition to Completed/Failed correctly.
+    ///
+    /// Only `ToolCallUpdate` events are processed — all other event types
+    /// are logged and discarded since the turn is already over.
+    async fn drain_background_events(
+        mut events: mpsc::UnboundedReceiver<Result<ThreadEvent>>,
+        acp_thread: WeakEntity<AcpThread>,
+        cx: &mut AsyncApp,
+    ) {
+        while let Some(result) = events.next().await {
+            match result {
+                Ok(ThreadEvent::ToolCallUpdate(update)) => {
+                    if let Err(e) = acp_thread.update(cx, |thread, cx| {
+                        thread.update_tool_call(update, cx)
+                    }) {
+                        log::debug!(
+                            "Background event drain: failed to update tool call: {e:#}"
+                        );
+                        return;
+                    }
+                }
+                Ok(event) => {
+                    log::debug!(
+                        "Background event drain: ignoring non-update event: {event:?}"
+                    );
+                }
+                Err(e) => {
+                    log::debug!("Background event drain: channel error: {e:#}");
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -1577,6 +1628,22 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                     .thread
                     .update(cx, |thread, cx| thread.cancel(cx))
                     .detach();
+            }
+        });
+    }
+
+    fn cancel_tool_call(
+        &self,
+        session_id: &acp::SessionId,
+        tool_call_id: &acp::ToolCallId,
+        cx: &mut App,
+    ) {
+        let tool_use_id = language_model::LanguageModelToolUseId::from(tool_call_id.to_string());
+        self.0.update(cx, |agent, cx| {
+            if let Some(session) = agent.sessions.get(session_id) {
+                session
+                    .thread
+                    .update(cx, |thread, cx| thread.cancel_tool_call(tool_use_id, cx));
             }
         });
     }

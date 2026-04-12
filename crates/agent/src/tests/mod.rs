@@ -55,6 +55,7 @@ use util::path;
 
 mod edit_file_thread_test;
 mod test_mcp_audience;
+mod test_mcp_tasks;
 mod test_tools;
 use test_tools::*;
 
@@ -321,6 +322,7 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: Some(5),
+                background: false,
             }),
             event_stream,
             cx,
@@ -388,6 +390,7 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
+                background: false,
             }),
             event_stream,
             cx,
@@ -638,6 +641,7 @@ async fn test_prompt_caching(cx: &mut TestAppContext) {
         tool_use_id: "tool_1".into(),
         tool_name: EchoTool::NAME.into(),
         is_error: false,
+        is_provisional: false,
         content: "test".into(),
         output: Some("test".into()),
     };
@@ -867,6 +871,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: tool_call_auth_1.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
+                is_provisional: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
             }),
@@ -874,6 +879,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: tool_call_auth_2.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: true,
+                is_provisional: false,
                 content: "Permission to run tool denied by user".into(),
                 output: Some("Permission to run tool denied by user".into())
             })
@@ -913,6 +919,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: tool_call_auth_3.tool_call.tool_call_id.0.to_string().into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
+                is_provisional: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
             }
@@ -941,6 +948,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_use_id: "tool_id_4".into(),
                 tool_name: ToolRequiringPermission::NAME.into(),
                 is_error: false,
+                is_provisional: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
             }
@@ -1461,6 +1469,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
             .unwrap(),
             output_schema: None,
             annotations: None,
+            execution: None,
         }],
         &context_server_store,
         cx,
@@ -1564,6 +1573,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
                 tool_use_id: "tool_3".into(),
                 tool_name: "echo".into(),
                 is_error: false,
+                is_provisional: false,
                 content: "native".into(),
                 output: Some("native".into()),
             },),
@@ -1571,6 +1581,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
                 tool_use_id: "tool_2".into(),
                 tool_name: "test_server_echo".into(),
                 is_error: false,
+                is_provisional: false,
                 content: "mcp".into(),
                 output: Some("mcp".into()),
             },),
@@ -1581,6 +1592,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
 }
 
 // Audience annotation tests are in test_mcp_audience.rs
+
 
 #[gpui::test]
 async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAppContext) {
@@ -1631,6 +1643,7 @@ async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAp
             }),
             output_schema: None,
             annotations: None,
+            execution: None,
         }],
         &context_server_store,
         cx,
@@ -1824,6 +1837,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 .unwrap(),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
             context_server::types::Tool {
                 name: "unique_tool_1".into(),
@@ -1831,6 +1845,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
         ],
         &context_server_store,
@@ -1849,6 +1864,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 .unwrap(),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
             context_server::types::Tool {
                 name: "unique_tool_2".into(),
@@ -1856,6 +1872,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
             context_server::types::Tool {
                 name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2),
@@ -1863,6 +1880,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
             context_server::types::Tool {
                 name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
@@ -1870,6 +1888,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
         ],
         &context_server_store,
@@ -1884,6 +1903,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
             context_server::types::Tool {
                 name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
@@ -1891,6 +1911,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
             context_server::types::Tool {
                 name: "c".repeat(MAX_TOOL_NAME_LENGTH + 1),
@@ -1898,6 +1919,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 input_schema: json!({"type": "object", "properties": {}}),
                 output_schema: None,
                 annotations: None,
+                execution: None,
             },
         ],
         &context_server_store,
@@ -1916,6 +1938,7 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             .unwrap(),
             output_schema: None,
             annotations: None,
+            execution: None,
         }],
         &context_server_store,
         cx,
@@ -3235,6 +3258,7 @@ async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
                     tool_use_id: echo_tool_use.id.clone(),
                     tool_name: echo_tool_use.name,
                     is_error: false,
+                    is_provisional: false,
                     content: "test".into(),
                     output: Some("test".into())
                 })],
@@ -3721,6 +3745,7 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
                         tool_use_id: tool_use_1.id.clone(),
                         tool_name: tool_use_1.name.clone(),
                         is_error: false,
+                        is_provisional: false,
                         content: "test".into(),
                         output: Some("test".into())
                     }
@@ -3881,6 +3906,7 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name,
                         is_error: true,
+                        is_provisional: false,
                         content: "Failed to receive tool input: tool input was not fully received"
                             .into(),
                         output: Some(
@@ -4075,7 +4101,6 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             InfiniteTool::NAME: true,
                             CancellationAwareTool::NAME: true,
                             StreamingEchoTool::NAME: true,
-                            StreamingJsonErrorContextTool::NAME: true,
                             StreamingFailingEchoTool::NAME: true,
                             TerminalTool::NAME: true,
                             UpdatePlanTool::NAME: true,
@@ -4499,6 +4524,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "rm -rf /".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -4551,6 +4577,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -4609,6 +4636,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "sudo rm file".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -4656,6 +4684,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
+                    background: false,
                 }),
                 event_stream,
                 cx,
@@ -6325,9 +6354,9 @@ async fn test_edit_file_tool_allow_rule_skips_confirmation(cx: &mut TestAppConte
 
     cx.run_until_parked();
 
-    let event = rx.try_recv();
+    let event = rx.try_next();
     assert!(
-        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
+        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
         "expected no authorization request for allowed .md file"
     );
 }
@@ -6469,9 +6498,9 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 
     cx.run_until_parked();
 
-    let event = rx.try_recv();
+    let event = rx.try_next();
     assert!(
-        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
+        !matches!(event, Ok(Some(Ok(ThreadEvent::ToolCallAuthorization(_))))),
         "expected no authorization request for allowed docs.rs URL"
     );
 }
@@ -6625,6 +6654,7 @@ async fn test_streaming_tool_error_breaks_stream_loop_immediately(cx: &mut TestA
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name,
                         is_error: true,
+                        is_provisional: false,
                         content: "failed".into(),
                         output: Some("failed".into()),
                     }
@@ -6736,6 +6766,7 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
                         tool_use_id: second_tool_use.id.clone(),
                         tool_name: second_tool_use.name,
                         is_error: true,
+                        is_provisional: false,
                         content: "failed".into(),
                         output: Some("failed".into()),
                     }),
@@ -6743,6 +6774,7 @@ async fn test_streaming_tool_error_waits_for_prior_tools_to_complete(cx: &mut Te
                         tool_use_id: first_tool_use.id.clone(),
                         tool_name: first_tool_use.name,
                         is_error: false,
+                        is_provisional: false,
                         content: "hello world".into(),
                         output: Some("hello world".into()),
                     }),

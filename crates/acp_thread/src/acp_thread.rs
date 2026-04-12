@@ -2357,6 +2357,24 @@ impl AcpThread {
         .boxed()
     }
 
+    pub fn cancel_tool_call(&mut self, tool_call_id: &acp::ToolCallId, cx: &mut Context<Self>) {
+        self.connection
+            .cancel_tool_call(&self.session_id, tool_call_id, cx);
+
+        if let Some((ix, call)) = self.tool_call_mut(tool_call_id) {
+            if matches!(
+                call.status,
+                ToolCallStatus::Pending
+                    | ToolCallStatus::WaitingForConfirmation { .. }
+                    | ToolCallStatus::InProgress
+            ) {
+                call.status = ToolCallStatus::Canceled;
+                cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                cx.notify();
+            }
+        }
+    }
+
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let Some(turn) = self.running_turn.take() else {
             return Task::ready(());

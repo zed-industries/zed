@@ -2239,10 +2239,14 @@ impl ThreadView {
         let subagents_awaiting_permission = self.render_subagents_awaiting_permission(cx);
         let has_subagents_awaiting = subagents_awaiting_permission.is_some();
 
+        let running_tasks = self.render_running_tasks(cx);
+        let has_running_tasks = running_tasks.is_some();
+
         if changed_buffers.is_empty()
             && plan.is_empty()
             && queue_is_empty
             && !has_subagents_awaiting
+            && !has_running_tasks
         {
             return None;
         }
@@ -2283,8 +2287,14 @@ impl ThreadView {
                     .when_some(subagents_awaiting_permission, |this, element| {
                         this.child(element)
                     })
+                    .when(has_subagents_awaiting && has_running_tasks, |this| {
+                        this.child(Divider::horizontal().color(DividerColor::Border))
+                    })
+                    .when_some(running_tasks, |this, element| {
+                        this.child(element)
+                    })
                     .when(
-                        has_subagents_awaiting
+                        (has_subagents_awaiting || has_running_tasks)
                             && (!plan.is_empty() || !changed_buffers.is_empty() || !queue_is_empty),
                         |this| this.child(Divider::horizontal().color(DividerColor::Border)),
                     )
@@ -2646,6 +2656,135 @@ impl ThreadView {
                                             .color(Color::Muted)
                                             .truncate(),
                                     ),
+                                )
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.list_state.scroll_to(ListOffset {
+                                        item_ix: entry_ix,
+                                        offset_in_item: px(0.0),
+                                    });
+                                    cx.notify();
+                                }))
+                        },
+                    )),
+                )
+                .into_any(),
+        )
+    }
+
+    fn render_running_tasks(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let thread = self.thread.read(cx);
+        let entries = thread.entries();
+        let mut task_items: Vec<(SharedString, acp::ToolCallId, usize)> = Vec::new();
+
+        for (entry_ix, entry) in entries.iter().enumerate() {
+            if let AgentThreadEntry::ToolCall(tool_call) = entry {
+                if matches!(tool_call.status, ToolCallStatus::InProgress)
+                    && !tool_call.is_subagent()
+                {
+                    let title: SharedString = {
+                        let source = tool_call.label.read(cx).source().to_string();
+                        if source.is_empty() {
+                            "Background Task".into()
+                        } else {
+                            source.into()
+                        }
+                    };
+                    task_items.push((title, tool_call.id.clone(), entry_ix));
+                }
+            }
+        }
+
+        if task_items.is_empty() {
+            return None;
+        }
+
+        let item_count = task_items.len();
+
+        Some(
+            v_flex()
+                .child(
+                    h_flex()
+                        .py_1()
+                        .px_2()
+                        .w_full()
+                        .gap_1()
+                        .border_b_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(
+                            Label::new("Running Tasks:")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(Label::new(item_count.to_string()).size(LabelSize::Small)),
+                )
+                .child(
+                    v_flex().children(task_items.into_iter().enumerate().map(
+                        |(ix, (label, tool_call_id, entry_ix))| {
+                            let is_last = ix == item_count - 1;
+                            let group = format!("mcp-task-group-{}", entry_ix);
+                            let thread = self.thread.clone();
+
+                            h_flex()
+                                .cursor_pointer()
+                                .id(format!("mcp-task-{}", entry_ix))
+                                .group(&group)
+                                .p_1()
+                                .pl_2()
+                                .min_w_0()
+                                .w_full()
+                                .gap_1()
+                                .justify_between()
+                                .bg(cx.theme().colors().editor_background)
+                                .hover(|s| s.bg(cx.theme().colors().element_hover))
+                                .when(!is_last, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .min_w_0()
+                                        .child(
+                                            Icon::new(IconName::ArrowCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Accent),
+                                        )
+                                        .child(
+                                            Label::new(label)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                                .truncate(),
+                                        ),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            div().visible_on_hover(&group).child(
+                                                Label::new("Scroll to Task")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .truncate(),
+                                            ),
+                                        )
+                                        .child(
+                                            IconButton::new(
+                                                SharedString::from(format!(
+                                                    "cancel-mcp-task-{}",
+                                                    entry_ix
+                                                )),
+                                                IconName::Stop,
+                                            )
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Error)
+                                            .shape(ui::IconButtonShape::Square)
+                                            .tooltip(Tooltip::text("Cancel Task"))
+                                            .on_click(move |_, _, cx| {
+                                                thread.update(cx, |thread, cx| {
+                                                    thread
+                                                        .cancel_tool_call(&tool_call_id, cx);
+                                                });
+                                            }),
+                                        ),
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.list_state.scroll_to(ListOffset {

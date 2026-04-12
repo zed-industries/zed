@@ -136,6 +136,16 @@ pub trait AgentConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
+    /// Cancel a single tool call without stopping the entire turn.
+    /// Default implementation is a no-op for connections that don't support it.
+    fn cancel_tool_call(
+        &self,
+        _session_id: &acp::SessionId,
+        _tool_call_id: &acp::ToolCallId,
+        _cx: &mut App,
+    ) {
+    }
+
     fn truncate(
         &self,
         _session_id: &acp::SessionId,

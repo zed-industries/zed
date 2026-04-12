@@ -110,6 +110,7 @@ impl McpServer {
                     Some(generator.root_schema_for::<T::Output>().into())
                 },
                 annotations: Some(tool.annotations()),
+                execution: None,
             },
             handler: Box::new({
                 move |input_value, cx| {

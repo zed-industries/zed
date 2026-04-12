@@ -53,7 +53,10 @@ use std::{
     ops::RangeInclusive,
     path::Path,
     rc::Rc,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use std::{fmt::Write, path::PathBuf};
@@ -1233,6 +1236,7 @@ impl Thread {
                 stream.clone(),
                 Some(self.project.read(cx).fs().clone()),
                 cancellation_rx,
+                None,
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
                 .log_err();
@@ -1612,6 +1616,16 @@ impl Thread {
         }
     }
 
+    pub fn cancel_tool_call(&mut self, tool_use_id: LanguageModelToolUseId, cx: &mut Context<Self>) {
+        if let Some(running_turn) = self.running_turn.as_mut() {
+            if let Some(mut sender) = running_turn.tool_cancellation_senders.remove(&tool_use_id) {
+                log::debug!("Cancelling individual tool call: {}", tool_use_id);
+                sender.send(true).ok();
+            }
+        }
+        cx.notify();
+    }
+
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
         for subagent in self.running_subagents.drain(..) {
             if let Some(subagent) = subagent.upgrade() {
@@ -1852,6 +1866,7 @@ impl Thread {
             tools: self.enabled_tools(cx),
             cancellation_tx,
             streaming_tool_inputs: HashMap::default(),
+            tool_cancellation_senders: HashMap::default(),
             _task: cx.spawn(async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
@@ -2115,17 +2130,19 @@ impl Thread {
     ) -> Result<(), anyhow::Error> {
         log::debug!("Tool finished {:?}", tool_result);
 
-        event_stream.update_tool_call_fields(
-            &tool_result.tool_use_id,
-            acp::ToolCallUpdateFields::new()
-                .status(if tool_result.is_error {
-                    acp::ToolCallStatus::Failed
-                } else {
-                    acp::ToolCallStatus::Completed
-                })
-                .raw_output(tool_result.output.clone()),
-            None,
-        );
+        if !tool_result.is_provisional {
+            event_stream.update_tool_call_fields(
+                &tool_result.tool_use_id,
+                acp::ToolCallUpdateFields::new()
+                    .status(if tool_result.is_error {
+                        acp::ToolCallStatus::Failed
+                    } else {
+                        acp::ToolCallStatus::Completed
+                    })
+                    .raw_output(tool_result.output.clone()),
+                None,
+            );
+        }
         this.update(cx, |this, _cx| {
             this.pending_message()
                 .tool_results
@@ -2331,6 +2348,7 @@ impl Thread {
                 tool_use_id: tool_use.id,
                 tool_name: tool_use.name,
                 is_error: true,
+                is_provisional: false,
                 output: None,
             }));
         };
@@ -2389,7 +2407,7 @@ impl Thread {
     }
 
     fn run_tool(
-        &self,
+        &mut self,
         tool: Arc<dyn AnyAgentTool>,
         tool_input: ToolInput<serde_json::Value>,
         tool_use_id: LanguageModelToolUseId,
@@ -2398,12 +2416,17 @@ impl Thread {
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
+        let (tool_cancel_tx, tool_cancel_rx) = watch::channel(false);
+        if let Some(running_turn) = self.running_turn.as_mut() {
+            running_turn.tool_cancellation_senders.insert(tool_use_id.clone(), tool_cancel_tx);
+        }
         let fs = self.project.read(cx).fs().clone();
         let tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
             event_stream.clone(),
             Some(fs),
             cancellation_rx,
+            Some(tool_cancel_rx),
         );
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
@@ -2431,6 +2454,7 @@ impl Thread {
                 tool_use_id,
                 tool_name,
                 is_error,
+                is_provisional: output.is_provisional,
                 content: output.llm_output,
                 output: Some(output.raw_output),
             }
@@ -2471,6 +2495,7 @@ impl Thread {
                 tool_use_id: tool_use.id,
                 tool_name: tool_use.name,
                 is_error: true,
+                is_provisional: false,
                 output: None,
             }));
         };
@@ -2734,6 +2759,7 @@ impl Thread {
                         tool_use_id: tool_use.id.clone(),
                         tool_name: tool_use.name.clone(),
                         is_error: true,
+                        is_provisional: false,
                         content: LanguageModelToolResultContent::Text(TOOL_CANCELED_MESSAGE.into()),
                         output: None,
                     },
@@ -3156,6 +3182,7 @@ struct RunningTurn {
     /// Senders for tools that support input streaming and have already been
     /// started but are still receiving input from the LLM.
     streaming_tool_inputs: HashMap<LanguageModelToolUseId, ToolInputSender>,
+    tool_cancellation_senders: HashMap<LanguageModelToolUseId, watch::Sender<bool>>,
 }
 
 impl RunningTurn {
@@ -3385,6 +3412,7 @@ pub struct Erased<T>(T);
 pub struct AgentToolOutput {
     pub llm_output: LanguageModelToolResultContent,
     pub raw_output: serde_json::Value,
+    pub is_provisional: bool,
 }
 
 impl AgentToolOutput {
@@ -3394,6 +3422,7 @@ impl AgentToolOutput {
         Self {
             raw_output: serde_json::Value::String(message),
             llm_output,
+            is_provisional: false,
         }
     }
 }
@@ -3468,6 +3497,7 @@ where
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput, AgentToolOutput>> {
         let tool_input: ToolInput<T::Input> = input.cast();
+        let event_stream_ref = event_stream.clone();
         let task = self.0.clone().run(tool_input, event_stream, cx);
         cx.spawn(async move |_cx| match task.await {
             Ok(output) => {
@@ -3477,6 +3507,7 @@ where
                 Ok(AgentToolOutput {
                     llm_output: output.into(),
                     raw_output,
+                    is_provisional: event_stream_ref.is_provisional(),
                 })
             }
             Err(error_output) => {
@@ -3487,6 +3518,7 @@ where
                 Err(AgentToolOutput {
                     llm_output: error_output.into(),
                     raw_output,
+                    is_provisional: false,
                 })
             }
         })
@@ -3603,6 +3635,8 @@ pub struct ToolCallEventStream {
     stream: ThreadEventStream,
     fs: Option<Arc<dyn Fs>>,
     cancellation_rx: watch::Receiver<bool>,
+    provisional: Arc<AtomicBool>,
+    tool_cancellation_rx: Option<watch::Receiver<bool>>,
 }
 
 impl ToolCallEventStream {
@@ -3622,6 +3656,7 @@ impl ToolCallEventStream {
             ThreadEventStream(events_tx),
             None,
             cancellation_rx,
+            None,
         );
 
         (
@@ -3642,27 +3677,51 @@ impl ToolCallEventStream {
         stream: ThreadEventStream,
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
+        tool_cancellation_rx: Option<watch::Receiver<bool>>,
     ) -> Self {
         Self {
             tool_use_id,
             stream,
             fs,
             cancellation_rx,
+            provisional: Arc::new(AtomicBool::new(false)),
+            tool_cancellation_rx,
         }
     }
 
     /// Returns a future that resolves when the user cancels the tool call.
     /// Tools should select on this alongside their main work to detect user cancellation.
     pub fn cancelled_by_user(&self) -> impl std::future::Future<Output = ()> + '_ {
-        let mut rx = self.cancellation_rx.clone();
+        let mut turn_rx = self.cancellation_rx.clone();
+        let mut tool_rx = self.tool_cancellation_rx.clone();
         async move {
             loop {
-                if *rx.borrow() {
+                if *turn_rx.borrow() {
                     return;
                 }
-                if rx.changed().await.is_err() {
-                    // Sender dropped, will never be cancelled
-                    std::future::pending::<()>().await;
+                if let Some(ref mut rx) = tool_rx {
+                    if *rx.borrow() {
+                        return;
+                    }
+                }
+
+                let turn_changed = turn_rx.changed();
+                if let Some(ref mut rx) = tool_rx {
+                    let tool_changed = rx.changed();
+                    futures::pin_mut!(turn_changed);
+                    futures::pin_mut!(tool_changed);
+                    match futures::future::select(turn_changed, tool_changed).await {
+                        futures::future::Either::Left((Ok(()), _)) => {}
+                        futures::future::Either::Right((Ok(()), _)) => {}
+                        futures::future::Either::Left((Err(_), _))
+                        | futures::future::Either::Right((Err(_), _)) => {
+                            std::future::pending::<()>().await;
+                        }
+                    }
+                } else {
+                    if turn_changed.await.is_err() {
+                        std::future::pending::<()>().await;
+                    }
                 }
             }
         }
@@ -3672,7 +3731,23 @@ impl ToolCallEventStream {
     /// This is useful for checking cancellation state after an operation completes,
     /// to determine if the completion was due to user cancellation.
     pub fn was_cancelled_by_user(&self) -> bool {
-        *self.cancellation_rx.clone().borrow()
+        if *self.cancellation_rx.clone().borrow() {
+            return true;
+        }
+        if let Some(mut rx) = self.tool_cancellation_rx.clone() {
+            if *rx.borrow() {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn set_provisional(&self) {
+        self.provisional.store(true, Ordering::SeqCst);
+    }
+
+    pub fn is_provisional(&self) -> bool {
+        self.provisional.load(Ordering::SeqCst)
     }
 
     pub fn tool_use_id(&self) -> &LanguageModelToolUseId {

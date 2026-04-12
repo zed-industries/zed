@@ -27,6 +27,7 @@ impl ModelContextProtocol {
     fn supported_protocols() -> Vec<types::ProtocolVersion> {
         vec![
             types::ProtocolVersion(types::LATEST_PROTOCOL_VERSION.to_string()),
+            types::ProtocolVersion(types::VERSION_2025_03_26.to_string()),
             types::ProtocolVersion(types::VERSION_2024_11_05.to_string()),
         ]
     }
@@ -41,6 +42,7 @@ impl ModelContextProtocol {
                 experimental: None,
                 sampling: None,
                 roots: None,
+                tasks: None,
             },
             meta: None,
             client_info,
@@ -82,6 +84,7 @@ pub enum ServerCapability {
     Prompts,
     Resources,
     Tools,
+    Tasks,
 }
 
 impl InitializedContextServerProtocol {
@@ -93,6 +96,7 @@ impl InitializedContextServerProtocol {
             ServerCapability::Prompts => self.initialize.capabilities.prompts.is_some(),
             ServerCapability::Resources => self.initialize.capabilities.resources.is_some(),
             ServerCapability::Tools => self.initialize.capabilities.tools.is_some(),
+            ServerCapability::Tasks => self.initialize.capabilities.tasks.is_some(),
         }
     }
 
