@@ -6389,20 +6389,21 @@ mod tests {
             .await
             .expect("failed to open workspace");
 
-        let multi_workspace = window.root_view(cx).unwrap();
-        multi_workspace.update(cx, |mw, cx| mw.open_sidebar(cx));
+        window.update(cx, |mw, _, cx| mw.open_sidebar(cx)).unwrap();
 
-        multi_workspace
-            .update_in(cx, |mw, window, cx| {
+        window
+            .update(cx, |mw, window, cx| {
                 mw.open_project(vec![path!("/root_b").into()], OpenMode::Add, window, cx)
             })
+            .unwrap()
             .await
             .expect("failed to add root_b");
 
-        multi_workspace
-            .update_in(cx, |mw, window, cx| {
+        window
+            .update(cx, |mw, window, cx| {
                 mw.open_project(vec![path!("/root_c").into()], OpenMode::Add, window, cx)
             })
+            .unwrap()
             .await
             .expect("failed to add root_c");
         cx.run_until_parked();
@@ -6411,19 +6412,21 @@ mod tests {
         let key_c = ProjectGroupKey::new(None, PathList::new(&[path!("/root_c")]));
 
         // Make root_a the active workspace so it's the one eagerly restored.
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            let workspace_a = mw
-                .workspaces()
-                .find(|ws| {
-                    ws.read(cx)
-                        .root_paths(cx)
-                        .iter()
-                        .any(|p| p.as_ref() == Path::new(path!("/root_a")))
-                })
-                .expect("workspace_a should exist")
-                .clone();
-            mw.activate(workspace_a, window, cx);
-        });
+        window
+            .update(cx, |mw, window, cx| {
+                let workspace_a = mw
+                    .workspaces()
+                    .find(|ws| {
+                        ws.read(cx)
+                            .root_paths(cx)
+                            .iter()
+                            .any(|p| p.as_ref() == Path::new(path!("/root_a")))
+                    })
+                    .expect("workspace_a should exist")
+                    .clone();
+                mw.activate(workspace_a, window, cx);
+            })
+            .unwrap();
         cx.run_until_parked();
 
         // --- Phase 2: Serialize, close, and restore ---
