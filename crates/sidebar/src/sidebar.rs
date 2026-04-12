@@ -48,7 +48,8 @@ use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
     NextProject, NextThread, Open, PreviousProject, PreviousThread, SerializedProjectGroup,
     ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
-    ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
+    ToggleWorkspaceSidebar, Workspace,
+    notifications::NotificationId, sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -83,6 +84,7 @@ const DEFAULT_WIDTH: Pixels = px(300.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
 const DEFAULT_THREADS_SHOWN: usize = 5;
+const EMPTY_DRAFT_TITLE: &str = "New Agent Thread";
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SerializedSidebarView {
@@ -179,11 +181,13 @@ impl ActiveEntry {
 
     fn matches_entry(&self, entry: &ListEntry) -> bool {
         match entry {
-            ListEntry::Thread(thread) => self.identity.matches_metadata(&thread.metadata),
-            ListEntry::DraftThread {
-                draft_id: Some(entry_id),
-                ..
-            } => self.identity.thread_id == *entry_id,
+            ListEntry::Thread(thread) => {
+                if thread.is_draft {
+                    self.identity.thread_id == thread.metadata.thread_id
+                } else {
+                    self.identity.matches_metadata(&thread.metadata)
+                }
+            }
             _ => false,
         }
     }
@@ -243,6 +247,7 @@ struct ThreadEntry {
     is_live: bool,
     is_background: bool,
     is_title_generating: bool,
+    is_draft: bool,
     highlight_positions: Vec<usize>,
     worktrees: Vec<WorktreeInfo>,
     diff_stats: DiffStats,
@@ -282,14 +287,6 @@ enum ListEntry {
         key: ProjectGroupKey,
         is_fully_expanded: bool,
     },
-    DraftThread {
-        /// `None` for placeholder entries in empty groups with no open
-        /// workspace. `Some` for drafts backed by an AgentPanel.
-        draft_id: Option<ThreadId>,
-        key: project::ProjectGroupKey,
-        workspace: Option<Entity<Workspace>>,
-        worktrees: Vec<WorktreeInfo>,
-    },
 }
 
 #[cfg(test)]
@@ -311,7 +308,6 @@ impl ListEntry {
                 ThreadEntryWorkspace::Open(ws) => vec![ws.clone()],
                 ThreadEntryWorkspace::Closed { .. } => Vec::new(),
             },
-            ListEntry::DraftThread { workspace, .. } => workspace.iter().cloned().collect(),
             ListEntry::ProjectHeader { key, .. } => multi_workspace
                 .workspaces_for_project_group(key, cx)
                 .unwrap_or_default(),
@@ -501,6 +497,7 @@ pub struct Sidebar {
     project_header_menu_ix: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_observation: Option<gpui::Subscription>,
+    reconciling: bool,
 }
 
 impl Sidebar {
@@ -527,13 +524,16 @@ impl Sidebar {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
                     this.observe_draft_editor(cx);
                     this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
                 }
                 MultiWorkspaceEvent::WorkspaceAdded(workspace) => {
                     this.subscribe_to_workspace(workspace, window, cx);
                     this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
                 }
                 MultiWorkspaceEvent::WorkspaceRemoved(_) => {
                     this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
                 }
             },
         )
@@ -564,6 +564,7 @@ impl Sidebar {
                 this.subscribe_to_workspace(workspace, window, cx);
             }
             this.update_entries(cx);
+            this.reconcile_groups(window, cx);
         });
 
         Self {
@@ -589,6 +590,7 @@ impl Sidebar {
             project_header_menu_ix: None,
             _subscriptions: Vec::new(),
             _draft_observation: None,
+            reconciling: false,
         }
     }
 
@@ -612,11 +614,12 @@ impl Sidebar {
         cx.subscribe_in(
             &project,
             window,
-            |this, _project, event, _window, cx| match event {
+            |this, _project, event, window, cx| match event {
                 ProjectEvent::WorktreeAdded(_)
                 | ProjectEvent::WorktreeRemoved(_)
                 | ProjectEvent::WorktreeOrderChanged => {
                     this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
                 }
                 _ => {}
             },
@@ -645,10 +648,12 @@ impl Sidebar {
         cx.subscribe_in(
             workspace,
             window,
-            |this, _workspace, event: &workspace::Event, _window, cx| {
+            |this, _workspace, event: &workspace::Event, window, cx| {
                 if let workspace::Event::PanelAdded(view) = event {
                     if let Ok(agent_panel) = view.clone().downcast::<AgentPanel>() {
-                        this.subscribe_to_agent_panel(&agent_panel, _window, cx);
+                        this.subscribe_to_agent_panel(&agent_panel, window, cx);
+                        this.update_entries(cx);
+                        this.reconcile_groups(window, cx);
                     }
                 }
             },
@@ -672,17 +677,20 @@ impl Sidebar {
         cx.subscribe_in(
             agent_panel,
             window,
-            |this, _agent_panel, event: &AgentPanelEvent, _window, cx| match event {
+            |this, _agent_panel, event: &AgentPanelEvent, window, cx| match event {
                 AgentPanelEvent::ActiveViewChanged => {
                     this.observe_draft_editor(cx);
                     this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
                 }
                 AgentPanelEvent::ThreadFocused | AgentPanelEvent::RetainedThreadChanged => {
                     this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
                 }
                 AgentPanelEvent::MessageSentOrQueued { thread_id } => {
                     this.record_thread_message_sent(thread_id);
                     this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
                 }
             },
         )
@@ -939,6 +947,7 @@ impl Sidebar {
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut project_header_indices: Vec<usize> = Vec::new();
 
+
         let has_open_projects = workspaces
             .iter()
             .any(|ws| !workspace_path_list(ws, cx).paths().is_empty());
@@ -995,9 +1004,9 @@ impl Sidebar {
             let mut threads: Vec<ThreadEntry> = Vec::new();
             let mut has_running_threads = false;
             let mut waiting_thread_count: usize = 0;
+            let mut seen_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
 
             if should_load_threads {
-                let mut seen_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
                 let thread_store = ThreadMetadataStore::global(cx);
 
                 // Build a lookup from workspace root paths to their workspace
@@ -1036,6 +1045,7 @@ impl Sidebar {
                             is_live: false,
                             is_background: false,
                             is_title_generating: false,
+                            is_draft: false,
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
@@ -1147,6 +1157,15 @@ impl Sidebar {
 
                     if is_active_thread && !thread.is_background {
                         notified_threads.remove(&thread.metadata.thread_id);
+                    }
+
+                    if thread.is_draft {
+                        thread.metadata.title = match &thread.workspace {
+                            ThreadEntryWorkspace::Open(workspace) => self
+                                .read_draft_text(thread.metadata.thread_id, workspace, cx)
+                                .unwrap_or_else(|| EMPTY_DRAFT_TITLE.into()),
+                            ThreadEntryWorkspace::Closed { .. } => EMPTY_DRAFT_TITLE.into(),
+                        };
                     }
                 }
 
@@ -1264,43 +1283,67 @@ impl Sidebar {
                     continue;
                 }
 
-                // Emit DraftThread entries by reading draft IDs from
-                // each workspace's AgentPanel in this group.
+                // Mark threads that are drafts and add draft Thread
+                // entries for panel drafts not yet in the metadata store.
                 {
-                    let mut group_draft_ids: Vec<(ThreadId, Entity<Workspace>)> = Vec::new();
+                    let mut draft_ids_by_workspace: Vec<(ThreadId, Entity<Workspace>)> =
+                        Vec::new();
                     for ws in group_workspaces {
                         if let Some(panel) = ws.read(cx).panel::<AgentPanel>(cx) {
-                            let ids = panel.read(cx).draft_thread_ids(cx);
-
-                            for draft_id in ids {
-                                group_draft_ids.push((draft_id, ws.clone()));
+                            for draft_id in panel.read(cx).draft_thread_ids(cx) {
+                                draft_ids_by_workspace.push((draft_id, ws.clone()));
                             }
                         }
                     }
 
-                    // For empty groups with no drafts, emit a
-                    // placeholder DraftThread.
-                    if !has_threads && group_draft_ids.is_empty() {
-                        entries.push(ListEntry::DraftThread {
-                            draft_id: None,
-                            key: group_key.clone(),
-                            workspace: group_workspaces.first().cloned(),
-                            worktrees: Vec::new(),
-                        });
-                    } else {
-                        for (draft_id, ws) in &group_draft_ids {
-                            let ws_worktree_paths = ThreadWorktreePaths::from_project(
-                                ws.read(cx).project().read(cx),
-                                cx,
-                            );
-                            let worktrees = worktree_info_from_thread_paths(&ws_worktree_paths);
-                            entries.push(ListEntry::DraftThread {
-                                draft_id: Some(*draft_id),
-                                key: group_key.clone(),
-                                workspace: Some(ws.clone()),
-                                worktrees,
-                            });
+                    let draft_id_set: HashSet<ThreadId> = draft_ids_by_workspace
+                        .iter()
+                        .map(|(id, _)| *id)
+                        .collect();
+
+                    // Mark existing threads that are drafts.
+                    for thread in &mut threads {
+                        if draft_id_set.contains(&thread.metadata.thread_id) {
+                            thread.is_draft = true;
                         }
+                    }
+
+                    // Add draft Thread entries for panel drafts not
+                    // already present from the metadata store.
+                    for (draft_id, ws) in &draft_ids_by_workspace {
+                        if seen_thread_ids.contains(draft_id) {
+                            continue;
+                        }
+                        seen_thread_ids.insert(*draft_id);
+                        let ws_worktree_paths = ThreadWorktreePaths::from_project(
+                            ws.read(cx).project().read(cx),
+                            cx,
+                        );
+                        let worktrees = worktree_info_from_thread_paths(&ws_worktree_paths);
+                        threads.push(ThreadEntry {
+                            metadata: ThreadMetadata {
+                                thread_id: *draft_id,
+                                session_id: None,
+                                agent_id: agent::ZED_AGENT_ID.clone(),
+                                title: EMPTY_DRAFT_TITLE.into(),
+                                updated_at: chrono::Utc::now(),
+                                created_at: Some(chrono::Utc::now()),
+                                worktree_paths: ws_worktree_paths,
+                                archived: false,
+                                remote_connection: None,
+                            },
+                            icon: IconName::Pencil,
+                            icon_from_external_svg: None,
+                            status: AgentThreadStatus::default(),
+                            workspace: ThreadEntryWorkspace::Open(ws.clone()),
+                            is_live: false,
+                            is_background: false,
+                            is_title_generating: false,
+                            is_draft: true,
+                            highlight_positions: Vec::new(),
+                            worktrees,
+                            diff_stats: DiffStats::default(),
+                        });
                     }
                 }
 
@@ -1369,6 +1412,76 @@ impl Sidebar {
             project_header_indices,
             has_open_projects,
         };
+    }
+
+    /// Gives each workspace's sidebar delegate a chance to reconcile its
+    /// project group (e.g. create a draft when the group is empty).
+    ///
+    /// Called at the top of `render` so we have `Window` + `Context`
+    /// available for panel mutations.
+    fn reconcile_groups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.reconciling {
+            return;
+        }
+        self.reconciling = true;
+
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            self.reconciling = false;
+            return;
+        };
+
+        let empty_group_keys: Vec<ProjectGroupKey> = self
+            .contents
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                ListEntry::ProjectHeader {
+                    key,
+                    has_threads: false,
+                    ..
+                } => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+
+        if empty_group_keys.is_empty() {
+            self.reconciling = false;
+            return;
+        }
+
+        let mut did_reconcile = false;
+
+        for key in &empty_group_keys {
+            let workspace = {
+                let mw = multi_workspace.read(cx);
+                let active = mw.workspace().clone();
+                if active.read(cx).project_group_key(cx) == *key {
+                    Some(active)
+                } else {
+                    mw.workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
+                }
+            };
+
+            let Some(workspace) = workspace else {
+                continue;
+            };
+
+            let Some(delegate) = workspace.read(cx).sidebar_delegate() else {
+                continue;
+            };
+
+            let changed = workspace.update(cx, |workspace, cx| {
+                delegate.reconcile_group(workspace, key, window, cx)
+            });
+
+            did_reconcile |= changed;
+        }
+
+        if did_reconcile {
+            self.update_entries(cx);
+        }
+
+        self.reconciling = false;
     }
 
     /// Rebuilds the sidebar's visible entries from already-cached state.
@@ -1460,36 +1573,6 @@ impl Sidebar {
                 key,
                 is_fully_expanded,
             } => self.render_view_more(ix, key, *is_fully_expanded, is_selected, cx),
-            ListEntry::DraftThread {
-                draft_id,
-                key,
-                workspace,
-                worktrees,
-            } => {
-                let group_has_threads = self
-                    .contents
-                    .entries
-                    .iter()
-                    .any(|e| matches!(e, ListEntry::ProjectHeader { key: hk, has_threads: true, .. } if hk == key));
-                // Count drafts in the AgentPanel for this group's workspaces.
-                let sibling_draft_count = workspace
-                    .as_ref()
-                    .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-                    .map(|p| p.read(cx).draft_thread_ids(cx).len())
-                    .unwrap_or(0);
-                let can_dismiss = group_has_threads || sibling_draft_count > 1;
-                self.render_draft_thread(
-                    ix,
-                    *draft_id,
-                    key,
-                    workspace.as_ref(),
-                    is_active,
-                    worktrees,
-                    is_selected,
-                    can_dismiss,
-                    cx,
-                )
-            }
         };
 
         if is_group_header_after_first {
@@ -2175,24 +2258,34 @@ impl Sidebar {
             }
             ListEntry::Thread(thread) => {
                 let metadata = thread.metadata.clone();
-                match &thread.workspace {
-                    ThreadEntryWorkspace::Open(workspace) => {
-                        let workspace = workspace.clone();
-                        self.activate_thread(metadata, &workspace, false, window, cx);
+                if thread.is_draft {
+                    match &thread.workspace {
+                        ThreadEntryWorkspace::Open(workspace) => {
+                            let workspace = workspace.clone();
+                            self.activate_draft(metadata.thread_id, &workspace, window, cx);
+                        }
+                        _ => {}
                     }
-                    ThreadEntryWorkspace::Closed {
-                        folder_paths,
-                        project_group_key,
-                    } => {
-                        let folder_paths = folder_paths.clone();
-                        let project_group_key = project_group_key.clone();
-                        self.open_workspace_and_activate_thread(
-                            metadata,
+                } else {
+                    match &thread.workspace {
+                        ThreadEntryWorkspace::Open(workspace) => {
+                            let workspace = workspace.clone();
+                            self.activate_thread(metadata, &workspace, false, window, cx);
+                        }
+                        ThreadEntryWorkspace::Closed {
                             folder_paths,
-                            &project_group_key,
-                            window,
-                            cx,
-                        );
+                            project_group_key,
+                        } => {
+                            let folder_paths = folder_paths.clone();
+                            let project_group_key = project_group_key.clone();
+                            self.open_workspace_and_activate_thread(
+                                metadata,
+                                folder_paths,
+                                &project_group_key,
+                                window,
+                                cx,
+                            );
+                        }
                     }
                 }
             }
@@ -2208,28 +2301,7 @@ impl Sidebar {
                     self.expand_thread_group(&key, cx);
                 }
             }
-            ListEntry::DraftThread {
-                draft_id,
-                key,
-                workspace,
-                ..
-            } => {
-                let draft_id = *draft_id;
-                let key = key.clone();
-                let workspace = workspace.clone();
-                if let Some(draft_id) = draft_id {
-                    if let Some(workspace) = workspace {
-                        self.activate_draft(draft_id, &workspace, window, cx);
-                    }
-                } else if let Some(workspace) = workspace {
-                    self.activate_workspace(&workspace, window, cx);
-                    workspace.update(cx, |ws, cx| {
-                        ws.focus_panel::<AgentPanel>(window, cx);
-                    });
-                } else {
-                    self.open_workspace_for_group(&key, window, cx);
-                }
-            }
+
         }
     }
 
@@ -2676,7 +2748,7 @@ impl Sidebar {
                 }
             }
             Some(
-                ListEntry::Thread(_) | ListEntry::ViewMore { .. } | ListEntry::DraftThread { .. },
+                ListEntry::Thread(_) | ListEntry::ViewMore { .. },
             ) => {
                 for i in (0..ix).rev() {
                     if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(i)
@@ -2704,7 +2776,7 @@ impl Sidebar {
         let header_ix = match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { .. }) => Some(ix),
             Some(
-                ListEntry::Thread(_) | ListEntry::ViewMore { .. } | ListEntry::DraftThread { .. },
+                ListEntry::Thread(_) | ListEntry::ViewMore { .. },
             ) => (0..ix).rev().find(|&i| {
                 matches!(
                     self.contents.entries.get(i),
@@ -3198,6 +3270,13 @@ impl Sidebar {
             return;
         };
         match self.contents.entries.get(ix) {
+            Some(ListEntry::Thread(thread)) if thread.is_draft => {
+                let draft_id = thread.metadata.thread_id;
+                if let ThreadEntryWorkspace::Open(workspace) = &thread.workspace {
+                    let workspace = workspace.clone();
+                    self.remove_draft(draft_id, &workspace, window, cx);
+                }
+            }
             Some(ListEntry::Thread(thread)) => {
                 match thread.status {
                     AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation => {
@@ -3208,15 +3287,6 @@ impl Sidebar {
                 if let Some(session_id) = thread.metadata.session_id.clone() {
                     self.archive_thread(&session_id, window, cx);
                 }
-            }
-            Some(ListEntry::DraftThread {
-                draft_id: Some(draft_id),
-                workspace: Some(workspace),
-                ..
-            }) => {
-                let draft_id = *draft_id;
-                let workspace = workspace.clone();
-                self.remove_draft(draft_id, &workspace, window, cx);
             }
             _ => {}
         }

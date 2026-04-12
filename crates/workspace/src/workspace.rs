@@ -215,6 +215,16 @@ pub trait DebuggerProvider {
     fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus>;
 }
 
+pub trait WorkspaceSidebarDelegate: Send + Sync {
+    fn reconcile_group(
+        &self,
+        workspace: &mut Workspace,
+        group_key: &ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> bool;
+}
+
 /// Opens a file or directory.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
@@ -1371,6 +1381,7 @@ pub struct Workspace {
     _panels_task: Option<Task<Result<()>>>,
     sidebar_focus_handle: Option<FocusHandle>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
+    sidebar_delegate: Option<Arc<dyn WorkspaceSidebarDelegate>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1799,6 +1810,7 @@ impl Workspace {
             removing: false,
             sidebar_focus_handle: None,
             multi_workspace,
+            sidebar_delegate: None,
             open_in_dev_container: false,
             _dev_container_task: None,
         }
@@ -2457,6 +2469,14 @@ impl Workspace {
             status_bar.set_multi_workspace(multi_workspace.clone(), cx);
         });
         self.multi_workspace = Some(multi_workspace);
+    }
+
+    pub fn set_sidebar_delegate(&mut self, delegate: Arc<dyn WorkspaceSidebarDelegate>) {
+        self.sidebar_delegate = Some(delegate);
+    }
+
+    pub fn sidebar_delegate(&self) -> Option<Arc<dyn WorkspaceSidebarDelegate>> {
+        self.sidebar_delegate.clone()
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {

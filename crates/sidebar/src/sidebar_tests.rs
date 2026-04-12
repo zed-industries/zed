@@ -106,6 +106,7 @@ fn assert_remote_project_integration_sidebar_state(
             {
                 saw_remote_thread = true;
             }
+            ListEntry::Thread(thread) if thread.is_draft => {}
             ListEntry::Thread(thread) => {
                 let title = thread.metadata.title.as_ref();
                 panic!(
@@ -117,7 +118,6 @@ fn assert_remote_project_integration_sidebar_state(
                     "unexpected `View More` entry while simulating remote project integration flicker"
                 );
             }
-            ListEntry::DraftThread { .. } => {}
         }
     }
 
@@ -370,23 +370,33 @@ fn visible_entries_as_strings(
                     }
                     ListEntry::Thread(thread) => {
                         let title = thread.metadata.title.as_ref();
-                        let live = if thread.is_live { " *" } else { "" };
-                        let status_str = match thread.status {
-                            AgentThreadStatus::Running => " (running)",
-                            AgentThreadStatus::Error => " (error)",
-                            AgentThreadStatus::WaitingForConfirmation => " (waiting)",
-                            _ => "",
-                        };
-                        let notified = if sidebar
-                            .contents
-                            .is_thread_notified(&thread.metadata.thread_id)
-                        {
-                            " (!)"
-                        } else {
-                            ""
-                        };
                         let worktree = format_linked_worktree_chips(&thread.worktrees);
-                        format!("  {title}{worktree}{live}{status_str}{notified}{selected}")
+
+                        if thread.is_draft {
+                            let is_active = sidebar
+                                .active_entry
+                                .as_ref()
+                                .is_some_and(|e| e.matches_entry(entry));
+                            let active_marker = if is_active { " *" } else { "" };
+                            format!("  [~ Draft{worktree}]{active_marker}{selected}")
+                        } else {
+                            let live = if thread.is_live { " *" } else { "" };
+                            let status_str = match thread.status {
+                                AgentThreadStatus::Running => " (running)",
+                                AgentThreadStatus::Error => " (error)",
+                                AgentThreadStatus::WaitingForConfirmation => " (waiting)",
+                                _ => "",
+                            };
+                            let notified = if sidebar
+                                .contents
+                                .is_thread_notified(&thread.metadata.thread_id)
+                            {
+                                " (!)"
+                            } else {
+                                ""
+                            };
+                            format!("  {title}{worktree}{live}{status_str}{notified}{selected}")
+                        }
                     }
                     ListEntry::ViewMore {
                         is_fully_expanded, ..
@@ -396,15 +406,6 @@ fn visible_entries_as_strings(
                         } else {
                             format!("  + View More{}", selected)
                         }
-                    }
-                    ListEntry::DraftThread { worktrees, .. } => {
-                        let worktree = format_linked_worktree_chips(worktrees);
-                        let is_active = sidebar
-                            .active_entry
-                            .as_ref()
-                            .is_some_and(|e| e.matches_entry(entry));
-                        let active_marker = if is_active { " *" } else { "" };
-                        format!("  [~ Draft{}]{}{}", worktree, active_marker, selected)
                     }
                 }
             })
@@ -565,13 +566,13 @@ async fn test_entities_released_on_window_close(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_single_workspace_no_threads(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let (_sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
+        visible_entries_as_strings(&_sidebar, cx),
         vec!["v [my-project]", "  [~ Draft]"]
     );
 }
@@ -839,7 +840,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     sidebar.update_in(cx, |s, _window, _cx| {
         s.collapsed_groups
             .insert(project::ProjectGroupKey::new(None, collapsed_path.clone()));
-        s.contents.notified_threads.insert(ThreadId::new());
+        let notified_thread_id = ThreadId::new();
+        s.contents.notified_threads.insert(notified_thread_id);
         s.contents.entries = vec![
             // Expanded project header
             ListEntry::ProjectHeader {
@@ -870,6 +872,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: false,
                 is_background: false,
                 is_title_generating: false,
+                is_draft: false,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -894,6 +897,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: false,
                 is_title_generating: false,
+                is_draft: false,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -918,6 +922,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: false,
                 is_title_generating: false,
+                is_draft: false,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -943,6 +948,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: false,
                 is_background: false,
                 is_title_generating: false,
+                is_draft: false,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -951,7 +957,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             // remote_connection: None,
             ListEntry::Thread(ThreadEntry {
                 metadata: ThreadMetadata {
-                    thread_id: ThreadId::new(),
+                    thread_id: notified_thread_id,
                     session_id: Some(acp::SessionId::new(Arc::from("t-5"))),
                     agent_id: AgentId::new("zed-agent"),
                     worktree_paths: ThreadWorktreePaths::default(),
@@ -968,6 +974,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: true,
                 is_title_generating: false,
+                is_draft: false,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1330,10 +1337,10 @@ async fn test_keyboard_collapse_from_child_selects_parent(cx: &mut TestAppContex
 
 #[gpui::test]
 async fn test_keyboard_navigation_on_empty_list(cx: &mut TestAppContext) {
-    let project = init_test_project("/empty-project", cx).await;
+    let project = init_test_project_with_agent_panel("/empty-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
     // An empty project has the header and an auto-created draft.
     assert_eq!(
@@ -4680,6 +4687,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                 {
                     saw_expected_thread = true;
                 }
+                ListEntry::Thread(thread) if thread.is_draft => {}
                 ListEntry::Thread(thread) => {
                     let title = thread.metadata.title.as_ref();
                     let worktree_name = thread
@@ -4694,7 +4702,6 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                 ListEntry::ViewMore { .. } => {
                     panic!("unexpected `View More` entry while opening linked worktree thread");
                 }
-                ListEntry::DraftThread { .. } => {}
             }
         }
 
@@ -5675,17 +5682,26 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
         .update(cx, |p, cx| p.git_scans_complete(cx))
         .await;
 
+    // Save a thread under the linked worktree path BEFORE setting up
+    // the sidebar and panels, so that reconciliation sees the [project]
+    // group as non-empty and doesn't create a spurious draft there.
+    let wt_session_id = acp::SessionId::new(Arc::from("wt-thread"));
+    save_thread_metadata(
+        wt_session_id,
+        "Worktree Thread".into(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &worktree_project,
+        cx,
+    );
+
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_only.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-    multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.test_add_workspace(multi_root.clone(), window, cx);
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let multi_root_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(multi_root.clone(), window, cx)
     });
-
-    // Save a thread under the linked worktree path.
-    save_named_thread_metadata("wt-thread", "Worktree Thread", &worktree_project, cx).await;
-
-    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    add_agent_panel(&multi_root_workspace, cx);
     cx.run_until_parked();
 
     // The thread should appear only under [project] (the dedicated
@@ -6868,22 +6884,20 @@ async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestA
         "linked worktree workspace should be reachable, but reachable are: {reachable:?}"
     );
 
-    // Find the DraftThread entry whose workspace is the linked worktree.
+    // Find the draft Thread entry whose workspace is the linked worktree.
     let new_thread_ix = sidebar.read_with(cx, |sidebar, _| {
         sidebar
             .contents
             .entries
             .iter()
-            .position(|entry| {
-                matches!(
-                    entry,
-                    ListEntry::DraftThread {
-                        workspace: Some(ws),
-                        ..
-                    } if ws.entity_id() == worktree_ws_id
-                )
+            .position(|entry| match entry {
+                ListEntry::Thread(thread) if thread.is_draft => matches!(
+                    &thread.workspace,
+                    ThreadEntryWorkspace::Open(ws) if ws.entity_id() == worktree_ws_id
+                ),
+                _ => false,
             })
-            .expect("expected a DraftThread entry for the linked worktree")
+            .expect("expected a draft thread entry for the linked worktree")
     });
 
     assert_eq!(
@@ -6904,20 +6918,17 @@ async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestA
     );
 
     let has_draft_for_worktree = sidebar.read_with(cx, |sidebar, _| {
-        sidebar.contents.entries.iter().any(|entry| {
-            matches!(
-                entry,
-                ListEntry::DraftThread {
-                    draft_id: Some(_),
-                    workspace: Some(ws),
-                    ..
-                } if ws.entity_id() == worktree_ws_id
-            )
+        sidebar.contents.entries.iter().any(|entry| match entry {
+            ListEntry::Thread(thread) if thread.is_draft => matches!(
+                &thread.workspace,
+                ThreadEntryWorkspace::Open(ws) if ws.entity_id() == worktree_ws_id
+            ),
+            _ => false,
         })
     });
     assert!(
         !has_draft_for_worktree,
-        "DraftThread entry for the linked worktree should be removed after dismiss"
+        "draft thread entry for the linked worktree should be removed after dismiss"
     );
 }
 

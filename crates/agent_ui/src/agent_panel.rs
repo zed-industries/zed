@@ -82,7 +82,7 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
-    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
+    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId, WorkspaceSidebarDelegate,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::{
@@ -95,6 +95,36 @@ const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
+
+#[derive(Default)]
+struct AgentPanelSidebarDelegate;
+
+impl WorkspaceSidebarDelegate for AgentPanelSidebarDelegate {
+    fn reconcile_group(
+        &self,
+        workspace: &mut Workspace,
+        group_key: &project::ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> bool {
+        if workspace.project_group_key(cx) != *group_key {
+            return false;
+        }
+
+        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+            return false;
+        };
+
+        panel.update(cx, |panel, cx| {
+            if panel.draft_thread_ids(cx).is_empty() {
+                panel.create_thread(window, cx);
+                true
+            } else {
+                false
+            }
+        })
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct LastUsedAgent {
@@ -172,6 +202,7 @@ struct SerializedActiveThread {
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+            workspace.set_sidebar_delegate(Arc::new(AgentPanelSidebarDelegate));
             workspace
                 .register_action(|workspace, action: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -1411,9 +1442,11 @@ impl AgentPanel {
 
     pub fn draft_thread_ids(&self, cx: &App) -> Vec<ThreadId> {
         let is_draft = |cv: &Entity<ConversationView>| -> bool {
-            cv.read(cx)
-                .root_thread(cx)
-                .is_some_and(|tv| tv.read(cx).is_draft(cx))
+            let cv = cv.read(cx);
+            match cv.root_thread(cx) {
+                Some(tv) => tv.read(cx).is_draft(cx),
+                None => cv.is_new_draft(),
+            }
         };
 
         let mut ids: Vec<ThreadId> = self
@@ -5048,6 +5081,15 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let empty_draft_ids: Vec<ThreadId> = self
+            .draft_thread_ids(cx)
+            .into_iter()
+            .filter(|id| self.editor_text(*id, cx).is_none())
+            .collect();
+        for id in empty_draft_ids {
+            self.remove_thread(id, cx);
+        }
+
         let ext_agent = Agent::Custom {
             id: server.agent_id(),
         };
