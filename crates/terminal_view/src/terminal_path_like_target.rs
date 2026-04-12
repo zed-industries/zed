@@ -11,7 +11,7 @@ use util::{
     paths::{PathStyle, PathWithPosition, normalize_lexically},
     rel_path::RelPath,
 };
-use workspace::{OpenOptions, OpenVisible, Workspace};
+use workspace::{ItemHandle, OpenOptions, OpenVisible, Workspace};
 
 /// The way we found the open target. This is important to have for test assertions.
 /// For example, remote projects never look in the file system.
@@ -439,6 +439,21 @@ pub(super) fn open_path_like_target(
     }
 }
 
+fn find_item_in_panes(
+    workspace: &Workspace,
+    open_target: &OpenTarget,
+    cx: &App,
+) -> Option<Box<dyn ItemHandle>> {
+    if let OpenTarget::Worktree(_, entry, ..) = open_target {
+        for pane in workspace.panes() {
+            if let Some(item) = pane.read(cx).item_for_entry(entry.id, cx) {
+                return Some(item);
+            }
+        }
+    }
+    None
+}
+
 fn possibly_open_target(
     workspace: &WeakEntity<Workspace>,
     terminal_view: &mut TerminalView,
@@ -469,6 +484,40 @@ fn possibly_open_target(
         };
 
         let path_to_open = open_target.path();
+
+        if open_target.is_file() {
+            let existing_item = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let item = find_item_in_panes(workspace, &open_target, cx)?;
+                    workspace.activate_item(item.as_ref(), true, true, window, cx);
+                    Some(item)
+                })
+                .ok()
+                .flatten();
+
+            if let Some(existing_item) = existing_item {
+                if let Some(row) = path_to_open.row {
+                    let col = path_to_open.column.unwrap_or(0);
+                    if let Some(active_editor) = existing_item.downcast::<Editor>() {
+                        active_editor
+                            .downgrade()
+                            .update_in(cx, |editor, window, cx| {
+                                editor.go_to_singleton_buffer_point(
+                                    language::Point::new(
+                                        row.saturating_sub(1),
+                                        col.saturating_sub(1),
+                                    ),
+                                    window,
+                                    cx,
+                                )
+                            })
+                            .log_err();
+                    }
+                }
+                return Ok(Some(open_target));
+            }
+        }
+
         let opened_items = workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.open_paths(
