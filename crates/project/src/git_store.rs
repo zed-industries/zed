@@ -33,7 +33,7 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, CreateWorktreeTarget,
-        DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint, GraphCommitData,
+        DiffType, FetchOptions, GitRef, GitRepository, GitRepositoryCheckpoint, GraphCommitData,
         InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
         RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
     },
@@ -295,7 +295,7 @@ pub struct RepositorySnapshot {
     pub remote_upstream_url: Option<String>,
     pub stash_entries: GitStash,
     pub linked_worktrees: Arc<[GitWorktree]>,
-    pub refs: Arc<[SharedString]>,
+    pub refs: Arc<[GitRef]>,
 }
 
 type JobId = u64;
@@ -7559,7 +7559,7 @@ async fn compute_snapshot(
             remote_origin_url,
             remote_upstream_url,
             linked_worktrees,
-            refs,
+            refs: refs.into(),
             scan_id: prev_snapshot.scan_id + 1,
             ..prev_snapshot
         };

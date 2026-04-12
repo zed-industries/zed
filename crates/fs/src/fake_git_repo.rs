@@ -7,7 +7,7 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
+        CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRef, GitRepository,
         GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
         RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
@@ -466,12 +466,17 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn refs(&self) -> BoxFuture<'_, Result<Arc<[gpui::SharedString]>>> {
+    fn refs(&self) -> BoxFuture<'_, Result<Vec<GitRef>>> {
         self.with_state_async(false, |state| {
-            let mut refs: Vec<gpui::SharedString> =
-                state.refs.keys().map(|r| r.clone().into()).collect();
-            refs.sort();
-            Ok(refs.into())
+            let mut refs: Vec<GitRef> = state
+                .refs
+                .keys()
+                .map(|r| GitRef {
+                    name: r.clone().into(),
+                })
+                .collect();
+            refs.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(refs)
         })
     }
 
