@@ -890,7 +890,11 @@ impl VsCodeSettings {
             bell: self
                 .read_value("accessibility.signals.terminalBell")
                 .and_then(|v| Some(v.get("sound")?.as_str()? == "on"))
-                .or_else(|| self.read_bool("terminal.integrated.enableBell"))
+                .or_else(|| {
+                    // Older deprecated setting, might as well still support it:
+                    self.read_value("terminal.integrated.enableBell")
+                        .map(|v| v.as_bool() == Some(true) || v.as_str() == Some("both"))
+                })
                 .map(|system| TerminalBell {
                     system: Some(system),
                 }),
