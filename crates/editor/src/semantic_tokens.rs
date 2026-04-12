@@ -1330,9 +1330,7 @@ mod tests {
                             move |_, _| async move {
                                 Ok(Some(lsp::SemanticTokensResult::Tokens(
                                     lsp::SemanticTokens {
-                                        data: vec![
-                                            0, 3, 4, 0, 0,
-                                        ],
+                                        data: vec![0, 3, 4, 0, 0],
                                         result_id: None,
                                     },
                                 )))
@@ -1515,8 +1513,7 @@ mod tests {
 
         // Wait for semantic tokens on the singleton.
         cx.executor().advance_clock(Duration::from_millis(200));
-        let task =
-            active_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+        let task = active_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         task.await;
         cx.run_until_parked();
 
