@@ -16079,6 +16079,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "db",
  "editor",
  "extension",
  "fs",

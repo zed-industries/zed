@@ -8135,6 +8135,8 @@ mod property_test {
     ) {
         agent_ui::test_support::init_test(cx);
         cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
+
             ThreadStore::init_global(cx);
             ThreadMetadataStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
