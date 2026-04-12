@@ -265,6 +265,12 @@ pub struct ProjectGroup {
     pub visible_thread_count: Option<usize>,
 }
 
+pub struct SerializedProjectGroupState {
+    pub key: ProjectGroupKey,
+    pub expanded: bool,
+    pub visible_thread_count: Option<usize>,
+}
+
 #[derive(Clone)]
 pub struct ProjectGroupState {
     pub key: ProjectGroupKey,
@@ -693,11 +699,16 @@ impl MultiWorkspace {
 
     pub fn restore_project_groups(
         &mut self,
-        groups: Vec<(ProjectGroupKey, bool, Option<usize>)>,
+        groups: Vec<SerializedProjectGroupState>,
         _cx: &mut Context<Self>,
     ) {
         let mut restored: Vec<ProjectGroupState> = Vec::new();
-        for (key, expanded, visible_thread_count) in groups {
+        for SerializedProjectGroupState {
+            key,
+            expanded,
+            visible_thread_count,
+        } in groups
+        {
             if key.path_list().paths().is_empty() {
                 continue;
             }
@@ -1510,6 +1521,45 @@ impl MultiWorkspace {
                 .unwrap();
             task.await
         })
+    }
+
+    /// Assigns random database IDs to all retained workspaces, flushes
+    /// workspace serialization (SQLite) and multi-workspace state (KVP),
+    /// and writes session bindings so the serialized data can be read
+    /// back by `last_session_workspace_locations` +
+    /// `read_serialized_multi_workspaces`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn flush_all_serialization(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Task<()>> {
+        for workspace in self.workspaces() {
+            workspace.update(cx, |ws, _cx| {
+                if ws.database_id().is_none() {
+                    ws.set_random_database_id();
+                }
+            });
+        }
+
+        let session_id = self.workspace().read(cx).session_id();
+        let window_id_u64 = window.window_handle().window_id().as_u64();
+
+        let mut tasks: Vec<Task<()>> = Vec::new();
+        for workspace in self.workspaces() {
+            tasks.push(workspace.update(cx, |ws, cx| ws.flush_serialization(window, cx)));
+            if let Some(db_id) = workspace.read(cx).database_id() {
+                let db = crate::persistence::WorkspaceDb::global(cx);
+                let session_id = session_id.clone();
+                tasks.push(cx.background_spawn(async move {
+                    db.set_session_binding(db_id, session_id, Some(window_id_u64))
+                        .await
+                        .log_err();
+                }));
+            }
+        }
+        self.serialize(cx);
+        tasks
     }
 
     /// Removes one or more workspaces from this multi-workspace.

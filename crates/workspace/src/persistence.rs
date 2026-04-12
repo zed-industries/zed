@@ -4775,38 +4775,8 @@ mod tests {
             mw.test_add_workspace(project_1_linked_worktree.clone(), window, cx)
         });
 
-        // Assign database IDs and set up session bindings so serialization
-        // writes real rows.
-        multi_workspace.update_in(cx, |mw, _, cx| {
-            for workspace in mw.workspaces() {
-                workspace.update(cx, |ws, _cx| {
-                    ws.set_random_database_id();
-                });
-            }
-        });
-
-        // Flush serialization for each individual workspace (writes to SQLite)
-        // and for the MultiWorkspace (writes to KVP).
-        let tasks = multi_workspace.update_in(cx, |mw, window, cx| {
-            let session_id = mw.workspace().read(cx).session_id();
-            let window_id_u64 = window.window_handle().window_id().as_u64();
-
-            let mut tasks: Vec<Task<()>> = Vec::new();
-            for workspace in mw.workspaces() {
-                tasks.push(workspace.update(cx, |ws, cx| ws.flush_serialization(window, cx)));
-                if let Some(db_id) = workspace.read(cx).database_id() {
-                    let db = WorkspaceDb::global(cx);
-                    let session_id = session_id.clone();
-                    tasks.push(cx.background_spawn(async move {
-                        db.set_session_binding(db_id, session_id, Some(window_id_u64))
-                            .await
-                            .log_err();
-                    }));
-                }
-            }
-            mw.serialize(cx);
-            tasks
-        });
+        let tasks =
+            multi_workspace.update_in(cx, |mw, window, cx| mw.flush_all_serialization(window, cx));
         cx.run_until_parked();
         for task in tasks {
             task.await;
