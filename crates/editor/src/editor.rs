@@ -2655,7 +2655,7 @@ impl Editor {
                             );
                         });
 
-                        editor.update_visible_data(true, window, cx);
+                        editor.update_data_on_scroll(true, window, cx);
                     }
                     editor.refresh_sticky_headers(&editor.snapshot(window, cx), cx);
                 }
@@ -20854,7 +20854,7 @@ impl Editor {
         cx.notify();
 
         self.scrollbar_marker_state.dirty = true;
-        self.update_visible_data(false, window, cx);
+        self.update_data_on_scroll(false, window, cx);
         self.folds_did_change(cx);
     }
 
@@ -26086,7 +26086,7 @@ impl Editor {
         self.enable_mouse_wheel_zoom = false;
     }
 
-    fn update_visible_data(
+    fn update_data_on_scroll(
         &mut self,
         debounce: bool,
         window: &mut Window,
@@ -26099,17 +26099,17 @@ impl Editor {
                     .await;
                 editor
                     .update_in(cx, |editor, window, cx| {
-                        editor.do_update_visible_data(window, cx);
+                        editor.do_update_data_on_scroll(window, cx);
                     })
                     .ok();
             });
         } else {
             self.post_scroll_update = Task::ready(());
-            self.do_update_visible_data(window, cx);
+            self.do_update_data_on_scroll(window, cx);
         }
     }
 
-    fn do_update_visible_data(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    fn do_update_data_on_scroll(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.register_visible_buffers(cx);
         self.colorize_brackets(false, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);

@@ -680,7 +680,7 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            self.update_visible_data(false, window, cx);
+            self.update_data_on_scroll(false, window, cx);
         }
     }
 
