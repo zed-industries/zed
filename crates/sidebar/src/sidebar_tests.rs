@@ -5697,6 +5697,70 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_unarchive_only_shows_restored_thread(cx: &mut TestAppContext) {
+    // Full flow: create a thread, archive it (removing the workspace),
+    // then unarchive. Only the restored thread should appear — no
+    // leftover drafts or previously-serialized threads.
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    // Create a thread and send a message so it's a real thread.
+    let connection = acp_thread::StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Hello".into()),
+    )]);
+    agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
+    agent_ui::test_support::send_message(&panel, cx);
+    let session_id = agent_ui::test_support::active_session_id(&panel, cx);
+    cx.run_until_parked();
+
+    // Archive it.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&session_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Grab metadata for unarchive.
+    let thread_id = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .thread_id_for_session(&session_id)
+            .expect("thread should exist")
+    });
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .cloned()
+            .expect("metadata should exist")
+    });
+
+    // Unarchive it — the draft should be replaced by the restored thread.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Only the unarchived thread should be visible — no drafts, no other threads.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    let thread_count = entries
+        .iter()
+        .filter(|e| !e.starts_with("v ") && !e.starts_with("> "))
+        .count();
+    assert_eq!(
+        thread_count, 1,
+        "expected exactly 1 thread entry (the restored one), got entries: {entries:?}"
+    );
+    assert!(
+        !entries.iter().any(|e| e.contains("Draft")),
+        "expected no drafts after restoring, got entries: {entries:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
     cx: &mut TestAppContext,
 ) {
@@ -5794,6 +5858,145 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
 }
 
 #[gpui::test]
+async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread(
+    cx: &mut TestAppContext,
+) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    let session_id = acp::SessionId::new(Arc::from("restore-into-new-workspace"));
+    let path_list_b = PathList::new(&[PathBuf::from("/project-b")]);
+    let original_thread_id = ThreadId::new();
+    cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save_manually(
+                ThreadMetadata {
+                    thread_id: original_thread_id,
+                    session_id: Some(session_id.clone()),
+                    agent_id: agent::ZED_AGENT_ID.clone(),
+                    title: Some("Unarchived Thread".into()),
+                    updated_at: Utc::now(),
+                    created_at: None,
+                    worktree_paths: ThreadWorktreePaths::from_folder_paths(&path_list_b),
+                    archived: true,
+                    remote_connection: None,
+                },
+                cx,
+            )
+        });
+    });
+    cx.run_until_parked();
+
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(original_thread_id)
+            .cloned()
+            .expect("metadata should exist before unarchive")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+    cx.run_until_parked();
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        2,
+        "expected unarchive to open the target workspace"
+    );
+
+    let restored_workspace = multi_workspace.read_with(cx, |mw, cx| {
+        mw.workspaces()
+            .find(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)) == path_list_b)
+            .cloned()
+            .expect("expected restored workspace for unarchived thread")
+    });
+    let restored_panel = restored_workspace.read_with(cx, |workspace, cx| {
+        workspace
+            .panel::<AgentPanel>(cx)
+            .expect("expected unarchive to install an agent panel in the new workspace")
+    });
+
+    let restored_thread_id = restored_panel.read_with(cx, |panel, _| panel.active_thread_id());
+    assert_eq!(
+        restored_thread_id,
+        Some(original_thread_id),
+        "expected the new workspace's agent panel to target the restored archived thread id"
+    );
+
+    let session_entries = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .filter(|entry| entry.session_id.as_ref() == Some(&session_id))
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        session_entries.len(),
+        1,
+        "expected exactly one metadata row for restored session after opening a new workspace, got: {session_entries:?}"
+    );
+    assert_eq!(
+        session_entries[0].thread_id,
+        original_thread_id,
+        "expected restore into a new workspace to reuse the original thread id"
+    );
+    assert!(
+        !session_entries[0].archived,
+        "expected restored thread metadata to be unarchived, got: {:?}",
+        session_entries[0]
+    );
+
+    let mapped_thread_id = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .thread_id_for_session(&session_id)
+    });
+    assert_eq!(
+        mapped_thread_id,
+        Some(original_thread_id),
+        "expected session mapping to remain stable after opening the new workspace"
+    );
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    let real_thread_rows = entries
+        .iter()
+        .filter(|entry| !entry.starts_with("v ") && !entry.starts_with("> "))
+        .filter(|entry| !entry.contains("Draft"))
+        .count();
+    assert_eq!(
+        real_thread_rows, 1,
+        "expected exactly one visible real thread row after restore into a new workspace, got entries: {entries:?}"
+    );
+    assert!(
+        entries.iter().any(|entry| entry.contains("Unarchived Thread")),
+        "expected restored thread row to be visible, got entries: {entries:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppContext) {
     // When a workspace already exists with an empty draft (from
     // reconcile_groups) and a thread is unarchived into it, the draft
@@ -5866,6 +6069,104 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
     assert_eq!(
         draft_count, 0,
         "expected no drafts after unarchiving, got entries: {entries:?}"
+    );
+}
+
+#[gpui::test]
+async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(
+    cx: &mut TestAppContext,
+) {
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/my-project", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project = project::Project::test(fs.clone(), ["/my-project".as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    let connection = acp_thread::StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    agent_ui::test_support::open_thread_with_connection(&panel, connection, cx);
+    agent_ui::test_support::send_message(&panel, cx);
+    let session_id = agent_ui::test_support::active_session_id(&panel, cx);
+    cx.run_until_parked();
+
+    let original_thread_id = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .thread_id_for_session(&session_id)
+            .expect("thread should exist in store before archiving")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&session_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(original_thread_id)
+            .cloned()
+            .expect("metadata should exist after archiving")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+    cx.run_until_parked();
+
+    let session_entries = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .filter(|entry| entry.session_id.as_ref() == Some(&session_id))
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+
+    assert_eq!(
+        session_entries.len(),
+        1,
+        "expected exactly one metadata row for the restored session, got: {session_entries:?}"
+    );
+    assert_eq!(
+        session_entries[0].thread_id,
+        original_thread_id,
+        "expected unarchive to reuse the original thread id instead of creating a duplicate row"
+    );
+    assert!(
+        !session_entries[0].is_draft(),
+        "expected restored metadata to be a real thread, got: {:?}",
+        session_entries[0]
+    );
+
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    let real_thread_rows = entries
+        .iter()
+        .filter(|entry| !entry.starts_with("v ") && !entry.starts_with("> "))
+        .filter(|entry| !entry.contains("Draft"))
+        .count();
+    assert_eq!(
+        real_thread_rows, 1,
+        "expected exactly one visible real thread row after unarchive, got entries: {entries:?}"
+    );
+    assert!(
+        !entries.iter().any(|entry| entry.contains("Draft")),
+        "expected no draft rows after restoring, got entries: {entries:?}"
     );
 }
 
@@ -6299,6 +6600,195 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_creates_dr
             "active entry should be a draft on the main workspace",
         );
     });
+}
+
+#[gpui::test]
+async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_restored_real_thread(
+    cx: &mut TestAppContext,
+) {
+    // When an archived thread belongs to a linked worktree whose main repo is
+    // already open, unarchiving should reopen the linked workspace into the
+    // same project group and show only the restored real thread row.
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/wt-ochre-drift",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/ochre-drift",
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: std::path::PathBuf::from("/wt-ochre-drift"),
+            ref_name: Some("refs/heads/ochre-drift".into()),
+            sha: "aaa".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project =
+        project::Project::test(fs.clone(), ["/wt-ochre-drift".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let main_workspace =
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
+    let _main_panel = add_agent_panel(&main_workspace, cx);
+    cx.run_until_parked();
+
+    let entries_before = visible_entries_as_strings(&sidebar, cx);
+    assert!(
+        entries_before.iter().any(|entry| entry.contains("Draft")),
+        "expected main workspace to start with a fallback draft, got entries: {entries_before:?}"
+    );
+
+    let session_id = acp::SessionId::new(Arc::from("linked-worktree-unarchive"));
+    let original_thread_id = ThreadId::new();
+    let main_paths = PathList::new(&[PathBuf::from("/project")]);
+    let folder_paths = PathList::new(&[PathBuf::from("/wt-ochre-drift")]);
+
+    cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save_manually(
+                ThreadMetadata {
+                    thread_id: original_thread_id,
+                    session_id: Some(session_id.clone()),
+                    agent_id: agent::ZED_AGENT_ID.clone(),
+                    title: Some("Unarchived Linked Thread".into()),
+                    updated_at: Utc::now(),
+                    created_at: None,
+                    worktree_paths: ThreadWorktreePaths::from_path_lists(
+                        main_paths.clone(),
+                        folder_paths.clone(),
+                    )
+                    .expect("main and folder paths should be well-formed"),
+                    archived: true,
+                    remote_connection: None,
+                },
+                cx,
+            )
+        });
+    });
+    cx.run_until_parked();
+
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(original_thread_id)
+            .cloned()
+            .expect("archived linked-worktree metadata should exist before restore")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+
+    cx.run_until_parked();
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        2,
+        "expected unarchive to open the linked worktree workspace into the project group"
+    );
+
+    let session_entries = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .filter(|entry| entry.session_id.as_ref() == Some(&session_id))
+            .cloned()
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        session_entries.len(),
+        1,
+        "expected exactly one metadata row for restored linked worktree session, got: {session_entries:?}"
+    );
+    assert_eq!(
+        session_entries[0].thread_id,
+        original_thread_id,
+        "expected unarchive to reuse the original linked worktree thread id"
+    );
+    assert!(
+        !session_entries[0].archived,
+        "expected restored linked worktree metadata to be unarchived, got: {:?}",
+        session_entries[0]
+    );
+
+    let assert_no_extra_rows = |entries: &[String]| {
+        let real_thread_rows = entries
+            .iter()
+            .filter(|entry| !entry.starts_with("v ") && !entry.starts_with("> "))
+            .filter(|entry| !entry.contains("Draft"))
+            .count();
+        assert_eq!(
+            real_thread_rows, 1,
+            "expected exactly one visible real thread row after linked-worktree unarchive, got entries: {entries:?}"
+        );
+        assert!(
+            !entries.iter().any(|entry| entry.contains("Draft")),
+            "expected no draft rows after linked-worktree unarchive, got entries: {entries:?}"
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.contains(DEFAULT_THREAD_TITLE)),
+            "expected no default-titled real placeholder row after linked-worktree unarchive, got entries: {entries:?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.contains("Unarchived Linked Thread")),
+            "expected restored linked worktree thread row to be visible, got entries: {entries:?}"
+        );
+    };
+
+    let entries_after_restore = visible_entries_as_strings(&sidebar, cx);
+    assert_no_extra_rows(&entries_after_restore);
+
+    // The reported bug may only appear after an extra scheduling turn.
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    let entries_after_extra_turns = visible_entries_as_strings(&sidebar, cx);
+    assert_no_extra_rows(&entries_after_extra_turns);
 }
 
 #[gpui::test]
@@ -7180,62 +7670,31 @@ async fn test_startup_successful_restoration_no_spurious_draft(cx: &mut TestAppC
 
 #[gpui::test]
 async fn test_delete_last_draft_in_empty_group_shows_placeholder(cx: &mut TestAppContext) {
-    // Rule 8: Deleting the last draft in a threadless group should
+    // Deleting the last draft in a threadless group should
     // leave a placeholder draft entry (not an empty group).
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
-    // Reconciliation already creates one draft. Create one more so we have two.
+    // Reconciliation creates a draft for the empty group.
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.create_new_thread(&workspace, window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
-        vec!["v [my-project]", "  [~ Draft] *", "  [~ Draft]"]
-    );
-
-    // Delete the active (first) draft. The second should become active.
-    let active_thread_id = sidebar.read_with(cx, |_sidebar, cx| {
-        workspace
-            .read(cx)
-            .panel::<AgentPanel>(cx)
-            .unwrap()
-            .read(cx)
-            .active_thread_id()
-            .unwrap()
-    });
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.remove_draft(active_thread_id, &workspace, window, cx);
-    });
-    cx.run_until_parked();
-
-    // Should still have 1 draft (the remaining one), now active.
     let entries = visible_entries_as_strings(&sidebar, cx);
     let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
-    assert_eq!(draft_count, 1, "one draft should remain after deleting one");
+    assert_eq!(draft_count, 1, "should start with 1 draft from reconciliation");
 
-    // Delete the last remaining draft.
-    let last_thread_id = sidebar.read_with(cx, |_sidebar, cx| {
-        workspace
-            .read(cx)
-            .panel::<AgentPanel>(cx)
-            .unwrap()
-            .read(cx)
-            .active_thread_id()
-            .unwrap()
+    // Find and delete the draft.
+    let draft_thread_id = sidebar.read_with(cx, |_sidebar, cx| {
+        let panel = workspace.read(cx).panel::<AgentPanel>(cx).unwrap();
+        panel.read(cx).draft_thread_ids(cx).into_iter().next().unwrap()
     });
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.remove_draft(last_thread_id, &workspace, window, cx);
+        sidebar.remove_draft(draft_thread_id, &workspace, window, cx);
     });
     cx.run_until_parked();
 
     // The group has no threads and no tracked drafts, so a
-    // placeholder draft should appear.
+    // placeholder draft should appear via reconciliation.
     let entries = visible_entries_as_strings(&sidebar, cx);
     let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
     assert_eq!(
@@ -7349,28 +7808,26 @@ async fn test_project_header_click_restores_last_viewed(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-async fn test_plus_button_always_creates_new_draft(cx: &mut TestAppContext) {
-    // Rule 3: Clicking the + button on a group should always create
-    // a new draft, even starting from a placeholder (no tracked drafts).
+async fn test_plus_button_reuses_empty_draft(cx: &mut TestAppContext) {
+    // Clicking the + button when an empty draft already exists should
+    // focus the existing draft rather than creating a new one.
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
-    // Start: panel has no tracked drafts, sidebar shows a placeholder.
+    // Start: panel has 1 draft from set_active.
     let entries = visible_entries_as_strings(&sidebar, cx);
     let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
-    assert_eq!(draft_count, 1, "should start with 1 placeholder");
+    assert_eq!(draft_count, 1, "should start with 1 draft");
 
-    // Simulate what the + button handler does: create exactly one
-    // new draft per click.
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let simulate_plus_button =
         |sidebar: &mut Sidebar, window: &mut Window, cx: &mut Context<Sidebar>| {
             sidebar.create_new_thread(&workspace, window, cx);
         };
 
-    // First + click: placeholder -> 1 tracked draft.
+    // + click with empty draft: should reuse it, not create a new one.
     sidebar.update_in(cx, |sidebar, window, cx| {
         simulate_plus_button(sidebar, window, cx);
     });
@@ -7379,31 +7836,11 @@ async fn test_plus_button_always_creates_new_draft(cx: &mut TestAppContext) {
     let entries = visible_entries_as_strings(&sidebar, cx);
     let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
     assert_eq!(
-        draft_count, 2,
-        "first + click should add 1 draft to the reconciliation draft"
+        draft_count, 1,
+        "+ click should reuse the existing empty draft, not create a new one"
     );
 
-    // Second + click: 1 -> 2 drafts.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        simulate_plus_button(sidebar, window, cx);
-    });
-    cx.run_until_parked();
-
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
-    assert_eq!(draft_count, 3, "second + click should add 1 more draft");
-
-    // Third + click: 2 -> 3 drafts.
-    sidebar.update_in(cx, |sidebar, window, cx| {
-        simulate_plus_button(sidebar, window, cx);
-    });
-    cx.run_until_parked();
-
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
-    assert_eq!(draft_count, 4, "third + click should add 1 more draft");
-
-    // The most recently created draft should be active (first in list).
+    // The draft should be active.
     assert_eq!(entries[1], "  [~ Draft] *");
 }
 

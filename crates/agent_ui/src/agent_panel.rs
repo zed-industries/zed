@@ -957,17 +957,20 @@ impl AgentPanel {
                 .and_then(|p| p.last_active_thread.as_ref())
             {
                 let session_id = acp::SessionId::new(thread_info.session_id.clone());
-                let has_metadata = cx
+                let is_restorable = cx
                     .update(|_window, cx| {
                         let store = ThreadMetadataStore::global(cx);
-                        store.read(cx).entry_by_session(&session_id).is_some()
+                        store
+                            .read(cx)
+                            .entry_by_session(&session_id)
+                            .is_some_and(|entry| !entry.archived)
                     })
                     .unwrap_or(false);
-                if has_metadata {
+                if is_restorable {
                     Some(thread_info)
                 } else {
-                    log::warn!(
-                        "last active thread {} has no metadata, skipping restoration",
+                    log::info!(
+                        "last active thread {} is archived or missing, skipping restoration",
                         thread_info.session_id
                     );
                     None
@@ -2207,8 +2210,62 @@ impl AgentPanel {
             return;
         }
 
+        let is_empty_draft = match conversation_view.read(cx).root_thread(cx) {
+            Some(tv) => tv.read(cx).is_draft(cx),
+            None => conversation_view.read(cx).is_new_draft(),
+        };
+        if is_empty_draft {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.delete(thread_id, cx);
+            });
+            return;
+        }
+
         self.retained_threads.insert(thread_id, conversation_view);
         self.cleanup_retained_threads(cx);
+    }
+
+    fn remove_empty_draft(&mut self, cx: &mut Context<Self>) {
+        let draft_ids: Vec<ThreadId> = self
+            .retained_threads
+            .iter()
+            .filter(|(_, cv)| match cv.read(cx).root_thread(cx) {
+                Some(tv) => tv.read(cx).is_draft(cx),
+                None => cv.read(cx).is_new_draft(),
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in draft_ids {
+            self.retained_threads.remove(&id);
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.delete(id, cx);
+            });
+        }
+
+        // Also clean up orphaned draft metadata in the store for this
+        // panel's worktree paths (e.g. from a previously removed workspace).
+        let path_list = {
+            let project = self.project.read(cx);
+            project.project_group_key(cx).path_list().clone()
+        };
+        if let Some(store) = ThreadMetadataStore::try_global(cx) {
+            let orphaned: Vec<ThreadId> = {
+                let store = store.read(cx);
+                store
+                    .entries_for_path(&path_list)
+                    .chain(store.entries_for_main_worktree_path(&path_list))
+                    .filter(|entry| entry.is_draft())
+                    .map(|entry| entry.thread_id)
+                    .collect()
+            };
+            if !orphaned.is_empty() {
+                store.update(cx, |store, cx| {
+                    for id in orphaned {
+                        store.delete(id, cx);
+                    }
+                });
+            }
+        }
     }
 
     fn cleanup_retained_threads(&mut self, cx: &App) {
@@ -2795,6 +2852,7 @@ impl AgentPanel {
                     window,
                     cx,
                 );
+                self.remove_empty_draft(cx);
                 return;
             }
 
@@ -2825,6 +2883,7 @@ impl AgentPanel {
             window,
             cx,
         );
+        self.remove_empty_draft(cx);
     }
 
     pub(crate) fn create_agent_thread(
@@ -3809,19 +3868,7 @@ impl Panel for AgentPanel {
         });
     }
 
-    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if active
-            && matches!(self.base_view, BaseView::Uninitialized)
-            && self.pending_thread_loads == 0
-            && !matches!(
-                self.worktree_creation_status,
-                Some((_, WorktreeCreationStatus::Creating))
-            )
-        {
-            let id = self.create_thread(window, cx);
-            self.activate_retained_thread(id, false, window, cx);
-        }
-    }
+    fn set_active(&mut self, _active: bool, _window: &mut Window, _cx: &mut Context<Self>) {}
 
     fn remote_id() -> Option<proto::PanelId> {
         Some(proto::PanelId::AssistantPanel)
@@ -5232,7 +5279,9 @@ mod tests {
 
         // Create a MultiWorkspace window with two workspaces.
         let fs = FakeFs::new(cx.executor());
-        let project_a = Project::test(fs.clone(), [], cx).await;
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        let project_a = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
         let project_b = Project::test(fs, [], cx).await;
 
         let multi_workspace =
@@ -5751,7 +5800,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_draft_thread_retained_when_navigating_away(cx: &mut TestAppContext) {
+    async fn test_empty_draft_discarded_when_navigating_away(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
 
         let connection_a = StubAgentConnection::new();
@@ -5770,10 +5819,9 @@ mod tests {
         open_thread_with_connection(&panel, connection_b, &mut cx);
 
         panel.read_with(&cx, |panel, _cx| {
-            assert_eq!(
-                panel.retained_threads.len(),
-                1,
-                "draft thread should be retained when navigating away"
+            assert!(
+                panel.retained_threads.is_empty(),
+                "empty draft should be discarded, not retained"
             );
         });
     }
@@ -6479,38 +6527,13 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Simulate worktree creation in progress and reset to Uninitialized
+        // set_active no longer creates threads — verify it's a no-op.
         panel.update_in(cx, |panel, window, cx| {
-            panel.worktree_creation_status =
-                Some((EntityId::from(0u64), WorktreeCreationStatus::Creating));
             panel.base_view = BaseView::Uninitialized;
             Panel::set_active(panel, true, window, cx);
             assert!(
                 matches!(panel.base_view, BaseView::Uninitialized),
-                "set_active should not create a thread while worktree is being created"
-            );
-        });
-
-        // Clear the creation status and use open_external_thread_with_server
-        // (which bypasses new_agent_thread) to verify the panel can transition
-        // out of Uninitialized. We can't call set_active directly because
-        // new_agent_thread requires full agent server infrastructure.
-        panel.update_in(cx, |panel, window, cx| {
-            panel.worktree_creation_status = None;
-            panel.base_view = BaseView::Uninitialized;
-            panel.open_external_thread_with_server(
-                Rc::new(StubAgentServer::default_response()),
-                window,
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        panel.read_with(cx, |panel, _cx| {
-            assert!(
-                !matches!(panel.base_view, BaseView::Uninitialized),
-                "panel should transition out of Uninitialized once worktree creation is cleared"
+                "set_active should not create a thread"
             );
         });
     }

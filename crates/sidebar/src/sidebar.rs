@@ -2264,17 +2264,16 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut App,
     ) {
-        workspace.update(cx, |workspace, cx| {
-            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                panel.update(cx, |panel, _cx| panel.begin_loading_thread());
-            }
-            workspace.reveal_panel::<AgentPanel>(window, cx);
-        });
-
-        if let (Some(agent_panel), Some(session_id)) = (
-            workspace.read(cx).panel::<AgentPanel>(cx),
-            metadata.session_id.clone(),
-        ) {
+        let load_thread = |
+            agent_panel: Entity<AgentPanel>,
+            metadata: &ThreadMetadata,
+            focus: bool,
+            window: &mut Window,
+            cx: &mut App,
+        | {
+            let Some(session_id) = metadata.session_id.clone() else {
+                return;
+            };
             agent_panel.update(cx, |panel, cx| {
                 panel.load_agent_thread(
                     Agent::from(metadata.agent_id.clone()),
@@ -2285,6 +2284,78 @@ impl Sidebar {
                     window,
                     cx,
                 );
+            });
+        };
+
+        let mut existing_panel = None;
+        workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                panel.update(cx, |panel, _cx| panel.begin_loading_thread());
+                workspace.reveal_panel::<AgentPanel>(window, cx);
+                existing_panel = Some(panel);
+            }
+        });
+
+        if let Some(agent_panel) = existing_panel {
+            load_thread(agent_panel, metadata, focus, window, cx);
+            return;
+        }
+
+        let workspace = workspace.downgrade();
+        let metadata = metadata.clone();
+        let mut async_window_cx = window.to_async(cx);
+        cx.spawn(async move |_cx| {
+            let panel = AgentPanel::load(workspace.clone(), async_window_cx.clone()).await?;
+
+            workspace.update_in(&mut async_window_cx, |workspace, window, cx| {
+                let panel = workspace.panel::<AgentPanel>(cx).unwrap_or_else(|| {
+                    workspace.add_panel(panel.clone(), window, cx);
+                    panel.clone()
+                });
+                panel.update(cx, |panel, _cx| panel.begin_loading_thread());
+                workspace.reveal_panel::<AgentPanel>(window, cx);
+                load_thread(panel, &metadata, focus, window, cx);
+            })?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn clear_empty_group_drafts(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        let group_key = workspace.read(cx).project_group_key(cx);
+        let group_workspaces: Vec<_> = multi_workspace
+            .read(cx)
+            .workspaces()
+            .filter(|candidate| candidate.read(cx).project_group_key(cx) == group_key)
+            .cloned()
+            .collect();
+
+        for group_workspace in group_workspaces {
+            group_workspace.update(cx, |workspace, cx| {
+                let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                    return;
+                };
+
+                panel.update(cx, |panel, cx| {
+                    let empty_draft_ids: Vec<ThreadId> = panel
+                        .draft_thread_ids(cx)
+                        .into_iter()
+                        .filter(|id| panel.editor_text(*id, cx).is_none())
+                        .collect();
+
+                    for id in empty_draft_ids {
+                        panel.remove_thread(id, cx);
+                    }
+                });
             });
         }
     }
@@ -2333,6 +2404,7 @@ impl Sidebar {
             self.observe_draft_editors(cx);
         } else {
             Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
+            self.clear_empty_group_drafts(workspace, cx);
         }
 
         self.update_entries(cx);
@@ -2375,6 +2447,7 @@ impl Sidebar {
                         workspace: workspace_for_entry.clone(),
                     });
                     sidebar.record_thread_access(&target_session_id);
+                    sidebar.clear_empty_group_drafts(&workspace_for_entry, cx);
                     sidebar.update_entries(cx);
                 });
             }
@@ -3839,9 +3912,16 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                let id = panel.create_thread(window, cx);
-                panel.activate_retained_thread(id, true, window, cx);
-                id
+                if let Some(id) = panel.draft_thread_ids(cx).first().copied() {
+                    if panel.active_thread_id() != Some(id) {
+                        panel.activate_retained_thread(id, true, window, cx);
+                    }
+                    id
+                } else {
+                    let id = panel.create_thread(window, cx);
+                    panel.activate_retained_thread(id, true, window, cx);
+                    id
+                }
             });
             workspace.focus_panel::<AgentPanel>(window, cx);
             Some(draft_id)
