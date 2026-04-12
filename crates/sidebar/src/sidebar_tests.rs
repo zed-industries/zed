@@ -375,7 +375,7 @@ fn visible_entries_as_strings(
     sidebar: &Entity<Sidebar>,
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<String> {
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.read_with(cx, |sidebar, cx| {
         sidebar
             .contents
             .entries
@@ -394,7 +394,7 @@ fn visible_entries_as_strings(
                         highlight_positions: _,
                         ..
                     } => {
-                        let icon = if sidebar.collapsed_groups.contains(key) {
+                        let icon = if sidebar.is_group_collapsed(key, cx) {
                             ">"
                         } else {
                             "v"
@@ -461,7 +461,6 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
         sidebar.toggle_collapse(&project_group_key, window, cx);
-        sidebar.expanded_groups.insert(project_group_key.clone(), 2);
     });
     cx.run_until_parked();
 
@@ -480,27 +479,11 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     // Assert all serialized fields match.
-    let (width1, collapsed1, expanded1) = sidebar.read_with(cx, |s, _| {
-        (
-            s.width,
-            s.collapsed_groups.clone(),
-            s.expanded_groups.clone(),
-        )
-    });
-    let (width2, collapsed2, expanded2) = sidebar2.read_with(cx, |s, _| {
-        (
-            s.width,
-            s.collapsed_groups.clone(),
-            s.expanded_groups.clone(),
-        )
-    });
+    let width1 = sidebar.read_with(cx, |s, _| s.width);
+    let width2 = sidebar2.read_with(cx, |s, _| s.width);
 
     assert_eq!(width1, width2);
-    assert_eq!(collapsed1, collapsed2);
-    assert_eq!(expanded1, expanded2);
     assert_eq!(width1, px(420.0));
-    assert!(collapsed1.contains(&project_group_key));
-    assert_eq!(expanded1.get(&project_group_key), Some(&2));
 }
 
 #[gpui::test]
@@ -516,8 +499,6 @@ async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppCon
 
     let serialized = serde_json::to_string(&SerializedSidebar {
         width: Some(400.0),
-        collapsed_groups: Vec::new(),
-        expanded_groups: Vec::new(),
         active_view: SerializedSidebarView::Archive,
     })
     .expect("serialization should succeed");
@@ -758,14 +739,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Expand again by one batch
     sidebar.update_in(cx, |s, _window, cx| {
-        let current = s
-            .expanded_groups
-            .get(&project_group_key)
-            .copied()
-            .unwrap_or(0);
-        s.expanded_groups
-            .insert(project_group_key.clone(), current + 1);
-        s.update_entries(cx);
+        s.expand_thread_group(&project_group_key, cx);
     });
     cx.run_until_parked();
 
@@ -776,14 +750,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Expand one more time - should show all 17 threads with Collapse button
     sidebar.update_in(cx, |s, _window, cx| {
-        let current = s
-            .expanded_groups
-            .get(&project_group_key)
-            .copied()
-            .unwrap_or(0);
-        s.expanded_groups
-            .insert(project_group_key.clone(), current + 1);
-        s.update_entries(cx);
+        s.expand_thread_group(&project_group_key, cx);
     });
     cx.run_until_parked();
 
@@ -795,8 +762,7 @@ async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
 
     // Click collapse - should go back to showing 5 threads
     sidebar.update_in(cx, |s, _window, cx| {
-        s.expanded_groups.remove(&project_group_key);
-        s.update_entries(cx);
+        s.reset_thread_group_expansion(&project_group_key, cx);
     });
     cx.run_until_parked();
 
@@ -860,6 +826,57 @@ async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContext) {
+    // When a worktree is added to a project, the project group key changes.
+    // The sidebar's collapsed/expanded state is keyed by ProjectGroupKey, so
+    // UI state must survive the key change.
+    let (_fs, project) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_n_test_threads(2, &project, cx).await;
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project-a]", "  Thread 2", "  Thread 1",]
+    );
+
+    // Collapse the group.
+    let old_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.toggle_collapse(&old_key, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["> [project-a]"]
+    );
+
+    // Add a second worktree — the key changes from [/project-a] to
+    // [/project-a, /project-b].
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project-b", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // The group should still be collapsed under the new key.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["> [project-a, project-b]"]
+    );
+}
+
+#[gpui::test]
 async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -870,9 +887,17 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     let expanded_path = PathList::new(&[std::path::PathBuf::from("/expanded")]);
     let collapsed_path = PathList::new(&[std::path::PathBuf::from("/collapsed")]);
 
+    // Set the collapsed group state through multi_workspace
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(ProjectGroup {
+            key: project::ProjectGroupKey::new(None, collapsed_path.clone()),
+            workspaces: Vec::new(),
+            expanded: false,
+            visible_thread_count: None,
+        });
+    });
+
     sidebar.update_in(cx, |s, _window, _cx| {
-        s.collapsed_groups
-            .insert(project::ProjectGroupKey::new(None, collapsed_path.clone()));
         let notified_thread_id = ThreadId::new();
         s.contents.notified_threads.insert(notified_thread_id);
         s.contents.entries = vec![
@@ -1440,6 +1465,7 @@ async fn init_test_project_with_agent_panel(
 ) -> Entity<project::Project> {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -7176,6 +7202,7 @@ async fn init_multi_project_test(
 ) -> (Arc<FakeFs>, Entity<project::Project>) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -7573,18 +7600,8 @@ async fn test_linked_worktree_workspace_reachable_after_adding_unrelated_project
 
     // Force a full sidebar rebuild with all groups expanded.
     sidebar.update_in(cx, |sidebar, _window, cx| {
-        sidebar.collapsed_groups.clear();
-        let group_keys: Vec<project::ProjectGroupKey> = sidebar
-            .contents
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
-                ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
-                _ => None,
-            })
-            .collect();
-        for group_key in group_keys {
-            sidebar.expanded_groups.insert(group_key, 10_000);
+        if let Some(mw) = sidebar.multi_workspace.upgrade() {
+            mw.update(cx, |mw, _cx| mw.test_expand_all_groups());
         }
         sidebar.update_entries(cx);
     });
@@ -7915,6 +7932,238 @@ async fn test_activating_workspace_with_draft_does_not_create_extras(cx: &mut Te
             sidebar,
             &workspace_b,
             "draft should be active after switching back to its workspace",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &mut TestAppContext) {
+    // Historical threads (not open in any agent panel) should have their
+    // worktree paths updated when a folder is added to or removed from the
+    // project.
+    let (_fs, project) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Save two threads directly into the metadata store (not via the agent
+    // panel), so they are purely historical — no open views hold them.
+    save_named_thread_metadata("hist-1", "Historical 1", &project, cx).await;
+    save_named_thread_metadata("hist-2", "Historical 2", &project, cx).await;
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // Sanity-check: both threads exist under the initial key [/project-a].
+    let old_key_paths = PathList::new(&[PathBuf::from("/project-a")]);
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            2,
+            "should have 2 historical threads under old key before worktree add"
+        );
+    });
+
+    // Add a second worktree to the project.
+    // TODO: Should there be different behavior for calling Project::find_or_create_worktree,
+    //       or MultiWorkspace::add_folders_to_project_group?
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project-b", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    // The historical threads should now be indexed under the new combined
+    // key [/project-a, /project-b].
+    let new_key_paths = PathList::new(&[PathBuf::from("/project-a"), PathBuf::from("/project-b")]);
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            0,
+            "should have 0 historical threads under old key after worktree add"
+        );
+        assert_eq!(
+            store.entries_for_main_worktree_path(&new_key_paths).count(),
+            2,
+            "should have 2 historical threads under new key after worktree add"
+        );
+    });
+
+    // Sidebar should show threads under the new header.
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [project-a, project-b]",
+            "  Historical 2",
+            "  Historical 1",
+        ]
+    );
+
+    // Now remove the second worktree.
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .visible_worktrees(cx)
+            .find(|wt| wt.read(cx).abs_path().as_ref() == Path::new("/project-b"))
+            .map(|wt| wt.read(cx).id())
+            .expect("should find project-b worktree")
+    });
+    project.update(cx, |project, cx| {
+        project.remove_worktree(worktree_id, cx);
+    });
+    cx.run_until_parked();
+
+    // Historical threads should migrate back to the original key.
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_main_worktree_path(&new_key_paths).count(),
+            0,
+            "should have 0 historical threads under new key after worktree remove"
+        );
+        assert_eq!(
+            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            2,
+            "should have 2 historical threads under old key after worktree remove"
+        );
+    });
+
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project-a]", "  Historical 2", "  Historical 1",]
+    );
+}
+
+#[gpui::test]
+async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut TestAppContext) {
+    // When two workspaces share the same project group (same main path)
+    // but have different folder paths (main repo vs linked worktree),
+    // adding a worktree to the main workspace should only migrate threads
+    // whose folder paths match that workspace — not the linked worktree's
+    // threads.
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", serde_json::json!({ ".git": {}, "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ ".git": {}, "src": {} }))
+        .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: std::path::PathBuf::from("/wt-feature"),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "aaa".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    // Workspace A: main repo at /project.
+    let main_project =
+        project::Project::test(fs.clone() as Arc<dyn fs::Fs>, ["/project".as_ref()], cx).await;
+    // Workspace B: linked worktree of the same repo (same group, different folder).
+    let worktree_project =
+        project::Project::test(fs.clone() as Arc<dyn fs::Fs>, ["/wt-feature".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let _sidebar = setup_sidebar(&multi_workspace, cx);
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Save a thread for each workspace's folder paths.
+    let time_main = chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap();
+    let time_wt = chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 2).unwrap();
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-main")),
+        Some("Main Thread".into()),
+        time_main,
+        Some(time_main),
+        &main_project,
+        cx,
+    );
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-wt")),
+        Some("Worktree Thread".into()),
+        time_wt,
+        Some(time_wt),
+        &worktree_project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    let folder_paths_main = PathList::new(&[PathBuf::from("/project")]);
+    let folder_paths_wt = PathList::new(&[PathBuf::from("/wt-feature")]);
+
+    // Sanity-check: each thread is indexed under its own folder paths.
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_path(&folder_paths_main).count(),
+            1,
+            "one thread under [/project]"
+        );
+        assert_eq!(
+            store.entries_for_path(&folder_paths_wt).count(),
+            1,
+            "one thread under [/wt-feature]"
+        );
+    });
+
+    // Add /project-b to the main project only.
+    main_project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project-b", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    // Main Thread (folder paths [/project]) should have migrated to
+    // [/project, /project-b]. Worktree Thread should be unchanged.
+    let folder_paths_main_b =
+        PathList::new(&[PathBuf::from("/project"), PathBuf::from("/project-b")]);
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx).read(cx);
+        assert_eq!(
+            store.entries_for_path(&folder_paths_main).count(),
+            0,
+            "main thread should no longer be under old folder paths [/project]"
+        );
+        assert_eq!(
+            store.entries_for_path(&folder_paths_main_b).count(),
+            1,
+            "main thread should now be under [/project, /project-b]"
+        );
+        assert_eq!(
+            store.entries_for_path(&folder_paths_wt).count(),
+            1,
+            "worktree thread should remain unchanged under [/wt-feature]"
         );
     });
 }
@@ -8370,18 +8619,8 @@ mod property_test {
 
     fn update_sidebar(sidebar: &Entity<Sidebar>, cx: &mut gpui::VisualTestContext) {
         sidebar.update_in(cx, |sidebar, _window, cx| {
-            sidebar.collapsed_groups.clear();
-            let group_keys: Vec<project::ProjectGroupKey> = sidebar
-                .contents
-                .entries
-                .iter()
-                .filter_map(|entry| match entry {
-                    ListEntry::ProjectHeader { key, .. } => Some(key.clone()),
-                    _ => None,
-                })
-                .collect();
-            for group_key in group_keys {
-                sidebar.expanded_groups.insert(group_key, 10_000);
+            if let Some(mw) = sidebar.multi_workspace.upgrade() {
+                mw.update(cx, |mw, _cx| mw.test_expand_all_groups());
             }
             sidebar.update_entries(cx);
         });
@@ -8746,6 +8985,7 @@ mod property_test {
         agent_ui::test_support::init_test(cx);
         cx.update(|cx| {
             cx.set_global(db::AppDatabase::test_new());
+            cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
 
             ThreadStore::init_global(cx);
             ThreadMetadataStore::init_global(cx);

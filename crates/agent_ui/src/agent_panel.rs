@@ -95,6 +95,16 @@ const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
+/// Maximum number of idle threads kept in the agent panel's retained list.
+/// Set as a GPUI global to override; otherwise defaults to 5.
+pub struct MaxIdleRetainedThreads(pub usize);
+impl gpui::Global for MaxIdleRetainedThreads {}
+
+impl MaxIdleRetainedThreads {
+    pub fn global(cx: &App) -> usize {
+        cx.try_global::<Self>().map_or(5, |g| g.0)
+    }
+}
 
 #[derive(Default)]
 struct AgentPanelSidebarDelegate;
@@ -2281,12 +2291,10 @@ impl AgentPanel {
             })
             .collect::<Vec<_>>();
 
-        const MAX_IDLE_RETAINED_THREADS: usize = 5;
+        let max_idle = MaxIdleRetainedThreads::global(cx);
 
         potential_removals.sort_unstable_by_key(|(_, view)| view.read(cx).updated_at(cx));
-        let n = potential_removals
-            .len()
-            .saturating_sub(MAX_IDLE_RETAINED_THREADS);
+        let n = potential_removals.len().saturating_sub(max_idle);
         let to_remove = potential_removals
             .into_iter()
             .map(|(id, _)| *id)
