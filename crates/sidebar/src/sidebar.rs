@@ -1347,7 +1347,10 @@ impl Sidebar {
     /// Called at the top of `render` so we have `Window` + `Context`
     /// available for panel mutations.
     fn reconcile_groups(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.reconciling {
+        if self.reconciling
+            || self.pending_remote_thread_activation.is_some()
+            || !self.restoring_tasks.is_empty()
+        {
             return;
         }
         self.reconciling = true;
@@ -2262,6 +2265,9 @@ impl Sidebar {
         cx: &mut App,
     ) {
         workspace.update(cx, |workspace, cx| {
+            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                panel.update(cx, |panel, _cx| panel.begin_loading_thread());
+            }
             workspace.reveal_panel::<AgentPanel>(window, cx);
         });
 

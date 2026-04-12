@@ -5697,6 +5697,103 @@ async fn test_archive_thread_active_entry_management(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
+    cx: &mut TestAppContext,
+) {
+    // When a thread is unarchived into a project group that has no open
+    // workspace, the sidebar opens a new workspace and loads the thread.
+    // No spurious draft should appear alongside the unarchived thread.
+    agent_ui::test_support::init_test(cx);
+    cx.update(|cx| {
+        ThreadStore::init_global(cx);
+        ThreadMetadataStore::init_global(cx);
+        language_model::LanguageModelRegistry::test(cx);
+        prompt_store::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), ["/project-a".as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    // Save an archived thread whose folder_paths point to project-b,
+    // which has no open workspace.
+    let session_id = acp::SessionId::new(Arc::from("archived-thread"));
+    let path_list_b = PathList::new(&[std::path::PathBuf::from("/project-b")]);
+    let thread_id = ThreadId::new();
+    cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.save_manually(
+                ThreadMetadata {
+                    thread_id,
+                    session_id: Some(session_id.clone()),
+                    agent_id: agent::ZED_AGENT_ID.clone(),
+                    title: Some("Unarchived Thread".into()),
+                    updated_at: Utc::now(),
+                    created_at: None,
+                    worktree_paths: ThreadWorktreePaths::from_folder_paths(&path_list_b),
+                    archived: true,
+                    remote_connection: None,
+                },
+                cx,
+            )
+        });
+    });
+    cx.run_until_parked();
+
+    // Verify no workspace for project-b exists yet.
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        1,
+        "should start with only the project-a workspace"
+    );
+
+    // Un-archive the thread — should open project-b workspace and load it.
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .cloned()
+            .expect("metadata should exist")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+    cx.run_until_parked();
+
+    // A second workspace should have been created for project-b.
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        2,
+        "should have opened a workspace for the unarchived thread"
+    );
+
+    // The sidebar should show the unarchived thread without a spurious draft
+    // in the project-b group.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
+    // project-a gets a draft (it's the active workspace with no threads),
+    // but project-b should NOT have one — only the unarchived thread.
+    assert!(
+        draft_count <= 1,
+        "expected at most one draft (for project-a), got entries: {entries:?}"
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("Unarchived Thread")),
+        "expected unarchived thread to appear, got entries: {entries:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_switch_to_workspace_with_archived_thread_shows_draft(cx: &mut TestAppContext) {
     // When a thread is archived while the user is in a different workspace,
     // the archiving code replaces the thread with a tracked draft in its
