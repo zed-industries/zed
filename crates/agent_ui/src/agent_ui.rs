@@ -65,7 +65,9 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, WorktreeCreationStatus};
+pub use crate::agent_panel::{
+    AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads, WorktreeCreationStatus,
+};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
 pub use crate::thread_metadata_store::ThreadId;

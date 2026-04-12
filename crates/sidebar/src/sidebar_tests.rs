@@ -860,6 +860,57 @@ async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContext) {
+    // When a worktree is added to a project, the project group key changes.
+    // The sidebar's collapsed/expanded state is keyed by ProjectGroupKey, so
+    // UI state must survive the key change.
+    let (_fs, project) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_n_test_threads(2, &project, cx).await;
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project-a]", "  Thread 2", "  Thread 1",]
+    );
+
+    // Collapse the group.
+    let old_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.toggle_collapse(&old_key, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["> [project-a]"]
+    );
+
+    // Add a second worktree — the key changes from [/project-a] to
+    // [/project-a, /project-b].
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project-b", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // The group should still be collapsed under the new key.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["> [project-a, project-b]"]
+    );
+}
+
+#[gpui::test]
 async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -1440,6 +1491,7 @@ async fn init_test_project_with_agent_panel(
 ) -> Entity<project::Project> {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -6686,6 +6738,7 @@ async fn init_multi_project_test(
 ) -> (Arc<FakeFs>, Entity<project::Project>) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
+        cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
         ThreadStore::init_global(cx);
         ThreadMetadataStore::init_global(cx);
         language_model::LanguageModelRegistry::test(cx);
@@ -8413,6 +8466,7 @@ mod property_test {
         agent_ui::test_support::init_test(cx);
         cx.update(|cx| {
             cx.set_global(db::AppDatabase::test_new());
+            cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
 
             ThreadStore::init_global(cx);
             ThreadMetadataStore::init_global(cx);
