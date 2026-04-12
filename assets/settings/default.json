@@ -87,6 +87,19 @@
   // Layout mode of the bottom dock. Defaults to "contained"
   //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
+  // How dock-backed panels are rendered.
+  // 1. "push" keeps the current Zed behavior where docks participate in layout.
+  // 2. "overlay" renders dock panels above the workspace instead of reflowing it.
+  "dock_panel_mode": "push",
+  // Optional per-panel dock mode overrides keyed by each panel's internal panel key.
+  // Panels not listed here fall back to `dock_panel_mode`.
+  // Valid override values are "push" and "overlay".
+  // Example:
+  // "dock_panel_modes": {
+  //   "ProjectPanel": "overlay",
+  //   "OutlinePanel": "push",
+  //   "TerminalPanel": "overlay"
+  // },
   // The direction that you want to split panes horizontally. Defaults to "down"
   "pane_split_direction_horizontal": "down",
   // The direction that you want to split panes vertically. Defaults to "right"

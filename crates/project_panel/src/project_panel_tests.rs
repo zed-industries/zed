@@ -10028,6 +10028,95 @@ async fn run_create_file_in_folded_path_case(
     }
 }
 
+#[gpui::test]
+async fn test_dismiss_closes_project_panel_overlay(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    enable_overlay_dock_panel_mode(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project_root",
+        json!({
+            "dir": {
+                "file.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        workspace.focus_panel::<ProjectPanel>(window, cx);
+    });
+    cx.run_until_parked();
+
+    select_path(&panel, "project_root/dir", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        window.focus(&panel.focus_handle(cx), cx);
+    });
+    cx.run_until_parked();
+
+    workspace.update_in(cx, |workspace, _window, cx| {
+        assert!(workspace.is_panel_visible::<ProjectPanel>(cx));
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.dismiss(&Dismiss, window, cx);
+    });
+    cx.run_until_parked();
+
+    workspace.update_in(cx, |workspace, _window, cx| {
+        assert!(!workspace.is_panel_visible::<ProjectPanel>(cx));
+    });
+}
+
+#[gpui::test]
+async fn test_escape_binding_routes_to_project_panel_dismiss(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+    enable_overlay_dock_panel_mode(cx);
+    load_default_keymap(cx);
+    cx.update(|cx| {
+        let input = [gpui::Keystroke::parse("escape").unwrap()];
+
+        let mut project_panel_context = gpui::KeyContext::new_with_defaults();
+        project_panel_context.add("ProjectPanel");
+        project_panel_context.add("menu");
+        project_panel_context.add("not_editing");
+
+        let mut default_context = gpui::KeyContext::new_with_defaults();
+        default_context.add("menu");
+
+        let keymap = cx.key_bindings();
+        let keymap = keymap.borrow();
+
+        let (project_panel_bindings, _) =
+            keymap.bindings_for_input(&input, &[project_panel_context]);
+        assert_eq!(
+            project_panel_bindings.first().map(|binding| binding.action().name()),
+            Some("project_panel::Dismiss"),
+        );
+
+        let (default_bindings, _) = keymap.bindings_for_input(&input, &[default_context]);
+        assert_eq!(
+            default_bindings.first().map(|binding| binding.action().name()),
+            Some("menu::Cancel"),
+        );
+    });
+}
+
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
@@ -10064,6 +10153,26 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
                 settings.project.worktree.file_scan_exclusions = Some(Vec::new())
             });
         });
+    });
+}
+
+fn enable_overlay_dock_panel_mode(cx: &mut TestAppContext) {
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store.update_user_settings(cx, |settings| {
+            settings.workspace.dock_panel_mode = Some(settings::DockPanelMode::Overlay);
+        });
+    });
+}
+
+fn load_default_keymap(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        cx.bind_keys(
+            settings::KeymapFile::load_asset_allow_partial_failure(
+                settings::DEFAULT_KEYMAP_PATH,
+                cx,
+            )
+            .expect("failed to load default keymap"),
+        );
     });
 }
 

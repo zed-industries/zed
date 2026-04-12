@@ -1199,8 +1199,6 @@ impl Render for PanelButtons {
 
                     (action, icon_tooltip.into())
                 };
-
-                let focus_handle = dock.focus_handle(cx);
                 let icon_label = entry.panel.icon_label(window, cx);
 
                 Some(
@@ -1297,7 +1295,9 @@ impl Render for PanelButtons {
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
-                                        window.focus(&focus_handle, cx);
+                                        // Overlay-mode docks keep the underlying dock out of the
+                                        // normal layout tree, so dispatch from the current focus
+                                        // instead of forcing focus onto the dock first.
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })
