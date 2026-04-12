@@ -1308,9 +1308,6 @@ mod tests {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
-        let full_counter = Arc::new(AtomicUsize::new(0));
-        let full_counter_clone = full_counter.clone();
-
         let mut rust_server = language_registry.register_fake_lsp(
             rust_language.name(),
             FakeLspAdapter {
@@ -1327,32 +1324,36 @@ mod tests {
                     ),
                     ..lsp::ServerCapabilities::default()
                 },
-                initializer: Some(Box::new({
-                    let full_counter = full_counter_clone.clone();
-                    move |fake_server| {
-                        let full_counter = full_counter.clone();
-                        fake_server
-                            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
-                                move |_, _| {
-                                    full_counter.fetch_add(1, atomic::Ordering::Release);
-                                    async move {
-                                        Ok(Some(lsp::SemanticTokensResult::Tokens(
-                                            lsp::SemanticTokens {
-                                                data: vec![
-                                                    0, 3, 4, 0, 0, // "fn main" -> highlight "main" (col 3, len 4)
-                                                ],
-                                                result_id: None,
-                                            },
-                                        )))
-                                    }
-                                },
-                            );
-                    }
+                initializer: Some(Box::new(move |fake_server| {
+                    fake_server
+                        .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                            move |_, _| async move {
+                                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                    lsp::SemanticTokens {
+                                        data: vec![
+                                            0, 3, 4, 0, 0,
+                                        ],
+                                        result_id: None,
+                                    },
+                                )))
+                            },
+                        );
                 })),
                 ..FakeLspAdapter::default()
             },
         );
         language_registry.add(rust_language.clone());
+
+        // foo.rs must be long enough that autoscroll triggers an actual scroll
+        // position change when opening from the multibuffer with cursor near
+        // the end. This reproduces the race: set_visible_line_count spawns a
+        // task, then autoscroll fires ScrollPositionChanged whose handler
+        // replaces post_scroll_update with a debounced task that skips
+        // update_lsp_data for singletons.
+        let mut foo_content = String::from("fn test() {}\n");
+        for i in 0..100 {
+            foo_content.push_str(&format!("fn func_{i}() {{}}\n"));
+        }
 
         app_state
             .fs
@@ -1362,7 +1363,7 @@ mod tests {
                 json!({
                     ".git": {},
                     "bar.rs": "fn main() {}\n",
-                    "foo.rs": "fn test() {}\n",
+                    "foo.rs": foo_content,
                 }),
             )
             .await;
@@ -1379,7 +1380,7 @@ mod tests {
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
 
-        // Open bar.rs first so the LSP starts up.
+        // Open bar.rs as an editor to start the LSP server.
         let bar_file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
         let bar_item = workspace
             .update_in(cx, |workspace, window, cx| {
@@ -1403,49 +1404,28 @@ mod tests {
 
         let _rust_server = rust_server.next().await.unwrap();
 
-        // Wait for bar.rs semantic tokens.
         cx.executor().advance_clock(Duration::from_millis(200));
         let task = bar_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         cx.run_until_parked();
         task.await;
         cx.run_until_parked();
 
-        // bar.rs should have semantic tokens now.
         assert!(
             !extract_semantic_highlights(&bar_editor, &cx).is_empty(),
             "bar.rs should have semantic tokens after initial open"
         );
 
-        // Open foo.rs buffer (needed for the multibuffer).
+        // Get foo.rs buffer directly from the project. No editor has ever
+        // fetched semantic tokens for this buffer.
         let foo_file = cx.read(|cx| workspace.file_project_paths(cx)[1].clone());
-        let foo_item = workspace
-            .update_in(cx, |workspace, window, cx| {
-                workspace.open_path(foo_file, None, true, window, cx)
-            })
+        let foo_buffer = project
+            .update(cx, |project, cx| project.open_buffer(foo_file, cx))
             .await
-            .expect("Could not open foo.rs");
-        let foo_editor = cx.update(|_, cx| {
-            foo_item
-                .act_as::<Editor>(cx)
-                .expect("Opened test file wasn't an editor")
-        });
-        let foo_buffer = cx.read(|cx| {
-            foo_editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .unwrap()
-        });
+            .expect("Could not open foo.rs buffer");
 
-        // Wait for foo.rs semantic tokens too.
-        cx.executor().advance_clock(Duration::from_millis(200));
-        let task = foo_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
-        cx.run_until_parked();
-        task.await;
-        cx.run_until_parked();
-
-        // Build a multibuffer with both files (simulating search results).
+        // Build a multibuffer with both files. The foo.rs excerpt covers a
+        // range near the end of the file so that opening the singleton will
+        // autoscroll to a position that requires changing scroll_position.
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
             multibuffer.set_excerpts_for_path(
@@ -1458,7 +1438,7 @@ mod tests {
             multibuffer.set_excerpts_for_path(
                 PathKey::sorted(1),
                 foo_buffer.clone(),
-                [Point::new(0, 0)..Point::new(0, 12)],
+                [Point::new(95, 0)..Point::new(100, 0)],
                 0,
                 cx,
             );
@@ -1481,28 +1461,25 @@ mod tests {
             window.focus(&editor.focus_handle(cx), cx)
         });
 
-        // Close the individual file tabs so we test opening from multibuffer fresh.
-        workspace.update_in(cx, |workspace, window, cx| {
-            let pane = workspace.active_pane().clone();
-            // Close bar.rs and foo.rs tabs (items 0 and 1, multibuffer is now active).
-            pane.update(cx, |pane, cx| {
-                pane.close_item_by_id(bar_editor.entity_id(), workspace::SaveIntent::Skip, window, cx)
+        // Close bar.rs tab so only the multibuffer remains.
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let pane = workspace.active_pane().clone();
+                pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(
+                        bar_editor.entity_id(),
+                        workspace::SaveIntent::Skip,
+                        window,
+                        cx,
+                    )
+                })
             })
-        }).await.ok();
-        workspace.update_in(cx, |workspace, window, cx| {
-            let pane = workspace.active_pane().clone();
-            pane.update(cx, |pane, cx| {
-                pane.close_item_by_id(foo_editor.entity_id(), workspace::SaveIntent::Skip, window, cx)
-            })
-        }).await.ok();
+            .await
+            .ok();
 
         cx.run_until_parked();
 
-        // Reset the counter so we can track new requests.
-        full_counter.store(0, atomic::Ordering::Release);
-
-        // Now open foo.rs from the multibuffer (simulates clicking the file header).
-        // Move cursor to foo.rs excerpt area first.
+        // Position cursor in the foo.rs excerpt (near line 95+).
         mb_editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.display_snapshot(cx);
             let end = snapshot.buffer_snapshot().len();
@@ -1511,7 +1488,11 @@ mod tests {
             });
         });
 
-        // Trigger OpenExcerpts to open the file from the multibuffer.
+        // Open the singleton from the multibuffer. open_buffers_in_workspace
+        // creates the editor and calls change_selections with autoscroll.
+        // During render, set_visible_line_count fires first (spawning a task),
+        // then autoscroll_vertically scrolls to line ~95 which emits
+        // ScrollPositionChanged, whose handler replaces post_scroll_update.
         mb_editor.update_in(cx, |editor, window, cx| {
             editor.open_excerpts(&crate::actions::OpenExcerpts, window, cx);
         });
@@ -1520,7 +1501,6 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
 
-        // Find the newly opened singleton editor (the active item should be foo.rs).
         let active_editor = workspace.read_with(cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -1528,20 +1508,18 @@ mod tests {
                 .expect("Active item should be an editor")
         });
 
-        // It should be a singleton (not the multibuffer).
         assert!(
             active_editor.read_with(cx, |editor, cx| editor.buffer().read(cx).is_singleton()),
             "Active editor should be a singleton buffer"
         );
 
-        // Wait for semantic tokens on the new singleton.
+        // Wait for semantic tokens on the singleton.
         cx.executor().advance_clock(Duration::from_millis(200));
         let task =
             active_editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
         task.await;
         cx.run_until_parked();
 
-        // The singleton editor should have semantic tokens.
         let highlights = extract_semantic_highlights(&active_editor, &cx);
         assert!(
             !highlights.is_empty(),
