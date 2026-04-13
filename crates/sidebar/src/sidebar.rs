@@ -3155,10 +3155,8 @@ impl Sidebar {
         // editors hold Entity<Worktree> references (through File structs
         // in buffers), preventing the worktree entity from being released
         // and blocking git worktree removal indefinitely.
-        let mut workspaces_to_remove: Vec<Entity<Workspace>> = Vec::new();
-        if let Some(ws) = workspace_to_remove {
-            workspaces_to_remove.push(ws);
-        }
+        let mut workspaces_to_remove: Vec<Entity<Workspace>> =
+            workspace_to_remove.into_iter().collect();
         if let Some(multi_workspace) = self.multi_workspace.upgrade() {
             let mw = multi_workspace.read(cx);
             for root in &roots_to_archive {
