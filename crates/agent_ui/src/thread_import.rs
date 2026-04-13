@@ -23,7 +23,7 @@ use workspace::{ModalView, MultiWorkspace, Workspace};
 use crate::{
     Agent, AgentPanel,
     agent_connection_store::AgentConnectionStore,
-    thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore, ThreadWorktreePaths},
+    thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore, WorktreePaths},
 };
 
 pub struct AcpThreadImportOnboarding;
@@ -527,7 +527,7 @@ fn collect_importable_threads(
                 title: session.title,
                 updated_at: session.updated_at.unwrap_or_else(|| Utc::now()),
                 created_at: session.created_at,
-                worktree_paths: ThreadWorktreePaths::from_folder_paths(&folder_paths),
+                worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: remote_connection.clone(),
                 archived: true,
             });

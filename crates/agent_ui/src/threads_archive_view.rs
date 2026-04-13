@@ -950,7 +950,7 @@ impl ProjectPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) {
         self.thread.worktree_paths =
-            super::thread_metadata_store::ThreadWorktreePaths::from_folder_paths(&paths);
+            super::thread_metadata_store::WorktreePaths::from_folder_paths(&paths);
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
             store.update_working_directories(self.thread.thread_id, paths, cx);
         });

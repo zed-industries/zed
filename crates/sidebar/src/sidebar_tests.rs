@@ -4,7 +4,7 @@ use agent::ThreadStore;
 use agent_ui::{
     ThreadId,
     test_support::{active_session_id, open_thread_with_connection, send_message},
-    thread_metadata_store::{ThreadMetadata, ThreadWorktreePaths},
+    thread_metadata_store::{ThreadMetadata, WorktreePaths},
 };
 use chrono::DateTime;
 use fs::{FakeFs, Fs};
@@ -261,7 +261,7 @@ fn save_thread_metadata(
     cx: &mut TestAppContext,
 ) {
     cx.update(|cx| {
-        let worktree_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
+        let worktree_paths = project.read(cx).worktree_paths(cx);
         let thread_id = ThreadMetadataStore::global(cx)
             .read(cx)
             .thread_id_for_session(&session_id)
@@ -305,8 +305,7 @@ fn save_thread_metadata_with_main_paths(
         title: Some(title),
         updated_at,
         created_at: None,
-        worktree_paths: ThreadWorktreePaths::from_path_lists(main_worktree_paths, folder_paths)
-            .unwrap(),
+        worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, folder_paths).unwrap(),
         archived: false,
         remote_connection: None,
     };
@@ -877,6 +876,96 @@ async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_adding_folder_to_non_backed_group_migrates_threads(cx: &mut TestAppContext) {
+    // When a project group has no backing workspace (e.g. the workspace was
+    // closed but the group and its threads remain), adding a folder via
+    // `add_folders_to_project_group` should still migrate thread metadata
+    // to the new key and cause the sidebar to rerender.
+    let (_fs, project) =
+        init_multi_project_test(&["/active-project", "/orphan-a", "/orphan-b"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Insert a standalone project group for [/orphan-a] with no backing
+    // workspace — simulating a group that persisted after its workspace
+    // was closed.
+    let group_key = ProjectGroupKey::new(None, PathList::new(&[PathBuf::from("/orphan-a")]));
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(ProjectGroup {
+            key: group_key.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+            visible_thread_count: None,
+        });
+    });
+
+    // Verify the group has no backing workspaces.
+    multi_workspace.read_with(cx, |mw, cx| {
+        let group = mw
+            .project_groups(cx)
+            .into_iter()
+            .find(|g| g.key == group_key)
+            .expect("group should exist");
+        assert!(
+            group.workspaces.is_empty(),
+            "group should have no backing workspaces"
+        );
+    });
+
+    // Save threads directly into the metadata store under [/orphan-a].
+    save_thread_metadata_with_main_paths(
+        "t-1",
+        "Thread One",
+        PathList::new(&[PathBuf::from("/orphan-a")]),
+        PathList::new(&[PathBuf::from("/orphan-a")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "t-2",
+        "Thread Two",
+        PathList::new(&[PathBuf::from("/orphan-a")]),
+        PathList::new(&[PathBuf::from("/orphan-a")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
+        cx,
+    );
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // Verify threads show under the standalone group.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [active-project]",
+            "v [orphan-a]",
+            "  Thread Two",
+            "  Thread One",
+        ]
+    );
+
+    // Add /orphan-b to the non-backed group.
+    multi_workspace.update(cx, |mw, cx| {
+        mw.add_folders_to_project_group(&group_key, vec![PathBuf::from("/orphan-b")], cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // Threads should now appear under the combined key.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [active-project]",
+            "v [orphan-a, orphan-b]",
+            "  Thread Two",
+            "  Thread One",
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -890,7 +979,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     // Set the collapsed group state through multi_workspace
     multi_workspace.update(cx, |mw, _cx| {
         mw.test_add_project_group(ProjectGroup {
-            key: project::ProjectGroupKey::new(None, collapsed_path.clone()),
+            key: ProjectGroupKey::new(None, collapsed_path.clone()),
             workspaces: Vec::new(),
             expanded: false,
             visible_thread_count: None,
@@ -903,7 +992,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
         s.contents.entries = vec![
             // Expanded project header
             ListEntry::ProjectHeader {
-                key: project::ProjectGroupKey::new(None, expanded_path.clone()),
+                key: ProjectGroupKey::new(None, expanded_path.clone()),
                 label: "expanded-project".into(),
                 highlight_positions: Vec::new(),
                 has_running_threads: false,
@@ -916,7 +1005,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-1"))),
                     agent_id: AgentId::new("zed-agent"),
-                    worktree_paths: ThreadWorktreePaths::default(),
+                    worktree_paths: WorktreePaths::default(),
                     title: Some("Completed thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
@@ -941,7 +1030,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-2"))),
                     agent_id: AgentId::new("zed-agent"),
-                    worktree_paths: ThreadWorktreePaths::default(),
+                    worktree_paths: WorktreePaths::default(),
                     title: Some("Running thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
@@ -966,7 +1055,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-3"))),
                     agent_id: AgentId::new("zed-agent"),
-                    worktree_paths: ThreadWorktreePaths::default(),
+                    worktree_paths: WorktreePaths::default(),
                     title: Some("Error thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
@@ -992,7 +1081,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     thread_id: ThreadId::new(),
                     session_id: Some(acp::SessionId::new(Arc::from("t-4"))),
                     agent_id: AgentId::new("zed-agent"),
-                    worktree_paths: ThreadWorktreePaths::default(),
+                    worktree_paths: WorktreePaths::default(),
                     title: Some("Waiting thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
@@ -1018,7 +1107,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     thread_id: notified_thread_id,
                     session_id: Some(acp::SessionId::new(Arc::from("t-5"))),
                     agent_id: AgentId::new("zed-agent"),
-                    worktree_paths: ThreadWorktreePaths::default(),
+                    worktree_paths: WorktreePaths::default(),
                     title: Some("Notified thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
@@ -1039,12 +1128,12 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             }),
             // View More entry
             ListEntry::ViewMore {
-                key: project::ProjectGroupKey::new(None, expanded_path.clone()),
+                key: ProjectGroupKey::new(None, expanded_path.clone()),
                 is_fully_expanded: false,
             },
             // Collapsed project header
             ListEntry::ProjectHeader {
-                key: project::ProjectGroupKey::new(None, collapsed_path.clone()),
+                key: ProjectGroupKey::new(None, collapsed_path.clone()),
                 label: "collapsed-project".into(),
                 highlight_positions: Vec::new(),
                 has_running_threads: false,
@@ -2346,7 +2435,10 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
 
     let workspace_b = multi_workspace.read_with(cx, |mw, cx| {
         mw.workspaces()
-            .find(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)) == project_b_key.path_list().clone())
+            .find(|workspace| {
+                PathList::new(&workspace.read(cx).root_paths(cx))
+                    == project_b_key.path_list().clone()
+            })
             .cloned()
             .expect("expected workspace for project-b after opening the historical thread")
     });
@@ -2452,7 +2544,7 @@ async fn test_click_clears_selection_and_focus_in_restores_it(cx: &mut TestAppCo
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.selection = None;
         let path_list = PathList::new(&[std::path::PathBuf::from("/my-project")]);
-        let project_group_key = project::ProjectGroupKey::new(None, path_list);
+        let project_group_key = ProjectGroupKey::new(None, path_list);
         sidebar.toggle_collapse(&project_group_key, window, cx);
     });
     assert_eq!(sidebar.read_with(cx, |sidebar, _| sidebar.selection), None);
@@ -2569,7 +2661,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
                 title: Some("Test".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::default(),
+                worktree_paths: WorktreePaths::default(),
                 archived: false,
                 remote_connection: None,
             },
@@ -2626,7 +2718,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
                 title: Some("Thread B".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::default(),
+                worktree_paths: WorktreePaths::default(),
                 archived: false,
                 remote_connection: None,
             },
@@ -4522,9 +4614,9 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
                 title: Some("Archived Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::from_folder_paths(&PathList::new(&[
-                    PathBuf::from("/project-b"),
-                ])),
+                worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                    "/project-b",
+                )])),
                 archived: false,
                 remote_connection: None,
             },
@@ -4590,7 +4682,7 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
                 title: Some("CWD Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::from_folder_paths(&PathList::new(&[
+                worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[
                     std::path::PathBuf::from("/project-b"),
                 ])),
                 archived: false,
@@ -4656,7 +4748,7 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
                 title: Some("Contextless Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::default(),
+                worktree_paths: WorktreePaths::default(),
                 archived: false,
                 remote_connection: None,
             },
@@ -4712,7 +4804,7 @@ async fn test_activate_archived_thread_saved_paths_opens_new_workspace(cx: &mut 
                 title: Some("New WS Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::from_folder_paths(&path_list_b),
+                worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                 archived: false,
                 remote_connection: None,
             },
@@ -4767,9 +4859,9 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
                 title: Some("Cross Window Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::from_folder_paths(&PathList::new(&[
-                    PathBuf::from("/project-b"),
-                ])),
+                worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                    "/project-b",
+                )])),
                 archived: false,
                 remote_connection: None,
             },
@@ -4847,9 +4939,9 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
                 title: Some("Cross Window Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::from_folder_paths(&PathList::new(&[
-                    PathBuf::from("/project-b"),
-                ])),
+                worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                    "/project-b",
+                )])),
                 archived: false,
                 remote_connection: None,
             },
@@ -4930,9 +5022,9 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
                 title: Some("Current Window Thread".into()),
                 updated_at: Utc::now(),
                 created_at: None,
-                worktree_paths: ThreadWorktreePaths::from_folder_paths(&PathList::new(&[
-                    PathBuf::from("/project-a"),
-                ])),
+                worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                    "/project-a",
+                )])),
                 archived: false,
                 remote_connection: None,
             },
@@ -5964,7 +6056,7 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
                     title: Some("Unarchived Thread".into()),
                     updated_at: Utc::now(),
                     created_at: None,
-                    worktree_paths: ThreadWorktreePaths::from_folder_paths(&path_list_b),
+                    worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                     archived: true,
                     remote_connection: None,
                 },
@@ -6056,7 +6148,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
                     title: Some("Unarchived Thread".into()),
                     updated_at: Utc::now(),
                     created_at: None,
-                    worktree_paths: ThreadWorktreePaths::from_folder_paths(&path_list_b),
+                    worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                     archived: true,
                     remote_connection: None,
                 },
@@ -6120,8 +6212,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
         "expected exactly one metadata row for restored session after opening a new workspace, got: {session_entries:?}"
     );
     assert_eq!(
-        session_entries[0].thread_id,
-        original_thread_id,
+        session_entries[0].thread_id, original_thread_id,
         "expected restore into a new workspace to reuse the original thread id"
     );
     assert!(
@@ -6152,7 +6243,9 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
         "expected exactly one visible real thread row after restore into a new workspace, got entries: {entries:?}"
     );
     assert!(
-        entries.iter().any(|entry| entry.contains("Unarchived Thread")),
+        entries
+            .iter()
+            .any(|entry| entry.contains("Unarchived Thread")),
         "expected restored thread row to be visible, got entries: {entries:?}"
     );
 }
@@ -6366,7 +6459,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
                     title: Some("Restored In Inactive Workspace".into()),
                     updated_at: Utc::now(),
                     created_at: None,
-                    worktree_paths: ThreadWorktreePaths::from_folder_paths(&PathList::new(&[
+                    worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[
                         PathBuf::from("/project-b"),
                     ])),
                     archived: true,
@@ -6391,12 +6484,14 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
     });
 
     let panel_b_before_settle = workspace_b.read_with(cx, |workspace, cx| {
-        workspace
-            .panel::<AgentPanel>(cx)
-            .expect("target workspace should still have an agent panel immediately after activation")
+        workspace.panel::<AgentPanel>(cx).expect(
+            "target workspace should still have an agent panel immediately after activation",
+        )
     });
-    let immediate_active_thread_id = panel_b_before_settle.read_with(cx, |panel, _| panel.active_thread_id());
-    let immediate_draft_ids = panel_b_before_settle.read_with(cx, |panel, cx| panel.draft_thread_ids(cx));
+    let immediate_active_thread_id =
+        panel_b_before_settle.read_with(cx, |panel, _| panel.active_thread_id());
+    let immediate_draft_ids =
+        panel_b_before_settle.read_with(cx, |panel, cx| panel.draft_thread_ids(cx));
 
     cx.run_until_parked();
     cx.run_until_parked();
@@ -6428,9 +6523,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
     let entries = visible_entries_as_strings(&sidebar, cx);
     let target_rows: Vec<_> = entries
         .iter()
-        .filter(|entry| {
-            entry.contains("Restored In Inactive Workspace") || entry.contains("Draft")
-        })
+        .filter(|entry| entry.contains("Restored In Inactive Workspace") || entry.contains("Draft"))
         .cloned()
         .collect();
     assert_eq!(
@@ -6507,15 +6600,21 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
             .entry(thread_id)
             .cloned()
             .expect("archived metadata should still exist after archive");
-        assert!(metadata.archived, "thread should be archived before project removal");
+        assert!(
+            metadata.archived,
+            "thread should be archived before project removal"
+        );
         metadata
     });
 
-    let group_key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let group_key_b =
+        project_b.read_with(cx, |project, cx| ProjectGroupKey::from_project(project, cx));
     let remove_task = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.remove_project_group(&group_key_b, window, cx)
     });
-    remove_task.await.expect("remove project group task should complete");
+    remove_task
+        .await
+        .expect("remove project group task should complete");
     cx.run_until_parked();
     cx.run_until_parked();
 
@@ -6534,7 +6633,10 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
 
     let restored_workspace = multi_workspace.read_with(cx, |mw, cx| {
         mw.workspaces()
-            .find(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)) == PathList::new(&[PathBuf::from("/project-b")]))
+            .find(|workspace| {
+                PathList::new(&workspace.read(cx).root_paths(cx))
+                    == PathList::new(&[PathBuf::from("/project-b")])
+            })
             .cloned()
             .expect("expected unarchive to recreate the removed project workspace")
     });
@@ -6583,9 +6685,7 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
 }
 
 #[gpui::test]
-async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(
-    cx: &mut TestAppContext,
-) {
+async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(cx: &mut TestAppContext) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         ThreadStore::init_global(cx);
@@ -6654,8 +6754,7 @@ async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(
         "expected exactly one metadata row for the restored session, got: {session_entries:?}"
     );
     assert_eq!(
-        session_entries[0].thread_id,
-        original_thread_id,
+        session_entries[0].thread_id, original_thread_id,
         "expected unarchive to reuse the original thread id instead of creating a duplicate row"
     );
     assert!(
@@ -7202,7 +7301,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
                     title: Some("Unarchived Linked Thread".into()),
                     updated_at: Utc::now(),
                     created_at: None,
-                    worktree_paths: ThreadWorktreePaths::from_path_lists(
+                    worktree_paths: WorktreePaths::from_path_lists(
                         main_paths.clone(),
                         folder_paths.clone(),
                     )
@@ -7252,8 +7351,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
         "expected exactly one metadata row for restored linked worktree session, got: {session_entries:?}"
     );
     assert_eq!(
-        session_entries[0].thread_id,
-        original_thread_id,
+        session_entries[0].thread_id, original_thread_id,
         "expected unarchive to reuse the original linked worktree thread id"
     );
     assert!(
@@ -7909,9 +8007,9 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             title: Some("Legacy Main Thread".into()),
             updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
             created_at: None,
-            worktree_paths: ThreadWorktreePaths::from_folder_paths(&PathList::new(&[
-                PathBuf::from("/project"),
-            ])),
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                "/project",
+            )])),
             archived: false,
             remote_connection: None,
         };
@@ -8182,12 +8280,20 @@ async fn test_delete_last_draft_in_empty_group_shows_placeholder(cx: &mut TestAp
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     let entries = visible_entries_as_strings(&sidebar, cx);
     let draft_count = entries.iter().filter(|e| e.contains("Draft")).count();
-    assert_eq!(draft_count, 1, "should start with 1 draft from reconciliation");
+    assert_eq!(
+        draft_count, 1,
+        "should start with 1 draft from reconciliation"
+    );
 
     // Find and delete the draft.
     let draft_thread_id = sidebar.read_with(cx, |_sidebar, cx| {
         let panel = workspace.read(cx).panel::<AgentPanel>(cx).unwrap();
-        panel.read(cx).draft_thread_ids(cx).into_iter().next().unwrap()
+        panel
+            .read(cx)
+            .draft_thread_ids(cx)
+            .into_iter()
+            .next()
+            .unwrap()
     });
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.remove_draft(draft_thread_id, &workspace, window, cx);
@@ -8805,8 +8911,7 @@ mod property_test {
             title: Some(title),
             updated_at,
             created_at: None,
-            worktree_paths: ThreadWorktreePaths::from_path_lists(main_worktree_paths, path_list)
-                .unwrap(),
+            worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, path_list).unwrap(),
             archived: false,
             remote_connection: None,
         };
@@ -9158,12 +9263,12 @@ mod property_test {
         // non-empty path list should appear as a ProjectHeader in the
         // sidebar.
         let all_keys = mw.project_group_keys();
-        let expected_keys: HashSet<&project::ProjectGroupKey> = all_keys
+        let expected_keys: HashSet<&ProjectGroupKey> = all_keys
             .iter()
             .filter(|k| !k.path_list().paths().is_empty())
             .collect();
 
-        let sidebar_keys: HashSet<&project::ProjectGroupKey> = sidebar
+        let sidebar_keys: HashSet<&ProjectGroupKey> = sidebar
             .contents
             .entries
             .iter()
@@ -9211,7 +9316,7 @@ mod property_test {
         // Query using the same approach as the sidebar: iterate project
         // group keys, then do main + legacy queries per group.
         let mw = multi_workspace.read(cx);
-        let mut workspaces_by_group: HashMap<project::ProjectGroupKey, Vec<Entity<Workspace>>> =
+        let mut workspaces_by_group: HashMap<ProjectGroupKey, Vec<Entity<Workspace>>> =
             HashMap::default();
         for workspace in &workspaces {
             let key = workspace.read(cx).project_group_key(cx);
@@ -9681,7 +9786,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             title: Some("Worktree Thread".into()),
             updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
             created_at: None,
-            worktree_paths: ThreadWorktreePaths::from_path_lists(
+            worktree_paths: WorktreePaths::from_path_lists(
                 main_worktree_paths,
                 PathList::new(&[PathBuf::from("/project-wt-1")]),
             )
@@ -9810,7 +9915,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
 
     assert_eq!(
         group_after_update,
-        project.read_with(cx, |project, cx| project.project_group_key(cx)),
+        project.read_with(cx, |project, cx| ProjectGroupKey::from_project(project, cx)),
         "expected the remote worktree workspace to be grouped under the main remote project after the real update; \
          final sidebar entries: {:?}",
         entries_after_update,

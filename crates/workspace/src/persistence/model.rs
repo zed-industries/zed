@@ -12,8 +12,9 @@ use db::sqlez::{
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
+use crate::ProjectGroupKey;
 use language::{Toolchain, ToolchainScope};
-use project::{Project, ProjectGroupKey, debugger::breakpoint_store::SourceBreakpoint};
+use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
 use remote::RemoteConnectionOptions;
 use serde::{Deserialize, Serialize};
 use std::{
