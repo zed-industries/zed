@@ -9544,7 +9544,13 @@ pub fn open_paths(
         // workspace matched, check the user's setting to decide whether to add
         // the directory as a new workspace in the active window's MultiWorkspace
         // or open a new window.
-        if open_options.should_reuse_existing_window() && existing.is_none() {
+        // Skip when requesting_window is already set: the caller (e.g.
+        // open_workspace_for_paths reusing an empty window) already chose the
+        // target window, so we must not open the sidebar as a side-effect.
+        if open_options.should_reuse_existing_window()
+            && existing.is_none()
+            && open_options.requesting_window.is_none()
+        {
             let use_existing_window = open_options.force_existing_window
                 || cx.update(|cx| {
                     WorkspaceSettings::get_global(cx).cli_default_open_behavior
