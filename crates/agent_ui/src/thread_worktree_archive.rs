@@ -246,7 +246,12 @@ async fn remove_root_after_worktree_removal(
     drop(_temp_project);
     result.context("git worktree removal failed")?;
 
-    remove_empty_parent_dirs_up_to_worktrees_base(&root.root_path, &root.main_repo_path, cx);
+    remove_empty_parent_dirs_up_to_worktrees_base(
+        root.root_path.clone(),
+        root.main_repo_path.clone(),
+        cx,
+    )
+    .await;
 
     Ok(())
 }
@@ -258,18 +263,22 @@ async fn remove_root_after_worktree_removal(
 ///
 /// If the base directory is not an ancestor of `root_path`, no parent
 /// directories are removed.
-fn remove_empty_parent_dirs_up_to_worktrees_base(
-    root_path: &Path,
-    main_repo_path: &Path,
+async fn remove_empty_parent_dirs_up_to_worktrees_base(
+    root_path: PathBuf,
+    main_repo_path: PathBuf,
     cx: &mut AsyncApp,
 ) {
     let worktrees_base = cx.update(|cx| {
         let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-        worktrees_directory_for_repo(main_repo_path, setting).ok()
+        worktrees_directory_for_repo(&main_repo_path, setting).ok()
     });
 
     if let Some(worktrees_base) = worktrees_base {
-        remove_empty_ancestors(root_path, &worktrees_base);
+        cx.background_executor()
+            .spawn(async move {
+                remove_empty_ancestors(&root_path, &worktrees_base);
+            })
+            .await;
     }
 }
 
@@ -293,6 +302,9 @@ fn remove_empty_ancestors(child_path: &Path, base_path: &Path) {
                 log::info!("Removed empty parent directory: {}", parent.display());
             }
             Err(err) if err.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // Already removed by a concurrent process; keep walking upward.
+            }
             Err(err) => {
                 log::error!(
                     "Failed to remove parent directory {}: {err}",

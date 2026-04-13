@@ -16,14 +16,16 @@ use agent_ui::{
 use chrono::{DateTime, Utc};
 use editor::Editor;
 use gpui::{
-    Action as _, AnyElement, App, Context, DismissEvent, Entity, FocusHandle, Focusable,
+    Action as _, AnyElement, App, Context, DismissEvent, Entity, EntityId, FocusHandle, Focusable,
     KeyContext, ListState, Pixels, Render, SharedString, Task, WeakEntity, Window, WindowHandle,
     linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
-use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, linked_worktree_short_name};
+use project::{
+    AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId, linked_worktree_short_name,
+};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::RemoteConnectionOptions;
 use ui::utils::platform_title_bar_height;
@@ -32,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
 use std::mem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use theme::ActiveTheme;
 use ui::{
@@ -44,7 +46,7 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
-    NextProject, NextThread, Open, PreviousProject, PreviousThread, ProjectGroupKey,
+    NextProject, NextThread, Open, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
     ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
     ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
 };
@@ -3147,43 +3149,87 @@ impl Sidebar {
         });
 
         // Also find workspaces for root plans that aren't covered by
-        // workspace_to_remove. This handles edge cases where the thread's
-        // folder_paths don't exactly match any workspace's root paths
-        // (e.g. after a folder was added/removed), but a linked worktree
-        // workspace does contain the worktree that needs to be removed
-        // from disk. Without removing these workspaces first, their open
-        // editors hold Entity<Worktree> references (through File structs
-        // in buffers), preventing the worktree entity from being released
-        // and blocking git worktree removal indefinitely.
+        // workspace_to_remove. For workspaces that exclusively contain
+        // worktrees being archived, remove the whole workspace. For
+        // "mixed" workspaces (containing both archived and non-archived
+        // worktrees), close only the editor items referencing the
+        // archived worktrees so their Entity<Worktree> handles are
+        // dropped without destroying the user's workspace layout.
         let mut workspaces_to_remove: Vec<Entity<Workspace>> =
             workspace_to_remove.into_iter().collect();
+        let mut close_item_tasks: Vec<Task<anyhow::Result<()>>> = Vec::new();
+
+        let archive_paths: HashSet<&Path> = roots_to_archive
+            .iter()
+            .map(|root| root.root_path.as_path())
+            .collect();
+
+        // Classify workspaces into "exclusive" (all worktrees archived)
+        // and "mixed" (some worktrees archived, some not).
+        let mut mixed_workspaces: Vec<(Entity<Workspace>, Vec<WorktreeId>)> = Vec::new();
 
         if let Some(multi_workspace) = self.multi_workspace.upgrade() {
-            let mw = multi_workspace.read(cx);
-            for root in &roots_to_archive {
-                for workspace in mw.workspaces() {
-                    if !workspaces_to_remove.contains(workspace)
-                        && workspace
-                            .read(cx)
-                            .project()
-                            .read(cx)
-                            .visible_worktrees(cx)
-                            .any(|wt| wt.read(cx).abs_path().as_ref() == root.root_path.as_path())
-                    {
-                        let group_key = workspace.read(cx).project_group_key(cx);
-                        let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
+            let all_workspaces: Vec<_> = multi_workspace.read(cx).workspaces().cloned().collect();
 
-                        if root_paths != *group_key.path_list() {
-                            workspaces_to_remove.push(workspace.clone());
-                        }
-                    }
+            for workspace in all_workspaces {
+                if workspaces_to_remove.contains(&workspace) {
+                    continue;
+                }
+
+                let project = workspace.read(cx).project().read(cx);
+                let visible_worktrees: Vec<_> = project
+                    .visible_worktrees(cx)
+                    .map(|wt| (wt.read(cx).id(), wt.read(cx).abs_path()))
+                    .collect();
+
+                let archived_worktree_ids: Vec<WorktreeId> = visible_worktrees
+                    .iter()
+                    .filter(|(_, path)| archive_paths.contains(path.as_ref()))
+                    .map(|(id, _)| *id)
+                    .collect();
+
+                if archived_worktree_ids.is_empty() {
+                    continue;
+                }
+
+                if visible_worktrees.len() == archived_worktree_ids.len() {
+                    workspaces_to_remove.push(workspace);
+                } else {
+                    mixed_workspaces.push((workspace, archived_worktree_ids));
                 }
             }
         }
 
-        if !workspaces_to_remove.is_empty() {
+        // For mixed workspaces, close only items belonging to the
+        // worktrees being archived.
+        for (workspace, archived_worktree_ids) in &mixed_workspaces {
+            let panes: Vec<_> = workspace.read(cx).panes().to_vec();
+            for pane in panes {
+                let items_to_close: Vec<EntityId> = pane
+                    .read(cx)
+                    .items()
+                    .filter(|item| {
+                        item.project_path(cx)
+                            .is_some_and(|pp| archived_worktree_ids.contains(&pp.worktree_id))
+                    })
+                    .map(|item| item.item_id())
+                    .collect();
+
+                if !items_to_close.is_empty() {
+                    let task = pane.update(cx, |pane, cx| {
+                        pane.close_items(window, cx, SaveIntent::Skip, &|item_id| {
+                            items_to_close.contains(&item_id)
+                        })
+                    });
+                    close_item_tasks.push(task);
+                }
+            }
+        }
+
+        if !workspaces_to_remove.is_empty() || !close_item_tasks.is_empty() {
             let multi_workspace = self.multi_workspace.upgrade().unwrap();
             let session_id = session_id.clone();
+            let has_workspaces_to_remove = !workspaces_to_remove.is_empty();
 
             // For the workspace-removal fallback, use the neighbor's workspace
             // paths if available, otherwise fall back to the project group key
@@ -3192,11 +3238,10 @@ impl Sidebar {
                 .as_ref()
                 .map(|(_, paths)| paths.clone())
                 .unwrap_or_else(|| {
-                    workspaces_to_remove[0]
-                        .read(cx)
-                        .project_group_key(cx)
-                        .path_list()
-                        .clone()
+                    workspaces_to_remove
+                        .first()
+                        .map(|ws| ws.read(cx).project_group_key(cx).path_list().clone())
+                        .unwrap_or_default()
                 });
 
             let remove_task = multi_workspace.update(cx, |mw, cx| {
@@ -3213,8 +3258,16 @@ impl Sidebar {
             let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
             let thread_folder_paths = thread_folder_paths.clone();
             cx.spawn_in(window, async move |this, cx| {
+                for task in close_item_tasks {
+                    let result: anyhow::Result<()> = task.await;
+                    result.log_err();
+                }
                 let removed = remove_task.await?;
-                if removed {
+                // `removed` is false either because the user cancelled the
+                // save dialog, or because there were no workspaces to remove
+                // (only close_item_tasks). In the latter case we still need
+                // to proceed with archiving.
+                if removed || !has_workspaces_to_remove {
                     this.update_in(cx, |this, window, cx| {
                         let in_flight = thread_id.and_then(|tid| {
                             this.start_archive_worktree_task(tid, roots_to_archive, cx)
