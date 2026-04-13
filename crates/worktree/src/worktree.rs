@@ -4473,7 +4473,16 @@ impl BackgroundScanner {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor)
                         && entry.kind == EntryKind::UnloadedDir
                     {
-                        let abs_path = root_path.join(ancestor.as_std_path());
+                        let abs_path = if entry.is_external {
+                            entry
+                                .canonical_path
+                                .as_ref()
+                                .map(|path| path.as_ref().to_path_buf())
+                                .unwrap_or_else(|| root_path.join(ancestor.as_std_path()))
+                        }
+                        else {
+                            root_path.join(ancestor.as_std_path())
+                        };
                         state
                             .enqueue_scan_dir(
                                 abs_path.into(),
@@ -4648,7 +4657,6 @@ impl BackgroundScanner {
 
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
-            let mut child_scan_abs_path = child_abs_path.clone();
             let child_name = child_abs_path.file_name().unwrap();
             let Some(child_path) = child_name
                 .to_str()
@@ -4656,9 +4664,6 @@ impl BackgroundScanner {
             else {
                 continue;
             };
-
-            let child_worktree_abs_path: Arc<Path> =
-                Arc::from(root_abs_path.join(child_path.as_std_path()));
 
             if child_name == DOT_GIT {
                 let mut state = self.state.lock().await;
@@ -4737,6 +4742,10 @@ impl BackgroundScanner {
                     },
                 };
 
+                if !canonical_path.starts_with(root_canonical_path) {
+                    child_entry.is_external = true;
+                }
+
                 if child_metadata.is_dir {
                     let mut state = self.state.lock().await;
                     let paths = state
@@ -4747,17 +4756,13 @@ impl BackgroundScanner {
                         paths.push(child_path.clone());
                     }
                 }
-                // recurse into the real target path when scanning children.
-                if child_metadata.is_dir {
-                    child_scan_abs_path = Arc::from(canonical_path.clone());
-                }
 
                 child_entry.canonical_path = Some(canonical_path.into());
             }
 
             if child_entry.is_dir() {
                 child_entry.is_ignored =
-                    ignore_stack.is_abs_path_ignored(&child_worktree_abs_path, true);
+                    ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_always_included =
                     self.settings.is_path_always_included(&child_path, true);
 
@@ -4769,7 +4774,7 @@ impl BackgroundScanner {
                     ancestor_inodes.insert(child_entry.inode);
 
                     new_jobs.push(Some(ScanJob {
-                        abs_path: child_scan_abs_path.clone(),
+                        abs_path: child_abs_path.clone(),
                         path: child_path,
                         is_external: child_entry.is_external,
                         ignore_stack: if child_entry.is_ignored {
@@ -4783,7 +4788,7 @@ impl BackgroundScanner {
                 }
             } else {
                 child_entry.is_ignored =
-                    ignore_stack.is_abs_path_ignored(&child_worktree_abs_path, false);
+                    ignore_stack.is_abs_path_ignored(&child_abs_path, false);
                 child_entry.is_always_included =
                     self.settings.is_path_always_included(&child_path, false);
             }
