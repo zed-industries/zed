@@ -44,7 +44,7 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
-    NextProject, NextThread, Open, PreviousProject, PreviousThread, ProjectGroup, ProjectGroupKey,
+    NextProject, NextThread, Open, PreviousProject, PreviousThread, ProjectGroupKey,
     ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
     ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
 };

@@ -877,6 +877,7 @@ async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContex
 
 #[gpui::test]
 async fn test_adding_folder_to_non_backed_group_migrates_threads(cx: &mut TestAppContext) {
+    use workspace::ProjectGroup;
     // When a project group has no backing workspace (e.g. the workspace was
     // closed but the group and its threads remain), adding a folder via
     // `add_folders_to_project_group` should still migrate thread metadata
@@ -967,6 +968,8 @@ async fn test_adding_folder_to_non_backed_group_migrates_threads(cx: &mut TestAp
 
 #[gpui::test]
 async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
+    use workspace::ProjectGroup;
+
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
@@ -2355,6 +2358,8 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
 async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_thread(
     cx: &mut TestAppContext,
 ) {
+    use workspace::ProjectGroup;
+
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
