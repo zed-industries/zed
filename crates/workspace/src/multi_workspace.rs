@@ -1438,7 +1438,7 @@ impl MultiWorkspace {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn assert_project_group_key_integrity(&self, cx: &App) -> anyhow::Result<()> {
-        let mut retained_ids = collections::HashSet::new();
+        let mut retained_ids: collections::HashSet<EntityId> = Default::default();
         for workspace in &self.retained_workspaces {
             anyhow::ensure!(
                 retained_ids.insert(workspace.entity_id()),

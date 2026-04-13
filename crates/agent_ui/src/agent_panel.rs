@@ -64,7 +64,7 @@ use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use project::git_store::{GitStoreEvent, RepositoryEvent};
 use project::project_settings::ProjectSettings;
-use project::{Project, ProjectPath, Worktree, linked_worktree_short_name};
+use project::{Project, ProjectPath, Worktree, WorktreePaths, linked_worktree_short_name};
 use prompt_store::{PromptStore, UserPromptId};
 use remote::RemoteConnectionOptions;
 use rules_library::{RulesLibrary, open_rules_library};
@@ -2887,16 +2887,33 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AgentThread {
-        let thread_id = resume_session_id
+        let existing_metadata = resume_session_id.as_ref().and_then(|sid| {
+            ThreadMetadataStore::try_global(cx)
+                .and_then(|store| store.read(cx).entry_by_session(sid).cloned())
+        });
+        let thread_id = existing_metadata
             .as_ref()
-            .and_then(|sid| {
-                ThreadMetadataStore::try_global(cx)
-                    .and_then(|store| store.read(cx).entry_by_session(sid).map(|m| m.thread_id))
-            })
+            .map(|m| m.thread_id)
             .unwrap_or_else(ThreadId::new);
         let workspace = self.workspace.clone();
         let project = self.project.clone();
-        let worktree_paths = project.read(cx).worktree_paths(cx);
+        let mut worktree_paths = project.read(cx).worktree_paths(cx);
+        if let Some(existing) = &existing_metadata {
+            // When resuming a session (e.g. clicking a linked-worktree thread
+            // in the sidebar), the current workspace's project may not have
+            // completed its git scan yet. At that point `from_project()` would
+            // compute main_worktree_paths from the raw folder path instead of
+            // the git repo root, overwriting the thread's canonical project
+            // group association. Preserve the existing main_worktree_paths so
+            // the thread stays in the correct sidebar group.
+            if !existing.main_worktree_paths().is_empty() {
+                worktree_paths = WorktreePaths::from_path_lists(
+                    existing.main_worktree_paths().clone(),
+                    worktree_paths.folder_path_list().clone(),
+                )
+                .unwrap_or(worktree_paths);
+            }
+        }
         let remote_connection = project.read(cx).remote_connection_options(cx);
         let metadata = ThreadMetadata::new_draft(
             thread_id,

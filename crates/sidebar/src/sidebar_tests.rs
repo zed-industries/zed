@@ -2659,24 +2659,15 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
         );
     });
 
+    let thread_metadata_a = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&session_id_a)
+            .cloned()
+            .expect("session_id_a should exist in metadata store")
+    });
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_thread(
-            ThreadMetadata {
-                thread_id: ThreadId::new(),
-                session_id: Some(session_id_a.clone()),
-                agent_id: agent::ZED_AGENT_ID.clone(),
-                title: Some("Test".into()),
-                updated_at: Utc::now(),
-                created_at: None,
-                worktree_paths: WorktreePaths::default(),
-                archived: false,
-                remote_connection: None,
-            },
-            &workspace_a,
-            false,
-            window,
-            cx,
-        );
+        sidebar.activate_thread(thread_metadata_a, &workspace_a, false, window, cx);
     });
     cx.run_until_parked();
 
@@ -2716,24 +2707,15 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
 
     // Workspace A is currently active. Click a thread in workspace B,
     // which also triggers a workspace switch.
+    let thread_metadata_b = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&session_id_b)
+            .cloned()
+            .expect("session_id_b should exist in metadata store")
+    });
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_thread(
-            ThreadMetadata {
-                thread_id: ThreadId::new(),
-                session_id: Some(session_id_b.clone()),
-                agent_id: agent::ZED_AGENT_ID.clone(),
-                title: Some("Thread B".into()),
-                updated_at: Utc::now(),
-                created_at: None,
-                worktree_paths: WorktreePaths::default(),
-                archived: false,
-                remote_connection: None,
-            },
-            &workspace_b,
-            false,
-            window,
-            cx,
-        );
+        sidebar.activate_thread(thread_metadata_b, &workspace_b, false, window, cx);
     });
     cx.run_until_parked();
 
@@ -9950,7 +9932,11 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
         );
     });
 
-    // Individual workspace key changes (e.g. remote server discovering linked
-    // worktrees) are allowed to briefly show as separate projects. Propagation
-    // only happens for group-level operations via the "..." menu.
+    assert!(
+        !saw_separate_project_header.load(std::sync::atomic::Ordering::SeqCst),
+        "sidebar briefly rendered the remote worktree as a separate project during the real remote open/update sequence; \
+         final group: {:?}; final sidebar entries: {:?}",
+        group_after_update,
+        entries_after_update,
+    );
 }

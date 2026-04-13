@@ -723,9 +723,12 @@ impl ThreadMetadataStore {
 
     /// Apply a mutation to the worktree paths of all threads whose current
     /// `folder_paths` matches `current_folder_paths`, then re-index.
+    /// When `remote_connection` is provided, only threads with a matching
+    /// remote connection are affected.
     pub fn change_worktree_paths(
         &mut self,
         current_folder_paths: &PathList,
+        remote_connection: Option<&RemoteConnectionOptions>,
         mutate: impl Fn(&mut WorktreePaths),
         cx: &mut Context<Self>,
     ) {
@@ -734,6 +737,14 @@ impl ThreadMetadataStore {
             .get(current_folder_paths)
             .into_iter()
             .flatten()
+            .filter(|id| {
+                remote_connection.is_none()
+                    || self
+                        .threads
+                        .get(id)
+                        .and_then(|t| t.remote_connection.as_ref())
+                        == remote_connection
+            })
             .copied()
             .collect();
 
@@ -744,9 +755,12 @@ impl ThreadMetadataStore {
     /// `main_worktree_paths` instead of `folder_paths`. Used when
     /// migrating threads for project group key changes where the
     /// lookup key is the group key's main paths.
+    /// When `remote_connection` is provided, only threads with a matching
+    /// remote connection are affected.
     pub fn change_worktree_paths_by_main(
         &mut self,
         current_main_paths: &PathList,
+        remote_connection: Option<&RemoteConnectionOptions>,
         mutate: impl Fn(&mut WorktreePaths),
         cx: &mut Context<Self>,
     ) {
@@ -755,6 +769,14 @@ impl ThreadMetadataStore {
             .get(current_main_paths)
             .into_iter()
             .flatten()
+            .filter(|id| {
+                remote_connection.is_none()
+                    || self
+                        .threads
+                        .get(id)
+                        .and_then(|t| t.remote_connection.as_ref())
+                        == remote_connection
+            })
             .copied()
             .collect();
 

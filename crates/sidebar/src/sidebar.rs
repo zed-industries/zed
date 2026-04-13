@@ -706,9 +706,11 @@ impl Sidebar {
             return;
         }
 
+        let remote_connection = old_key.host();
         ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
             store.change_worktree_paths_by_main(
                 old_main_paths,
+                remote_connection.as_ref(),
                 |paths| {
                     for path in &added_paths {
                         paths.add_path(path, path);
@@ -753,9 +755,11 @@ impl Sidebar {
             return;
         }
 
+        let remote_connection = project.read(cx).remote_connection_options(cx);
         ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
             store.change_worktree_paths(
                 &old_folder_paths,
+                remote_connection.as_ref(),
                 |paths| {
                     for (main_path, folder_path) in &added_pairs {
                         paths.add_path(main_path, folder_path);
