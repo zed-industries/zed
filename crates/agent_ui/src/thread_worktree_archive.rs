@@ -244,7 +244,7 @@ async fn remove_root_after_worktree_removal(
         .map_err(|_| anyhow!("git worktree removal was canceled"))?;
     // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
     drop(_temp_project);
-    result?;
+    result.context("git worktree removal failed")?;
 
     remove_empty_parent_dirs_up_to_worktrees_base(&root.root_path, &root.main_repo_path, cx);
 
