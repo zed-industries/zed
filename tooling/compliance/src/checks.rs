@@ -110,7 +110,10 @@ impl<'a> Reporter<'a> {
     }
 
     /// Method that checks every commit for compliance
-    async fn check_commit(&self, commit: &CommitDetails) -> Result<ReviewSuccess, ReviewFailure> {
+    pub async fn check_commit(
+        &self,
+        commit: &CommitDetails,
+    ) -> Result<ReviewSuccess, ReviewFailure> {
         let Some(pr_number) = commit.pr_number() else {
             return Err(ReviewFailure::NoPullRequestFound);
         };
