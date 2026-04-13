@@ -73,6 +73,9 @@ pub fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        cx.set_global(acp_thread::StubSessionCounter(
+            std::sync::atomic::AtomicUsize::new(0),
+        ));
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         release_channel::init("0.0.0".parse().unwrap(), cx);

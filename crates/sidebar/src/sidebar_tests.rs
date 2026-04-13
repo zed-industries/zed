@@ -8541,8 +8541,24 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
 
     // Save two threads directly into the metadata store (not via the agent
     // panel), so they are purely historical — no open views hold them.
-    save_named_thread_metadata("hist-1", "Historical 1", &project, cx).await;
-    save_named_thread_metadata("hist-2", "Historical 2", &project, cx).await;
+    // Use different timestamps so sort order is deterministic.
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("hist-1")),
+        Some("Historical 1".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &project,
+        cx,
+    );
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("hist-2")),
+        Some("Historical 2".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
+        None,
+        &project,
+        cx,
+    );
+    cx.run_until_parked();
     sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
     cx.run_until_parked();
 

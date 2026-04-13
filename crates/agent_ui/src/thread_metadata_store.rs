@@ -416,9 +416,11 @@ impl ThreadMetadataStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn init_global(cx: &mut App) {
+        static NEXT_DB_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let thread = std::thread::current();
         let test_name = thread.name().unwrap_or("unknown_test");
-        let db_name = format!("THREAD_METADATA_DB_{}", test_name);
+        let unique_id = NEXT_DB_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let db_name = format!("THREAD_METADATA_DB_{}_{}", test_name, unique_id);
         let db = smol::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
         let thread_store = cx.new(|cx| Self::new(ThreadMetadataDb(db), cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
