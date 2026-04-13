@@ -1973,7 +1973,7 @@ impl Sidebar {
                 let project_group_key = project_group_key.clone();
 
                 let has_multiple_projects = multi_workspace
-                    .read_with(cx, |mw, _| mw.project_group_keys().count() >= 2)
+                    .read_with(cx, |mw, _| mw.project_group_keys().len() >= 2)
                     .unwrap_or(false);
 
                 let menu =
