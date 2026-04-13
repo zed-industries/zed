@@ -3130,7 +3130,9 @@ impl AgentPanel {
             return false;
         };
         let worktree_store = self.project.read(cx).worktree_store();
-        !trusted_store.read(cx).has_restricted_worktrees(&worktree_store, cx)
+        !trusted_store
+            .read(cx)
+            .has_restricted_worktrees(&worktree_store, cx)
     }
 
     fn trust_worktree_paths(
