@@ -38,6 +38,7 @@ pub(crate) struct ParsedMarkdownData {
     pub root_block_starts: Vec<usize>,
     pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
+    pub footnote_definitions: HashMap<SharedString, usize>,
 }
 
 impl ParseState {
@@ -499,9 +500,10 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::InlineHtml(_) => {
                 state.push_event(range, MarkdownEvent::InlineHtml)
             }
-            pulldown_cmark::Event::FootnoteReference(_) => {
-                state.push_event(range, MarkdownEvent::FootnoteReference)
-            }
+            pulldown_cmark::Event::FootnoteReference(label) => state.push_event(
+                range,
+                MarkdownEvent::FootnoteReference(SharedString::from(label.to_string())),
+            ),
             pulldown_cmark::Event::SoftBreak => state.push_event(range, MarkdownEvent::SoftBreak),
             pulldown_cmark::Event::HardBreak => state.push_event(range, MarkdownEvent::HardBreak),
             pulldown_cmark::Event::Rule => state.push_event(range, MarkdownEvent::Rule),
@@ -517,6 +519,7 @@ pub(crate) fn parse_markdown_with_options(
     } else {
         HashMap::default()
     };
+    let footnote_definitions = build_footnote_definitions(&state.events);
 
     ParsedMarkdownData {
         events: state.events,
@@ -525,7 +528,34 @@ pub(crate) fn parse_markdown_with_options(
         root_block_starts: state.root_block_starts,
         html_blocks,
         heading_slugs,
+        footnote_definitions,
     }
+}
+
+fn build_footnote_definitions(
+    events: &[(Range<usize>, MarkdownEvent)],
+) -> HashMap<SharedString, usize> {
+    let mut definitions = HashMap::default();
+    let mut current_label: Option<SharedString> = None;
+
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::FootnoteDefinition(label)) => {
+                current_label = Some(label.clone());
+            }
+            MarkdownEvent::End(MarkdownTagEnd::FootnoteDefinition) => {
+                current_label = None;
+            }
+            MarkdownEvent::Text if current_label.is_some() => {
+                if let Some(label) = current_label.take() {
+                    definitions.entry(label).or_insert(range.start);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    definitions
 }
 
 pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
@@ -589,7 +619,7 @@ pub enum MarkdownEvent {
     /// A reference to a footnote with given label, which may or may not be defined
     /// by an event with a `Tag::FootnoteDefinition` tag. Definitions and references to them may
     /// occur in any order.
-    FootnoteReference,
+    FootnoteReference(SharedString),
     /// A soft line break.
     SoftBreak,
     /// A hard line break.
@@ -1109,6 +1139,48 @@ mod tests {
         // Malformed input
         let input = "`````";
         assert_eq!(extract_code_block_content_range(input), 3..3);
+    }
+
+    #[test]
+    fn test_footnotes() {
+        let parsed = parse_markdown_with_options(
+            "Text with a footnote[^1] and some more text.\n\n[^1]: This is the footnote content.",
+            false,
+            false,
+        );
+        assert_eq!(
+            parsed.events,
+            vec![
+                (0..45, RootStart),
+                (0..45, Start(Paragraph)),
+                (0..20, Text),
+                (20..24, FootnoteReference("1".into())),
+                (24..44, Text),
+                (0..45, End(MarkdownTagEnd::Paragraph)),
+                (0..45, RootEnd(0)),
+                (46..81, RootStart),
+                (46..81, Start(FootnoteDefinition("1".into()))),
+                (52..81, Start(Paragraph)),
+                (52..81, Text),
+                (52..81, End(MarkdownTagEnd::Paragraph)),
+                (46..81, End(MarkdownTagEnd::FootnoteDefinition)),
+                (46..81, RootEnd(1)),
+            ]
+        );
+        assert_eq!(parsed.footnote_definitions.len(), 1);
+        assert_eq!(parsed.footnote_definitions.get("1").copied(), Some(52));
+    }
+
+    #[test]
+    fn test_footnote_definitions_multiple() {
+        let parsed = parse_markdown_with_options(
+            "Text[^a] and[^b].\n\n[^a]: First.\n\n[^b]: Second.",
+            false,
+            false,
+        );
+        assert_eq!(parsed.footnote_definitions.len(), 2);
+        assert!(parsed.footnote_definitions.contains_key("a"));
+        assert!(parsed.footnote_definitions.contains_key("b"));
     }
 
     #[test]

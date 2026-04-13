@@ -2071,6 +2071,28 @@ mod tests {
             .unindent(),
             cx,
         );
+
+        // hover sticky settings
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "editor.hover.sticky": false,
+              "editor.hover.hidingDelay": 500
+            }"#
+            .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "hover_popover_hiding_delay": 500,
+              "hover_popover_sticky": false
+            }
+            "#
+            .unindent(),
+            cx,
+        );
     }
 
     #[track_caller]

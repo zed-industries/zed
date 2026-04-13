@@ -167,7 +167,7 @@ impl StepOutput {
                 .run
                 .as_ref()
                 .is_none_or(|run_command| run_command.contains(name)),
-            "Step Output name {name} must occur at least once in run command with ID {step_id}!"
+            "Step output with name '{name}' must occur at least once in run command with ID {step_id}!"
         );
 
         Self { name, step_id }

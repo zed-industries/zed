@@ -5,11 +5,11 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
-use project::{DirectoryLister, DisableAiSettings, Project, ProjectGroupKey};
+pub use project::ProjectGroupKey;
+use project::{DirectoryLister, DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
-use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
@@ -101,6 +101,10 @@ pub enum MultiWorkspaceEvent {
     ActiveWorkspaceChanged,
     WorkspaceAdded(Entity<Workspace>),
     WorkspaceRemoved(EntityId),
+    ProjectGroupKeyUpdated {
+        old_key: ProjectGroupKey,
+        new_key: ProjectGroupKey,
+    },
 }
 
 pub enum SidebarEvent {
@@ -257,52 +261,32 @@ impl<T: Sidebar> SidebarHandle for Entity<T> {
     }
 }
 
-/// Tracks which workspace the user is currently looking at.
-///
-/// `Persistent` workspaces live in the `workspaces` vec and are shown in the
-/// sidebar. `Transient` workspaces exist outside the vec and are discarded
-/// when the user switches away.
-enum ActiveWorkspace {
-    /// A persistent workspace, identified by index into the `workspaces` vec.
-    Persistent(usize),
-    /// A workspace not in the `workspaces` vec that will be discarded on
-    /// switch or promoted to persistent when the sidebar is opened.
-    Transient(Entity<Workspace>),
+#[derive(Clone)]
+pub struct ProjectGroup {
+    pub key: ProjectGroupKey,
+    pub workspaces: Vec<Entity<Workspace>>,
+    pub expanded: bool,
+    pub visible_thread_count: Option<usize>,
 }
 
-impl ActiveWorkspace {
-    fn transient_workspace(&self) -> Option<&Entity<Workspace>> {
-        match self {
-            Self::Transient(workspace) => Some(workspace),
-            Self::Persistent(_) => None,
-        }
-    }
+pub struct SerializedProjectGroupState {
+    pub key: ProjectGroupKey,
+    pub expanded: bool,
+    pub visible_thread_count: Option<usize>,
+}
 
-    /// Sets the active workspace to transient, returning the previous
-    /// transient workspace (if any).
-    fn set_transient(&mut self, workspace: Entity<Workspace>) -> Option<Entity<Workspace>> {
-        match std::mem::replace(self, Self::Transient(workspace)) {
-            Self::Transient(old) => Some(old),
-            Self::Persistent(_) => None,
-        }
-    }
-
-    /// Sets the active workspace to persistent at the given index,
-    /// returning the previous transient workspace (if any).
-    fn set_persistent(&mut self, index: usize) -> Option<Entity<Workspace>> {
-        match std::mem::replace(self, Self::Persistent(index)) {
-            Self::Transient(workspace) => Some(workspace),
-            Self::Persistent(_) => None,
-        }
-    }
+#[derive(Clone)]
+pub struct ProjectGroupState {
+    pub key: ProjectGroupKey,
+    pub expanded: bool,
+    pub visible_thread_count: Option<usize>,
 }
 
 pub struct MultiWorkspace {
     window_id: WindowId,
-    workspaces: Vec<Entity<Workspace>>,
-    active_workspace: ActiveWorkspace,
-    project_group_keys: Vec<ProjectGroupKey>,
-    provisional_project_group_keys: HashMap<EntityId, ProjectGroupKey>,
+    retained_workspaces: Vec<Entity<Workspace>>,
+    project_groups: Vec<ProjectGroupState>,
+    active_workspace: Entity<Workspace>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
@@ -354,10 +338,9 @@ impl MultiWorkspace {
         });
         Self {
             window_id: window.window_handle().window_id(),
-            project_group_keys: Vec::new(),
-            provisional_project_group_keys: HashMap::default(),
-            workspaces: Vec::new(),
-            active_workspace: ActiveWorkspace::Transient(workspace),
+            retained_workspaces: Vec::new(),
+            project_groups: Vec::new(),
+            active_workspace: workspace,
             sidebar: None,
             sidebar_open: false,
             sidebar_overlay: None,
@@ -474,13 +457,9 @@ impl MultiWorkspace {
 
     pub fn open_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_open = true;
-        if let ActiveWorkspace::Transient(workspace) = &self.active_workspace {
-            let workspace = workspace.clone();
-            let index = self.promote_transient(workspace, cx);
-            self.active_workspace = ActiveWorkspace::Persistent(index);
-        }
+        self.retain_active_workspace(cx);
         let sidebar_focus_handle = self.sidebar.as_ref().map(|s| s.focus_handle(cx));
-        for workspace in self.workspaces.iter() {
+        for workspace in self.retained_workspaces.clone() {
             workspace.update(cx, |workspace, _cx| {
                 workspace.set_sidebar_focus_handle(sidebar_focus_handle.clone());
             });
@@ -491,7 +470,7 @@ impl MultiWorkspace {
 
     pub fn close_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar_open = false;
-        for workspace in self.workspaces.iter() {
+        for workspace in self.retained_workspaces.clone() {
             workspace.update(cx, |workspace, _cx| {
                 workspace.set_sidebar_focus_handle(None);
             });
@@ -559,19 +538,16 @@ impl MultiWorkspace {
         cx.subscribe_in(&project, window, {
             let workspace = workspace.downgrade();
             move |this, _project, event, _window, cx| match event {
-                project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                project::Event::WorktreePathsChanged { old_worktree_paths } => {
                     if let Some(workspace) = workspace.upgrade() {
-                        this.add_project_group_key(workspace.read(cx).project_group_key(cx));
-                    }
-                }
-                project::Event::WorktreeUpdatedRootRepoCommonDir(_) => {
-                    if let Some(workspace) = workspace.upgrade() {
-                        this.maybe_clear_provisional_project_group_key(&workspace, cx);
-                        this.add_project_group_key(
-                            this.project_group_key_for_workspace(&workspace, cx),
-                        );
-                        this.remove_stale_project_group_keys(cx);
-                        cx.notify();
+                        let host = workspace
+                            .read(cx)
+                            .project()
+                            .read(cx)
+                            .remote_connection_options(cx);
+                        let old_key =
+                            ProjectGroupKey::from_worktree_paths(old_worktree_paths, host);
+                        this.handle_project_group_key_change(&workspace, &old_key, cx);
                     }
                 }
                 _ => {}
@@ -587,25 +563,168 @@ impl MultiWorkspace {
         .detach();
     }
 
-    pub fn add_project_group_key(&mut self, project_group_key: ProjectGroupKey) {
-        if project_group_key.path_list().paths().is_empty() {
-            return;
-        }
-        if self.project_group_keys.contains(&project_group_key) {
-            return;
-        }
-        // Store newest first so the vec is in "most recently added"
-        self.project_group_keys.insert(0, project_group_key);
-    }
-
-    pub fn set_provisional_project_group_key(
+    fn handle_project_group_key_change(
         &mut self,
         workspace: &Entity<Workspace>,
-        project_group_key: ProjectGroupKey,
+        old_key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
     ) {
-        self.provisional_project_group_keys
-            .insert(workspace.entity_id(), project_group_key.clone());
-        self.add_project_group_key(project_group_key);
+        if !self.is_workspace_retained(workspace) {
+            return;
+        }
+
+        let new_key = workspace.read(cx).project_group_key(cx);
+        if new_key.path_list().paths().is_empty() {
+            return;
+        }
+
+        // Re-key the group without emitting ProjectGroupKeyUpdated —
+        // the Project already emitted WorktreePathsChanged which the
+        // sidebar handles for thread migration.
+        self.rekey_project_group(old_key, &new_key, cx);
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    pub fn is_workspace_retained(&self, workspace: &Entity<Workspace>) -> bool {
+        self.retained_workspaces
+            .iter()
+            .any(|retained| retained == workspace)
+    }
+
+    pub fn active_workspace_is_retained(&self) -> bool {
+        self.is_workspace_retained(&self.active_workspace)
+    }
+
+    pub fn retained_workspaces(&self) -> &[Entity<Workspace>] {
+        &self.retained_workspaces
+    }
+
+    /// Ensures a project group exists for `key`, creating one if needed.
+    fn ensure_project_group_state(&mut self, key: ProjectGroupKey) {
+        if key.path_list().paths().is_empty() {
+            return;
+        }
+
+        if self.project_groups.iter().any(|group| group.key == key) {
+            return;
+        }
+
+        self.project_groups.insert(
+            0,
+            ProjectGroupState {
+                key,
+                expanded: true,
+                visible_thread_count: None,
+            },
+        );
+    }
+
+    /// Transitions a project group from `old_key` to `new_key`.
+    ///
+    /// On collision (both keys have groups), the active workspace's
+    /// Re-keys a project group from `old_key` to `new_key`, handling
+    /// collisions. When two groups collide, the active workspace's
+    /// group always wins. Otherwise the old key's state is preserved
+    /// — it represents the group the user or system just acted on.
+    /// The losing group is removed, and the winner is re-keyed in
+    /// place to preserve sidebar order.
+    fn rekey_project_group(
+        &mut self,
+        old_key: &ProjectGroupKey,
+        new_key: &ProjectGroupKey,
+        cx: &App,
+    ) {
+        if old_key == new_key {
+            return;
+        }
+
+        if new_key.path_list().paths().is_empty() {
+            return;
+        }
+
+        let old_key_exists = self.project_groups.iter().any(|g| g.key == *old_key);
+        let new_key_exists = self.project_groups.iter().any(|g| g.key == *new_key);
+
+        if !old_key_exists {
+            self.ensure_project_group_state(new_key.clone());
+            return;
+        }
+
+        if new_key_exists {
+            let active_key = self.active_workspace.read(cx).project_group_key(cx);
+            if active_key == *new_key {
+                self.project_groups.retain(|g| g.key != *old_key);
+            } else {
+                self.project_groups.retain(|g| g.key != *new_key);
+                if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *old_key) {
+                    group.key = new_key.clone();
+                }
+            }
+        } else {
+            if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *old_key) {
+                group.key = new_key.clone();
+            }
+        }
+
+        // If another retained workspace still has the old key (e.g. a
+        // linked worktree workspace), re-create the old group so it
+        // remains reachable in the sidebar.
+        let other_workspace_needs_old_key = self
+            .retained_workspaces
+            .iter()
+            .any(|ws| ws.read(cx).project_group_key(cx) == *old_key);
+        if other_workspace_needs_old_key {
+            self.ensure_project_group_state(old_key.clone());
+        }
+    }
+
+    /// Re-keys a project group and emits `ProjectGroupKeyUpdated` so
+    /// the sidebar can migrate thread metadata. Used for direct group
+    /// manipulation (add/remove folder) where no Project event fires.
+    fn update_project_group_key(
+        &mut self,
+        old_key: &ProjectGroupKey,
+        new_key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) {
+        self.rekey_project_group(old_key, new_key, cx);
+
+        if old_key != new_key && !new_key.path_list().paths().is_empty() {
+            cx.emit(MultiWorkspaceEvent::ProjectGroupKeyUpdated {
+                old_key: old_key.clone(),
+                new_key: new_key.clone(),
+            });
+        }
+    }
+
+    pub(crate) fn retain_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        key: ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_project_group_state(key);
+        if self.is_workspace_retained(&workspace) {
+            return;
+        }
+
+        self.retained_workspaces.push(workspace.clone());
+        cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
+    }
+
+    fn register_workspace(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        Self::subscribe_to_workspace(workspace, window, cx);
+        self.sync_sidebar_to_workspace(workspace, cx);
+        let weak_self = cx.weak_entity();
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_multi_workspace(weak_self, cx);
+        });
     }
 
     pub fn project_group_key_for_workspace(
@@ -613,108 +732,139 @@ impl MultiWorkspace {
         workspace: &Entity<Workspace>,
         cx: &App,
     ) -> ProjectGroupKey {
-        self.provisional_project_group_keys
-            .get(&workspace.entity_id())
-            .cloned()
-            .unwrap_or_else(|| workspace.read(cx).project_group_key(cx))
+        workspace.read(cx).project_group_key(cx)
     }
 
-    fn maybe_clear_provisional_project_group_key(
+    pub fn restore_project_groups(
         &mut self,
-        workspace: &Entity<Workspace>,
-        cx: &App,
+        groups: Vec<SerializedProjectGroupState>,
+        _cx: &mut Context<Self>,
     ) {
-        let live_key = workspace.read(cx).project_group_key(cx);
-        if self
-            .provisional_project_group_keys
-            .get(&workspace.entity_id())
-            .is_some_and(|key| *key == live_key)
+        let mut restored: Vec<ProjectGroupState> = Vec::new();
+        for SerializedProjectGroupState {
+            key,
+            expanded,
+            visible_thread_count,
+        } in groups
         {
-            self.provisional_project_group_keys
-                .remove(&workspace.entity_id());
-        }
-    }
-
-    fn remove_stale_project_group_keys(&mut self, cx: &App) {
-        let workspace_keys: HashSet<ProjectGroupKey> = self
-            .workspaces
-            .iter()
-            .map(|workspace| self.project_group_key_for_workspace(workspace, cx))
-            .collect();
-        self.project_group_keys
-            .retain(|key| workspace_keys.contains(key));
-    }
-
-    pub fn restore_project_group_keys(&mut self, keys: Vec<ProjectGroupKey>) {
-        let mut restored: Vec<ProjectGroupKey> = Vec::with_capacity(keys.len());
-        for key in keys {
             if key.path_list().paths().is_empty() {
                 continue;
             }
-            if !restored.contains(&key) {
-                restored.push(key);
+            if restored.iter().any(|group| group.key == key) {
+                continue;
+            }
+            restored.push(ProjectGroupState {
+                key,
+                expanded,
+                visible_thread_count,
+            });
+        }
+        for existing in std::mem::take(&mut self.project_groups) {
+            if !restored.iter().any(|group| group.key == existing.key) {
+                restored.push(existing);
             }
         }
-        for existing_key in &self.project_group_keys {
-            if !restored.contains(existing_key) {
-                restored.push(existing_key.clone());
-            }
-        }
-        self.project_group_keys = restored;
+        self.project_groups = restored;
     }
 
-    pub fn project_group_keys(&self) -> impl Iterator<Item = &ProjectGroupKey> {
-        self.project_group_keys.iter()
-    }
-
-    /// Returns the project groups, ordered by most recently added.
-    pub fn project_groups(
-        &self,
-        cx: &App,
-    ) -> impl Iterator<Item = (ProjectGroupKey, Vec<Entity<Workspace>>)> {
-        let mut groups = self
-            .project_group_keys
+    pub fn project_group_keys(&self) -> Vec<ProjectGroupKey> {
+        self.project_groups
             .iter()
-            .map(|key| (key.clone(), Vec::new()))
-            .collect::<Vec<_>>();
-        for workspace in &self.workspaces {
-            let key = self.project_group_key_for_workspace(workspace, cx);
-            if let Some((_, workspaces)) = groups.iter_mut().find(|(k, _)| k == &key) {
-                workspaces.push(workspace.clone());
-            }
+            .map(|group| group.key.clone())
+            .collect()
+    }
+
+    fn derived_project_groups(&self, cx: &App) -> Vec<ProjectGroup> {
+        self.project_groups
+            .iter()
+            .map(|group| ProjectGroup {
+                key: group.key.clone(),
+                workspaces: self
+                    .retained_workspaces
+                    .iter()
+                    .filter(|workspace| workspace.read(cx).project_group_key(cx) == group.key)
+                    .cloned()
+                    .collect(),
+                expanded: group.expanded,
+                visible_thread_count: group.visible_thread_count,
+            })
+            .collect()
+    }
+
+    pub fn project_groups(&self, cx: &App) -> Vec<ProjectGroup> {
+        self.derived_project_groups(cx)
+    }
+
+    pub fn group_state_by_key(&self, key: &ProjectGroupKey) -> Option<&ProjectGroupState> {
+        self.project_groups.iter().find(|group| group.key == *key)
+    }
+
+    pub fn group_state_by_key_mut(
+        &mut self,
+        key: &ProjectGroupKey,
+    ) -> Option<&mut ProjectGroupState> {
+        self.project_groups
+            .iter_mut()
+            .find(|group| group.key == *key)
+    }
+
+    pub fn set_all_groups_expanded(&mut self, expanded: bool) {
+        for group in &mut self.project_groups {
+            group.expanded = expanded;
         }
-        groups.into_iter()
+    }
+
+    pub fn set_all_groups_visible_thread_count(&mut self, count: Option<usize>) {
+        for group in &mut self.project_groups {
+            group.visible_thread_count = count;
+        }
     }
 
     pub fn workspaces_for_project_group(
         &self,
-        project_group_key: &ProjectGroupKey,
+        key: &ProjectGroupKey,
         cx: &App,
-    ) -> impl Iterator<Item = &Entity<Workspace>> {
-        self.workspaces.iter().filter(move |workspace| {
-            self.project_group_key_for_workspace(workspace, cx) == *project_group_key
+    ) -> Option<Vec<Entity<Workspace>>> {
+        let has_group = self.project_groups.iter().any(|group| group.key == *key)
+            || self
+                .retained_workspaces
+                .iter()
+                .any(|workspace| workspace.read(cx).project_group_key(cx) == *key);
+
+        has_group.then(|| {
+            self.retained_workspaces
+                .iter()
+                .filter(|workspace| workspace.read(cx).project_group_key(cx) == *key)
+                .cloned()
+                .collect()
         })
     }
 
     pub fn remove_folder_from_project_group(
         &mut self,
-        project_group_key: &ProjectGroupKey,
+        group_key: &ProjectGroupKey,
         path: &Path,
         cx: &mut Context<Self>,
     ) {
-        let new_path_list = project_group_key.path_list().without_path(path);
+        let workspaces = self
+            .workspaces_for_project_group(group_key, cx)
+            .unwrap_or_default();
+
+        let Some(group) = self
+            .project_groups
+            .iter()
+            .find(|group| group.key == *group_key)
+        else {
+            return;
+        };
+
+        let new_path_list = group.key.path_list().without_path(path);
         if new_path_list.is_empty() {
             return;
         }
 
-        let new_key = ProjectGroupKey::new(project_group_key.host(), new_path_list);
-
-        let workspaces: Vec<_> = self
-            .workspaces_for_project_group(project_group_key, cx)
-            .cloned()
-            .collect();
-
-        self.add_project_group_key(new_key);
+        let new_key = ProjectGroupKey::new(group.key.host(), new_path_list);
+        self.update_project_group_key(group_key, &new_key, cx);
 
         for workspace in workspaces {
             let project = workspace.read(cx).project().clone();
@@ -729,7 +879,7 @@ impl MultiWorkspace {
 
     pub fn prompt_to_add_folders_to_project_group(
         &mut self,
-        key: &ProjectGroupKey,
+        group_key: ProjectGroupKey,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -747,12 +897,11 @@ impl MultiWorkspace {
             )
         });
 
-        let key = key.clone();
         cx.spawn_in(window, async move |this, cx| {
             if let Some(new_paths) = paths.await.ok().flatten() {
                 if !new_paths.is_empty() {
                     this.update(cx, |multi_workspace, cx| {
-                        multi_workspace.add_folders_to_project_group(&key, new_paths, cx);
+                        multi_workspace.add_folders_to_project_group(&group_key, new_paths, cx);
                     })?;
                 }
             }
@@ -763,21 +912,38 @@ impl MultiWorkspace {
 
     pub fn add_folders_to_project_group(
         &mut self,
-        project_group_key: &ProjectGroupKey,
+        group_key: &ProjectGroupKey,
         new_paths: Vec<PathBuf>,
         cx: &mut Context<Self>,
     ) {
-        let mut all_paths: Vec<PathBuf> = project_group_key.path_list().paths().to_vec();
-        all_paths.extend(new_paths.iter().cloned());
-        let new_path_list = PathList::new(&all_paths);
-        let new_key = ProjectGroupKey::new(project_group_key.host(), new_path_list);
+        let workspaces = self
+            .workspaces_for_project_group(group_key, cx)
+            .unwrap_or_default();
 
-        let workspaces: Vec<_> = self
-            .workspaces_for_project_group(project_group_key, cx)
-            .cloned()
+        let Some(group) = self
+            .project_groups
+            .iter()
+            .find(|group| group.key == *group_key)
+        else {
+            return;
+        };
+
+        let existing_paths = group.key.path_list().paths();
+        let new_paths: Vec<PathBuf> = new_paths
+            .into_iter()
+            .filter(|p| !existing_paths.contains(p))
             .collect();
 
-        self.add_project_group_key(new_key);
+        if new_paths.is_empty() {
+            return;
+        }
+
+        let mut all_paths: Vec<PathBuf> = existing_paths.to_vec();
+        all_paths.extend(new_paths.iter().cloned());
+        let new_path_list = PathList::new(&all_paths);
+        let new_key = ProjectGroupKey::new(group.key.host(), new_path_list);
+
+        self.update_project_group_key(group_key, &new_key, cx);
 
         for workspace in workspaces {
             let project = workspace.read(cx).project().clone();
@@ -796,31 +962,28 @@ impl MultiWorkspace {
 
     pub fn remove_project_group(
         &mut self,
-        key: &ProjectGroupKey,
+        group_key: &ProjectGroupKey,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        let workspaces: Vec<_> = self
-            .workspaces_for_project_group(key, cx)
-            .cloned()
-            .collect();
+        let pos = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *group_key);
+        let workspaces = self
+            .workspaces_for_project_group(group_key, cx)
+            .unwrap_or_default();
 
-        // Compute the neighbor while the key is still in the list.
-        let neighbor_key = {
-            let pos = self.project_group_keys.iter().position(|k| k == key);
-            pos.and_then(|pos| {
-                // Keys are in display order, so pos+1 is below
-                // and pos-1 is above. Try below first.
-                self.project_group_keys.get(pos + 1).or_else(|| {
-                    pos.checked_sub(1)
-                        .and_then(|i| self.project_group_keys.get(i))
-                })
-            })
-            .cloned()
-        };
+        // Compute the neighbor while the group is still in the list.
+        let neighbor_key = pos.and_then(|pos| {
+            self.project_groups
+                .get(pos + 1)
+                .or_else(|| pos.checked_sub(1).and_then(|i| self.project_groups.get(i)))
+                .map(|group| group.key.clone())
+        });
 
-        // Now remove the key.
-        self.project_group_keys.retain(|k| k != key);
+        // Now remove the group.
+        self.project_groups.retain(|group| group.key != *group_key);
 
         self.remove(
             workspaces,
@@ -861,14 +1024,17 @@ impl MultiWorkspace {
         host: Option<&RemoteConnectionOptions>,
         cx: &App,
     ) -> Option<Entity<Workspace>> {
-        self.workspaces
-            .iter()
-            .find(|ws| {
-                let key = ws.read(cx).project_group_key(cx);
-                key.host().as_ref() == host
-                    && PathList::new(&ws.read(cx).root_paths(cx)) == *path_list
-            })
-            .cloned()
+        for workspace in self.workspaces() {
+            let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
+            let key = workspace.read(cx).project_group_key(cx);
+            let host_matches = key.host().as_ref() == host;
+            let paths_match = root_paths == *path_list;
+            if host_matches && paths_match {
+                return Some(workspace.clone());
+            }
+        }
+
+        None
     }
 
     /// Finds an existing workspace whose paths match, or creates a new one.
@@ -967,12 +1133,6 @@ impl MultiWorkspace {
             return Task::ready(Ok(workspace));
         }
 
-        if let Some(transient) = self.active_workspace.transient_workspace() {
-            if transient.read(cx).project_group_key(cx).path_list() == &path_list {
-                return Task::ready(Ok(transient.clone()));
-            }
-        }
-
         let paths = path_list.paths().to_vec();
         let app_state = self.workspace().read(cx).app_state().clone();
         let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
@@ -996,16 +1156,14 @@ impl MultiWorkspace {
     }
 
     pub fn workspace(&self) -> &Entity<Workspace> {
-        match &self.active_workspace {
-            ActiveWorkspace::Persistent(index) => &self.workspaces[*index],
-            ActiveWorkspace::Transient(workspace) => workspace,
-        }
+        &self.active_workspace
     }
 
     pub fn workspaces(&self) -> impl Iterator<Item = &Entity<Workspace>> {
-        self.workspaces
+        let active_is_retained = self.is_workspace_retained(&self.active_workspace);
+        self.retained_workspaces
             .iter()
-            .chain(self.active_workspace.transient_workspace())
+            .chain(std::iter::once(&self.active_workspace).filter(move |_| !active_is_retained))
     }
 
     /// Adds a workspace to this window as persistent without changing which
@@ -1013,7 +1171,17 @@ impl MultiWorkspace {
     /// persistent list regardless of sidebar state — it's used for system-
     /// initiated additions like deserialization and worktree discovery.
     pub fn add(&mut self, workspace: Entity<Workspace>, window: &Window, cx: &mut Context<Self>) {
-        self.insert_workspace(workspace, window, cx);
+        if self.is_workspace_retained(&workspace) {
+            return;
+        }
+
+        if workspace != self.active_workspace {
+            self.register_workspace(&workspace, window, cx);
+        }
+
+        let key = workspace.read(cx).project_group_key(cx);
+        self.retain_workspace(workspace, key, cx);
+        cx.notify();
     }
 
     /// Ensures the workspace is in the multiworkspace and makes it the active one.
@@ -1023,41 +1191,28 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Re-activating the current workspace is a no-op.
         if self.workspace() == &workspace {
             self.focus_active_workspace(window, cx);
             return;
         }
 
-        // Resolve where we're going.
-        let new_index = if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
-            Some(index)
-        } else if self.sidebar_open {
-            Some(self.insert_workspace(workspace.clone(), &*window, cx))
-        } else {
-            None
-        };
+        let old_active_workspace = self.active_workspace.clone();
+        let old_active_was_retained = self.active_workspace_is_retained();
+        let workspace_was_retained = self.is_workspace_retained(&workspace);
 
-        // Transition the active workspace.
-        if let Some(index) = new_index {
-            if let Some(old) = self.active_workspace.set_persistent(index) {
-                if self.sidebar_open {
-                    self.promote_transient(old, cx);
-                } else {
-                    self.detach_workspace(&old, cx);
-                    cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(old.entity_id()));
-                }
+        if !workspace_was_retained {
+            self.register_workspace(&workspace, window, cx);
+
+            if self.sidebar_open {
+                let key = workspace.read(cx).project_group_key(cx);
+                self.retain_workspace(workspace.clone(), key, cx);
             }
-        } else {
-            Self::subscribe_to_workspace(&workspace, window, cx);
-            let weak_self = cx.weak_entity();
-            workspace.update(cx, |workspace, cx| {
-                workspace.set_multi_workspace(weak_self, cx);
-            });
-            if let Some(old) = self.active_workspace.set_transient(workspace) {
-                self.detach_workspace(&old, cx);
-                cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(old.entity_id()));
-            }
+        }
+
+        self.active_workspace = workspace;
+
+        if !self.sidebar_open && !old_active_was_retained {
+            self.detach_workspace(&old_active_workspace, cx);
         }
 
         cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged);
@@ -1070,76 +1225,43 @@ impl MultiWorkspace {
     /// transient, so it is retained across workspace switches even when
     /// the sidebar is closed. No-op if the workspace is already persistent.
     pub fn retain_active_workspace(&mut self, cx: &mut Context<Self>) {
-        if let ActiveWorkspace::Transient(workspace) = &self.active_workspace {
-            let workspace = workspace.clone();
-            let index = self.promote_transient(workspace, cx);
-            self.active_workspace = ActiveWorkspace::Persistent(index);
-            self.serialize(cx);
-            cx.notify();
+        let workspace = self.active_workspace.clone();
+        if self.is_workspace_retained(&workspace) {
+            return;
         }
+
+        let key = workspace.read(cx).project_group_key(cx);
+        self.retain_workspace(workspace, key, cx);
+        self.serialize(cx);
+        cx.notify();
     }
 
-    /// Promotes a former transient workspace into the persistent list.
-    /// Returns the index of the newly inserted workspace.
-    fn promote_transient(&mut self, workspace: Entity<Workspace>, cx: &mut Context<Self>) -> usize {
-        let project_group_key = self.project_group_key_for_workspace(&workspace, cx);
-        self.add_project_group_key(project_group_key);
-        self.workspaces.push(workspace.clone());
-        cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
-        self.workspaces.len() - 1
-    }
-
-    /// Collapses to a single transient workspace, discarding all persistent
-    /// workspaces. Used when multi-workspace is disabled (e.g. disable_ai).
+    /// Collapses to a single workspace, discarding all groups.
+    /// Used when multi-workspace is disabled (e.g. disable_ai).
     fn collapse_to_single_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.sidebar_open {
             self.close_sidebar(window, cx);
         }
-        let active = self.workspace().clone();
-        for workspace in std::mem::take(&mut self.workspaces) {
-            if workspace != active {
+
+        let active_workspace = self.active_workspace.clone();
+        for workspace in self.retained_workspaces.clone() {
+            if workspace != active_workspace {
                 self.detach_workspace(&workspace, cx);
-                cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
             }
         }
-        self.project_group_keys.clear();
-        self.active_workspace = ActiveWorkspace::Transient(active);
+
+        self.retained_workspaces.clear();
+        self.project_groups.clear();
         cx.notify();
     }
 
-    /// Inserts a workspace into the list if not already present. Returns the
-    /// index of the workspace (existing or newly inserted). Does not change
-    /// the active workspace index.
-    fn insert_workspace(
-        &mut self,
-        workspace: Entity<Workspace>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> usize {
-        if let Some(index) = self.workspaces.iter().position(|w| *w == workspace) {
-            index
-        } else {
-            let project_group_key = self.project_group_key_for_workspace(&workspace, cx);
-
-            Self::subscribe_to_workspace(&workspace, window, cx);
-            self.sync_sidebar_to_workspace(&workspace, cx);
-            let weak_self = cx.weak_entity();
-            workspace.update(cx, |workspace, cx| {
-                workspace.set_multi_workspace(weak_self, cx);
-            });
-
-            self.add_project_group_key(project_group_key);
-            self.workspaces.push(workspace.clone());
-            cx.emit(MultiWorkspaceEvent::WorkspaceAdded(workspace));
-            cx.notify();
-            self.workspaces.len() - 1
-        }
-    }
-
-    /// Clears session state and DB binding for a workspace that is being
-    /// removed or replaced. The DB row is preserved so the workspace still
-    /// appears in the recent-projects list.
+    /// Detaches a workspace: clears session state, DB binding, cached
+    /// group key, and emits `WorkspaceRemoved`. The DB row is preserved
+    /// so the workspace still appears in the recent-projects list.
     fn detach_workspace(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
+        self.retained_workspaces
+            .retain(|retained| retained != workspace);
+        cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
         workspace.update(cx, |workspace, _cx| {
             workspace.session_id.take();
             workspace._schedule_serialize_workspace.take();
@@ -1167,16 +1289,22 @@ impl MultiWorkspace {
         }
     }
 
-    pub(crate) fn serialize(&mut self, cx: &mut Context<Self>) {
+    pub fn serialize(&mut self, cx: &mut Context<Self>) {
         self._serialize_task = Some(cx.spawn(async move |this, cx| {
             let Some((window_id, state)) = this
                 .read_with(cx, |this, cx| {
                     let state = MultiWorkspaceState {
                         active_workspace_id: this.workspace().read(cx).database_id(),
-                        project_group_keys: this
-                            .project_group_keys()
-                            .cloned()
-                            .map(Into::into)
+                        project_groups: this
+                            .project_groups
+                            .iter()
+                            .map(|group| {
+                                crate::persistence::model::SerializedProjectGroup::from_group(
+                                    &group.key,
+                                    group.expanded,
+                                    group.visible_thread_count,
+                                )
+                            })
                             .collect::<Vec<_>>(),
                         sidebar_open: this.sidebar_open,
                         sidebar_state: this.sidebar.as_ref().and_then(|s| s.serialized_state(cx)),
@@ -1314,6 +1442,35 @@ impl MultiWorkspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn test_expand_all_groups(&mut self) {
+        self.set_all_groups_expanded(true);
+        self.set_all_groups_visible_thread_count(Some(10_000));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn assert_project_group_key_integrity(&self, cx: &App) -> anyhow::Result<()> {
+        let mut retained_ids: collections::HashSet<EntityId> = Default::default();
+        for workspace in &self.retained_workspaces {
+            anyhow::ensure!(
+                retained_ids.insert(workspace.entity_id()),
+                "workspace {:?} is retained more than once",
+                workspace.entity_id(),
+            );
+
+            let live_key = workspace.read(cx).project_group_key(cx);
+            anyhow::ensure!(
+                self.project_groups
+                    .iter()
+                    .any(|group| group.key == live_key),
+                "workspace {:?} has live key {:?} but no project-group metadata",
+                workspace.entity_id(),
+                live_key,
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_random_database_id(&mut self, cx: &mut Context<Self>) {
         self.workspace().update(cx, |workspace, _cx| {
             workspace.set_random_database_id();
@@ -1336,6 +1493,15 @@ impl MultiWorkspace {
         let workspace = cx.new(|cx| Workspace::test_new(project, window, cx));
         self.activate(workspace.clone(), window, cx);
         workspace
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test_add_project_group(&mut self, group: ProjectGroup) {
+        self.project_groups.push(ProjectGroupState {
+            key: group.key,
+            expanded: group.expanded,
+            visible_thread_count: group.visible_thread_count,
+        });
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1381,6 +1547,45 @@ impl MultiWorkspace {
                 .unwrap();
             task.await
         })
+    }
+
+    /// Assigns random database IDs to all retained workspaces, flushes
+    /// workspace serialization (SQLite) and multi-workspace state (KVP),
+    /// and writes session bindings so the serialized data can be read
+    /// back by `last_session_workspace_locations` +
+    /// `read_serialized_multi_workspaces`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn flush_all_serialization(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Task<()>> {
+        for workspace in self.workspaces() {
+            workspace.update(cx, |ws, _cx| {
+                if ws.database_id().is_none() {
+                    ws.set_random_database_id();
+                }
+            });
+        }
+
+        let session_id = self.workspace().read(cx).session_id();
+        let window_id_u64 = window.window_handle().window_id().as_u64();
+
+        let mut tasks: Vec<Task<()>> = Vec::new();
+        for workspace in self.workspaces() {
+            tasks.push(workspace.update(cx, |ws, cx| ws.flush_serialization(window, cx)));
+            if let Some(db_id) = workspace.read(cx).database_id() {
+                let db = crate::persistence::WorkspaceDb::global(cx);
+                let session_id = session_id.clone();
+                tasks.push(cx.background_spawn(async move {
+                    db.set_session_binding(db_id, session_id, Some(window_id_u64))
+                        .await
+                        .log_err();
+                }));
+            }
+        }
+        self.serialize(cx);
+        tasks
     }
 
     /// Removes one or more workspaces from this multi-workspace.
@@ -1454,38 +1659,17 @@ impl MultiWorkspace {
 
             // Actually remove the workspaces.
             this.update_in(cx, |this, _, cx| {
-                // Save a handle to the active workspace so we can restore
-                // its index after the removals shift the vec around.
-                let active_workspace = this.workspace().clone();
+                let mut removed_any = false;
 
-                let mut removed_workspaces: Vec<Entity<Workspace>> = Vec::new();
-
-                this.workspaces.retain(|ws| {
-                    if workspaces.contains(ws) {
-                        removed_workspaces.push(ws.clone());
-                        false
-                    } else {
-                        true
+                for workspace in &workspaces {
+                    let was_retained = this.is_workspace_retained(workspace);
+                    if was_retained {
+                        this.detach_workspace(workspace, cx);
+                        removed_any = true;
                     }
-                });
-
-                for workspace in &removed_workspaces {
-                    this.detach_workspace(workspace, cx);
-                    cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
                 }
 
-                let removed_any = !removed_workspaces.is_empty();
-
                 if removed_any {
-                    // Restore the active workspace index after removals.
-                    if let Some(new_index) = this
-                        .workspaces
-                        .iter()
-                        .position(|ws| ws == &active_workspace)
-                    {
-                        this.active_workspace = ActiveWorkspace::Persistent(new_index);
-                    }
-
                     this.serialize(cx);
                     cx.notify();
                 }

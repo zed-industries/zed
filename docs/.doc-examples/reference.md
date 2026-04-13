@@ -68,7 +68,7 @@ Reads the content of a specified file in the project, allowing access to file co
 
 Allows the Agent to work through problems, brainstorm ideas, or plan without executing actions, useful for complex problem-solving.
 
-### `web_search` {#web-search}
+### `search_web` {#search-web}
 
 Searches the web for information, providing results with snippets and links from relevant web pages, useful for accessing real-time information.
 
