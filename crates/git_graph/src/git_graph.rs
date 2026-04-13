@@ -1653,7 +1653,7 @@ impl GitGraph {
                     .px_1p5()
                     .gap_1()
                     .border_1()
-                    .border_color(color.border)
+                    .border_color(color.border_variant)
                     .rounded_md()
                     .bg(color.toolbar_background)
                     .on_action(cx.listener(Self::confirm_search))
@@ -1856,7 +1856,7 @@ impl GitGraph {
         v_flex()
             .min_w(px(300.))
             .h_full()
-            .bg(cx.theme().colors().surface_background)
+            .bg(cx.theme().colors().editor_background)
             .flex_basis(DefiniteLength::Fraction(
                 self.commit_details_split_state.read(cx).right_ratio(),
             ))
