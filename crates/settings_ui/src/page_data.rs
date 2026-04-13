@@ -1,6 +1,6 @@
 use gpui::{Action as _, App};
-use release_channel::ReleaseChannel;
 use itertools::Itertools as _;
+use release_channel::ReleaseChannel;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, LanguageSettingsContent, SemanticTokens,
     SettingsContent,
