@@ -9509,7 +9509,13 @@ pub fn open_paths(
         // Fallback for directories: when no flag is specified and no existing
         // workspace matched, add the directory as a new workspace in the
         // active window's MultiWorkspace (instead of opening a new window).
-        if open_options.should_reuse_existing_window() && existing.is_none() {
+        // Skip when requesting_window is already set: the caller (e.g.
+        // open_workspace_for_paths reusing an empty window) already chose the
+        // target window, so we must not open the sidebar as a side-effect.
+        if open_options.should_reuse_existing_window()
+            && existing.is_none()
+            && open_options.requesting_window.is_none()
+        {
             let target_window = cx.update(|cx| {
                 let windows = workspace_windows_for_location(
                     &SerializedWorkspaceLocation::Local,
