@@ -1,4 +1,5 @@
 use gpui::{Action as _, App};
+use release_channel::ReleaseChannel;
 use itertools::Itertools as _;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, LanguageSettingsContent, SemanticTokens,
@@ -7281,7 +7282,7 @@ fn ai_page(cx: &App) -> SettingsPage {
         ]
     }
 
-    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -7295,28 +7296,30 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
         ];
 
-        items.push(SettingsPageItem::SettingItem(SettingItem {
-            title: "New Thread Location",
-            description: "Whether to start a new thread in the current local project or in a new Git worktree.",
-            field: Box::new(SettingField {
-                json_path: Some("agent.new_thread_location"),
-                pick: |settings_content| {
-                    settings_content
-                        .agent
-                        .as_ref()?
-                        .new_thread_location
-                        .as_ref()
-                },
-                write: |settings_content, value| {
-                    settings_content
-                        .agent
-                        .get_or_insert_default()
-                        .new_thread_location = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }));
+        if !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable)) {
+            items.push(SettingsPageItem::SettingItem(SettingItem {
+                title: "New Thread Location",
+                description: "Whether to start a new thread in the current local project or in a new Git worktree.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.new_thread_location"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .new_thread_location
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .new_thread_location = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }));
+        }
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {

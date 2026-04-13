@@ -7,6 +7,7 @@ use gpui::{
 };
 pub use project::ProjectGroupKey;
 use project::{DirectoryLister, DisableAiSettings, Project};
+use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
@@ -395,7 +396,8 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
-        !DisableAiSettings::get_global(cx).disable_ai
+        !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
+            && !DisableAiSettings::get_global(cx).disable_ai
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {

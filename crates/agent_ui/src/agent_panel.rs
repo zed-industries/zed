@@ -66,6 +66,7 @@ use project::git_store::{GitStoreEvent, RepositoryEvent};
 use project::project_settings::ProjectSettings;
 use project::{Project, ProjectPath, Worktree, WorktreePaths, linked_worktree_short_name};
 use prompt_store::{PromptStore, UserPromptId};
+use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
@@ -93,6 +94,10 @@ const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
+
+fn agent_v2_enabled(cx: &App) -> bool {
+    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
+}
 /// Maximum number of idle threads kept in the agent panel's retained list.
 /// Set as a GPUI global to override; otherwise defaults to 5.
 pub struct MaxIdleRetainedThreads(pub usize);
@@ -1006,10 +1011,10 @@ impl AgentPanel {
                                 StartThreadIn::LocalProject => true,
                                 StartThreadIn::NewWorktree { .. } => {
                                     let project = panel.project.read(cx);
-                                    !project.is_via_collab()
+                                    agent_v2_enabled(cx) && !project.is_via_collab()
                                 }
                                 StartThreadIn::LinkedWorktree { path, .. } => {
-                                    path.exists()
+                                    agent_v2_enabled(cx) && path.exists()
                                 }
                             };
                             if is_valid {
@@ -2529,6 +2534,9 @@ impl AgentPanel {
         let new_target = match action {
             StartThreadIn::LocalProject => StartThreadIn::LocalProject,
             StartThreadIn::NewWorktree { .. } => {
+                if !agent_v2_enabled(cx) {
+                    return;
+                }
                 if !self.project_has_git_repository(cx) {
                     log::error!(
                         "set_start_thread_in: cannot use worktree mode without a git repository"
@@ -2544,6 +2552,9 @@ impl AgentPanel {
                 action.clone()
             }
             StartThreadIn::LinkedWorktree { .. } => {
+                if !agent_v2_enabled(cx) {
+                    return;
+                }
                 if !self.project_has_git_repository(cx) {
                     log::error!(
                         "set_start_thread_in: cannot use LinkedWorktree without a git repository"
@@ -2568,6 +2579,10 @@ impl AgentPanel {
     }
 
     fn cycle_start_thread_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !agent_v2_enabled(cx) {
+            return;
+        }
+
         let next = match &self.start_thread_in {
             StartThreadIn::LocalProject => StartThreadIn::NewWorktree {
                 worktree_name: None,
@@ -2582,6 +2597,15 @@ impl AgentPanel {
 
     fn reset_start_thread_in_to_default(&mut self, cx: &mut Context<Self>) {
         use settings::{NewThreadLocation, Settings};
+        if !agent_v2_enabled(cx) {
+            if self.start_thread_in != StartThreadIn::LocalProject {
+                self.start_thread_in = StartThreadIn::LocalProject;
+                self.serialize(cx);
+                cx.notify();
+            }
+            return;
+        }
+
         let default = AgentSettings::get_global(cx).new_thread_location;
         let start_thread_in = match default {
             NewThreadLocation::LocalProject => StartThreadIn::LocalProject,
@@ -2604,6 +2628,15 @@ impl AgentPanel {
     }
 
     fn sync_start_thread_in_with_git_state(&mut self, cx: &mut Context<Self>) {
+        if !agent_v2_enabled(cx) {
+            if self.start_thread_in != StartThreadIn::LocalProject {
+                self.start_thread_in = StartThreadIn::LocalProject;
+                self.serialize(cx);
+                cx.notify();
+            }
+            return;
+        }
+
         if matches!(self.start_thread_in, StartThreadIn::LocalProject) {
             return;
         }
@@ -4061,6 +4094,47 @@ impl AgentPanel {
             })
     }
 
+    fn render_recent_entries_menu(
+        &self,
+        icon: IconName,
+        corner: Corner,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+
+        PopoverMenu::new("agent-nav-menu")
+            .trigger_with_tooltip(
+                IconButton::new("agent-nav-menu", icon).icon_size(IconSize::Small),
+                {
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Recently Updated Threads",
+                            &ToggleNavigationMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                },
+            )
+            .anchor(corner)
+            .with_handle(self.agent_navigation_menu_handle.clone())
+            .menu({
+                let menu = self.agent_navigation_menu.clone();
+                move |window, cx| {
+                    telemetry::event!("View Thread History Clicked");
+
+                    if let Some(menu) = menu.as_ref() {
+                        menu.update(cx, |_, cx| {
+                            cx.defer_in(window, |menu, window, cx| {
+                                menu.rebuild(window, cx);
+                            });
+                        })
+                    }
+                    menu.clone()
+                }
+            })
+    }
+
     fn render_toolbar_back_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
@@ -4446,6 +4520,8 @@ impl AgentPanel {
             selected_agent.into_any_element()
         };
 
+        let show_history_menu = self.has_history_for_selected_agent(cx);
+        let agent_v2_enabled = agent_v2_enabled(cx);
         let is_empty_state = !self.active_thread_has_messages(cx);
 
         let is_in_history_or_config = self.is_history_or_configuration_visible();
@@ -4467,7 +4543,7 @@ impl AgentPanel {
                 }))
         };
 
-        let use_v2_empty_toolbar = is_empty_state && !is_in_history_or_config;
+        let use_v2_empty_toolbar = agent_v2_enabled && is_empty_state && !is_in_history_or_config;
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
@@ -4537,11 +4613,17 @@ impl AgentPanel {
                         .pl(DynamicSpacing::Base04.rems(cx))
                         .child(agent_selector_menu)
                         .when(
-                            has_visible_worktrees && self.project_has_git_repository(cx),
+                            agent_v2_enabled
+                                && has_visible_worktrees
+                                && self.project_has_git_repository(cx),
                             |this| this.child(self.render_start_thread_in_selector(cx)),
                         )
                         .when(
-                            matches!(self.start_thread_in, StartThreadIn::NewWorktree { .. }),
+                            agent_v2_enabled
+                                && matches!(
+                                    self.start_thread_in,
+                                    StartThreadIn::NewWorktree { .. }
+                                ),
                             |this| this.child(self.render_new_worktree_branch_selector(cx)),
                         ),
                 )
@@ -4552,6 +4634,13 @@ impl AgentPanel {
                         .gap_1()
                         .pl_1()
                         .pr_1()
+                        .when(show_history_menu && !agent_v2_enabled, |this| {
+                            this.child(self.render_recent_entries_menu(
+                                IconName::MenuAltTemp,
+                                Corner::TopRight,
+                                cx,
+                            ))
+                        })
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -4597,6 +4686,13 @@ impl AgentPanel {
                         .pl_1()
                         .pr_1()
                         .child(new_thread_menu)
+                        .when(show_history_menu && !agent_v2_enabled, |this| {
+                            this.child(self.render_recent_entries_menu(
+                                IconName::MenuAltTemp,
+                                Corner::TopRight,
+                                cx,
+                            ))
+                        })
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
