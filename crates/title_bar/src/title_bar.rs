@@ -1180,7 +1180,7 @@ impl TitleBar {
                                                         )
                                                     }),
                                             )
-                                            .child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
+                                            .children(plan.map(|plan| PlanChip::new(plan)))
                                             .into_any_element()
                                     }
                                 },
