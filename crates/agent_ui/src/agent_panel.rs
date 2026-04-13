@@ -24,9 +24,7 @@ use zed_actions::agent::{
     ResolveConflictsWithAgent, ReviewBranchDiff,
 };
 
-use crate::thread_metadata_store::{
-    ThreadId, ThreadMetadata, ThreadMetadataStore, ThreadWorktreePaths,
-};
+use crate::thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CycleStartThreadIn,
     Follow, InlineAssistant, LoadThreadFromClipboard, NewThread, NewWorktreeBranchTarget,
@@ -113,7 +111,7 @@ impl WorkspaceSidebarDelegate for AgentPanelSidebarDelegate {
     fn reconcile_group(
         &self,
         workspace: &mut Workspace,
-        group_key: &project::ProjectGroupKey,
+        group_key: &workspace::ProjectGroupKey,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> bool {
@@ -2171,7 +2169,7 @@ impl AgentPanel {
 
     fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
         let new_work_dirs = self.project.read(cx).default_path_list(cx);
-        let new_worktree_paths = ThreadWorktreePaths::from_project(self.project.read(cx), cx);
+        let new_worktree_paths = self.project.read(cx).worktree_paths(cx);
 
         if let Some(conversation_view) = self.active_conversation_view() {
             conversation_view.update(cx, |conversation_view, cx| {
@@ -2247,7 +2245,8 @@ impl AgentPanel {
         // panel's worktree paths (e.g. from a previously removed workspace).
         let path_list = {
             let project = self.project.read(cx);
-            project.project_group_key(cx).path_list().clone()
+            let worktree_paths = project.worktree_paths(cx);
+            worktree_paths.main_worktree_path_list().clone()
         };
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
             let orphaned: Vec<ThreadId> = {
@@ -2797,11 +2796,15 @@ impl AgentPanel {
     ) {
         self.pending_thread_loads = self.pending_thread_loads.saturating_sub(1);
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
-            store.update(cx, |store, cx| {
-                if let Some(thread_id) = store.entry_by_session(&session_id).map(|t| t.thread_id) {
+            let thread_id = store
+                .read(cx)
+                .entry_by_session(&session_id)
+                .map(|t| t.thread_id);
+            if let Some(thread_id) = thread_id {
+                store.update(cx, |store, cx| {
                     store.unarchive(thread_id, cx);
-                }
-            });
+                });
+            }
         }
 
         let has_session = |cv: &Entity<ConversationView>| -> bool {
@@ -2893,8 +2896,8 @@ impl AgentPanel {
             .unwrap_or_else(ThreadId::new);
         let workspace = self.workspace.clone();
         let project = self.project.clone();
-        let worktree_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
-        let remote_connection = project.read(cx).project_group_key(cx).host();
+        let worktree_paths = project.read(cx).worktree_paths(cx);
+        let remote_connection = project.read(cx).remote_connection_options(cx);
         let metadata = ThreadMetadata::new_draft(
             thread_id,
             resume_session_id.clone(),

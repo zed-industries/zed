@@ -2808,7 +2808,7 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
         let event_count = event_count.clone();
         |_, cx| {
             cx.subscribe(&cx.entity(), move |_, _, event, _| {
-                if matches!(event, Event::UpdatedRootRepoCommonDir) {
+                if matches!(event, Event::UpdatedRootRepoCommonDir { .. }) {
                     event_count.set(event_count.get() + 1);
                 }
             })
@@ -3380,7 +3380,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
     let events_clone = events.clone();
     cx.update(|cx| {
         cx.subscribe(&worktree, move |_, event, _cx| {
-            if matches!(event, Event::UpdatedRootRepoCommonDir) {
+            if matches!(event, Event::UpdatedRootRepoCommonDir { .. }) {
                 events_clone
                     .lock()
                     .unwrap()
@@ -3475,7 +3475,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
     let events_clone = events.clone();
     cx.update(|cx| {
         cx.subscribe(&worktree, move |_, event, _cx| {
-            if matches!(event, Event::UpdatedRootRepoCommonDir) {
+            if matches!(event, Event::UpdatedRootRepoCommonDir { .. }) {
                 events_clone
                     .lock()
                     .unwrap()

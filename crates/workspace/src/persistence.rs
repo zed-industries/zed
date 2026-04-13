@@ -2495,6 +2495,7 @@ pub fn delete_unloaded_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProjectGroupKey;
     use crate::{
         multi_workspace::MultiWorkspace,
         persistence::{
@@ -2508,7 +2509,7 @@ mod tests {
     use feature_flags::FeatureFlagAppExt;
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
-    use project::{Project, ProjectGroupKey};
+    use project::Project;
     use remote::SshConnectionOptions;
     use serde_json::json;
     use std::{thread, time::Duration};

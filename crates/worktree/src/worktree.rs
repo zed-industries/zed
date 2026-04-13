@@ -371,7 +371,9 @@ struct UpdateObservationState {
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
-    UpdatedRootRepoCommonDir,
+    UpdatedRootRepoCommonDir {
+        old: Option<Arc<SanitizedPath>>,
+    },
     DeletedEntry(ProjectEntryId),
     /// The worktree root itself has been deleted (for single-file worktrees)
     Deleted,
@@ -606,7 +608,9 @@ impl Worktree {
                         if this.snapshot.root_repo_common_dir != old_root_repo_common_dir
                             || (is_first_update && this.snapshot.root_repo_common_dir.is_none())
                         {
-                            cx.emit(Event::UpdatedRootRepoCommonDir);
+                            cx.emit(Event::UpdatedRootRepoCommonDir {
+                                old: old_root_repo_common_dir,
+                            });
                         }
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
@@ -1234,8 +1238,9 @@ impl LocalWorktree {
             .local_repo_for_work_directory_path(RelPath::empty())
             .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
 
-        let root_repo_common_dir_changed =
-            self.snapshot.root_repo_common_dir != new_snapshot.root_repo_common_dir;
+        let old_root_repo_common_dir = (self.snapshot.root_repo_common_dir
+            != new_snapshot.root_repo_common_dir)
+            .then(|| self.snapshot.root_repo_common_dir.clone());
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
@@ -1251,8 +1256,8 @@ impl LocalWorktree {
         if !repo_changes.is_empty() {
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
         }
-        if root_repo_common_dir_changed {
-            cx.emit(Event::UpdatedRootRepoCommonDir);
+        if let Some(old) = old_root_repo_common_dir {
+            cx.emit(Event::UpdatedRootRepoCommonDir { old });
         }
 
         while let Some((scan_id, _)) = self.snapshot_subscriptions.front() {
