@@ -1,5 +1,4 @@
 pub mod archive;
-pub mod char_bag;
 pub mod command;
 pub mod disambiguate;
 pub mod fs;

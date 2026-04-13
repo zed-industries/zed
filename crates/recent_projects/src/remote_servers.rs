@@ -12,7 +12,7 @@ use dev_container::{
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::{FutureExt, channel::oneshot, future::Shared};
-use fuzzy_nucleo::StringMatchCandidate;
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
@@ -39,9 +39,8 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{self, AtomicUsize},
+        atomic::{self, AtomicBool, AtomicUsize},
     },
-    time::Duration,
 };
 
 use ui::{
@@ -71,6 +70,7 @@ pub struct RemoteServerProjects {
     create_new_window: bool,
     dev_container_picker: Option<Entity<Picker<DevContainerPickerDelegate>>>,
     _subscriptions: Vec<Subscription>,
+    filter_cancel: Arc<AtomicBool>,
     _filter_task: Task<()>,
     allow_dismissal: bool,
 }
@@ -834,7 +834,15 @@ impl DefaultState {
             self.filtered_servers = None;
             return;
         }
-        let mut results = compute_filter_results(&self.filter_data, query);
+        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let matches = fuzzy_nucleo::match_strings_sync(
+            &self.filter_data.candidates,
+            query,
+            smart_case,
+            false,
+            self.filter_data.candidates.len(),
+        );
+        let mut results = build_filter_results(matches, &self.filter_data);
         results.sort_by(|a, b| b.score.total_cmp(&a.score));
         self.apply_filter_results(&results);
     }
@@ -908,16 +916,10 @@ struct CandidateMeta {
     host_byte_len: usize,
 }
 
-fn compute_filter_results(filter_data: &FilterData, query: &str) -> Vec<FilteredServer> {
-    let smart_case = query.chars().any(|c| c.is_uppercase());
-    let matches = fuzzy_nucleo::match_strings_sync(
-        &filter_data.candidates,
-        query,
-        smart_case,
-        false,
-        filter_data.candidates.len(),
-    );
-
+fn build_filter_results(
+    matches: Vec<StringMatch>,
+    filter_data: &FilterData,
+) -> Vec<FilteredServer> {
     let mut server_map: Vec<Option<FilteredServer>> =
         (0..filter_data.server_count).map(|_| None).collect();
 
@@ -1156,6 +1158,7 @@ impl RemoteServerProjects {
             create_new_window,
             dev_container_picker: None,
             _subscriptions: vec![settings_subscription, filter_subscription],
+            filter_cancel: Arc::new(AtomicBool::new(false)),
             _filter_task: Task::ready(()),
             allow_dismissal: true,
         }
@@ -1566,18 +1569,13 @@ impl RemoteServerProjects {
     }
 
     fn recompute_filter(&mut self, cx: &mut Context<Self>) {
-        self.recompute_filter_debounced(
-            Duration::from_millis(RemoteSettings::get_global(cx).filter_debounce_ms),
-            cx,
-        );
-    }
-
-    fn recompute_filter_debounced(&mut self, debounce: Duration, cx: &mut Context<Self>) {
         let Mode::Default(state) = &mut self.mode else {
             return;
         };
         let query = self.filter_editor.read(cx).text(cx);
         let query = query.trim().to_string();
+
+        self.filter_cancel.store(true, atomic::Ordering::Release);
 
         if query.is_empty() {
             state.filtered_servers = None;
@@ -1586,15 +1584,30 @@ impl RemoteServerProjects {
             return;
         }
 
-        let server_data = Arc::clone(&state.filter_data);
+        let filter_data = Arc::clone(&state.filter_data);
+        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let max_results = filter_data.candidates.len();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.filter_cancel = cancel.clone();
         let executor = cx.background_executor().clone();
 
         self._filter_task = cx.spawn(async move |this, cx| {
-            executor.timer(debounce).await;
+            let matches = fuzzy_nucleo::match_strings(
+                &filter_data.candidates,
+                &query,
+                smart_case,
+                false,
+                max_results,
+                &cancel,
+                executor,
+            )
+            .await;
 
-            let mut results = executor
-                .spawn(async move { compute_filter_results(&server_data, &query) })
-                .await;
+            if cancel.load(atomic::Ordering::Acquire) {
+                return;
+            }
+
+            let mut results = build_filter_results(matches, &filter_data);
             results.sort_by(|a, b| b.score.total_cmp(&a.score));
 
             this.update(cx, |this, cx| {
@@ -2910,9 +2923,7 @@ impl RemoteServerProjects {
         }
 
         if should_rebuild {
-            // Any in-flight debounced filter was built against the pre-rebuild
-            // FilterData. Dropping the task cancels it so stale positions never
-            // land on the freshly built state.
+            self.filter_cancel.store(true, atomic::Ordering::Release);
             self._filter_task = Task::ready(());
             self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
             if let Mode::Default(new_state) = &mut self.mode {
@@ -3387,10 +3398,22 @@ mod filter_tests {
         }
     }
 
+    fn filter(data: &FilterData, query: &str) -> Vec<FilteredServer> {
+        let smart_case = query.chars().any(|c| c.is_uppercase());
+        let matches = fuzzy_nucleo::match_strings_sync(
+            &data.candidates,
+            query,
+            smart_case,
+            false,
+            data.candidates.len(),
+        );
+        build_filter_results(matches, data)
+    }
+
     #[test]
     fn test_filter_host_only() {
         let servers = [mock("myhost", &[])];
-        let results = compute_filter_results(&build(&servers), "myh");
+        let results = filter(&build(&servers), "myh");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].server_index, 0);
         assert!(!results[0].host_positions.is_empty());
@@ -3399,14 +3422,14 @@ mod filter_tests {
     #[test]
     fn test_filter_no_match() {
         let servers = [mock("myhost", &["/home/project"])];
-        let results = compute_filter_results(&build(&servers), "zzz");
+        let results = filter(&build(&servers), "zzz");
         assert!(results.is_empty());
     }
 
     #[test]
     fn test_filter_project_path_match() {
         let servers = [mock("myhost", &["/home/user/project"])];
-        let results = compute_filter_results(&build(&servers), "project");
+        let results = filter(&build(&servers), "project");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].project_matches.len(), 1);
         assert_eq!(results[0].project_matches[0].project_index, 0);
@@ -3415,7 +3438,7 @@ mod filter_tests {
     #[test]
     fn test_filter_host_match_includes_all_projects() {
         let servers = [mock("myhost", &["/path/a", "/path/b"])];
-        let results = compute_filter_results(&build(&servers), "myhost");
+        let results = filter(&build(&servers), "myhost");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].project_matches.len(), 2);
     }
@@ -3423,7 +3446,7 @@ mod filter_tests {
     #[test]
     fn test_filter_excludes_non_matching_servers() {
         let servers = [mock("alpha", &["/path/a"]), mock("beta", &["/path/b"])];
-        let results = compute_filter_results(&build(&servers), "alpha");
+        let results = filter(&build(&servers), "alpha");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].server_index, 0);
     }
@@ -3431,7 +3454,7 @@ mod filter_tests {
     #[test]
     fn test_position_mapping_splits_host_and_path() {
         let servers = [mock("dev", &["/src/app"])];
-        let results = compute_filter_results(&build(&servers), "dev app");
+        let results = filter(&build(&servers), "dev app");
 
         assert_eq!(results.len(), 1);
         let result = &results[0];
@@ -3470,7 +3493,7 @@ mod filter_tests {
     #[test]
     fn test_position_mapping_host_only_server() {
         let servers = [mock("myhost", &[])];
-        let results = compute_filter_results(&build(&servers), "myh");
+        let results = filter(&build(&servers), "myh");
 
         assert_eq!(results.len(), 1);
         let host = &servers[0].host;
@@ -3486,7 +3509,7 @@ mod filter_tests {
     #[test]
     fn test_unicode_host_and_path_positions() {
         let servers = [mock("señor", &["/código/app"])];
-        let results = compute_filter_results(&build(&servers), "señ app");
+        let results = filter(&build(&servers), "señ app");
 
         assert_eq!(results.len(), 1);
         let result = &results[0];
@@ -3538,12 +3561,12 @@ mod filter_tests {
             assert_eq!(filter_data.candidates[0].string, "alpha");
             assert_eq!(filter_data.candidates[1].string, "beta");
 
-            let results = compute_filter_results(&filter_data, "alp");
+            let results = filter(&filter_data, "alp");
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].server_index, 0);
             assert!(!results[0].host_positions.is_empty());
 
-            let empty = compute_filter_results(&filter_data, "zzz");
+            let empty = filter(&filter_data, "zzz");
             assert!(empty.is_empty());
         });
     }

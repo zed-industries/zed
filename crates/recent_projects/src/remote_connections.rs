@@ -34,7 +34,6 @@ pub struct RemoteSettings {
     pub wsl_connections: ExtendingVec<WslConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
-    pub filter_debounce_ms: u64,
 }
 
 impl RemoteSettings {
@@ -123,7 +122,6 @@ impl Settings for RemoteSettings {
             ssh_connections: remote.ssh_connections.clone().unwrap_or_default().into(),
             wsl_connections: remote.wsl_connections.clone().unwrap_or_default().into(),
             read_ssh_config: remote.read_ssh_config.unwrap(),
-            filter_debounce_ms: remote.filter_debounce_ms.unwrap_or(50),
         }
     }
 }

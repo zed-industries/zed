@@ -11,7 +11,7 @@ use util::{paths::PathStyle, rel_path::RelPath};
 use nucleo::Utf32Str;
 use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 
-use util::char_bag::CharBag;
+use fuzzy::CharBag;
 
 use crate::Cancelled;
 use crate::matcher::{self, LENGTH_PENALTY};

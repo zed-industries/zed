@@ -1018,9 +1018,6 @@ pub struct RemoteSettingsContent {
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
     pub use_podman: Option<bool>,
-    /// Debounce delay in milliseconds for filtering remote projects.
-    /// Lower values feel more responsive but use more CPU during rapid typing.
-    pub filter_debounce_ms: Option<u64>,
 }
 
 #[with_fallible_options]

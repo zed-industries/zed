@@ -14,7 +14,7 @@ use crate::{
     Cancelled,
     matcher::{self, LENGTH_PENALTY},
 };
-use util::char_bag::CharBag;
+use fuzzy::CharBag;
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
