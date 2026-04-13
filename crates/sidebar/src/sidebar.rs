@@ -3523,17 +3523,15 @@ impl Sidebar {
                 return Ok(ArchiveWorktreeOutcome::Cancelled);
             }
 
-            if root.worktree_repo.is_some() {
-                match thread_worktree_archive::persist_worktree_state(root, cx).await {
-                    Ok(id) => {
-                        completed_persists.push((id, root.clone()));
+            match thread_worktree_archive::persist_worktree_state(root, cx).await {
+                Ok(id) => {
+                    completed_persists.push((id, root.clone()));
+                }
+                Err(error) => {
+                    for &(id, ref completed_root) in completed_persists.iter().rev() {
+                        thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
                     }
-                    Err(error) => {
-                        for &(id, ref completed_root) in completed_persists.iter().rev() {
-                            thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
-                        }
-                        return Err(error);
-                    }
+                    return Err(error);
                 }
             }
 

@@ -40,17 +40,12 @@ pub struct RootPlan {
     /// Multiple projects can reference the same path when the user has the
     /// worktree open in more than one workspace.
     pub affected_projects: Vec<AffectedProject>,
-    /// The `Repository` entity for this worktree, used to run git commands
-    /// (create WIP commits, stage files, reset) during
-    /// [`persist_worktree_state`]. `None` when the `GitStore` hasn't created
-    /// a `Repository` for this worktree yet — in that case,
-    /// `persist_worktree_state` falls back to creating a temporary headless
-    /// project to obtain one.
-    pub worktree_repo: Option<Entity<Repository>>,
+    /// The `Repository` entity for this linked worktree, used to run git
+    /// commands (create WIP commits, stage files, reset) during
+    /// [`persist_worktree_state`].
+    pub worktree_repo: Entity<Repository>,
     /// The branch the worktree was on, so it can be restored later.
-    /// `None` if the worktree was in detached HEAD state or if no
-    /// `Repository` entity was available at planning time (in which case
-    /// `persist_worktree_state` reads it from the repo snapshot instead).
+    /// `None` if the worktree was in detached HEAD state.
     pub branch_name: Option<String>,
 }
 
@@ -87,13 +82,8 @@ fn archived_worktree_ref_name(id: i64) -> String {
 ///    linked worktree — needed for both git ref creation and
 ///    `git worktree remove`.
 ///
-/// When no `Repository` entity is available (e.g. the `GitStore` hasn't
-/// finished scanning), the function falls back to deriving `main_repo_path`
-/// from the worktree snapshot's `root_repo_common_dir`. In that case
-/// `worktree_repo` is `None` and [`persist_worktree_state`] will create a
-/// temporary headless project to obtain one.
-///
-/// Returns `None` if no open project has this path as a visible worktree.
+/// Returns `None` if the path is not a linked worktree (main worktrees
+/// cannot be archived to disk) or if no open project has it loaded.
 pub fn build_root_plan(
     path: &Path,
     workspaces: &[Entity<Workspace>],
@@ -140,29 +130,19 @@ pub fn build_root_plan(
             .then_some((snapshot, repo))
         });
 
-    let (main_repo_path, worktree_repo, branch_name) =
-        if let Some((linked_snapshot, repo)) = linked_repo {
-            (
-                linked_snapshot.original_repo_abs_path.to_path_buf(),
-                Some(repo),
-                linked_snapshot
-                    .branch
-                    .as_ref()
-                    .map(|branch| branch.name().to_string()),
-            )
-        } else {
-            // Not a linked worktree — nothing to archive from disk.
-            // `remove_root` would try to remove the main worktree from
-            // the project and then run `git worktree remove`, both of
-            // which fail for main working trees.
-            return None;
-        };
-
+    // Only linked worktrees can be archived to disk via `git worktree remove`.
+    // Main worktrees must be left alone — git refuses to remove them.
+    let (linked_snapshot, repo) = linked_repo?;
+    let main_repo_path = linked_snapshot.original_repo_abs_path.to_path_buf();
+    let branch_name = linked_snapshot
+        .branch
+        .as_ref()
+        .map(|branch| branch.name().to_string());
     Some(RootPlan {
         root_path: path,
         main_repo_path,
         affected_projects,
-        worktree_repo,
+        worktree_repo: repo,
         branch_name,
     })
 }
@@ -429,10 +409,7 @@ async fn rollback_root(root: &RootPlan, cx: &mut AsyncApp) {
 ///
 /// On success, returns the archived worktree DB row ID for rollback.
 pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Result<i64> {
-    let (worktree_repo, _temp_worktree_project) = match &root.worktree_repo {
-        Some(worktree_repo) => (worktree_repo.clone(), None),
-        None => find_or_create_repository(&root.root_path, cx).await?,
-    };
+    let worktree_repo = root.worktree_repo.clone();
 
     let original_commit_hash = worktree_repo
         .update(cx, |repo, _cx| repo.head_sha())
@@ -776,11 +753,27 @@ fn current_app_state(cx: &mut AsyncApp) -> Option<Arc<AppState>> {
             .map(|workspace| workspace.read(cx).app_state().clone())
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
+    use git::repository::Worktree as GitWorktree;
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
     use tempfile::TempDir;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+    }
 
     #[test]
     fn test_remove_empty_ancestors_single_empty_parent() {
@@ -891,5 +884,112 @@ mod tests {
             "a/ should be preserved (has other-branch sibling)"
         );
         assert!(other_in_a.exists());
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_returns_none_for_main_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // The main worktree should NOT produce a root plan.
+        workspace.read_with(cx, |_workspace, cx| {
+            let plan = build_root_plan(Path::new("/project"), std::slice::from_ref(&workspace), cx);
+            assert!(
+                plan.is_none(),
+                "build_root_plan should return None for a main worktree",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_returns_some_for_linked_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/linked-worktree"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project"), Path::new("/linked-worktree")],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |_workspace, cx| {
+            // The linked worktree SHOULD produce a root plan.
+            let plan = build_root_plan(
+                Path::new("/linked-worktree"),
+                std::slice::from_ref(&workspace),
+                cx,
+            );
+            assert!(
+                plan.is_some(),
+                "build_root_plan should return Some for a linked worktree",
+            );
+            let plan = plan.unwrap();
+            assert_eq!(plan.root_path, PathBuf::from("/linked-worktree"));
+            assert_eq!(plan.main_repo_path, PathBuf::from("/project"));
+
+            // The main worktree should still return None.
+            let main_plan =
+                build_root_plan(Path::new("/project"), std::slice::from_ref(&workspace), cx);
+            assert!(
+                main_plan.is_none(),
+                "build_root_plan should return None for the main worktree \
+                 even when a linked worktree exists",
+            );
+        });
     }
 }
