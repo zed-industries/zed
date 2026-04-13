@@ -52,6 +52,10 @@ impl CopilotChatConfiguration {
         format!("{}/responses", api_endpoint)
     }
 
+    pub fn messages_url(&self, api_endpoint: &str) -> String {
+        format!("{}/v1/messages", api_endpoint)
+    }
+
     pub fn models_url(&self, api_endpoint: &str) -> String {
         format!("{}/models", api_endpoint)
     }
@@ -75,6 +79,30 @@ pub enum Role {
     User,
     Assistant,
     System,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ChatLocation {
+    #[default]
+    Panel,
+    Editor,
+    EditingSession,
+    Terminal,
+    Agent,
+    Other,
+}
+
+impl ChatLocation {
+    pub fn to_intent_string(self) -> &'static str {
+        match self {
+            ChatLocation::Panel => "conversation-panel",
+            ChatLocation::Editor => "conversation-inline",
+            ChatLocation::EditingSession => "conversation-edits",
+            ChatLocation::Terminal => "conversation-terminal",
+            ChatLocation::Agent => "conversation-agent",
+            ChatLocation::Other => "conversation-other",
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone, PartialEq)]
@@ -179,6 +207,16 @@ struct ModelSupportedFeatures {
     parallel_tool_calls: bool,
     #[serde(default)]
     vision: bool,
+    #[serde(default)]
+    thinking: bool,
+    #[serde(default)]
+    adaptive_thinking: bool,
+    #[serde(default)]
+    max_thinking_budget: Option<u32>,
+    #[serde(default)]
+    min_thinking_budget: Option<u32>,
+    #[serde(default)]
+    reasoning_effort: Vec<String>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -226,6 +264,10 @@ impl Model {
         self.capabilities.limits.max_context_window_tokens as u64
     }
 
+    pub fn max_output_tokens(&self) -> usize {
+        self.capabilities.limits.max_output_tokens
+    }
+
     pub fn supports_tools(&self) -> bool {
         self.capabilities.supports.tool_calls
     }
@@ -256,6 +298,41 @@ impl Model {
                 .contains(&ModelSupportedEndpoint::Responses)
     }
 
+    pub fn supports_messages(&self) -> bool {
+        self.supported_endpoints
+            .contains(&ModelSupportedEndpoint::Messages)
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.capabilities.supports.thinking
+    }
+
+    pub fn supports_adaptive_thinking(&self) -> bool {
+        self.capabilities.supports.adaptive_thinking
+    }
+
+    pub fn can_think(&self) -> bool {
+        self.supports_thinking()
+            || self.supports_adaptive_thinking()
+            || self.max_thinking_budget().is_some()
+    }
+
+    pub fn max_thinking_budget(&self) -> Option<u32> {
+        self.capabilities.supports.max_thinking_budget
+    }
+
+    pub fn min_thinking_budget(&self) -> Option<u32> {
+        self.capabilities.supports.min_thinking_budget
+    }
+
+    pub fn reasoning_effort_levels(&self) -> &[String] {
+        &self.capabilities.supports.reasoning_effort
+    }
+
+    pub fn family(&self) -> &str {
+        &self.capabilities.family
+    }
+
     pub fn multiplier(&self) -> f64 {
         self.billing.multiplier
     }
@@ -263,7 +340,6 @@ impl Model {
 
 #[derive(Serialize, Deserialize)]
 pub struct Request {
-    pub intent: bool,
     pub n: usize,
     pub stream: bool,
     pub temperature: f32,
@@ -273,6 +349,8 @@ pub struct Request {
     pub tools: Vec<Tool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -292,7 +370,7 @@ pub enum Tool {
 #[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
-    Any,
+    Required,
     None,
 }
 
@@ -550,6 +628,7 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
+        location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
@@ -563,12 +642,14 @@ impl CopilotChat {
             api_url.into(),
             request,
             is_user_initiated,
+            location,
         )
         .await
     }
 
     pub async fn stream_response(
         request: responses::Request,
+        location: ChatLocation,
         is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<responses::StreamEvent>>> {
@@ -582,6 +663,30 @@ impl CopilotChat {
             api_url,
             request,
             is_user_initiated,
+            location,
+        )
+        .await
+    }
+
+    pub async fn stream_messages(
+        body: String,
+        location: ChatLocation,
+        is_user_initiated: bool,
+        anthropic_beta: Option<String>,
+        mut cx: AsyncApp,
+    ) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
+        let (client, oauth_token, api_endpoint, configuration) =
+            Self::get_auth_details(&mut cx).await?;
+
+        let api_url = configuration.messages_url(&api_endpoint);
+        stream_messages(
+            client.clone(),
+            oauth_token,
+            api_url,
+            body,
+            is_user_initiated,
+            location,
+            anthropic_beta,
         )
         .await
     }
@@ -755,6 +860,7 @@ pub(crate) fn copilot_request_headers(
     builder: http_client::Builder,
     oauth_token: &str,
     is_user_initiated: Option<bool>,
+    location: Option<ChatLocation>,
 ) -> http_client::Builder {
     builder
         .header("Authorization", format!("Bearer {}", oauth_token))
@@ -766,11 +872,18 @@ pub(crate) fn copilot_request_headers(
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )
+        .header("X-GitHub-Api-Version", "2025-10-01")
         .when_some(is_user_initiated, |builder, is_user_initiated| {
             builder.header(
                 "X-Initiator",
                 if is_user_initiated { "user" } else { "agent" },
             )
+        })
+        .when_some(location, |builder, loc| {
+            let interaction_type = loc.to_intent_string();
+            builder
+                .header("X-Interaction-Type", interaction_type)
+                .header("OpenAI-Intent", interaction_type)
         })
 }
 
@@ -785,8 +898,8 @@ async fn request_models(
             .uri(models_url.as_ref()),
         &oauth_token,
         None,
-    )
-    .header("x-github-api-version", "2025-05-01");
+        None,
+    );
 
     let request = request_builder.body(AsyncBody::empty())?;
 
@@ -830,6 +943,7 @@ async fn stream_completion(
     completion_url: Arc<str>,
     request: Request,
     is_user_initiated: bool,
+    location: ChatLocation,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
     let is_vision_request = request.messages.iter().any(|message| match message {
         ChatMessage::User { content }
@@ -846,6 +960,7 @@ async fn stream_completion(
             .uri(completion_url.as_ref()),
         &oauth_token,
         Some(is_user_initiated),
+        Some(location),
     )
     .when(is_vision_request, |builder| {
         builder.header("Copilot-Vision-Request", is_vision_request.to_string())
@@ -903,6 +1018,65 @@ async fn stream_completion(
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
     }
+}
+
+async fn stream_messages(
+    client: Arc<dyn HttpClient>,
+    oauth_token: String,
+    api_url: String,
+    body: String,
+    is_user_initiated: bool,
+    location: ChatLocation,
+    anthropic_beta: Option<String>,
+) -> Result<BoxStream<'static, Result<anthropic::Event, anthropic::AnthropicError>>> {
+    let mut request_builder = copilot_request_headers(
+        HttpRequest::builder().method(Method::POST).uri(&api_url),
+        &oauth_token,
+        Some(is_user_initiated),
+        Some(location),
+    );
+
+    if let Some(beta) = &anthropic_beta {
+        request_builder = request_builder.header("anthropic-beta", beta.as_str());
+    }
+
+    let request = request_builder.body(AsyncBody::from(body))?;
+    let mut response = client.send(request).await?;
+
+    if !response.status().is_success() {
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+        anyhow::bail!("Failed to connect to API: {} {}", response.status(), body);
+    }
+
+    let reader = BufReader::new(response.into_body());
+    Ok(reader
+        .lines()
+        .filter_map(|line| async move {
+            match line {
+                Ok(line) => {
+                    let line = line
+                        .strip_prefix("data: ")
+                        .or_else(|| line.strip_prefix("data:"))?;
+                    if line.starts_with("[DONE]") || line.is_empty() {
+                        return None;
+                    }
+                    match serde_json::from_str(line) {
+                        Ok(event) => Some(Ok(event)),
+                        Err(error) => {
+                            log::error!(
+                                "Failed to parse Copilot messages stream event: `{}`\nResponse: `{}`",
+                                error,
+                                line,
+                            );
+                            Some(Err(anthropic::AnthropicError::DeserializeResponse(error)))
+                        }
+                    }
+                }
+                Err(error) => Some(Err(anthropic::AnthropicError::ReadResponse(error))),
+            }
+        })
+        .boxed())
 }
 
 #[cfg(test)]
@@ -1513,6 +1687,11 @@ mod tests {
                     tool_calls: true,
                     parallel_tool_calls: false,
                     vision: false,
+                    thinking: false,
+                    adaptive_thinking: false,
+                    max_thinking_budget: None,
+                    min_thinking_budget: None,
+                    reasoning_effort: vec![],
                 },
                 model_type: "chat".to_string(),
                 tokenizer: None,
@@ -1556,5 +1735,23 @@ mod tests {
 
         // Only /v1/messages endpoint -> supports_response = false (doesn't have /responses)
         assert!(!model_with_messages.supports_response());
+    }
+
+    #[test]
+    fn test_tool_choice_required_serializes_as_required() {
+        // Regression test: ToolChoice::Required must serialize as "required" (not "any")
+        // for OpenAI-compatible APIs. Reverting the rename would break this.
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Required).unwrap(),
+            "\"required\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::Auto).unwrap(),
+            "\"auto\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ToolChoice::None).unwrap(),
+            "\"none\""
+        );
     }
 }

@@ -47,6 +47,8 @@ pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_picker;
 
+pub use conflict_view::MergeConflictIndicator;
+
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
@@ -277,32 +279,6 @@ fn open_modified_files(
     for path in modified_paths {
         workspace.open_path(path, None, true, window, cx).detach();
     }
-}
-
-/// Resolves the repository for git operations, respecting the workspace's
-/// active worktree override from the project dropdown.
-pub fn resolve_active_repository(workspace: &Workspace, cx: &App) -> Option<Entity<Repository>> {
-    let project = workspace.project().read(cx);
-    workspace
-        .active_worktree_override()
-        .and_then(|override_id| {
-            project
-                .worktree_for_id(override_id, cx)
-                .and_then(|worktree| {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    let git_store = project.git_store().read(cx);
-                    git_store
-                        .repositories()
-                        .values()
-                        .find(|repo| {
-                            let repo_path = &repo.read(cx).work_directory_abs_path;
-                            *repo_path == worktree_abs_path
-                                || worktree_abs_path.starts_with(repo_path.as_ref())
-                        })
-                        .cloned()
-                })
-        })
-        .or_else(|| project.active_repository(cx))
 }
 
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
@@ -871,8 +847,7 @@ impl Render for GitCloneModal {
                     .child(
                         Button::new("learn-more", "Learn More")
                             .label_size(LabelSize::Small)
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
                             .on_click(|_, _, cx| {
                                 cx.open_url("https://github.com/git-guides/git-clone");
                             }),

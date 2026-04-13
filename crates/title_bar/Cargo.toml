@@ -14,13 +14,13 @@ doctest = false
 
 [features]
 default = []
-stories = ["dep:story"]
+
 test-support = [
     "call/test-support",
     "client/test-support",
-    "collections/test-support",
+
     "gpui/test-support",
-    "http_client/test-support",
+
     "project/test-support",
     "remote/test-support",
     "util/test-support",
@@ -38,20 +38,21 @@ chrono.workspace = true
 client.workspace = true
 cloud_api_types.workspace = true
 db.workspace = true
-feature_flags.workspace = true
 git_ui.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
+icons.workspace = true
+livekit_client.workspace = true
 notifications.workspace = true
 project.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
+remote_connection.workspace = true
 rpc.workspace = true
 semver.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
-story = { workspace = true, optional = true }
 telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
@@ -65,17 +66,13 @@ windows.workspace = true
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
-collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
 notifications = { workspace = true, features = ["test-support"] }
-pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 settings = { workspace = true, features = ["test-support"] }
-tree-sitter-md.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

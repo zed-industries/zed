@@ -1076,7 +1076,12 @@ impl VariableList {
         presentation_hint: Option<&VariablePresentationHint>,
         cx: &Context<Self>,
     ) -> VariableColor {
-        let syntax_color_for = |name| cx.theme().syntax().get(name).color;
+        let syntax_color_for = |name| {
+            cx.theme()
+                .syntax()
+                .style_for_name(name)
+                .and_then(|style| style.color)
+        };
         let name = if self.disabled {
             Some(Color::Disabled.color(cx))
         } else {

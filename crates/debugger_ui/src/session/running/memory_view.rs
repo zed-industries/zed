@@ -17,7 +17,7 @@ use gpui::{
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
 use settings::Settings;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, Divider, DropdownMenu, FluentBuilder, IntoElement, PopoverMenuHandle, Render,
     ScrollableHandle, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
@@ -133,7 +133,7 @@ impl ViewState {
     fn set_offset(&mut self, point: Point<Pixels>) {
         if point.y >= -Pixels::ZERO {
             self.schedule_scroll_up();
-        } else if point.y <= -self.scroll_handle.max_offset().height {
+        } else if point.y <= -self.scroll_handle.max_offset().y {
             self.schedule_scroll_down();
         }
         self.scroll_handle.set_offset(point);
@@ -141,7 +141,7 @@ impl ViewState {
 }
 
 impl ScrollableHandle for ViewStateHandle {
-    fn max_offset(&self) -> gpui::Size<Pixels> {
+    fn max_offset(&self) -> gpui::Point<Pixels> {
         self.0.borrow().scroll_handle.max_offset()
     }
 

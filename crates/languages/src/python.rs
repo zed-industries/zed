@@ -5,10 +5,12 @@ use collections::HashMap;
 use futures::future::BoxFuture;
 use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
-use gpui::{App, AsyncApp, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use language::language_settings::language_settings;
-use language::{ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol};
+use language::language_settings::LanguageSettings;
+use language::{
+    Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol,
+};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
@@ -24,7 +26,7 @@ use project::lsp_store::language_server_settings;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use settings::Settings;
+use settings::{SemanticTokenRules, Settings};
 use terminal::terminal_settings::TerminalSettings;
 
 use smol::lock::OnceCell;
@@ -48,6 +50,14 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = grammars::get_file("python/semantic_token_rules.json")
+        .expect("missing python/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse python semantic_token_rules.json")
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct PythonToolchainData {
@@ -159,6 +169,75 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
     }
 }
 
+fn label_for_pyright_completion(
+    item: &lsp::CompletionItem,
+    language: &Arc<language::Language>,
+) -> Option<language::CodeLabel> {
+    let label = &item.label;
+    let label_len = label.len();
+    let grammar = language.grammar()?;
+    let highlight_id = match item.kind? {
+        lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
+        lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
+        lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
+        lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
+        lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
+        _ => {
+            return None;
+        }
+    };
+    let mut text = label.clone();
+    if let Some(completion_details) = item
+        .label_details
+        .as_ref()
+        .and_then(|details| details.description.as_ref())
+    {
+        write!(&mut text, " {}", completion_details).ok();
+    }
+    Some(language::CodeLabel::filtered(
+        text,
+        label_len,
+        item.filter_text.as_deref(),
+        highlight_id
+            .map(|id| (0..label_len, id))
+            .into_iter()
+            .collect(),
+    ))
+}
+
+fn label_for_python_symbol(
+    symbol: &Symbol,
+    language: &Arc<language::Language>,
+) -> Option<language::CodeLabel> {
+    let name = &symbol.name;
+    let (text, filter_range, display_range) = match symbol.kind {
+        lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+            let text = format!("def {}():\n", name);
+            let filter_range = 4..4 + name.len();
+            let display_range = 0..filter_range.end;
+            (text, filter_range, display_range)
+        }
+        lsp::SymbolKind::CLASS => {
+            let text = format!("class {}:", name);
+            let filter_range = 6..6 + name.len();
+            let display_range = 0..filter_range.end;
+            (text, filter_range, display_range)
+        }
+        lsp::SymbolKind::CONSTANT => {
+            let text = format!("{} = 0", name);
+            let filter_range = 0..name.len();
+            let display_range = 0..filter_range.end;
+            (text, filter_range, display_range)
+        }
+        _ => return None,
+    };
+    Some(language::CodeLabel::new(
+        text[display_range.clone()].to_string(),
+        filter_range,
+        language.highlight_text(&text.as_str().into(), display_range),
+    ))
+}
+
 pub struct TyLspAdapter {
     fs: Arc<dyn Fs>,
 }
@@ -253,6 +332,14 @@ impl LspAdapter for TyLspAdapter {
                 .into_iter()
                 .collect(),
         ))
+    }
+
+    async fn label_for_symbol(
+        &self,
+        symbol: &language::Symbol,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(
@@ -360,7 +447,7 @@ impl LspInstaller for TyLspAdapter {
         async_fs::create_dir_all(&destination_path).await?;
 
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path
                 .join(Self::build_asset_name()?.0)
                 .join("ty"),
             AssetKind::Zip => destination_path.clone().join("ty.exe"),
@@ -450,7 +537,7 @@ impl LspInstaller for TyLspAdapter {
 
             let path = last.context("no cached binary")?;
             let path = match TyLspAdapter::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => {
                     path.join(Self::build_asset_name()?.0).join("ty")
                 }
                 AssetKind::Zip => path.join("ty.exe"),
@@ -531,36 +618,7 @@ impl LspAdapter for PyrightLspAdapter {
         item: &lsp::CompletionItem,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let label = &item.label;
-        let label_len = label.len();
-        let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-            _ => {
-                return None;
-            }
-        };
-        let mut text = label.clone();
-        if let Some(completion_details) = item
-            .label_details
-            .as_ref()
-            .and_then(|details| details.description.as_ref())
-        {
-            write!(&mut text, " {}", completion_details).ok();
-        }
-        Some(language::CodeLabel::filtered(
-            text,
-            label_len,
-            item.filter_text.as_deref(),
-            highlight_id
-                .map(|id| (0..label_len, id))
-                .into_iter()
-                .collect(),
-        ))
+        label_for_pyright_completion(item, language)
     }
 
     async fn label_for_symbol(
@@ -568,34 +626,7 @@ impl LspAdapter for PyrightLspAdapter {
         symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("def {}():\n", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CLASS => {
-                let text = format!("class {}:", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("{} = 0", name);
-                let filter_range = 0..name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            _ => return None,
-        };
-
-        Some(language::CodeLabel::new(
-            text[display_range.clone()].to_string(),
-            filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
-        ))
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(
@@ -801,11 +832,10 @@ impl ContextProvider for PythonContextProvider {
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target =
-            match selected_test_runner(location.file_location.buffer.read(cx).file(), cx) {
-                TestRunner::UNITTEST => self.build_unittest_target(variables),
-                TestRunner::PYTEST => self.build_pytest_target(variables),
-            };
+        let test_target = match selected_test_runner(Some(&location.file_location.buffer), cx) {
+            TestRunner::UNITTEST => self.build_unittest_target(variables),
+            TestRunner::PYTEST => self.build_pytest_target(variables),
+        };
 
         let module_target = self.build_module_target(variables);
         let location_file = location.file_location.buffer.read(cx).file().cloned();
@@ -843,10 +873,10 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let test_runner = selected_test_runner(file.as_ref(), cx);
+        let test_runner = selected_test_runner(buffer.as_ref(), cx);
 
         let mut tasks = vec![
             // Execute a selection
@@ -953,9 +983,11 @@ impl ContextProvider for PythonContextProvider {
     }
 }
 
-fn selected_test_runner(location: Option<&Arc<dyn language::File>>, cx: &App) -> TestRunner {
+fn selected_test_runner(location: Option<&Entity<Buffer>>, cx: &App) -> TestRunner {
     const TEST_RUNNER_VARIABLE: &str = "TEST_RUNNER";
-    language_settings(Some(LanguageName::new_static("Python")), location, cx)
+    let language = LanguageName::new_static("Python");
+    let settings = LanguageSettings::resolve(location.map(|b| b.read(cx)), Some(&language), cx);
+    settings
         .tasks
         .variables
         .get(TEST_RUNNER_VARIABLE)
@@ -1080,6 +1112,7 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
         PythonEnvironmentKind::Venv => "venv",
         PythonEnvironmentKind::VirtualEnv => "virtualenv",
         PythonEnvironmentKind::VirtualEnvWrapper => "virtualenvwrapper",
+        PythonEnvironmentKind::WinPython => "WinPython",
         PythonEnvironmentKind::WindowsStore => "global (Windows Store)",
         PythonEnvironmentKind::WindowsRegistry => "global (Windows Registry)",
         PythonEnvironmentKind::Uv => "uv",
@@ -1087,7 +1120,15 @@ fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
     }
 }
 
-pub(crate) struct PythonToolchainProvider;
+pub(crate) struct PythonToolchainProvider {
+    fs: Arc<dyn Fs>,
+}
+
+impl PythonToolchainProvider {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
+        Self { fs }
+    }
+}
 
 static ENV_PRIORITY_LIST: &[PythonEnvironmentKind] = &[
     // Prioritize non-Conda environments.
@@ -1202,8 +1243,8 @@ impl ToolchainLister for PythonToolchainProvider {
         worktree_root: PathBuf,
         subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
-        fs: &dyn Fs,
     ) -> ToolchainList {
+        let fs = &*self.fs;
         let env = project_env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -1334,8 +1375,8 @@ impl ToolchainLister for PythonToolchainProvider {
         &self,
         path: PathBuf,
         env: Option<HashMap<String, String>>,
-        fs: &dyn Fs,
     ) -> anyhow::Result<Toolchain> {
+        let fs = &*self.fs;
         let env = env.unwrap_or_default();
         let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
@@ -1378,12 +1419,9 @@ impl ToolchainLister for PythonToolchainProvider {
 
             match toolchain.environment.kind {
                 Some(PythonEnvironmentKind::Conda) => {
-                    let Some(manager_info) = &toolchain.environment.manager else {
+                    if toolchain.environment.manager.is_none() {
                         return vec![];
                     };
-                    if smol::fs::metadata(&manager_info.executable).await.is_err() {
-                        return vec![];
-                    }
 
                     let manager = match conda_manager {
                         settings::CondaManager::Conda => "conda",
@@ -1741,33 +1779,7 @@ impl LspAdapter for PyLspAdapter {
         symbol: &language::Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("def {}():\n", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CLASS => {
-                let text = format!("class {}:", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("{} = 0", name);
-                let filter_range = 0..name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            _ => return None,
-        };
-        Some(language::CodeLabel::new(
-            text[display_range.clone()].to_string(),
-            filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
-        ))
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(
@@ -1849,6 +1861,17 @@ impl LspInstaller for PyLspAdapter {
     ) -> Option<LanguageServerBinary> {
         if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
             let env = delegate.shell_env().await;
+            delegate
+                .try_exec(LanguageServerBinary {
+                    path: pylsp_bin.clone(),
+                    arguments: vec!["--version".into()],
+                    env: Some(env.clone()),
+                })
+                .await
+                .inspect_err(|err| {
+                    log::warn!("failed to validate user-installed pylsp at {pylsp_bin:?}: {err:#}")
+                })
+                .ok()?;
             Some(LanguageServerBinary {
                 path: pylsp_bin,
                 env: Some(env),
@@ -1857,7 +1880,21 @@ impl LspInstaller for PyLspAdapter {
         } else {
             let toolchain = toolchain?;
             let pylsp_path = Path::new(toolchain.path.as_ref()).parent()?.join("pylsp");
-            pylsp_path.exists().then(|| LanguageServerBinary {
+            if !pylsp_path.exists() {
+                return None;
+            }
+            delegate
+                .try_exec(LanguageServerBinary {
+                    path: toolchain.path.to_string().into(),
+                    arguments: vec![pylsp_path.clone().into(), "--version".into()],
+                    env: None,
+                })
+                .await
+                .inspect_err(|err| {
+                    log::warn!("failed to validate toolchain pylsp at {pylsp_path:?}: {err:#}")
+                })
+                .ok()?;
+            Some(LanguageServerBinary {
                 path: toolchain.path.to_string().into(),
                 arguments: vec![pylsp_path.into()],
                 env: None,
@@ -1997,36 +2034,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         item: &lsp::CompletionItem,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let label = &item.label;
-        let label_len = label.len();
-        let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-            _ => {
-                return None;
-            }
-        };
-        let mut text = label.clone();
-        if let Some(completion_details) = item
-            .label_details
-            .as_ref()
-            .and_then(|details| details.description.as_ref())
-        {
-            write!(&mut text, " {}", completion_details).ok();
-        }
-        Some(language::CodeLabel::filtered(
-            text,
-            label_len,
-            item.filter_text.as_deref(),
-            highlight_id
-                .map(|id| (0..label.len(), id))
-                .into_iter()
-                .collect(),
-        ))
+        label_for_pyright_completion(item, language)
     }
 
     async fn label_for_symbol(
@@ -2034,33 +2042,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         symbol: &Symbol,
         language: &Arc<language::Language>,
     ) -> Option<language::CodeLabel> {
-        let name = &symbol.name;
-        let (text, filter_range, display_range) = match symbol.kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("def {}():\n", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CLASS => {
-                let text = format!("class {}:", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("{} = 0", name);
-                let filter_range = 0..name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            _ => return None,
-        };
-        Some(language::CodeLabel::new(
-            text[display_range.clone()].to_string(),
-            filter_range,
-            language.highlight_text(&text.as_str().into(), display_range),
-        ))
+        label_for_python_symbol(symbol, language)
     }
 
     async fn workspace_configuration(
@@ -2545,7 +2527,7 @@ impl LspInstaller for RuffLspAdapter {
         } = latest_version;
         let destination_path = container_dir.join(format!("ruff-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path
                 .join(Self::build_asset_name()?.0)
                 .join("ruff"),
             AssetKind::Zip => destination_path.clone().join("ruff.exe"),
@@ -2635,7 +2617,7 @@ impl LspInstaller for RuffLspAdapter {
 
             let path = last.context("no cached binary")?;
             let path = match Self::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => {
                     path.join(Self::build_asset_name()?.0).join("ruff")
                 }
                 AssetKind::Zip => path.join("ruff.exe"),
@@ -2689,7 +2671,8 @@ mod tests {
             });
         });
 
-        let provider = PythonToolchainProvider;
+        let fs = project::FakeFs::new(cx.executor());
+        let provider = PythonToolchainProvider::new(fs);
         let malicious_name = "foo; rm -rf /";
 
         let manager_executable = std::env::current_exe().unwrap();

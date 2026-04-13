@@ -3,11 +3,11 @@ use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{App, AppContext, AsyncApp, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use itertools::Itertools as _;
 use language::{
-    ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate, LspInstaller, Toolchain,
+    Buffer, ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore,
+    LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -425,10 +425,11 @@ async fn detect_package_manager(
 impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+        let file = buffer.and_then(|buffer| buffer.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
         let Some(worktree_root) = file.worktree.read(cx).root_dir() else {

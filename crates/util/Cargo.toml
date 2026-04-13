@@ -21,7 +21,7 @@ test-support = ["git2", "rand", "util_macros"]
 anyhow.workspace = true
 async_zip.workspace = true
 collections.workspace = true
-dunce = "1.0"
+dunce.workspace = true
 futures-lite.workspace = true
 futures.workspace = true
 globset.workspace = true
@@ -64,7 +64,6 @@ tendril = "0.4.3"
 
 [dev-dependencies]
 git2.workspace = true
-indoc.workspace = true
 rand.workspace = true
 util_macros.workspace = true
 pretty_assertions.workspace = true

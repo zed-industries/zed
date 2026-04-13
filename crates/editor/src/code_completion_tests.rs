@@ -7,7 +7,7 @@ use project::{Completion, CompletionSource};
 use settings::SnippetSortOrder;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use text::Anchor;
+use text::{Anchor, BufferId};
 
 #[gpui::test]
 async fn test_sort_kind(cx: &mut TestAppContext) {
@@ -393,7 +393,7 @@ impl CompletionBuilder {
         kind: Option<CompletionItemKind>,
     ) -> Completion {
         Completion {
-            replace_range: Anchor::MIN..Anchor::MAX,
+            replace_range: Anchor::min_max_range_for_buffer(BufferId::new(1).unwrap()),
             new_text: label.to_string(),
             label: CodeLabel::plain(label.to_string(), filter_text),
             documentation: None,

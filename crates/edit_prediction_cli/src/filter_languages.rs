@@ -13,7 +13,7 @@
 //!
 //! Language is detected based on file extension of the `cursor_path` field.
 //! The extension-to-language mapping is built from the embedded language
-//! config files in the `languages` crate.
+//! config files in the `grammars` crate.
 
 use anyhow::{Context as _, Result, bail};
 use clap::Args;
@@ -29,7 +29,7 @@ mod language_configs_embedded {
     use rust_embed::RustEmbed;
 
     #[derive(RustEmbed)]
-    #[folder = "../languages/src/"]
+    #[folder = "../grammars/src/"]
     #[include = "*/config.toml"]
     pub struct LanguageConfigs;
 }
@@ -123,7 +123,7 @@ fn build_extension_to_language_map() -> HashMap<String, String> {
 
 #[cfg(feature = "dynamic_prompts")]
 fn build_extension_to_language_map() -> HashMap<String, String> {
-    const LANGUAGES_SRC_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../languages/src");
+    const LANGUAGES_SRC_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../grammars/src");
 
     let mut map = HashMap::default();
 

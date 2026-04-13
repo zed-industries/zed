@@ -253,12 +253,14 @@ impl ContextServerRegistry {
         let project::context_server_store::ServerStatusChangedEvent { server_id, status } = event;
 
         match status {
-            ContextServerStatus::Starting => {}
+            ContextServerStatus::Starting | ContextServerStatus::Authenticating => {}
             ContextServerStatus::Running => {
                 self.reload_tools_for_server(server_id.clone(), cx);
                 self.reload_prompts_for_server(server_id.clone(), cx);
             }
-            ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
+            ContextServerStatus::Stopped
+            | ContextServerStatus::Error(_)
+            | ContextServerStatus::AuthRequired => {
                 if let Some(registered_server) = self.registered_servers.remove(server_id) {
                     if !registered_server.tools.is_empty() {
                         cx.emit(ContextServerRegistryEvent::ToolsChanged);
