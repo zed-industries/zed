@@ -1025,8 +1025,7 @@ impl MultiWorkspace {
 
         let workspaces: Vec<_> = self
             .workspaces_for_project_group(key, cx)
-            .cloned()
-            .collect();
+            .unwrap_or_default();
         let mut serialization_tasks = Vec::new();
         for workspace in &workspaces {
             serialization_tasks.push(workspace.update(cx, |workspace, inner_cx| {
@@ -1879,7 +1878,7 @@ impl Render for MultiWorkspace {
                             }
                         }),
                     )
-                    .when(self.project_group_keys.len() >= 2, |el| {
+                    .when(self.project_group_keys().len() >= 2, |el| {
                         el.on_action(cx.listener(
                             |this: &mut Self, _: &MoveProjectToNewWindow, window, cx| {
                                 let key =
