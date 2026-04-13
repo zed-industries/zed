@@ -297,10 +297,9 @@ impl ThreadBranchPickerDelegate {
             ThreadBranchEntry::CurrentBranch => {
                 Some(SharedString::from(self.current_branch_name.clone()))
             }
-            ThreadBranchEntry::DefaultBranch => self
-                .default_branch_name
-                .clone()
-                .map(SharedString::from),
+            ThreadBranchEntry::DefaultBranch => {
+                self.default_branch_name.clone().map(SharedString::from)
+            }
             ThreadBranchEntry::ExistingBranch { branch, .. } => {
                 Some(SharedString::from(branch.name().to_string()))
             }
