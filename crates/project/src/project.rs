@@ -246,6 +246,7 @@ pub struct Project {
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
+    group_key: ProjectGroupKey,
 }
 
 struct DownloadingFile {
@@ -361,6 +362,9 @@ pub enum Event {
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedRootRepoCommonDir(WorktreeId),
+    ProjectGroupKeyChanged {
+        old_key: ProjectGroupKey,
+    },
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -1339,6 +1343,7 @@ impl Project {
 
                 agent_location: None,
                 downloading_files: Default::default(),
+                group_key: ProjectGroupKey::default(),
             }
         })
     }
@@ -1576,6 +1581,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
                 downloading_files: Default::default(),
+                group_key: ProjectGroupKey::default(),
             };
 
             // remote server -> local machine handlers
@@ -1857,6 +1863,7 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
+                group_key: ProjectGroupKey::default(),
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2405,6 +2412,14 @@ impl Project {
         let host = self.remote_connection_options(cx);
         let path_list = PathList::new(&roots);
         ProjectGroupKey::new(host, path_list)
+    }
+
+    fn emit_group_key_changed_if_needed(&mut self, cx: &mut Context<Self>) {
+        let new_key = self.project_group_key(cx);
+        if new_key != self.group_key {
+            let old_key = std::mem::replace(&mut self.group_key, new_key);
+            cx.emit(Event::ProjectGroupKeyChanged { old_key });
+        }
     }
 
     #[inline]
@@ -3723,9 +3738,11 @@ impl Project {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
                 self.on_worktree_added(worktree, cx);
                 cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
+                self.emit_group_key_changed_if_needed(cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => {
                 cx.emit(Event::WorktreeRemoved(*id));
+                self.emit_group_key_changed_if_needed(cx);
             }
             WorktreeStoreEvent::WorktreeReleased(_, id) => {
                 self.on_worktree_released(*id, cx);
@@ -3745,6 +3762,7 @@ impl Project {
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
             WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(worktree_id) => {
                 cx.emit(Event::WorktreeUpdatedRootRepoCommonDir(*worktree_id));
+                self.emit_group_key_changed_if_needed(cx);
             }
         }
     }
@@ -6156,7 +6174,7 @@ impl Project {
 ///
 /// Paths are mapped to their main worktree path first so we can group
 /// workspaces by main repos.
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Default)]
 pub struct ProjectGroupKey {
     /// The paths of the main worktrees for this project group.
     paths: PathList,

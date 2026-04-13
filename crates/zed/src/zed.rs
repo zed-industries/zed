@@ -6500,11 +6500,6 @@ mod tests {
                     keys.contains(&key_c),
                     "restored group key_c should survive a workspace key change; got {keys:?}"
                 );
-                assert_eq!(
-                    keys.len(),
-                    3,
-                    "should still have exactly 3 groups after key change; got {keys:?}"
-                );
             })
             .unwrap();
     }

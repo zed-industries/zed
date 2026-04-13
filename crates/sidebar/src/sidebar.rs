@@ -640,7 +640,8 @@ impl Sidebar {
                     this.update_entries(cx);
                     this.reconcile_groups(window, cx);
                 }
-                ProjectEvent::WorktreeOrderChanged => {
+                ProjectEvent::WorktreeOrderChanged
+                | ProjectEvent::ProjectGroupKeyChanged { .. } => {
                     this.observe_draft_editors(cx);
                     this.update_entries(cx);
                     this.reconcile_groups(window, cx);
@@ -2415,13 +2416,11 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let load_thread = |
-            agent_panel: Entity<AgentPanel>,
-            metadata: &ThreadMetadata,
-            focus: bool,
-            window: &mut Window,
-            cx: &mut App,
-        | {
+        let load_thread = |agent_panel: Entity<AgentPanel>,
+                           metadata: &ThreadMetadata,
+                           focus: bool,
+                           window: &mut Window,
+                           cx: &mut App| {
             let Some(session_id) = metadata.session_id.clone() else {
                 return;
             };
@@ -2475,11 +2474,7 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
-    fn clear_empty_group_drafts(
-        &mut self,
-        workspace: &Entity<Workspace>,
-        cx: &mut Context<Self>,
-    ) {
+    fn clear_empty_group_drafts(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };

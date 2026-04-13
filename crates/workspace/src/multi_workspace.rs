@@ -534,11 +534,9 @@ impl MultiWorkspace {
         cx.subscribe_in(&project, window, {
             let workspace = workspace.downgrade();
             move |this, _project, event, _window, cx| match event {
-                project::Event::WorktreeAdded(_)
-                | project::Event::WorktreeRemoved(_)
-                | project::Event::WorktreeUpdatedRootRepoCommonDir(_) => {
+                project::Event::ProjectGroupKeyChanged { old_key } => {
                     if let Some(workspace) = workspace.upgrade() {
-                        this.handle_workspace_key_change(&workspace, cx);
+                        this.handle_project_group_key_change(&workspace, old_key, cx);
                     }
                 }
                 _ => {}
@@ -554,9 +552,10 @@ impl MultiWorkspace {
         .detach();
     }
 
-    fn handle_workspace_key_change(
+    fn handle_project_group_key_change(
         &mut self,
         workspace: &Entity<Workspace>,
+        old_key: &ProjectGroupKey,
         cx: &mut Context<Self>,
     ) {
         if !self.is_workspace_retained(workspace) {
@@ -568,34 +567,7 @@ impl MultiWorkspace {
             return;
         }
 
-        // WIP: This is a bad heuristic based approach. Going to try to consolidate a precise solution
-        //      with other work in a follow up
-        // Before the old group state gets pruned, carry over its UI
-        // state (collapse/expand) to the new key.
-        let predecessor_state = self
-            .project_groups
-            .iter()
-            .find(|g| {
-                g.key != new_key
-                    && g.key
-                        .path_list()
-                        .paths()
-                        .iter()
-                        .any(|p| new_key.path_list().paths().contains(p))
-            })
-            .map(|g| (g.expanded, g.visible_thread_count));
-
-        self.ensure_project_group_state(new_key.clone());
-
-        if let Some((expanded, visible_thread_count)) = predecessor_state {
-            if let Some(state) = self.group_state_by_key_mut(&new_key) {
-                state.expanded = expanded;
-                state.visible_thread_count = visible_thread_count;
-            }
-        }
-
-        self.merge_groups_with_duplicate_keys();
-        self.prune_empty_project_groups(cx);
+        self.update_project_group_key(old_key, &new_key, cx);
         self.serialize(cx);
         cx.notify();
     }
@@ -614,6 +586,7 @@ impl MultiWorkspace {
         &self.retained_workspaces
     }
 
+    /// Ensures a project group exists for `key`, creating one if needed.
     fn ensure_project_group_state(&mut self, key: ProjectGroupKey) {
         if key.path_list().paths().is_empty() {
             return;
@@ -633,31 +606,57 @@ impl MultiWorkspace {
         );
     }
 
-    fn merge_groups_with_duplicate_keys(&mut self) {
-        let mut i = 0;
-        while i < self.project_groups.len() {
-            let key = self.project_groups[i].key.clone();
-            if let Some(j) = self.project_groups[i + 1..]
-                .iter()
-                .position(|group| group.key == key)
-                .map(|offset| i + 1 + offset)
-            {
-                self.project_groups.remove(j);
+    /// Transitions a project group from `old_key` to `new_key`.
+    ///
+    /// On collision (both keys have groups), the active workspace's
+    /// group always wins. Otherwise the old key's state is preserved
+    /// — it represents the group the user or system just acted on.
+    /// The losing group is removed, and the winner is re-keyed in
+    /// place to preserve sidebar order.
+    fn update_project_group_key(
+        &mut self,
+        old_key: &ProjectGroupKey,
+        new_key: &ProjectGroupKey,
+        cx: &App,
+    ) {
+        if old_key == new_key {
+            return;
+        }
+
+        if new_key.path_list().paths().is_empty() {
+            return;
+        }
+
+        let old_key_exists = self.project_groups.iter().any(|g| g.key == *old_key);
+        let new_key_exists = self.project_groups.iter().any(|g| g.key == *new_key);
+
+        if !old_key_exists {
+            // Old key has no group — it was already transitioned or never
+            // existed. Just ensure the new key has a group.
+            self.ensure_project_group_state(new_key.clone());
+            return;
+        }
+
+        if new_key_exists {
+            // Collision — decide who wins.
+            let active_key = self.active_workspace.read(cx).project_group_key(cx);
+            if active_key == *new_key {
+                // The active workspace owns the new key's group — it wins.
+                // Just remove the old key's group.
+                self.project_groups.retain(|g| g.key != *old_key);
             } else {
-                i += 1;
+                // Old key wins — remove the new key's group, re-key old in place.
+                self.project_groups.retain(|g| g.key != *new_key);
+                if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *old_key) {
+                    group.key = new_key.clone();
+                }
+            }
+        } else {
+            // No collision — re-key old group in place.
+            if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *old_key) {
+                group.key = new_key.clone();
             }
         }
-    }
-
-    fn prune_empty_project_groups(&mut self, cx: &App) {
-        let active_keys: Vec<ProjectGroupKey> = self
-            .retained_workspaces
-            .iter()
-            .map(|ws| ws.read(cx).project_group_key(cx))
-            .collect();
-
-        self.project_groups
-            .retain(|group| active_keys.contains(&group.key));
     }
 
     pub(crate) fn retain_workspace(
@@ -727,7 +726,6 @@ impl MultiWorkspace {
             }
         }
         self.project_groups = restored;
-        self.merge_groups_with_duplicate_keys();
     }
 
     pub fn project_group_keys(&self) -> Vec<ProjectGroupKey> {
@@ -738,12 +736,9 @@ impl MultiWorkspace {
     }
 
     fn derived_project_groups(&self, cx: &App) -> Vec<ProjectGroup> {
-        let mut groups = Vec::new();
-        let mut seen_keys = HashSet::new();
-
-        for group in &self.project_groups {
-            seen_keys.insert(group.key.clone());
-            groups.push(ProjectGroup {
+        self.project_groups
+            .iter()
+            .map(|group| ProjectGroup {
                 key: group.key.clone(),
                 workspaces: self
                     .retained_workspaces
@@ -753,29 +748,8 @@ impl MultiWorkspace {
                     .collect(),
                 expanded: group.expanded,
                 visible_thread_count: group.visible_thread_count,
-            });
-        }
-
-        for workspace in &self.retained_workspaces {
-            let key = workspace.read(cx).project_group_key(cx);
-            if key.path_list().paths().is_empty() || !seen_keys.insert(key.clone()) {
-                continue;
-            }
-
-            groups.push(ProjectGroup {
-                key: key.clone(),
-                workspaces: self
-                    .retained_workspaces
-                    .iter()
-                    .filter(|candidate| candidate.read(cx).project_group_key(cx) == key)
-                    .cloned()
-                    .collect(),
-                expanded: true,
-                visible_thread_count: None,
-            });
-        }
-
-        groups
+            })
+            .collect()
     }
 
     pub fn project_groups(&self, cx: &App) -> Vec<ProjectGroup> {
@@ -839,7 +813,7 @@ impl MultiWorkspace {
 
         let Some(group) = self
             .project_groups
-            .iter_mut()
+            .iter()
             .find(|group| group.key == *group_key)
         else {
             return;
@@ -850,8 +824,8 @@ impl MultiWorkspace {
             return;
         }
 
-        group.key = ProjectGroupKey::new(group.key.host(), new_path_list);
-        self.merge_groups_with_duplicate_keys();
+        let new_key = ProjectGroupKey::new(group.key.host(), new_path_list);
+        self.update_project_group_key(group_key, &new_key, cx);
 
         for workspace in workspaces {
             let project = workspace.read(cx).project().clone();
@@ -909,7 +883,7 @@ impl MultiWorkspace {
 
         let Some(group) = self
             .project_groups
-            .iter_mut()
+            .iter()
             .find(|group| group.key == *group_key)
         else {
             return;
@@ -918,9 +892,9 @@ impl MultiWorkspace {
         let mut all_paths: Vec<PathBuf> = group.key.path_list().paths().to_vec();
         all_paths.extend(new_paths.iter().cloned());
         let new_path_list = PathList::new(&all_paths);
-        group.key = ProjectGroupKey::new(group.key.host(), new_path_list);
+        let new_key = ProjectGroupKey::new(group.key.host(), new_path_list);
 
-        self.merge_groups_with_duplicate_keys();
+        self.update_project_group_key(group_key, &new_key, cx);
 
         for workspace in workspaces {
             let project = workspace.read(cx).project().clone();
@@ -1234,7 +1208,6 @@ impl MultiWorkspace {
     fn detach_workspace(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
         self.retained_workspaces
             .retain(|retained| retained != workspace);
-        self.prune_empty_project_groups(cx);
         cx.emit(MultiWorkspaceEvent::WorkspaceRemoved(workspace.entity_id()));
         workspace.update(cx, |workspace, _cx| {
             workspace.session_id.take();
