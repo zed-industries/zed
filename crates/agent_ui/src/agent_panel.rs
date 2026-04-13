@@ -85,7 +85,7 @@ use ui::{
 use util::{ResultExt as _, debug_panic};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
-    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId, WorkspaceSidebarDelegate,
+    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -101,39 +101,6 @@ impl gpui::Global for MaxIdleRetainedThreads {}
 impl MaxIdleRetainedThreads {
     pub fn global(cx: &App) -> usize {
         cx.try_global::<Self>().map_or(5, |g| g.0)
-    }
-}
-
-#[derive(Default)]
-struct AgentPanelSidebarDelegate;
-
-impl WorkspaceSidebarDelegate for AgentPanelSidebarDelegate {
-    fn reconcile_group(
-        &self,
-        workspace: &mut Workspace,
-        group_key: &workspace::ProjectGroupKey,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> bool {
-        if workspace.project_group_key(cx) != *group_key {
-            return false;
-        }
-
-        let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
-            return false;
-        };
-
-        panel.update(cx, |panel, cx| {
-            if panel.pending_thread_loads > 0 {
-                return false;
-            }
-            if panel.draft_thread_ids(cx).is_empty() {
-                panel.create_thread(window, cx);
-                true
-            } else {
-                false
-            }
-        })
     }
 }
 
@@ -213,7 +180,6 @@ struct SerializedActiveThread {
 pub fn init(cx: &mut App) {
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
-            workspace.set_sidebar_delegate(Arc::new(AgentPanelSidebarDelegate));
             workspace
                 .register_action(|workspace, action: &NewThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -1041,10 +1007,6 @@ impl AgentPanel {
                             cx,
                         );
                     });
-                } else {
-                    panel.update(cx, |panel, cx| {
-                        panel.show_or_create_empty_draft(window, cx);
-                    });
                 }
                 panel
             })?;
@@ -1377,30 +1339,16 @@ impl AgentPanel {
             .unwrap_or(false)
     }
 
-    /// Clear any active conversation while preserving a real empty draft.
-    /// Running non-draft threads are retained in the background.
-    pub fn clear_active_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.show_or_create_empty_draft(window, cx);
-    }
-
-    fn show_or_create_empty_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.active_thread_is_draft(cx) {
-            self.clear_overlay_state();
-            self.refresh_base_view_subscriptions(window, cx);
-            self.serialize(cx);
-            cx.emit(AgentPanelEvent::ActiveViewChanged);
-            cx.notify();
-            return;
-        }
-
-        if let Some(draft_id) = self.draft_thread_ids(cx).into_iter().next() {
-            self.activate_retained_thread(draft_id, false, window, cx);
-            cx.notify();
-            return;
-        }
-
-        let id = self.create_thread(window, cx);
-        self.activate_retained_thread(id, false, window, cx);
+    /// Clear the active view, retaining any running thread in the background.
+    pub fn clear_base_view(&mut self, cx: &mut Context<Self>) {
+        let old_view = std::mem::replace(&mut self.base_view, BaseView::Uninitialized);
+        self.retain_running_thread(old_view, cx);
+        self.clear_overlay_state();
+        self._thread_view_subscription = None;
+        self._active_thread_focus_subscription = None;
+        self._base_view_observation = None;
+        self.serialize(cx);
+        cx.emit(AgentPanelEvent::ActiveViewChanged);
         cx.notify();
     }
 
@@ -5395,8 +5343,8 @@ mod tests {
             );
         });
 
-        // Workspace B should restore its own agent type and seed an empty draft.
-        loaded_b.read_with(cx, |panel, cx| {
+        // Workspace B should restore its own agent type but have no active thread.
+        loaded_b.read_with(cx, |panel, _cx| {
             assert_eq!(
                 panel.selected_agent,
                 Agent::Custom {
@@ -5405,12 +5353,8 @@ mod tests {
                 "workspace B agent type should be restored"
             );
             assert!(
-                panel.active_conversation_view().is_some(),
-                "workspace B should show an empty draft"
-            );
-            assert!(
-                panel.active_thread_is_draft(cx),
-                "workspace B should seed a draft in an empty workspace"
+                panel.active_conversation_view().is_none(),
+                "workspace B should have no active thread when it had no prior conversation"
             );
         });
     }
@@ -5472,14 +5416,10 @@ mod tests {
             .expect("panel load should succeed");
         cx.run_until_parked();
 
-        loaded.read_with(cx, |panel, cx| {
+        loaded.read_with(cx, |panel, _cx| {
             assert!(
-                panel.active_conversation_view().is_some(),
-                "empty workspaces should still show a draft after load"
-            );
-            assert!(
-                panel.active_thread_is_draft(cx),
-                "thread without metadata should not be restored; the panel should fall back to a fresh draft"
+                panel.active_conversation_view().is_none(),
+                "thread without metadata should not be restored; the panel should have no active thread"
             );
         });
     }
@@ -6147,69 +6087,6 @@ mod tests {
                 !panel.retained_threads.contains_key(&loadable_thread_ids[6]),
                 "the active loadable thread should not also be stored as a retained thread"
             );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_clear_active_thread_creates_real_empty_draft(cx: &mut TestAppContext) {
-        let (panel, mut cx) = setup_panel(cx).await;
-
-        let connection = StubAgentConnection::new();
-        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk::new("done".into()),
-        )]);
-        open_thread_with_connection(&panel, connection, &mut cx);
-        send_message(&panel, &mut cx);
-
-        panel.read_with(&cx, |panel, cx| {
-            assert!(
-                panel.draft_thread_ids(cx).is_empty(),
-                "sent thread should not leave any draft entries before clearing"
-            );
-        });
-
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.clear_active_thread(window, cx);
-        });
-        cx.run_until_parked();
-
-        panel.read_with(&cx, |panel, cx| {
-            assert!(panel.active_thread_is_draft(cx));
-            assert_eq!(panel.draft_thread_ids(cx).len(), 1);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_clear_active_thread_reuses_retained_empty_draft(cx: &mut TestAppContext) {
-        let (panel, mut cx) = setup_panel(cx).await;
-
-        let connection_a = StubAgentConnection::new();
-        connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
-            acp::ContentChunk::new("done".into()),
-        )]);
-        open_thread_with_connection(&panel, connection_a, &mut cx);
-        send_message(&panel, &mut cx);
-
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.new_thread(&NewThread, window, cx);
-        });
-        cx.run_until_parked();
-
-        let retained_draft_id = panel.read_with(&cx, |panel, cx| {
-            let ids = panel.draft_thread_ids(cx);
-            assert_eq!(ids.len(), 1);
-            ids[0]
-        });
-
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.clear_active_thread(window, cx);
-        });
-        cx.run_until_parked();
-
-        panel.read_with(&cx, |panel, cx| {
-            assert_eq!(panel.active_thread_id(cx), Some(retained_draft_id));
-            assert!(panel.active_thread_is_draft(cx));
-            assert_eq!(panel.draft_thread_ids(cx), vec![retained_draft_id]);
         });
     }
 
