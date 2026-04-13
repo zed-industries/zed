@@ -666,6 +666,17 @@ impl MultiWorkspace {
                 group.key = new_key.clone();
             }
         }
+
+        // If another retained workspace still has the old key (e.g. a
+        // linked worktree workspace), re-create the old group so it
+        // remains reachable in the sidebar.
+        let other_workspace_needs_old_key = self
+            .retained_workspaces
+            .iter()
+            .any(|ws| ws.read(cx).project_group_key(cx) == *old_key);
+        if other_workspace_needs_old_key {
+            self.ensure_project_group_state(old_key.clone());
+        }
     }
 
     /// Re-keys a project group and emits `ProjectGroupKeyUpdated` so

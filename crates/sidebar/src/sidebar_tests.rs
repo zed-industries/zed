@@ -8777,6 +8777,115 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
     });
 }
 
+#[gpui::test]
+async fn test_linked_worktree_workspace_reachable_after_adding_worktree_to_project(
+    cx: &mut TestAppContext,
+) {
+    // When a linked worktree is opened as its own workspace and then a new
+    // folder is added to the main project group, the linked worktree
+    // workspace must still be reachable from some sidebar entry.
+    let (_fs, project) = init_multi_project_test(&["/my-project"], cx).await;
+    let fs = _fs.clone();
+
+    // Set up git worktree infrastructure.
+    fs.insert_tree(
+        "/my-project/.git/worktrees/wt-0",
+        serde_json::json!({
+            "commondir": "../../",
+            "HEAD": "ref: refs/heads/wt-0",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/wt-0",
+        serde_json::json!({
+            ".git": "gitdir: /my-project/.git/worktrees/wt-0",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/my-project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/worktrees/wt-0"),
+            ref_name: Some("refs/heads/wt-0".into()),
+            sha: "aaa".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    // Re-scan so the main project discovers the linked worktree.
+    project.update(cx, |p, cx| p.git_scans_complete(cx)).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Open the linked worktree as its own workspace.
+    let worktree_project = project::Project::test(
+        fs.clone() as Arc<dyn fs::Fs>,
+        ["/worktrees/wt-0".as_ref()],
+        cx,
+    )
+    .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx);
+    });
+    cx.run_until_parked();
+
+    // Both workspaces should be reachable.
+    let workspace_count = multi_workspace.read_with(cx, |mw, _| mw.workspaces().count());
+    assert_eq!(workspace_count, 2, "should have 2 workspaces");
+
+    // Add a new folder to the main project, changing the project group key.
+    fs.insert_tree(
+        "/other-project",
+        serde_json::json!({ ".git": {}, "src": {} }),
+    )
+    .await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/other-project", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // The linked worktree workspace must still be reachable.
+    let entries = visible_entries_as_strings(&sidebar, cx);
+    let mw_workspaces: Vec<_> = multi_workspace.read_with(cx, |mw, _| {
+        mw.workspaces().map(|ws| ws.entity_id()).collect()
+    });
+    sidebar.read_with(cx, |sidebar, cx| {
+        let multi_workspace = multi_workspace.read(cx);
+        let reachable: std::collections::HashSet<gpui::EntityId> = sidebar
+            .contents
+            .entries
+            .iter()
+            .flat_map(|entry| entry.reachable_workspaces(multi_workspace, cx))
+            .map(|ws| ws.entity_id())
+            .collect();
+        let all: std::collections::HashSet<gpui::EntityId> =
+            mw_workspaces.iter().copied().collect();
+        let unreachable = &all - &reachable;
+        assert!(
+            unreachable.is_empty(),
+            "all workspaces should be reachable after adding folder; \
+             unreachable: {:?}, entries: {:?}",
+            unreachable,
+            entries,
+        );
+    });
+}
+
 mod property_test {
     use super::*;
     use gpui::proptest::prelude::*;
@@ -9582,11 +9691,11 @@ mod property_test {
     }
 
     #[gpui::property_test(config = ProptestConfig {
-        cases: 50,
+        cases: 20,
         ..Default::default()
     })]
     async fn test_sidebar_invariants(
-        #[strategy = gpui::proptest::collection::vec(0u32..DISTRIBUTION_SLOTS * 10, 1..5)]
+        #[strategy = gpui::proptest::collection::vec(0u32..DISTRIBUTION_SLOTS * 10, 1..10)]
         raw_operations: Vec<u32>,
         cx: &mut TestAppContext,
     ) {
