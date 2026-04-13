@@ -352,7 +352,18 @@ impl ToolCall {
         }
 
         if let Some(status) = status {
-            self.status = status.into();
+            let new_status: ToolCallStatus = status.into();
+            if matches!(
+                (&self.status, &new_status),
+                (ToolCallStatus::WaitingForConfirmation { .. }, ToolCallStatus::Pending)
+            ) {
+                log::warn!(
+                    "update_fields: skipping status downgrade from WaitingForConfirmation to Pending for tool_call {:?}",
+                    self.id,
+                );
+            } else {
+                self.status = new_status;
+            }
         }
 
         if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
@@ -1908,7 +1919,17 @@ impl AcpThread {
                 &self.terminals,
                 cx,
             )?;
-            call.status = status;
+            if matches!(
+                (&call.status, &status),
+                (ToolCallStatus::WaitingForConfirmation { .. }, ToolCallStatus::Pending)
+            ) {
+                log::warn!(
+                    "upsert_tool_call_inner: skipping status downgrade from WaitingForConfirmation to Pending for tool_call {:?}",
+                    id,
+                );
+            } else {
+                call.status = status;
+            }
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
@@ -3268,6 +3289,189 @@ mod tests {
         assert!(
             result.is_ok(),
             "Should succeed even though the terminal doesn't exist yet"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_session_update_does_not_clobber_waiting_for_confirmation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project,
+                    PathList::new(&[std::path::Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new("term-1");
+        let tool_call_id = acp::ToolCallId::new("tc-1");
+
+        let _auth_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_tool_call_authorization(
+                    acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .title("odin test .".to_string())
+                            .kind(acp::ToolKind::Execute)
+                            .content(vec![acp::ToolCallContent::Terminal(
+                                acp::Terminal::new(terminal_id.clone()),
+                            )]),
+                    ),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        "allow",
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        let is_waiting = thread.read_with(cx, |thread, _cx| {
+            thread.entries.iter().any(|e| {
+                matches!(
+                    e,
+                    AgentThreadEntry::ToolCall(c)
+                        if matches!(c.status, ToolCallStatus::WaitingForConfirmation { .. })
+                )
+            })
+        });
+        assert!(is_waiting, "Tool call should be WaitingForConfirmation");
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "odin test .")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::Pending)
+                            .content(vec![acp::ToolCallContent::Terminal(
+                                acp::Terminal::new(terminal_id.clone()),
+                            )]),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let still_waiting = thread.read_with(cx, |thread, _cx| {
+            thread.entries.iter().any(|e| {
+                matches!(
+                    e,
+                    AgentThreadEntry::ToolCall(c)
+                        if matches!(c.status, ToolCallStatus::WaitingForConfirmation { .. })
+                )
+            })
+        });
+        assert!(
+            still_waiting,
+            "Tool call should still be WaitingForConfirmation after session update"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pending_terminal_resolved_on_register(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project,
+                    PathList::new(&[std::path::Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new("pending-terminal");
+        let tool_call_id = acp::ToolCallId::new("test-bash-tool");
+
+        thread.update(cx, |thread, cx| {
+            let _auth_task = thread
+                .request_tool_call_authorization(
+                    acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .title("odin test .".to_string())
+                            .kind(acp::ToolKind::Execute)
+                            .content(vec![acp::ToolCallContent::Terminal(
+                                acp::Terminal::new(terminal_id.clone()),
+                            )]),
+                    ),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        "allow",
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let has_terminal_content = thread.read_with(cx, |thread, _cx| {
+            if let Some(AgentThreadEntry::ToolCall(call)) = thread.entries.last() {
+                call.content
+                    .iter()
+                    .any(|c| matches!(c, ToolCallContent::Terminal(_)))
+            } else {
+                false
+            }
+        });
+        assert!(
+            !has_terminal_content,
+            "Tool call should have no terminal content yet"
+        );
+
+        let lower = cx.new(|cx| {
+            let builder = ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap();
+            builder.subscribe(cx)
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.register_terminal_created(
+                terminal_id.clone(),
+                "odin test .".to_string(),
+                None,
+                None,
+                lower,
+                cx,
+            );
+        });
+
+        let has_terminal_content_after = thread.read_with(cx, |thread, _cx| {
+            if let Some(AgentThreadEntry::ToolCall(call)) = thread.entries.last() {
+                call.content
+                    .iter()
+                    .any(|c| matches!(c, ToolCallContent::Terminal(_)))
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_terminal_content_after,
+            "Tool call should have terminal content after register_terminal_created"
         );
     }
 
