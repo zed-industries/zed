@@ -2822,11 +2822,11 @@ impl AgentPanel {
         branch_target: &NewWorktreeBranchTarget,
         existing_branches: &HashSet<String>,
         occupied_branches: &HashSet<String>,
+        rng: &mut impl rand::Rng,
     ) -> Result<(String, bool, Option<String>)> {
-        let generate_branch_name = || -> Result<String> {
+        let mut generate_branch_name = || {
             let refs: Vec<&str> = existing_branches.iter().map(|s| s.as_str()).collect();
-            let mut rng = rand::rng();
-            crate::branch_names::generate_branch_name(&refs, &mut rng)
+            crate::branch_names::generate_branch_name(&refs, rng)
                 .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))
         };
 
@@ -2860,6 +2860,7 @@ impl AgentPanel {
         use_existing_branch: bool,
         start_point: Option<String>,
         worktree_directory_setting: &str,
+        rng: &mut impl rand::Rng,
         cx: &mut Context<Self>,
     ) -> Result<(
         Vec<(
@@ -2875,8 +2876,7 @@ impl AgentPanel {
         let worktree_name = worktree_name.unwrap_or_else(|| {
             let existing_refs: Vec<&str> =
                 existing_worktree_names.iter().map(|s| s.as_str()).collect();
-            let mut rng = rand::rng();
-            crate::branch_names::generate_branch_name(&existing_refs, &mut rng)
+            crate::branch_names::generate_branch_name(&existing_refs, rng)
                 .unwrap_or_else(|| branch_name.to_string())
         });
 
@@ -3190,11 +3190,14 @@ impl AgentPanel {
                         }
                     }
 
+                    let mut rng = rand::rng();
+
                     let (branch_name, use_existing_branch, start_point) =
                         match Self::resolve_worktree_branch_target(
                             &branch_target,
                             &existing_branches,
                             &occupied_branches,
+                            &mut rng,
                         ) {
                             Ok(target) => target,
                             Err(err) => {
@@ -3220,6 +3223,7 @@ impl AgentPanel {
                                 use_existing_branch,
                                 start_point,
                                 &worktree_directory_setting,
+                                &mut rng,
                                 cx,
                             )
                         }) {
@@ -4980,6 +4984,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
+    use rand::rngs::StdRng;
     use serde_json::json;
     use std::path::Path;
     use std::time::Instant;
@@ -6263,8 +6268,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_resolve_worktree_branch_target() {
+    #[gpui::test(iterations = 10)]
+    fn test_resolve_worktree_branch_target(mut rng: StdRng) {
         let existing_branches = HashSet::from_iter([
             "main".to_string(),
             "feature".to_string(),
@@ -6278,6 +6283,7 @@ mod tests {
             },
             &existing_branches,
             &HashSet::from_iter(["main".to_string()]),
+            &mut rng,
         )
         .unwrap();
         assert_eq!(
@@ -6291,6 +6297,7 @@ mod tests {
             },
             &existing_branches,
             &HashSet::default(),
+            &mut rng,
         )
         .unwrap();
         assert_eq!(resolved, ("feature".to_string(), true, None));
@@ -6301,6 +6308,7 @@ mod tests {
             },
             &existing_branches,
             &HashSet::from_iter(["main".to_string()]),
+            &mut rng,
         )
         .unwrap();
         assert_eq!(resolved.1, false);
