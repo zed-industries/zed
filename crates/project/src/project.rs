@@ -51,6 +51,7 @@ pub use git_store::{
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
+pub use worktree_store::WorktreePaths;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -246,7 +247,7 @@ pub struct Project {
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
-    group_key: ProjectGroupKey,
+    last_worktree_paths: WorktreePaths,
 }
 
 struct DownloadingFile {
@@ -362,8 +363,8 @@ pub enum Event {
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedRootRepoCommonDir(WorktreeId),
-    ProjectGroupKeyChanged {
-        old_key: ProjectGroupKey,
+    WorktreePathsChanged {
+        old_worktree_paths: WorktreePaths,
     },
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
@@ -1343,7 +1344,7 @@ impl Project {
 
                 agent_location: None,
                 downloading_files: Default::default(),
-                group_key: ProjectGroupKey::default(),
+                last_worktree_paths: WorktreePaths::default(),
             }
         })
     }
@@ -1581,7 +1582,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
                 downloading_files: Default::default(),
-                group_key: ProjectGroupKey::default(),
+                last_worktree_paths: WorktreePaths::default(),
             };
 
             // remote server -> local machine handlers
@@ -1863,7 +1864,7 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
-                group_key: ProjectGroupKey::default(),
+                last_worktree_paths: WorktreePaths::default(),
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2392,33 +2393,12 @@ impl Project {
             .find(|tree| tree.read(cx).root_name() == root_name)
     }
 
-    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
-        let roots = self
-            .visible_worktrees(cx)
-            .filter(|worktree| {
-                let worktree = worktree.read(cx);
-                // Remote worktrees that haven't received their first update
-                // don't have enough data to contribute to the group key yet.
-                !worktree.is_remote() || worktree.root_entry().is_some()
-            })
-            .map(|worktree| {
-                let snapshot = worktree.read(cx).snapshot();
-                snapshot
-                    .root_repo_common_dir()
-                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
-                    .unwrap_or(snapshot.abs_path().to_path_buf())
-            })
-            .collect::<Vec<_>>();
-        let host = self.remote_connection_options(cx);
-        let path_list = PathList::new(&roots);
-        ProjectGroupKey::new(host, path_list)
-    }
-
     fn emit_group_key_changed_if_needed(&mut self, cx: &mut Context<Self>) {
-        let new_key = self.project_group_key(cx);
-        if new_key != self.group_key {
-            let old_key = std::mem::replace(&mut self.group_key, new_key);
-            cx.emit(Event::ProjectGroupKeyChanged { old_key });
+        let new_worktree_paths = self.worktree_paths(cx);
+        if new_worktree_paths != self.last_worktree_paths {
+            let old_worktree_paths =
+                std::mem::replace(&mut self.last_worktree_paths, new_worktree_paths);
+            cx.emit(Event::WorktreePathsChanged { old_worktree_paths });
         }
     }
 
@@ -6167,6 +6147,14 @@ impl Project {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
     }
+
+    pub fn worktree_paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_store.read(cx).paths(cx)
+    }
+
+    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
+        ProjectGroupKey::from_project(self, cx)
+    }
 }
 
 /// Identifies a project group by a set of paths the workspaces in this group
@@ -6187,6 +6175,25 @@ impl ProjectGroupKey {
     /// The path list should point to the git main worktree paths for a project.
     pub fn new(host: Option<RemoteConnectionOptions>, paths: PathList) -> Self {
         Self { paths, host }
+    }
+
+    pub fn from_project(project: &Project, cx: &App) -> Self {
+        let paths = project.worktree_paths(cx);
+        let host = project.remote_connection_options(cx);
+        Self {
+            paths: paths.main_worktree_path_list().clone(),
+            host,
+        }
+    }
+
+    pub fn from_worktree_paths(
+        paths: &WorktreePaths,
+        host: Option<RemoteConnectionOptions>,
+    ) -> Self {
+        Self {
+            paths: paths.main_worktree_path_list().clone(),
+            host,
+        }
     }
 
     pub fn path_list(&self) -> &PathList {

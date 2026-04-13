@@ -5,7 +5,8 @@ use gpui::{
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
-use project::{DirectoryLister, DisableAiSettings, Project, ProjectGroupKey};
+pub use project::ProjectGroupKey;
+use project::{DirectoryLister, DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
@@ -534,9 +535,16 @@ impl MultiWorkspace {
         cx.subscribe_in(&project, window, {
             let workspace = workspace.downgrade();
             move |this, _project, event, _window, cx| match event {
-                project::Event::ProjectGroupKeyChanged { old_key } => {
+                project::Event::WorktreePathsChanged { old_worktree_paths } => {
                     if let Some(workspace) = workspace.upgrade() {
-                        this.handle_project_group_key_change(&workspace, old_key, cx);
+                        let host = workspace
+                            .read(cx)
+                            .project()
+                            .read(cx)
+                            .remote_connection_options(cx);
+                        let old_key =
+                            ProjectGroupKey::from_worktree_paths(old_worktree_paths, host);
+                        this.handle_project_group_key_change(&workspace, &old_key, cx);
                     }
                 }
                 _ => {}

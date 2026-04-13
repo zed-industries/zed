@@ -2,7 +2,7 @@ use super::*;
 use client::proto;
 use fs::FakeFs;
 use gpui::TestAppContext;
-use project::{DisableAiSettings, ProjectGroupKey};
+use project::DisableAiSettings;
 use serde_json::json;
 use settings::SettingsStore;
 

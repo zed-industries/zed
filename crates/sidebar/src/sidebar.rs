@@ -4,7 +4,7 @@ use acp_thread::ThreadStatus;
 use action_log::DiffStats;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentSettings;
-use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore, ThreadWorktreePaths};
+use agent_ui::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore, WorktreePaths};
 use agent_ui::thread_worktree_archive;
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
@@ -23,9 +23,7 @@ use gpui::{
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
-use project::{
-    AgentId, AgentRegistryStore, Event as ProjectEvent, ProjectGroupKey, linked_worktree_short_name,
-};
+use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, linked_worktree_short_name};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::RemoteConnectionOptions;
 use ui::utils::platform_title_bar_height;
@@ -46,9 +44,9 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
-    NextProject, NextThread, Open, PreviousProject, PreviousThread, ProjectGroup, ShowFewerThreads,
-    ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar,
-    Workspace, notifications::NotificationId, sidebar_side_context_menu,
+    NextProject, NextThread, Open, PreviousProject, PreviousThread, ProjectGroup, ProjectGroupKey,
+    ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
+    ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -345,7 +343,7 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 /// wouldn't identify which main project it belongs to, the main project
 /// name is prefixed for disambiguation (e.g. `project:feature`).
 ///
-fn worktree_info_from_thread_paths(worktree_paths: &ThreadWorktreePaths) -> Vec<WorktreeInfo> {
+fn worktree_info_from_thread_paths(worktree_paths: &WorktreePaths) -> Vec<WorktreeInfo> {
     let mut infos: Vec<WorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
     let mut unique_main_count = HashSet::new();
@@ -449,7 +447,6 @@ pub struct Sidebar {
     _subscriptions: Vec<gpui::Subscription>,
     _draft_observations: Vec<gpui::Subscription>,
     reconciling: bool,
-    project_worktree_paths: HashMap<EntityId, ThreadWorktreePaths>,
 }
 
 impl Sidebar {
@@ -543,7 +540,6 @@ impl Sidebar {
             _subscriptions: Vec::new(),
             _draft_observations: Vec::new(),
             reconciling: false,
-            project_worktree_paths: HashMap::new(),
         }
     }
 
@@ -614,34 +610,19 @@ impl Sidebar {
     ) {
         let project = workspace.read(cx).project().clone();
 
-        let initial_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
-        self.project_worktree_paths
-            .insert(project.entity_id(), initial_paths);
-
-        let project_entity_id = project.entity_id();
-        cx.observe_release(&project, move |this, _project, _cx| {
-            this.project_worktree_paths.remove(&project_entity_id);
-        })
-        .detach();
-
         cx.subscribe_in(
             &project,
             window,
             |this, project, event, window, cx| match event {
-                ProjectEvent::WorktreeAdded(_) => {
-                    this.migrate_worktree_paths_on_add(project, cx);
+                ProjectEvent::WorktreeAdded(_)
+                | ProjectEvent::WorktreeRemoved(_)
+                | ProjectEvent::WorktreeOrderChanged => {
                     this.observe_draft_editors(cx);
                     this.update_entries(cx);
                     this.reconcile_groups(window, cx);
                 }
-                ProjectEvent::WorktreeRemoved(_) => {
-                    this.migrate_worktree_paths_on_remove(project, cx);
-                    this.observe_draft_editors(cx);
-                    this.update_entries(cx);
-                    this.reconcile_groups(window, cx);
-                }
-                ProjectEvent::WorktreeOrderChanged
-                | ProjectEvent::ProjectGroupKeyChanged { .. } => {
+                ProjectEvent::WorktreePathsChanged { old_worktree_paths } => {
+                    this.move_thread_paths(project, old_worktree_paths, cx);
                     this.observe_draft_editors(cx);
                     this.update_entries(cx);
                     this.reconcile_groups(window, cx);
@@ -693,81 +674,51 @@ impl Sidebar {
         }
     }
 
-    fn migrate_worktree_paths_on_add(
+    fn move_thread_paths(
         &mut self,
         project: &Entity<project::Project>,
+        old_paths: &WorktreePaths,
         cx: &mut Context<Self>,
     ) {
-        let project_id = project.entity_id();
-        let new_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
+        let new_paths = project.read(cx).worktree_paths(cx);
+        let old_folder_paths = old_paths.folder_path_list().clone();
 
-        if let Some(old_paths) = self.project_worktree_paths.get(&project_id) {
-            let old_folder_paths = old_paths.folder_path_list().clone();
-            let added_pairs: Vec<_> = new_paths
-                .ordered_pairs()
-                .filter(|(main, folder)| {
-                    !old_paths
-                        .ordered_pairs()
-                        .any(|(old_main, old_folder)| old_main == *main && old_folder == *folder)
-                })
-                .map(|(m, f)| (m.clone(), f.clone()))
-                .collect();
+        let added_pairs: Vec<_> = new_paths
+            .ordered_pairs()
+            .filter(|(main, folder)| {
+                !old_paths
+                    .ordered_pairs()
+                    .any(|(old_main, old_folder)| old_main == *main && old_folder == *folder)
+            })
+            .map(|(m, f)| (m.clone(), f.clone()))
+            .collect();
 
-            if !added_pairs.is_empty() {
-                ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
-                    store.change_worktree_paths(
-                        &old_folder_paths,
-                        |paths| {
-                            for (main_path, folder_path) in &added_pairs {
-                                paths.add_path(main_path, folder_path);
-                            }
-                        },
-                        store_cx,
-                    );
-                });
-            }
+        let new_folder_paths = new_paths.folder_path_list();
+        let removed_folder_paths: Vec<PathBuf> = old_folder_paths
+            .paths()
+            .iter()
+            .filter(|p| !new_folder_paths.paths().contains(p))
+            .cloned()
+            .collect();
+
+        if added_pairs.is_empty() && removed_folder_paths.is_empty() {
+            return;
         }
 
-        self.project_worktree_paths.insert(project_id, new_paths);
-    }
-
-    fn migrate_worktree_paths_on_remove(
-        &mut self,
-        project: &Entity<project::Project>,
-        cx: &mut Context<Self>,
-    ) {
-        let project_id = project.entity_id();
-        let new_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
-
-        if let Some(old_paths) = self.project_worktree_paths.get(&project_id) {
-            let old_folder_paths = old_paths.folder_path_list().clone();
-            let new_folder_paths = new_paths.folder_path_list();
-
-            if old_folder_paths != *new_folder_paths {
-                let removed_paths: Vec<PathBuf> = old_folder_paths
-                    .paths()
-                    .iter()
-                    .filter(|p| !new_folder_paths.paths().contains(p))
-                    .cloned()
-                    .collect();
-
-                if !removed_paths.is_empty() {
-                    ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
-                        store.change_worktree_paths(
-                            &old_folder_paths,
-                            |paths| {
-                                for path in &removed_paths {
-                                    paths.remove_folder_path(path);
-                                }
-                            },
-                            store_cx,
-                        );
-                    });
-                }
-            }
-        }
-
-        self.project_worktree_paths.insert(project_id, new_paths);
+        ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+            store.change_worktree_paths(
+                &old_folder_paths,
+                |paths| {
+                    for (main_path, folder_path) in &added_pairs {
+                        paths.add_path(main_path, folder_path);
+                    }
+                    for path in &removed_folder_paths {
+                        paths.remove_folder_path(path);
+                    }
+                },
+                store_cx,
+            );
+        });
     }
 
     fn subscribe_to_agent_panel(

@@ -6130,10 +6130,9 @@ mod tests {
     #[gpui::test]
     async fn test_multi_workspace_session_restore(cx: &mut TestAppContext) {
         use collections::HashMap;
-        use project::ProjectGroupKey;
         use session::Session;
         use util::path_list::PathList;
-        use workspace::{OpenMode, Workspace, WorkspaceId};
+        use workspace::{OpenMode, ProjectGroupKey, Workspace, WorkspaceId};
 
         let app_state = init_test(cx);
 
@@ -6348,10 +6347,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_restored_project_groups_survive_workspace_key_change(cx: &mut TestAppContext) {
-        use project::ProjectGroupKey;
         use session::Session;
         use util::path_list::PathList;
-        use workspace::OpenMode;
+        use workspace::{OpenMode, ProjectGroupKey};
 
         let app_state = init_test(cx);
 
