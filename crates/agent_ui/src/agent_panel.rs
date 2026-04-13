@@ -2915,17 +2915,20 @@ impl AgentPanel {
             }
         }
         let remote_connection = project.read(cx).remote_connection_options(cx);
-        let metadata = ThreadMetadata::new_draft(
-            thread_id,
-            resume_session_id.clone(),
-            agent.id(),
-            title.clone(),
-            worktree_paths,
-            remote_connection,
-        );
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save_all(vec![metadata], cx);
-        });
+
+        if existing_metadata.is_none() {
+            let metadata = ThreadMetadata::new_draft(
+                thread_id,
+                resume_session_id.clone(),
+                agent.id(),
+                title.clone(),
+                worktree_paths,
+                remote_connection,
+            );
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(metadata, cx);
+            });
+        }
 
         if self.selected_agent != agent {
             self.selected_agent = agent.clone();
