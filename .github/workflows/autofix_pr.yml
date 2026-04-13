@@ -45,10 +45,9 @@ jobs:
         version: '9'
     - name: autofix_pr::run_autofix::install_cargo_machete
       if: ${{ inputs.run_clippy }}
-      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
       with:
-        command: install
-        args: cargo-machete@0.7.0
+        tool: cargo-machete@0.7.0
     - name: autofix_pr::run_autofix::run_cargo_fix
       if: ${{ inputs.run_clippy }}
       run: cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged

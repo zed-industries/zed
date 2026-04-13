@@ -2,7 +2,7 @@ use crate::handle_open_request;
 use crate::restore_or_create_workspace;
 use agent_ui::ExternalSourcePrompt;
 use anyhow::{Context as _, Result, anyhow};
-use cli::{CliRequest, CliResponse, ipc::IpcSender};
+use cli::{CliRequest, CliResponse, CliResponseSink};
 use cli::{IpcHandshake, ipc};
 use client::{ZedLink, parse_zed_link};
 use db::kvp::KeyValueStore;
@@ -12,7 +12,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future;
 
-use futures::{FutureExt, SinkExt, StreamExt};
+use futures::{FutureExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use onboarding::FIRST_OPEN;
@@ -26,6 +26,7 @@ use std::thread;
 use std::time::Duration;
 use ui::SharedString;
 use util::ResultExt;
+use util::debug_panic;
 use util::paths::PathWithPosition;
 use workspace::PathList;
 use workspace::item::ItemHandle;
@@ -43,9 +44,13 @@ pub struct OpenRequest {
     pub remote_connection: Option<RemoteConnectionOptions>,
 }
 
-#[derive(Debug)]
 pub enum OpenRequestKind {
-    CliConnection((mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)),
+    CliConnection(
+        (
+            mpsc::UnboundedReceiver<CliRequest>,
+            Box<dyn CliResponseSink>,
+        ),
+    ),
     Extension {
         extension_id: String,
     },
@@ -71,6 +76,45 @@ pub enum OpenRequestKind {
     GitCommit {
         sha: String,
     },
+}
+
+impl std::fmt::Debug for OpenRequestKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CliConnection(_) => write!(f, "CliConnection(..)"),
+            Self::Extension { extension_id } => f
+                .debug_struct("Extension")
+                .field("extension_id", extension_id)
+                .finish(),
+            Self::AgentPanel {
+                external_source_prompt,
+            } => f
+                .debug_struct("AgentPanel")
+                .field("external_source_prompt", external_source_prompt)
+                .finish(),
+            Self::SharedAgentThread { session_id } => f
+                .debug_struct("SharedAgentThread")
+                .field("session_id", session_id)
+                .finish(),
+            Self::DockMenuAction { index } => f
+                .debug_struct("DockMenuAction")
+                .field("index", index)
+                .finish(),
+            Self::BuiltinJsonSchema { schema_path } => f
+                .debug_struct("BuiltinJsonSchema")
+                .field("schema_path", schema_path)
+                .finish(),
+            Self::Setting { setting_path } => f
+                .debug_struct("Setting")
+                .field("setting_path", setting_path)
+                .finish(),
+            Self::GitClone { repo_url } => f
+                .debug_struct("GitClone")
+                .field("repo_url", repo_url)
+                .finish(),
+            Self::GitCommit { sha } => f.debug_struct("GitCommit").field("sha", sha).finish(),
+        }
+    }
 }
 
 impl OpenRequest {
@@ -305,8 +349,11 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
 
 fn connect_to_cli(
     server_name: &str,
-) -> Result<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)> {
-    let handshake_tx = cli::ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
+) -> Result<(
+    mpsc::UnboundedReceiver<CliRequest>,
+    Box<dyn CliResponseSink>,
+)> {
+    let handshake_tx = ipc::IpcSender::<IpcHandshake>::connect(server_name.to_string())
         .context("error connecting to cli")?;
     let (request_tx, request_rx) = ipc::channel::<CliRequest>()?;
     let (response_tx, response_rx) = ipc::channel::<CliResponse>()?;
@@ -318,18 +365,17 @@ fn connect_to_cli(
         })
         .context("error sending ipc handshake")?;
 
-    let (mut async_request_tx, async_request_rx) =
-        futures::channel::mpsc::channel::<CliRequest>(16);
+    let (async_request_tx, async_request_rx) = futures::channel::mpsc::unbounded::<CliRequest>();
     thread::spawn(move || {
         while let Ok(cli_request) = request_rx.recv() {
-            if smol::block_on(async_request_tx.send(cli_request)).is_err() {
+            if async_request_tx.unbounded_send(cli_request).is_err() {
                 break;
             }
         }
         anyhow::Ok(())
     });
 
-    Ok((async_request_rx, response_tx))
+    Ok((async_request_rx, Box::new(response_tx)))
 }
 
 pub async fn open_paths_with_positions(
@@ -399,7 +445,10 @@ pub async fn open_paths_with_positions(
 }
 
 pub async fn handle_cli_connection(
-    (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
+    (mut requests, responses): (
+        mpsc::UnboundedReceiver<CliRequest>,
+        Box<dyn CliResponseSink>,
+    ),
     app_state: Arc<AppState>,
     cx: &mut AsyncApp,
 ) {
@@ -412,7 +461,8 @@ pub async fn handle_cli_connection(
                 diff_all,
                 wait,
                 wsl,
-                open_new_workspace,
+                mut open_new_workspace,
+                mut force_existing_window,
                 reuse,
                 env,
                 user_data_dir: _,
@@ -447,13 +497,36 @@ pub async fn handle_cli_connection(
                     return;
                 }
 
+                if let Some(behavior) = maybe_prompt_open_behavior(
+                    open_new_workspace,
+                    force_existing_window,
+                    reuse,
+                    &paths,
+                    &app_state,
+                    responses.as_ref(),
+                    &mut requests,
+                    cx,
+                )
+                .await
+                {
+                    match behavior {
+                        settings::CliDefaultOpenBehavior::ExistingWindow => {
+                            force_existing_window = true;
+                        }
+                        settings::CliDefaultOpenBehavior::NewWindow => {
+                            open_new_workspace = Some(true);
+                        }
+                    }
+                }
+
                 let open_workspace_result = open_workspaces(
                     paths,
                     diff_paths,
                     diff_all,
                     open_new_workspace,
+                    force_existing_window,
                     reuse,
-                    &responses,
+                    responses.as_ref(),
                     wait,
                     dev_container,
                     app_state.clone(),
@@ -465,8 +538,117 @@ pub async fn handle_cli_connection(
                 let status = if open_workspace_result.is_err() { 1 } else { 0 };
                 responses.send(CliResponse::Exit { status }).log_err();
             }
+            CliRequest::SetOpenBehavior { .. } => {
+                // We handle this case in a situation-specific way in
+                // maybe_prompt_open_behavior
+                debug_panic!("unexpected SetOpenBehavior message");
+            }
         }
     }
+}
+
+/// Checks whether the CLI user should be prompted to configure their default
+/// open behavior. Sends `CliResponse::PromptOpenBehavior` and waits for the
+/// CLI's response if all of these are true:
+///   - No explicit flag was given (`-n`, `-e`, `-a`)
+///   - There is at least one existing Zed window
+///   - The user has not yet configured `cli_default_open_behavior` in settings
+///
+/// Returns the user's choice, or `None` if no prompt was needed or the CLI
+/// didn't respond.
+async fn maybe_prompt_open_behavior(
+    open_new_workspace: Option<bool>,
+    force_existing_window: bool,
+    reuse: bool,
+    paths: &[String],
+    app_state: &Arc<AppState>,
+    responses: &dyn CliResponseSink,
+    requests: &mut mpsc::UnboundedReceiver<CliRequest>,
+    cx: &mut AsyncApp,
+) -> Option<settings::CliDefaultOpenBehavior> {
+    if open_new_workspace.is_some() || force_existing_window || reuse {
+        return None;
+    }
+
+    let has_existing_windows = cx.update(|cx| {
+        cx.windows()
+            .iter()
+            .any(|window| window.downcast::<MultiWorkspace>().is_some())
+    });
+
+    if !has_existing_windows {
+        return None;
+    }
+
+    if !paths.is_empty() {
+        let paths_as_pathbufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        let paths_in_existing_workspace = cx.update(|cx| {
+            for window in cx.windows() {
+                if let Some(multi_workspace) = window.downcast::<MultiWorkspace>() {
+                    if let Ok(multi_workspace) = multi_workspace.read(cx) {
+                        for workspace in multi_workspace.workspaces() {
+                            let project = workspace.read(cx).project().read(cx);
+                            if project
+                                .visibility_for_paths(&paths_as_pathbufs, false, cx)
+                                .is_some()
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        });
+
+        if paths_in_existing_workspace {
+            return None;
+        }
+    }
+
+    if !paths.is_empty() {
+        let has_directory =
+            futures::future::join_all(paths.iter().map(|p| app_state.fs.is_dir(Path::new(p))))
+                .await
+                .into_iter()
+                .any(|is_dir| is_dir);
+
+        if !has_directory {
+            return None;
+        }
+    }
+
+    let settings_text = app_state
+        .fs
+        .load(paths::settings_file())
+        .await
+        .unwrap_or_default();
+
+    if settings_text.contains("cli_default_open_behavior") {
+        return None;
+    }
+
+    responses.send(CliResponse::PromptOpenBehavior).log_err()?;
+
+    if let Some(CliRequest::SetOpenBehavior { behavior }) = requests.next().await {
+        let behavior = match behavior {
+            cli::CliOpenBehavior::ExistingWindow => {
+                settings::CliDefaultOpenBehavior::ExistingWindow
+            }
+            cli::CliOpenBehavior::NewWindow => settings::CliDefaultOpenBehavior::NewWindow,
+        };
+
+        let fs = app_state.fs.clone();
+        cx.update(|cx| {
+            settings::update_settings_file(fs, cx, move |content, _cx| {
+                content.workspace.cli_default_open_behavior = Some(behavior);
+            });
+        });
+
+        return Some(behavior);
+    }
+
+    None
 }
 
 async fn open_workspaces(
@@ -474,8 +656,9 @@ async fn open_workspaces(
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_new_workspace: Option<bool>,
+    force_existing_window: bool,
     reuse: bool,
-    responses: &IpcSender<CliResponse>,
+    responses: &dyn CliResponseSink,
     wait: bool,
     dev_container: bool,
     app_state: Arc<AppState>,
@@ -536,6 +719,7 @@ async fn open_workspaces(
         };
         let open_options = workspace::OpenOptions {
             open_new_workspace,
+            force_existing_window,
             requesting_window: replace_window,
             wait,
             env: env.clone(),
@@ -600,7 +784,7 @@ async fn open_local_workspace(
     diff_paths: Vec<[String; 2]>,
     diff_all: bool,
     open_options: workspace::OpenOptions,
-    responses: &IpcSender<CliResponse>,
+    responses: &dyn CliResponseSink,
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
@@ -742,10 +926,7 @@ pub async fn derive_paths_with_position(
 mod tests {
     use super::*;
     use crate::zed::{open_listener::open_local_workspace, tests::init_test};
-    use cli::{
-        CliResponse,
-        ipc::{self},
-    };
+    use cli::CliResponse;
     use editor::Editor;
     use futures::poll;
     use gpui::{AppContext as _, TestAppContext};
@@ -756,6 +937,24 @@ mod tests {
     use std::{sync::Arc, task::Poll};
     use util::path;
     use workspace::{AppState, MultiWorkspace};
+
+    struct DiscardResponseSink;
+
+    impl CliResponseSink for DiscardResponseSink {
+        fn send(&self, _response: CliResponse) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct SyncResponseSender(std::sync::mpsc::Sender<CliResponse>);
+
+    impl CliResponseSink for SyncResponseSender {
+        fn send(&self, response: CliResponse) -> anyhow::Result<()> {
+            self.0
+                .send(response)
+                .map_err(|error| anyhow::anyhow!("{error}"))
+        }
+    }
 
     #[gpui::test]
     fn test_parse_ssh_url(cx: &mut TestAppContext) {
@@ -1072,7 +1271,7 @@ mod tests {
             )
             .await;
 
-        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
+        let response_sink = DiscardResponseSink;
         let workspace_paths = vec![path!("/root/dir1").to_owned()];
 
         let (done_tx, mut done_rx) = futures::channel::oneshot::channel();
@@ -1087,7 +1286,7 @@ mod tests {
                         wait: true,
                         ..Default::default()
                     },
-                    &response_tx,
+                    &response_sink,
                     &app_state,
                     &mut cx,
                 )
@@ -1171,7 +1370,7 @@ mod tests {
         app_state: Arc<AppState>,
         cx: &TestAppContext,
     ) {
-        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
+        let response_sink = DiscardResponseSink;
 
         let workspace_paths = vec![path.to_owned()];
 
@@ -1185,7 +1384,7 @@ mod tests {
                         open_new_workspace,
                         ..Default::default()
                     },
-                    &response_tx,
+                    &response_sink,
                     &app_state,
                     &mut cx,
                 )
@@ -1243,20 +1442,19 @@ mod tests {
             .unwrap();
 
         // First, open a workspace normally
-        let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
+        let response_sink = DiscardResponseSink;
         let workspace_paths = vec![file1_path.to_string()];
 
         let _errored = cx
             .spawn({
                 let app_state = app_state.clone();
-                let response_tx = response_tx.clone();
                 |mut cx| async move {
                     open_local_workspace(
                         workspace_paths,
                         vec![],
                         false,
                         workspace::OpenOptions::default(),
-                        &response_tx,
+                        &response_sink,
                         &app_state,
                         &mut cx,
                     )
@@ -1282,8 +1480,8 @@ mod tests {
         let errored_reuse = cx
             .spawn({
                 let app_state = app_state.clone();
-                let response_tx = response_tx.clone();
                 |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
                     open_local_workspace(
                         workspace_paths_reuse,
                         vec![],
@@ -1292,7 +1490,7 @@ mod tests {
                             requesting_window: Some(window_to_replace),
                             ..Default::default()
                         },
-                        &response_tx,
+                        &response_sink,
                         &app_state,
                         &mut cx,
                     )
@@ -1426,21 +1624,19 @@ mod tests {
             .await
             .unwrap();
 
-        let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
-
         // Open first workspace
         let workspace_paths_1 = vec![file1_path.to_string()];
         let _errored = cx
             .spawn({
                 let app_state = app_state.clone();
-                let response_tx = response_tx.clone();
                 |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
                     open_local_workspace(
                         workspace_paths_1,
                         Vec::new(),
                         false,
                         workspace::OpenOptions::default(),
-                        &response_tx,
+                        &response_sink,
                         &app_state,
                         &mut cx,
                     )
@@ -1457,8 +1653,8 @@ mod tests {
         let _errored = cx
             .spawn({
                 let app_state = app_state.clone();
-                let response_tx = response_tx.clone();
                 |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
                     open_local_workspace(
                         workspace_paths_2,
                         Vec::new(),
@@ -1467,7 +1663,7 @@ mod tests {
                             open_new_workspace: Some(true), // Force new window
                             ..Default::default()
                         },
-                        &response_tx,
+                        &response_sink,
                         &app_state,
                         &mut cx,
                     )
@@ -1503,8 +1699,8 @@ mod tests {
         let _errored = cx
             .spawn({
                 let app_state = app_state.clone();
-                let response_tx = response_tx.clone();
                 |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
                     open_local_workspace(
                         workspace_paths_add,
                         Vec::new(),
@@ -1513,7 +1709,7 @@ mod tests {
                             open_new_workspace: Some(false), // --add flag
                             ..Default::default()
                         },
-                        &response_tx,
+                        &response_sink,
                         &app_state,
                         &mut cx,
                     )
@@ -1564,11 +1760,11 @@ mod tests {
             )
             .await;
 
-        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
         let errored = cx
             .spawn({
                 let app_state = app_state.clone();
                 |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
                     open_local_workspace(
                         vec![path!("/project").to_owned()],
                         vec![],
@@ -1577,7 +1773,7 @@ mod tests {
                             open_in_dev_container: true,
                             ..Default::default()
                         },
-                        &response_tx,
+                        &response_sink,
                         &app_state,
                         &mut cx,
                     )
@@ -1618,11 +1814,11 @@ mod tests {
             )
             .await;
 
-        let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
         let errored = cx
             .spawn({
                 let app_state = app_state.clone();
                 |mut cx| async move {
+                    let response_sink = DiscardResponseSink;
                     open_local_workspace(
                         vec![path!("/project").to_owned()],
                         vec![],
@@ -1631,7 +1827,7 @@ mod tests {
                             open_in_dev_container: true,
                             ..Default::default()
                         },
-                        &response_tx,
+                        &response_sink,
                         &app_state,
                         &mut cx,
                     )
@@ -1660,5 +1856,342 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    fn make_cli_open_request(
+        paths: Vec<String>,
+        open_new_workspace: Option<bool>,
+        force_existing_window: bool,
+    ) -> CliRequest {
+        CliRequest::Open {
+            paths,
+            urls: vec![],
+            diff_paths: vec![],
+            diff_all: false,
+            wsl: None,
+            wait: false,
+            open_new_workspace,
+            force_existing_window,
+            reuse: false,
+            env: None,
+            user_data_dir: None,
+            dev_container: false,
+        }
+    }
+
+    /// Runs the real [`cli::run_cli_response_loop`] on an OS thread against
+    /// the Zed-side `handle_cli_connection` on the GPUI foreground executor,
+    /// using `allow_parking` so the test scheduler tolerates cross-thread
+    /// wakeups.
+    ///
+    /// Returns `(exit_status, prompt_was_shown)`.
+    fn run_cli_with_zed_handler(
+        cx: &mut TestAppContext,
+        app_state: Arc<AppState>,
+        open_request: CliRequest,
+        prompt_response: Option<cli::CliOpenBehavior>,
+    ) -> (i32, bool) {
+        cx.executor().allow_parking();
+
+        let (request_tx, request_rx) = mpsc::unbounded::<CliRequest>();
+        let (response_tx, response_rx) = std::sync::mpsc::channel::<CliResponse>();
+        let response_sink: Box<dyn CliResponseSink> = Box::new(SyncResponseSender(response_tx));
+
+        cx.spawn(|mut cx| async move {
+            handle_cli_connection((request_rx, response_sink), app_state, &mut cx).await;
+        })
+        .detach();
+
+        let prompt_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let prompt_called_for_thread = prompt_called.clone();
+
+        let cli_thread = std::thread::spawn(move || -> anyhow::Result<i32> {
+            request_tx
+                .unbounded_send(open_request)
+                .map_err(|error| anyhow::anyhow!("{error}"))?;
+
+            while let Ok(response) = response_rx.recv() {
+                match response {
+                    CliResponse::Ping => {}
+                    CliResponse::Stdout { .. } | CliResponse::Stderr { .. } => {}
+                    CliResponse::Exit { status } => return Ok(status),
+                    CliResponse::PromptOpenBehavior => {
+                        prompt_called_for_thread.store(true, std::sync::atomic::Ordering::SeqCst);
+                        let behavior =
+                            prompt_response.unwrap_or(cli::CliOpenBehavior::ExistingWindow);
+                        request_tx
+                            .unbounded_send(CliRequest::SetOpenBehavior { behavior })
+                            .map_err(|error| anyhow::anyhow!("{error}"))?;
+                    }
+                }
+            }
+
+            anyhow::bail!("CLI response channel closed without Exit")
+        });
+
+        while !cli_thread.is_finished() {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
+        let exit_status = cli_thread.join().unwrap().expect("CLI loop failed");
+        let prompt_shown = prompt_called.load(std::sync::atomic::Ordering::SeqCst);
+
+        // Flush any remaining async work (e.g. settings file writes).
+        cx.run_until_parked();
+
+        (exit_status, prompt_shown)
+    }
+
+    #[gpui::test]
+    async fn test_e2e_no_flags_no_windows_no_prompt(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        assert_eq!(cx.windows().len(), 0);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(vec![path!("/project/file.txt").to_string()], None, false),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when no windows exist"
+        );
+        assert_eq!(cx.windows().len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_prompt_user_picks_existing_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project_a"), json!({ "file.txt": "content" }))
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project_b"), json!({ "file.txt": "content" }))
+            .await;
+
+        // Create an existing window so the prompt triggers
+        open_workspace_file(path!("/project_a"), None, app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state.clone(),
+            make_cli_open_request(vec![path!("/project_b").to_string()], None, false),
+            Some(cli::CliOpenBehavior::ExistingWindow),
+        );
+
+        assert_eq!(status, 0);
+        assert!(prompt_shown, "prompt should be shown");
+        assert_eq!(cx.windows().len(), 1);
+
+        let settings_text = app_state
+            .fs
+            .load(paths::settings_file())
+            .await
+            .unwrap_or_default();
+        assert!(
+            settings_text.contains("existing_window"),
+            "settings should contain 'existing_window', got: {settings_text}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_e2e_prompt_user_picks_new_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project_a"), json!({ "file.txt": "content" }))
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project_b"), json!({ "file.txt": "content" }))
+            .await;
+
+        // Create an existing window with project_a
+        open_workspace_file(path!("/project_a"), None, app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state.clone(),
+            make_cli_open_request(vec![path!("/project_b").to_string()], None, false),
+            Some(cli::CliOpenBehavior::NewWindow),
+        );
+
+        assert_eq!(status, 0);
+        assert!(prompt_shown, "prompt should be shown");
+        assert_eq!(cx.windows().len(), 2);
+
+        let settings_text = app_state
+            .fs
+            .load(paths::settings_file())
+            .await
+            .unwrap_or_default();
+        assert!(
+            settings_text.contains("new_window"),
+            "settings should contain 'new_window', got: {settings_text}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_e2e_setting_already_configured_no_prompt(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        // Pre-configure the setting in settings.json
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                paths::config_dir(),
+                json!({
+                    "settings.json": r#"{"cli_default_open_behavior": "existing_window"}"#
+                }),
+            )
+            .await;
+
+        // Create an existing window
+        open_workspace_file(path!("/project"), None, app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(vec![path!("/project/file.txt").to_string()], None, false),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_e2e_explicit_existing_flag_no_prompt(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        // Create an existing window
+        open_workspace_file(path!("/project"), None, app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(
+                vec![path!("/project/file.txt").to_string()],
+                None,
+                true, // -e flag: force existing window
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(!prompt_shown, "no prompt should be shown with -e flag");
+        assert_eq!(cx.windows().len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_explicit_new_flag_no_prompt(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project_a"), json!({ "file.txt": "content" }))
+            .await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project_b"), json!({ "file.txt": "content" }))
+            .await;
+
+        // Create an existing window
+        open_workspace_file(path!("/project_a"), None, app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(
+                vec![path!("/project_b/file.txt").to_string()],
+                Some(true), // -n flag: force new window
+                false,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(!prompt_shown, "no prompt should be shown with -n flag");
+        assert_eq!(cx.windows().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_paths_in_existing_workspace_no_prompt(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    }
+                }),
+            )
+            .await;
+
+        // Open the project directory as a workspace
+        open_workspace_file(path!("/project"), None, app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        // Opening a file inside the already-open workspace should not prompt
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(vec![path!("/project/src/main.rs").to_string()], None, false),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when paths are in an existing workspace"
+        );
+        // File opened in existing window
+        assert_eq!(cx.windows().len(), 1);
     }
 }

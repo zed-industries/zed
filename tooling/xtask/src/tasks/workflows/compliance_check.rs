@@ -1,14 +1,10 @@
-use gh_workflow::{Event, Job, Run, Schedule, Step, Workflow, WorkflowDispatch};
-use indoc::formatdoc;
+use gh_workflow::{Event, Job, Schedule, Workflow, WorkflowDispatch};
 
 use crate::tasks::workflows::{
-    release::{
-        COMPLIANCE_REPORT_PATH, COMPLIANCE_STEP_ID, ComplianceContext,
-        add_compliance_notification_steps,
-    },
+    release::{ComplianceContext, add_compliance_steps},
     runners,
     steps::{self, CommonJobConditions, named},
-    vars::{self, StepOutput},
+    vars::StepOutput,
 };
 
 pub fn compliance_check() -> Workflow {
@@ -37,31 +33,20 @@ fn scheduled_compliance_check() -> steps::NamedJob {
 
     let tag_output = StepOutput::new(&determine_version_step, "tag");
 
-    fn run_compliance_check(tag: &StepOutput) -> Step<Run> {
-        named::bash(
-            formatdoc! {r#"
-                cargo xtask compliance "$LATEST_TAG" --branch main --report-path "{COMPLIANCE_REPORT_PATH}"
-                "#,
-            }
-        )
-        .id(COMPLIANCE_STEP_ID)
-        .add_env(("LATEST_TAG", tag.to_string()))
-        .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
-        .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
-    }
-
     let job = Job::default()
         .with_repository_owner_guard()
         .runs_on(runners::LINUX_SMALL)
         .add_step(steps::checkout_repo().with_full_history())
         .add_step(steps::cache_rust_dependencies_namespace())
-        .add_step(determine_version_step)
-        .add_step(run_compliance_check(&tag_output));
+        .add_step(determine_version_step);
 
-    named::job(add_compliance_notification_steps(
-        job,
-        ComplianceContext::Scheduled {
-            tag_source: tag_output,
-        },
-    ))
+    named::job(
+        add_compliance_steps(
+            job,
+            ComplianceContext::Scheduled {
+                tag_source: tag_output,
+            },
+        )
+        .0,
+    )
 }

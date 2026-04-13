@@ -3,7 +3,6 @@ use std::{
     sync::Arc,
 };
 
-use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AsyncApp, Entity, Task};
 use project::{
@@ -13,7 +12,7 @@ use project::{
 use util::ResultExt;
 use workspace::{AppState, MultiWorkspace, Workspace};
 
-use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadMetadataStore};
+use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadId, ThreadMetadataStore};
 
 /// The plan for archiving a single git worktree root.
 ///
@@ -139,16 +138,6 @@ pub fn build_root_plan(
             .then_some((snapshot, repo))
         });
 
-    let matching_worktree_snapshot = workspaces.iter().find_map(|workspace| {
-        workspace
-            .read(cx)
-            .project()
-            .read(cx)
-            .visible_worktrees(cx)
-            .find(|worktree| worktree.read(cx).abs_path().as_ref() == path.as_path())
-            .map(|worktree| worktree.read(cx).snapshot())
-    });
-
     let (main_repo_path, worktree_repo, branch_name) =
         if let Some((linked_snapshot, repo)) = linked_repo {
             (
@@ -160,12 +149,11 @@ pub fn build_root_plan(
                     .map(|branch| branch.name().to_string()),
             )
         } else {
-            let main_repo_path = matching_worktree_snapshot
-                .as_ref()?
-                .root_repo_common_dir()
-                .and_then(|dir| dir.parent())?
-                .to_path_buf();
-            (main_repo_path, None, None)
+            // Not a linked worktree — nothing to archive from disk.
+            // `remove_root` would try to remove the main worktree from
+            // the project and then run `git worktree remove`, both of
+            // which fail for main working trees.
+            return None;
         };
 
     Some(RootPlan {
@@ -181,18 +169,18 @@ pub fn build_root_plan(
 /// references `path` in its folder paths. Used to determine whether a
 /// worktree can safely be removed from disk.
 pub fn path_is_referenced_by_other_unarchived_threads(
-    current_session_id: &acp::SessionId,
+    current_thread_id: ThreadId,
     path: &Path,
     cx: &App,
 ) -> bool {
     ThreadMetadataStore::global(cx)
         .read(cx)
         .entries()
-        .filter(|thread| thread.session_id != *current_session_id)
+        .filter(|thread| thread.thread_id != current_thread_id)
         .filter(|thread| !thread.archived)
         .any(|thread| {
             thread
-                .folder_paths
+                .folder_paths()
                 .paths()
                 .iter()
                 .any(|other_path| other_path.as_path() == path)
@@ -423,28 +411,24 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
     };
 
     // Link all threads on this worktree to the archived record
-    let session_ids: Vec<acp::SessionId> = store.read_with(cx, |store, _cx| {
+    let thread_ids: Vec<ThreadId> = store.read_with(cx, |store, _cx| {
         store
             .entries()
             .filter(|thread| {
                 thread
-                    .folder_paths
+                    .folder_paths()
                     .paths()
                     .iter()
                     .any(|p| p.as_path() == root.root_path)
             })
-            .map(|thread| thread.session_id.clone())
+            .map(|thread| thread.thread_id)
             .collect()
     });
 
-    for session_id in &session_ids {
+    for thread_id in &thread_ids {
         let link_result = store
             .read_with(cx, |store, cx| {
-                store.link_thread_to_archived_worktree(
-                    session_id.0.to_string(),
-                    archived_worktree_id,
-                    cx,
-                )
+                store.link_thread_to_archived_worktree(*thread_id, archived_worktree_id, cx)
             })
             .await;
         if let Err(error) = link_result {
@@ -647,21 +631,18 @@ pub async fn cleanup_archived_worktree_record(row: &ArchivedGitWorktree, cx: &mu
 /// This unlinks the thread from all its archived worktrees and, for any
 /// archived worktree that is no longer referenced by any other thread,
 /// deletes the git ref and DB records.
-pub async fn cleanup_thread_archived_worktrees(session_id: &acp::SessionId, cx: &mut AsyncApp) {
+pub async fn cleanup_thread_archived_worktrees(thread_id: ThreadId, cx: &mut AsyncApp) {
     let store = cx.update(|cx| ThreadMetadataStore::global(cx));
 
     let archived_worktrees = store
         .read_with(cx, |store, cx| {
-            store.get_archived_worktrees_for_thread(session_id.0.to_string(), cx)
+            store.get_archived_worktrees_for_thread(thread_id, cx)
         })
         .await;
     let archived_worktrees = match archived_worktrees {
         Ok(rows) => rows,
         Err(error) => {
-            log::error!(
-                "Failed to fetch archived worktrees for thread {}: {error:#}",
-                session_id.0
-            );
+            log::error!("Failed to fetch archived worktrees for thread {thread_id:?}: {error:#}");
             return;
         }
     };
@@ -672,14 +653,11 @@ pub async fn cleanup_thread_archived_worktrees(session_id: &acp::SessionId, cx: 
 
     if let Err(error) = store
         .read_with(cx, |store, cx| {
-            store.unlink_thread_from_all_archived_worktrees(session_id.0.to_string(), cx)
+            store.unlink_thread_from_all_archived_worktrees(thread_id, cx)
         })
         .await
     {
-        log::error!(
-            "Failed to unlink thread {} from archived worktrees: {error:#}",
-            session_id.0
-        );
+        log::error!("Failed to unlink thread {thread_id:?} from archived worktrees: {error:#}");
         return;
     }
 

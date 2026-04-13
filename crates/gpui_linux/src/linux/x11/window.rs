@@ -423,6 +423,7 @@ impl X11WindowState {
         scale_factor: f32,
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
+        supports_xinput_gestures: bool,
     ) -> anyhow::Result<Self> {
         let x_screen_index = params
             .display_id
@@ -660,25 +661,27 @@ impl X11WindowState {
                 ),
             )?;
 
+            let mut xi_event_mask = xinput::XIEventMask::MOTION
+                | xinput::XIEventMask::BUTTON_PRESS
+                | xinput::XIEventMask::BUTTON_RELEASE
+                | xinput::XIEventMask::ENTER
+                | xinput::XIEventMask::LEAVE;
+            if supports_xinput_gestures {
+                // x11rb 0.13 doesn't define XIEventMask constants for gesture
+                // events, so we construct them from the event opcodes (each
+                // XInput event type N maps to mask bit N).
+                xi_event_mask |=
+                    xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_BEGIN_EVENT)
+                        | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_UPDATE_EVENT)
+                        | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_END_EVENT);
+            }
             check_reply(
                 || "X11 XiSelectEvents failed.",
                 xcb.xinput_xi_select_events(
                     x_window,
                     &[xinput::EventMask {
                         deviceid: XINPUT_ALL_DEVICE_GROUPS,
-                        mask: vec![
-                            xinput::XIEventMask::MOTION
-                                | xinput::XIEventMask::BUTTON_PRESS
-                                | xinput::XIEventMask::BUTTON_RELEASE
-                                | xinput::XIEventMask::ENTER
-                                | xinput::XIEventMask::LEAVE
-                                // x11rb 0.13 doesn't define XIEventMask constants for gesture
-                                // events, so we construct them from the event opcodes (each
-                                // XInput event type N maps to mask bit N).
-                                | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_BEGIN_EVENT)
-                                | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_UPDATE_EVENT)
-                                | xinput::XIEventMask::from(1u32 << xinput::GESTURE_PINCH_END_EVENT),
-                        ],
+                        mask: vec![xi_event_mask],
                     }],
                 ),
             )?;
@@ -855,6 +858,7 @@ impl X11Window {
         scale_factor: f32,
         appearance: WindowAppearance,
         parent_window: Option<X11WindowStatePtr>,
+        supports_xinput_gestures: bool,
     ) -> anyhow::Result<Self> {
         let ptr = X11WindowStatePtr {
             state: Rc::new(RefCell::new(X11WindowState::new(
@@ -872,6 +876,7 @@ impl X11Window {
                 scale_factor,
                 appearance,
                 parent_window,
+                supports_xinput_gestures,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             xcb: xcb.clone(),

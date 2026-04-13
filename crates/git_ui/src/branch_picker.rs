@@ -22,7 +22,7 @@ use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
 
-use crate::{branch_picker, git_panel::show_error_toast, resolve_active_repository};
+use crate::{branch_picker, git_panel::show_error_toast};
 
 actions!(
     branch_picker,
@@ -59,7 +59,7 @@ pub fn open(
     cx: &mut Context<Workspace>,
 ) {
     let workspace_handle = workspace.weak_handle();
-    let repository = resolve_active_repository(workspace, cx);
+    let repository = workspace.project().read(cx).active_repository(cx);
 
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(
@@ -864,7 +864,7 @@ impl PickerDelegate for BranchListDelegate {
     ) -> Option<Self::ListItem> {
         let entry = &self.matches.get(ix)?;
 
-        let (commit_time, author_name, subject) = entry
+        let (commit_time, absolute_time, author_name, subject) = entry
             .as_branch()
             .and_then(|branch| {
                 branch.most_recent_commit.as_ref().map(|commit| {
@@ -879,11 +879,22 @@ impl PickerDelegate for BranchListDelegate {
                         local_offset,
                         time_format::TimestampFormat::Relative,
                     );
+                    let absolute_time = time_format::format_localized_timestamp(
+                        commit_time,
+                        OffsetDateTime::now_utc(),
+                        local_offset,
+                        time_format::TimestampFormat::EnhancedAbsolute,
+                    );
                     let author = commit.author_name.clone();
-                    (Some(formatted_time), Some(author), Some(subject))
+                    (
+                        Some(formatted_time),
+                        Some(absolute_time),
+                        Some(author),
+                        Some(subject),
+                    )
                 })
             })
-            .unwrap_or_else(|| (None, None, None));
+            .unwrap_or_else(|| (None, None, None, None));
 
         let is_head_branch = entry.as_branch().is_some_and(|branch| branch.is_head);
 
@@ -1076,19 +1087,31 @@ impl PickerDelegate for BranchListDelegate {
                                 .when_some(
                                     entry.as_branch().map(|b| b.name().to_string()),
                                     |this, branch_name| {
-                                        this.map(|this| {
-                                            if is_head_branch {
-                                                this.tooltip(move |_, cx| {
-                                                    Tooltip::with_meta(
-                                                        branch_name.clone(),
-                                                        None,
-                                                        "Current Branch",
-                                                        cx,
+                                        let absolute_time = absolute_time.clone();
+                                        this.tooltip({
+                                            let is_head = is_head_branch;
+                                            Tooltip::element(move |_, _| {
+                                                v_flex()
+                                                    .child(Label::new(branch_name.clone()))
+                                                    .when(is_head, |this| {
+                                                        this.child(
+                                                            Label::new("Current Branch")
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Muted),
+                                                        )
+                                                    })
+                                                    .when_some(
+                                                        absolute_time.clone(),
+                                                        |this, time| {
+                                                            this.child(
+                                                                Label::new(time)
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted),
+                                                            )
+                                                        },
                                                     )
-                                                })
-                                            } else {
-                                                this.tooltip(Tooltip::text(branch_name))
-                                            }
+                                                    .into_any_element()
+                                            })
                                         })
                                     },
                                 ),

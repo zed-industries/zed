@@ -65,11 +65,14 @@ use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, WorktreeCreationStatus};
+pub use crate::agent_panel::{
+    AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads, WorktreeCreationStatus,
+};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
-pub(crate) use conversation_view::ConversationView;
+pub use conversation_view::ConversationView;
 pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
@@ -79,7 +82,7 @@ pub(crate) use thread_history_view::*;
 pub use thread_import::{AcpThreadImportOnboarding, ThreadImportModal};
 use zed_actions;
 
-pub const DEFAULT_THREAD_TITLE: &str = "New Thread";
+pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
 actions!(
     agent,
@@ -823,6 +826,7 @@ mod tests {
         .unwrap();
 
         cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             AgentSettings::register(cx);

@@ -292,6 +292,21 @@ impl ThreadBranchPickerDelegate {
         }
     }
 
+    fn entry_branch_name(&self, entry: &ThreadBranchEntry) -> Option<SharedString> {
+        match entry {
+            ThreadBranchEntry::CurrentBranch => {
+                Some(SharedString::from(self.current_branch_name.clone()))
+            }
+            ThreadBranchEntry::DefaultBranch => {
+                self.default_branch_name.clone().map(SharedString::from)
+            }
+            ThreadBranchEntry::ExistingBranch { branch, .. } => {
+                Some(SharedString::from(branch.name().to_string()))
+            }
+            _ => None,
+        }
+    }
+
     fn entry_aside_text(&self, entry: &ThreadBranchEntry) -> Option<SharedString> {
         match entry {
             ThreadBranchEntry::CurrentBranch => Some(SharedString::from(
@@ -742,17 +757,45 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<DocumentationAside> {
         let entry = self.matches.get(self.selected_index)?;
-        let aside_text = self.entry_aside_text(entry)?;
+        let branch_name = self.entry_branch_name(entry);
+        let aside_text = self.entry_aside_text(entry);
+
+        if branch_name.is_none() && aside_text.is_none() {
+            return None;
+        }
+
         let side = crate::ui::documentation_aside_side(cx);
 
         Some(DocumentationAside::new(
             side,
-            Rc::new(move |_| Label::new(aside_text.clone()).into_any_element()),
+            Rc::new(move |cx| {
+                v_flex()
+                    .gap_1()
+                    .when_some(branch_name.clone(), |this, name| {
+                        this.child(Label::new(name))
+                    })
+                    .when_some(aside_text.clone(), |this, text| {
+                        this.child(
+                            div()
+                                .when(branch_name.is_some(), |this| {
+                                    this.pt_1()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                })
+                                .child(Label::new(text).color(Color::Muted)),
+                        )
+                    })
+                    .into_any_element()
+            }),
         ))
     }
 
     fn documentation_aside_index(&self) -> Option<usize> {
         let entry = self.matches.get(self.selected_index)?;
-        self.entry_aside_text(entry).map(|_| self.selected_index)
+        if self.entry_branch_name(entry).is_some() || self.entry_aside_text(entry).is_some() {
+            Some(self.selected_index)
+        } else {
+            None
+        }
     }
 }

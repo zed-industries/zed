@@ -594,14 +594,47 @@ impl GitStore {
     pub fn is_local(&self) -> bool {
         matches!(self.state, GitStoreState::Local { .. })
     }
+
+    fn set_active_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
+        if self.active_repo_id != Some(repo_id) {
+            self.active_repo_id = Some(repo_id);
+            cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(repo_id)));
+        }
+    }
+
     pub fn set_active_repo_for_path(&mut self, project_path: &ProjectPath, cx: &mut Context<Self>) {
         if let Some((repo, _)) = self.repository_and_path_for_project_path(project_path, cx) {
-            let id = repo.read(cx).id;
-            if self.active_repo_id != Some(id) {
-                self.active_repo_id = Some(id);
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-            }
+            self.set_active_repo_id(repo.read(cx).id, cx);
         }
+    }
+
+    pub fn set_active_repo_for_worktree(
+        &mut self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+        else {
+            return;
+        };
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        let Some(repo_id) = self
+            .repositories
+            .values()
+            .filter(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+            })
+            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+            .map(|repo| repo.read(cx).id)
+        else {
+            return;
+        };
+
+        self.set_active_repo_id(repo_id, cx);
     }
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {

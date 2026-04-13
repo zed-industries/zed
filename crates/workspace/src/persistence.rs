@@ -1804,16 +1804,12 @@ impl WorkspaceDb {
         }
     }
 
-    async fn all_paths_exist_with_a_directory(
-        paths: &[PathBuf],
-        fs: &dyn Fs,
-        timestamp: Option<DateTime<Utc>>,
-    ) -> bool {
+    async fn all_paths_exist_with_a_directory(paths: &[PathBuf], fs: &dyn Fs) -> bool {
         let mut any_dir = false;
         for path in paths {
             match fs.metadata(path).await.ok().flatten() {
                 None => {
-                    return timestamp.is_some_and(|t| Utc::now() - t < chrono::Duration::days(7));
+                    return false;
                 }
                 Some(meta) => {
                     if meta.is_dir {
@@ -1839,9 +1835,9 @@ impl WorkspaceDb {
         )>,
     > {
         let mut result = Vec::new();
-        let mut delete_tasks = Vec::new();
+        let mut workspaces_to_delete = Vec::new();
         let remote_connections = self.remote_connections()?;
-
+        let now = Utc::now();
         for (id, paths, remote_connection_id, timestamp) in self.recent_workspaces()? {
             if let Some(remote_connection_id) = remote_connection_id {
                 if let Some(connection_options) = remote_connections.get(&remote_connection_id) {
@@ -1852,34 +1848,40 @@ impl WorkspaceDb {
                         timestamp,
                     ));
                 } else {
-                    delete_tasks.push(self.delete_workspace_by_id(id));
+                    workspaces_to_delete.push(id);
                 }
                 continue;
             }
 
-            let has_wsl_path = if cfg!(windows) {
-                paths
+            // Delete the workspace if any of the paths are WSL paths. If a
+            // local workspace points to WSL, attempting to read its metadata
+            // will wait for the WSL VM and file server to boot up. This can
+            // block for many seconds. Supported scenarios use remote
+            // workspaces.
+            if cfg!(windows) {
+                let has_wsl_path = paths
                     .paths()
                     .iter()
-                    .any(|path| util::paths::WslPath::from_path(path).is_some())
-            } else {
-                false
-            };
+                    .any(|path| util::paths::WslPath::from_path(path).is_some());
+                if has_wsl_path {
+                    workspaces_to_delete.push(id);
+                    continue;
+                }
+            }
 
-            // Delete the workspace if any of the paths are WSL paths.
-            // If a local workspace points to WSL, this check will cause us to wait for the
-            // WSL VM and file server to boot up. This can block for many seconds.
-            // Supported scenarios use remote workspaces.
-            if !has_wsl_path
-                && Self::all_paths_exist_with_a_directory(paths.paths(), fs, Some(timestamp)).await
-            {
+            if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
                 result.push((id, SerializedWorkspaceLocation::Local, paths, timestamp));
-            } else {
-                delete_tasks.push(self.delete_workspace_by_id(id));
+            } else if now - timestamp >= chrono::Duration::days(7) {
+                workspaces_to_delete.push(id);
             }
         }
 
-        futures::future::join_all(delete_tasks).await;
+        futures::future::join_all(
+            workspaces_to_delete
+                .into_iter()
+                .map(|id| self.delete_workspace_by_id(id)),
+        )
+        .await;
         Ok(result)
     }
 
@@ -1932,7 +1934,7 @@ impl WorkspaceDb {
                     window_id,
                 });
             } else {
-                if Self::all_paths_exist_with_a_directory(paths.paths(), fs, None).await {
+                if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
                     workspaces.push(SessionWorkspace {
                         workspace_id,
                         location: SerializedWorkspaceLocation::Local,
@@ -2494,6 +2496,7 @@ pub fn delete_unloaded_items(
 mod tests {
     use super::*;
     use crate::PathList;
+    use crate::ProjectGroupKey;
     use crate::{
         multi_workspace::MultiWorkspace,
         persistence::{
@@ -2507,7 +2510,7 @@ mod tests {
     use feature_flags::FeatureFlagAppExt;
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
-    use project::{Project, ProjectGroupKey};
+    use project::Project;
     use remote::SshConnectionOptions;
     use serde_json::json;
     use std::{thread, time::Duration};
@@ -2566,10 +2569,14 @@ mod tests {
              the newly activated workspace's database id"
         );
 
-        // --- Remove the first workspace (index 0, which is not the active one) ---
-        multi_workspace.update_in(cx, |mw, window, cx| {
-            let ws = mw.workspaces().nth(0).unwrap().clone();
-            mw.remove([ws], |_, _, _| unreachable!(), window, cx)
+        // --- Remove the non-active workspace ---
+        multi_workspace.update_in(cx, |mw, _window, cx| {
+            let active = mw.workspace().clone();
+            let ws = mw
+                .workspaces()
+                .find(|ws| *ws != &active)
+                .expect("should have a non-active workspace");
+            mw.remove([ws.clone()], |_, _, _| unreachable!(), _window, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -4006,7 +4013,7 @@ mod tests {
             window_10,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(2)),
-                project_group_keys: vec![],
+                project_groups: vec![],
                 sidebar_open: true,
                 sidebar_state: None,
             },
@@ -4018,7 +4025,7 @@ mod tests {
             window_20,
             MultiWorkspaceState {
                 active_workspace_id: Some(WorkspaceId(3)),
-                project_group_keys: vec![],
+                project_groups: vec![],
                 sidebar_open: false,
                 sidebar_state: None,
             },
@@ -4770,38 +4777,8 @@ mod tests {
             mw.test_add_workspace(project_1_linked_worktree.clone(), window, cx)
         });
 
-        // Assign database IDs and set up session bindings so serialization
-        // writes real rows.
-        multi_workspace.update_in(cx, |mw, _, cx| {
-            for workspace in mw.workspaces() {
-                workspace.update(cx, |ws, _cx| {
-                    ws.set_random_database_id();
-                });
-            }
-        });
-
-        // Flush serialization for each individual workspace (writes to SQLite)
-        // and for the MultiWorkspace (writes to KVP).
-        let tasks = multi_workspace.update_in(cx, |mw, window, cx| {
-            let session_id = mw.workspace().read(cx).session_id();
-            let window_id_u64 = window.window_handle().window_id().as_u64();
-
-            let mut tasks: Vec<Task<()>> = Vec::new();
-            for workspace in mw.workspaces() {
-                tasks.push(workspace.update(cx, |ws, cx| ws.flush_serialization(window, cx)));
-                if let Some(db_id) = workspace.read(cx).database_id() {
-                    let db = WorkspaceDb::global(cx);
-                    let session_id = session_id.clone();
-                    tasks.push(cx.background_spawn(async move {
-                        db.set_session_binding(db_id, session_id, Some(window_id_u64))
-                            .await
-                            .log_err();
-                    }));
-                }
-            }
-            mw.serialize(cx);
-            tasks
-        });
+        let tasks =
+            multi_workspace.update_in(cx, |mw, window, cx| mw.flush_all_serialization(window, cx));
         cx.run_until_parked();
         for task in tasks {
             task.await;
@@ -4842,13 +4819,13 @@ mod tests {
             serialized.active_workspace.workspace_id,
             active_db_id.unwrap(),
         );
-        assert_eq!(serialized.state.project_group_keys.len(), 2,);
+        assert_eq!(serialized.state.project_groups.len(), 2,);
 
         // Verify the serialized project group keys round-trip back to the
         // originals.
         let restored_keys: Vec<ProjectGroupKey> = serialized
             .state
-            .project_group_keys
+            .project_groups
             .iter()
             .cloned()
             .map(Into::into)
@@ -4881,9 +4858,7 @@ mod tests {
 
         // The restored window should have the same project group keys.
         let restored_keys: Vec<ProjectGroupKey> = restored_handle
-            .read_with(cx, |mw: &MultiWorkspace, _cx| {
-                mw.project_group_keys().cloned().collect()
-            })
+            .read_with(cx, |mw: &MultiWorkspace, _cx| mw.project_group_keys())
             .unwrap();
         assert_eq!(
             restored_keys, expected_keys,
@@ -4927,7 +4902,7 @@ mod tests {
         let project_c = Project::test(fs.clone(), [dir_c.as_path()], cx).await;
 
         // Create a multi-workspace with project A, then add B and C.
-        // project_group_keys stores newest first: [C, B, A].
+        // project_groups stores newest first: [C, B, A].
         // Sidebar displays in the same order: C (top), B (middle), A (bottom).
         let (multi_workspace, cx) = cx
             .add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
@@ -4975,7 +4950,7 @@ mod tests {
         // Activate workspace A (the bottom) so removing it tests the
         // "fall back upward" path.
         let workspace_a =
-            multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().cloned().unwrap());
+            multi_workspace.read_with(cx, |mw, _cx| mw.workspaces().next().unwrap().clone());
         multi_workspace.update_in(cx, |mw, window, cx| {
             mw.activate(workspace_a.clone(), window, cx);
         });

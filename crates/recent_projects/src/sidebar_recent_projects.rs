@@ -10,15 +10,14 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use project::ProjectGroupKey;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use ui_input::ErasedEditor;
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    MultiWorkspace, OpenMode, OpenOptions, PathList, SerializedWorkspaceLocation, Workspace,
-    WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
+    MultiWorkspace, OpenMode, OpenOptions, PathList, ProjectGroupKey, SerializedWorkspaceLocation,
+    Workspace, WorkspaceDb, WorkspaceId, notifications::DetachAndPromptErr,
 };
 
 use zed_actions::OpenRemote;
