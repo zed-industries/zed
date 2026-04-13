@@ -7,9 +7,9 @@ mod transport;
 #[cfg(target_os = "windows")]
 pub use remote_client::OpenWslPath;
 pub use remote_client::{
-    ConnectionIdentifier, ConnectionState, Interactive, RemoteArch, RemoteClient,
+    CommandTemplate, ConnectionIdentifier, ConnectionState, Interactive, RemoteArch, RemoteClient,
     RemoteClientDelegate, RemoteClientEvent, RemoteConnection, RemoteConnectionOptions, RemoteOs,
-    RemotePlatform, connect,
+    RemotePlatform, connect, has_active_connection,
 };
 pub use transport::docker::DockerConnectionOptions;
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};

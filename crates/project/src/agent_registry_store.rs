@@ -9,20 +9,21 @@ use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
 use http_client::{AsyncBody, HttpClient};
 use serde::Deserialize;
-use settings::Settings;
+use settings::Settings as _;
 
-use crate::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
+use crate::{AgentId, DisableAiSettings};
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const REFRESH_THROTTLE_DURATION: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct RegistryAgentMetadata {
-    pub id: SharedString,
+    pub id: AgentId,
     pub name: SharedString,
     pub description: SharedString,
     pub version: SharedString,
     pub repository: Option<SharedString>,
+    pub website: Option<SharedString>,
     pub icon_path: Option<SharedString>,
 }
 
@@ -55,7 +56,7 @@ impl RegistryAgent {
         }
     }
 
-    pub fn id(&self) -> &SharedString {
+    pub fn id(&self) -> &AgentId {
         &self.metadata().id
     }
 
@@ -73,6 +74,10 @@ impl RegistryAgent {
 
     pub fn repository(&self) -> Option<&SharedString> {
         self.metadata().repository.as_ref()
+    }
+
+    pub fn website(&self) -> Option<&SharedString> {
+        self.metadata().website.as_ref()
     }
 
     pub fn icon_path(&self) -> Option<&SharedString> {
@@ -117,29 +122,23 @@ impl AgentRegistryStore {
     /// are registry agents configured in settings, it will trigger a network fetch.
     /// Otherwise, call `refresh()` explicitly when you need fresh data
     /// (e.g., when opening the Agent Registry page).
-    pub fn init_global(cx: &mut App) -> Entity<Self> {
+    pub fn init_global(
+        cx: &mut App,
+        fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Entity<Self> {
         if let Some(store) = Self::try_global(cx) {
             return store;
         }
 
-        let fs = <dyn Fs>::global(cx);
-        let http_client: Arc<dyn HttpClient> = cx.http_client();
-
         let store = cx.new(|cx| Self::new(fs, http_client, cx));
         cx.set_global(GlobalAgentRegistryStore(store.clone()));
 
-        let has_registry_agents_in_settings = AllAgentServersSettings::get_global(cx)
-            .custom
-            .values()
-            .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }));
-
-        if has_registry_agents_in_settings {
-            store.update(cx, |store, cx| {
-                if store.agents.is_empty() {
-                    store.refresh(cx);
-                }
-            });
-        }
+        store.update(cx, |store, cx| {
+            if store.agents.is_empty() {
+                store.refresh(cx);
+            }
+        });
 
         store
     }
@@ -153,12 +152,34 @@ impl AgentRegistryStore {
             .map(|store| store.0.clone())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn init_test_global(cx: &mut App, agents: Vec<RegistryAgent>) -> Entity<Self> {
+        let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
+        let store = cx.new(|_cx| Self {
+            fs,
+            http_client: http_client::FakeHttpClient::with_404_response(),
+            agents,
+            is_fetching: false,
+            fetch_error: None,
+            pending_refresh: None,
+            last_refresh: None,
+        });
+        cx.set_global(GlobalAgentRegistryStore(store.clone()));
+        store
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_agents(&mut self, agents: Vec<RegistryAgent>, cx: &mut Context<Self>) {
+        self.agents = agents;
+        cx.notify();
+    }
+
     pub fn agents(&self) -> &[RegistryAgent] {
         &self.agents
     }
 
-    pub fn agent(&self, id: &str) -> Option<&RegistryAgent> {
-        self.agents.iter().find(|agent| agent.id().as_ref() == id)
+    pub fn agent(&self, id: &AgentId) -> Option<&RegistryAgent> {
+        self.agents.iter().find(|agent| agent.id() == id)
     }
 
     pub fn is_fetching(&self) -> bool {
@@ -177,6 +198,10 @@ impl AgentRegistryStore {
             return;
         }
 
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
         self.is_fetching = true;
         self.fetch_error = None;
         self.last_refresh = Some(Instant::now());
@@ -191,7 +216,10 @@ impl AgentRegistryStore {
                     build_registry_agents(fs.clone(), http_client, data.index, data.raw_body, true)
                         .await
                 }
-                Err(error) => Err(error),
+                Err(error) => {
+                    log::error!("AgentRegistryStore::refresh: fetch failed: {error:#}");
+                    Err(error)
+                }
             };
 
             this.update(cx, |this, cx| {
@@ -250,6 +278,10 @@ impl AgentRegistryStore {
         http_client: Arc<dyn HttpClient>,
         cx: &mut Context<Self>,
     ) {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return;
+        }
+
         cx.spawn(async move |this, cx| -> Result<()> {
             let cache_path = registry_cache_path();
             if !fs.is_file(&cache_path).await {
@@ -343,11 +375,12 @@ async fn build_registry_agents(
         .await?;
 
         let metadata = RegistryAgentMetadata {
-            id: entry.id.into(),
+            id: AgentId::new(entry.id),
             name: entry.name.into(),
             description: entry.description.into(),
             version: entry.version.into(),
             repository: entry.repository.map(Into::into),
+            website: entry.website.map(Into::into),
             icon_path,
         };
 
@@ -536,8 +569,6 @@ struct RegistryIndex {
     #[serde(rename = "version")]
     _version: String,
     agents: Vec<RegistryEntry>,
-    #[serde(rename = "extensions")]
-    _extensions: Vec<RegistryEntry>,
 }
 
 #[derive(Deserialize)]
@@ -548,6 +579,8 @@ struct RegistryEntry {
     description: String,
     #[serde(default)]
     repository: Option<String>,
+    #[serde(default)]
+    website: Option<String>,
     #[serde(default)]
     icon: Option<String>,
     distribution: RegistryDistribution,

@@ -550,7 +550,7 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &mut App) -> HighlightStyle {
-    let show_background = language_settings::language_settings(None, None, cx)
+    let show_background = language_settings::language_settings(cx).get()
         .inlay_hints
         .show_background;
 
@@ -5989,7 +5989,7 @@ impl Editor {
 
         let file = buffer.file();
 
-        if !language_settings(buffer.language().map(|l| l.name()), file, cx).show_edit_predictions {
+        if !language_settings(cx).buffer(buffer).get().show_edit_predictions {
             return EditPredictionSettings::Disabled;
         };
 
@@ -7837,7 +7837,7 @@ impl Editor {
         h_flex()
             .px_0p5()
             .when(is_platform_style_mac, |parent| parent.gap_0p5())
-            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .font(theme_settings::ThemeSettings::get_global(cx).buffer_font.clone())
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
@@ -8149,7 +8149,7 @@ impl Editor {
                             .px_2()
                             .child(
                                 h_flex()
-                                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                                    .font(theme_settings::ThemeSettings::get_global(cx).buffer_font.clone())
                                     .when(is_platform_style_mac, |parent| parent.gap_1())
                                     .child(h_flex().children(ui::render_modifiers(
                                         &accept_keystroke.modifiers,
@@ -8258,7 +8258,7 @@ impl Editor {
                         .gap_2()
                         .pr_1()
                         .overflow_x_hidden()
-                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                        .font(theme_settings::ThemeSettings::get_global(cx).buffer_font.clone())
                         .child(left)
                         .child(preview),
                 )
@@ -11922,6 +11922,7 @@ impl Editor {
                     scroll_anchor: scroll_state,
                     scroll_top_row,
                 }),
+                Some(cursor_position.row),
                 cx,
             );
             cx.emit(EditorEvent::PushedToNavHistory {
@@ -18800,7 +18801,7 @@ fn choose_completion_range(
     } = &completion.source
     {
         let completion_mode_setting =
-            language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+            language_settings(cx).buffer(buffer).get()
                 .completions
                 .lsp_insert_mode;
 
@@ -19849,7 +19850,7 @@ fn inlay_hint_settings(
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
     let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints
+    language_settings(cx).language(language).file(file).get().inlay_hints
 }
 
 fn consume_contiguous_rows(

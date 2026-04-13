@@ -1,7 +1,6 @@
 use anyhow::{Result, anyhow};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MinimapVisibility,
-    MultiBuffer,
+    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, MinimapVisibility, MultiBuffer,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -401,19 +400,19 @@ impl DivInspector {
                         ..snapshot.clip_offset(usize::MAX, Bias::Left),
                 )
                 .collect::<String>();
-            let mut method_names = split_str_with_ranges(&before_text, is_not_identifier_char)
+            let mut method_names = split_str_with_ranges(&before_text, &is_not_identifier_char)
                 .into_iter()
                 .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>();
             method_names.push((None, completion.clone()));
             method_names.extend(
-                split_str_with_ranges(&after_text, is_not_identifier_char)
+                split_str_with_ranges(&after_text, &is_not_identifier_char)
                     .into_iter()
                     .map(|(range, name)| (Some(range), name.to_string())),
             );
             method_names
         } else {
-            split_str_with_ranges(&snapshot.text(), is_not_identifier_char)
+            split_str_with_ranges(&snapshot.text(), &is_not_identifier_char)
                 .into_iter()
                 .map(|(range, name)| (Some(range), name.to_string()))
                 .collect::<Vec<_>>()
@@ -499,6 +498,7 @@ impl DivInspector {
             editor.set_show_breakpoints(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_runnables(false, cx);
+            editor.disable_mouse_wheel_zoom();
             editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
             editor
@@ -641,7 +641,6 @@ struct RustStyleCompletionProvider {
 impl CompletionProvider for RustStyleCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         position: Anchor,
         _: editor::CompletionContext,

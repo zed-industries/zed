@@ -174,7 +174,12 @@ impl RenderOnce for Callout {
                             .justify_between()
                             .flex_wrap()
                             .when_some(self.title, |this, title| {
-                                this.child(h_flex().child(Label::new(title).size(LabelSize::Small)))
+                                this.child(
+                                    div()
+                                        .min_w_0()
+                                        .flex_1()
+                                        .child(Label::new(title).size(LabelSize::Small)),
+                                )
                             })
                             .when(has_actions, |this| {
                                 this.child(
@@ -290,7 +295,7 @@ impl Component for Callout {
                                 "Error details:",
                                 "• Quota exceeded for metric",
                                 "• Limit: 0",
-                                "• Model: gemini-3-pro",
+                                "• Model: gemini-3.1-pro",
                                 "Please retry in 26.33s.",
                                 "Additional details:",
                                 "- Request ID: abc123def456",

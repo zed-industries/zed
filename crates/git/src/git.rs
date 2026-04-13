@@ -40,6 +40,9 @@ actions!(
         /// Restores the selected hunks to their original state.
         #[action(deprecated_aliases = ["editor::RevertSelectedHunks"])]
         Restore,
+        /// Restores the selected hunks to their original state and moves to the
+        /// next one.
+        RestoreAndNext,
         // per-file
         /// Shows git blame information for the current file.
         #[action(deprecated_aliases = ["editor::ToggleGitBlame"])]
@@ -155,6 +158,14 @@ impl Oid {
     /// Returns this [`Oid`] as a short SHA.
     pub fn display_short(&self) -> String {
         self.to_string().chars().take(SHORT_SHA_LENGTH).collect()
+    }
+}
+
+impl TryFrom<&str> for Oid {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::prelude::v1::Result<Self, Self::Error> {
+        Oid::from_str(value)
     }
 }
 

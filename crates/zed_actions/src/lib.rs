@@ -85,8 +85,6 @@ pub enum ExtensionCategoryFilter {
     LanguageServers,
     ContextServers,
     AgentServers,
-    SlashCommands,
-    IndexedDocsProviders,
     Snippets,
     DebugAdapters,
 }
@@ -109,6 +107,12 @@ pub struct Extensions {
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct AcpRegistry;
+
+/// Show call diagnostics and connection quality statistics.
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = collab)]
+#[serde(deny_unknown_fields)]
+pub struct ShowCallStats;
 
 /// Decreases the font size in the editor buffer.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
@@ -191,6 +195,8 @@ pub mod editor {
             MoveUp,
             /// Moves cursor down.
             MoveDown,
+            /// Reveals the current file in the system file manager.
+            RevealInFileManager,
         ]
     );
 }
@@ -302,6 +308,8 @@ pub mod project_panel {
     actions!(
         project_panel,
         [
+            /// Toggles the project panel.
+            Toggle,
             /// Toggles focus on the project panel.
             ToggleFocus
         ]
@@ -321,6 +329,12 @@ pub mod feedback {
             RequestFeature
         ]
     );
+}
+
+pub mod theme {
+    use gpui::actions;
+
+    actions!(theme, [ToggleMode]);
 }
 
 pub mod theme_selector {
@@ -363,6 +377,54 @@ pub mod search {
         ]
     );
 }
+pub mod buffer_search {
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Opens the buffer search interface with the specified configuration.
+    #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+    #[action(namespace = buffer_search)]
+    #[serde(deny_unknown_fields)]
+    pub struct Deploy {
+        #[serde(default = "util::serde::default_true")]
+        pub focus: bool,
+        #[serde(default)]
+        pub replace_enabled: bool,
+        #[serde(default)]
+        pub selection_search_enabled: bool,
+    }
+
+    impl Deploy {
+        pub fn find() -> Self {
+            Self {
+                focus: true,
+                replace_enabled: false,
+                selection_search_enabled: false,
+            }
+        }
+
+        pub fn replace() -> Self {
+            Self {
+                focus: true,
+                replace_enabled: true,
+                selection_search_enabled: false,
+            }
+        }
+    }
+
+    actions!(
+        buffer_search,
+        [
+            /// Deploys the search and replace interface.
+            DeployReplace,
+            /// Dismisses the search bar.
+            Dismiss,
+            /// Focuses back on the editor.
+            FocusEditor
+        ]
+    );
+}
 pub mod settings_profile_selector {
     use gpui::Action;
     use schemars::JsonSchema;
@@ -374,7 +436,9 @@ pub mod settings_profile_selector {
 }
 
 pub mod agent {
-    use gpui::actions;
+    use gpui::{Action, SharedString, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
     actions!(
         agent,
@@ -384,10 +448,6 @@ pub mod agent {
             OpenSettings,
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
-            /// Opens the ACP onboarding modal.
-            OpenAcpOnboardingModal,
-            /// Opens the Claude Code onboarding modal.
-            OpenClaudeCodeOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.
@@ -402,12 +462,48 @@ pub mod agent {
             AddSelectionToThread,
             /// Resets the agent panel zoom levels (agent UI and buffer font sizes).
             ResetAgentZoom,
-            /// Toggles the utility/agent pane open/closed state.
-            ToggleAgentPane,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
         ]
     );
+
+    /// Opens a new agent thread with the provided branch diff for review.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ReviewBranchDiff {
+        /// The full text of the diff to review.
+        pub diff_text: SharedString,
+        /// The base ref that the diff was computed against (e.g. "main").
+        pub base_ref: SharedString,
+    }
+
+    /// A single merge conflict region extracted from a file.
+    #[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema)]
+    pub struct ConflictContent {
+        pub file_path: String,
+        pub conflict_text: String,
+        pub ours_branch_name: String,
+        pub theirs_branch_name: String,
+    }
+
+    /// Opens a new agent thread to resolve specific merge conflicts.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ResolveConflictsWithAgent {
+        /// Individual conflicts with their full text.
+        pub conflicts: Vec<ConflictContent>,
+    }
+
+    /// Opens a new agent thread to resolve merge conflicts in the given file paths.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct ResolveConflictedFilesWithAgent {
+        /// File paths with unresolved conflicts (for project-wide resolution).
+        pub conflicted_file_paths: Vec<String>,
+    }
 }
 
 pub mod assistant {
@@ -419,16 +515,10 @@ pub mod assistant {
     actions!(
         agent,
         [
+            /// Toggles the agent panel.
+            Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus
-        ]
-    );
-
-    actions!(
-        assistant,
-        [
-            /// Shows the assistant configuration panel.
-            ShowConfiguration
         ]
     );
 
@@ -448,20 +538,6 @@ pub mod assistant {
     pub struct InlineAssist {
         pub prompt: Option<String>,
     }
-}
-
-pub mod debugger {
-    use gpui::actions;
-
-    actions!(
-        debugger,
-        [
-            /// Opens the debugger onboarding modal.
-            OpenOnboardingModal,
-            /// Resets the debugger onboarding state.
-            ResetOnboarding
-        ]
-    );
 }
 
 /// Opens the recent projects interface.
@@ -590,13 +666,19 @@ actions!(
     ]
 );
 
-actions!(
-    debug_panel,
-    [
-        /// Toggles focus on the debug panel.
-        ToggleFocus
-    ]
-);
+pub mod debug_panel {
+    use gpui::actions;
+    actions!(
+        debug_panel,
+        [
+            /// Toggles the debug panel.
+            Toggle,
+            /// Toggles focus on the debug panel.
+            ToggleFocus
+        ]
+    );
+}
+
 actions!(
     debugger,
     [
@@ -680,4 +762,67 @@ pub mod preview {
             ]
         );
     }
+}
+
+pub mod agents_sidebar {
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Toggles the thread switcher popup when the sidebar is focused.
+    #[derive(PartialEq, Clone, Deserialize, JsonSchema, Default, Action)]
+    #[action(namespace = agents_sidebar)]
+    #[serde(deny_unknown_fields)]
+    pub struct ToggleThreadSwitcher {
+        #[serde(default)]
+        pub select_last: bool,
+    }
+
+    actions!(
+        agents_sidebar,
+        [
+            /// Moves focus to the sidebar's search/filter editor.
+            FocusSidebarFilter,
+        ]
+    );
+}
+
+pub mod notebook {
+    use gpui::actions;
+
+    actions!(
+        notebook,
+        [
+            /// Opens a Jupyter notebook file.
+            OpenNotebook,
+            /// Runs all cells in the notebook.
+            RunAll,
+            /// Runs the current cell and stays on it.
+            Run,
+            /// Runs the current cell and advances to the next cell.
+            RunAndAdvance,
+            /// Clears all cell outputs.
+            ClearOutputs,
+            /// Moves the current cell up.
+            MoveCellUp,
+            /// Moves the current cell down.
+            MoveCellDown,
+            /// Adds a new markdown cell.
+            AddMarkdownBlock,
+            /// Adds a new code cell.
+            AddCodeBlock,
+            /// Restarts the kernel.
+            RestartKernel,
+            /// Interrupts the current execution.
+            InterruptKernel,
+            /// Move down in cells.
+            NotebookMoveDown,
+            /// Move up in cells.
+            NotebookMoveUp,
+            /// Enters the current cell's editor (edit mode).
+            EnterEditMode,
+            /// Exits the cell editor and returns to cell command mode.
+            EnterCommandMode,
+        ]
+    );
 }

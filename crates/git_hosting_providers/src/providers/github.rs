@@ -68,6 +68,15 @@ pub struct Github {
     base_url: Url,
 }
 
+fn build_cdn_avatar_url(email: &str) -> Result<Url> {
+    let email = email.trim_start_matches('<').trim_end_matches('>');
+    Url::parse(&format!(
+        "https://avatars.githubusercontent.com/u/e?email={}&s=128",
+        encode(email)
+    ))
+    .context("failed to construct avatar URL")
+}
+
 impl Github {
     pub fn new(name: impl Into<String>, base_url: Url) -> Self {
         Self {
@@ -255,8 +264,13 @@ impl GitHostingProvider for Github {
         repo_owner: &str,
         repo: &str,
         commit: SharedString,
+        author_email: Option<SharedString>,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
+        if let Some(email) = author_email {
+            return Ok(Some(build_cdn_avatar_url(&email)?));
+        }
+
         let commit = commit.to_string();
         let avatar_url = self
             .fetch_github_commit_author(repo_owner, repo, &commit, &http_client)
@@ -586,6 +600,33 @@ mod tests {
         assert_eq!(
             url.as_str(),
             "https://github.zed.com/zed-industries/zed/pull/new/feature%2Fnew-feature"
+        );
+    }
+
+    #[test]
+    fn test_build_cdn_avatar_url_simple_email() {
+        let url = build_cdn_avatar_url("user@example.com").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://avatars.githubusercontent.com/u/e?email=user%40example.com&s=128"
+        );
+    }
+
+    #[test]
+    fn test_build_cdn_avatar_url_with_angle_brackets() {
+        let url = build_cdn_avatar_url("<user@example.com>").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://avatars.githubusercontent.com/u/e?email=user%40example.com&s=128"
+        );
+    }
+
+    #[test]
+    fn test_build_cdn_avatar_url_with_special_chars() {
+        let url = build_cdn_avatar_url("user+tag@example.com").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://avatars.githubusercontent.com/u/e?email=user%2Btag%40example.com&s=128"
         );
     }
 }

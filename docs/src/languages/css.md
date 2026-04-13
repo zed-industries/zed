@@ -1,3 +1,8 @@
+---
+title: CSS
+description: "Configure CSS language support in Zed, including language servers, formatting, and debugging."
+---
+
 # CSS
 
 Zed has built-in support for CSS.

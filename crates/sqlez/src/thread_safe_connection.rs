@@ -7,12 +7,15 @@ use std::{
     ops::Deref,
     sync::{Arc, LazyLock},
     thread,
+    time::Duration,
 };
 use thread_local::ThreadLocal;
 
 use crate::{connection::Connection, domain::Migrator, util::UnboundedSyncSender};
 
 const MIGRATION_RETRIES: usize = 10;
+const CONNECTION_INITIALIZE_RETRIES: usize = 50;
+const CONNECTION_INITIALIZE_RETRY_DELAY: Duration = Duration::from_millis(1);
 
 type QueuedWrite = Box<dyn 'static + Send + FnOnce()>;
 type WriteQueue = Box<dyn 'static + Send + Sync + Fn(QueuedWrite)>;
@@ -197,19 +200,52 @@ impl ThreadSafeConnection {
             Self::open_shared_memory(uri)
         };
 
+        if let Some(initialize_query) = connection_initialize_query {
+            let mut last_error = None;
+            let initialized = (0..CONNECTION_INITIALIZE_RETRIES).any(|attempt| {
+                match connection
+                    .exec(initialize_query)
+                    .and_then(|mut statement| statement())
+                {
+                    Ok(()) => true,
+                    Err(err)
+                        if is_schema_lock_error(&err)
+                            && attempt + 1 < CONNECTION_INITIALIZE_RETRIES =>
+                    {
+                        last_error = Some(err);
+                        thread::sleep(CONNECTION_INITIALIZE_RETRY_DELAY);
+                        false
+                    }
+                    Err(err) => {
+                        panic!(
+                            "Initialize query failed to execute: {}\n\nCaused by:\n{err:#}",
+                            initialize_query
+                        )
+                    }
+                }
+            });
+
+            if !initialized {
+                let err = last_error
+                    .expect("connection initialization retries should record the last error");
+                panic!(
+                    "Initialize query failed to execute after retries: {}\n\nCaused by:\n{err:#}",
+                    initialize_query
+                );
+            }
+        }
+
         // Disallow writes on the connection. The only writes allowed for thread safe connections
         // are from the background thread that can serialize them.
         *connection.write.get_mut() = false;
 
-        if let Some(initialize_query) = connection_initialize_query {
-            connection.exec(initialize_query).unwrap_or_else(|_| {
-                panic!("Initialize query failed to execute: {}", initialize_query)
-            })()
-            .unwrap()
-        }
-
         connection
     }
+}
+
+fn is_schema_lock_error(err: &anyhow::Error) -> bool {
+    let message = format!("{err:#}");
+    message.contains("database schema is locked") || message.contains("database is locked")
 }
 
 impl ThreadSafeConnection {
@@ -282,7 +318,7 @@ mod test {
     use indoc::indoc;
     use std::ops::Deref;
 
-    use std::thread;
+    use std::{thread, time::Duration};
 
     use crate::{domain::Domain, thread_safe_connection::ThreadSafeConnection};
 
@@ -318,38 +354,21 @@ mod test {
     }
 
     #[test]
-    #[should_panic]
-    fn wild_zed_lost_failure() {
-        enum TestWorkspace {}
-        impl Domain for TestWorkspace {
-            const NAME: &str = "workspace";
+    fn connection_initialize_query_retries_transient_schema_lock() {
+        let name = "connection_initialize_query_retries_transient_schema_lock";
+        let locking_connection = crate::connection::Connection::open_memory(Some(name));
+        locking_connection.exec("BEGIN IMMEDIATE").unwrap()().unwrap();
+        locking_connection
+            .exec("CREATE TABLE test(col TEXT)")
+            .unwrap()()
+        .unwrap();
 
-            const MIGRATIONS: &[&str] = &["
-                    CREATE TABLE workspaces(
-                        workspace_id INTEGER PRIMARY KEY,
-                        dock_visible INTEGER, -- Boolean
-                        dock_anchor TEXT, -- Enum: 'Bottom' / 'Right' / 'Expanded'
-                        dock_pane INTEGER, -- NULL indicates that we don't have a dock pane yet
-                        timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
-                        FOREIGN KEY(dock_pane) REFERENCES panes(pane_id),
-                        FOREIGN KEY(active_pane) REFERENCES panes(pane_id)
-                    ) STRICT;
+        let releaser = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            locking_connection.exec("ROLLBACK").unwrap()().unwrap();
+        });
 
-                    CREATE TABLE panes(
-                        pane_id INTEGER PRIMARY KEY,
-                        workspace_id INTEGER NOT NULL,
-                        active INTEGER NOT NULL, -- Boolean
-                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                            ON DELETE CASCADE
-                            ON UPDATE CASCADE
-                    ) STRICT;
-                "];
-        }
-
-        let builder =
-            ThreadSafeConnection::builder::<TestWorkspace>("wild_zed_lost_failure", false)
-                .with_connection_initialize_query("PRAGMA FOREIGN_KEYS=true");
-
-        smol::block_on(builder.build()).unwrap();
+        ThreadSafeConnection::create_connection(false, name, Some("PRAGMA FOREIGN_KEYS=true"));
+        releaser.join().unwrap();
     }
 }

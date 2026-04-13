@@ -2,7 +2,83 @@ use std::{ops::Range, sync::Arc};
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditPredictionDiscardReason {
+    Rejected,
+    Ignored,
+}
+use icons::IconName;
 use language::{Anchor, Buffer, OffsetRangeExt};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditPredictionIconSet {
+    pub base: IconName,
+    pub disabled: IconName,
+    pub up: IconName,
+    pub down: IconName,
+    pub error: IconName,
+}
+
+impl EditPredictionIconSet {
+    pub fn new(base: IconName) -> Self {
+        Self {
+            base,
+            disabled: IconName::ZedPredictDisabled,
+            up: IconName::ZedPredictUp,
+            down: IconName::ZedPredictDown,
+            error: IconName::ZedPredictError,
+        }
+    }
+
+    pub fn with_disabled(mut self, disabled: IconName) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    pub fn with_up(mut self, up: IconName) -> Self {
+        self.up = up;
+        self
+    }
+
+    pub fn with_down(mut self, down: IconName) -> Self {
+        self.down = down;
+        self
+    }
+
+    pub fn with_error(mut self, error: IconName) -> Self {
+        self.error = error;
+        self
+    }
+}
+
+/// Represents a predicted cursor position after an edit is applied.
+///
+/// Since the cursor may be positioned inside newly inserted text that doesn't
+/// exist in the original buffer, we store an anchor (which points to a position
+/// in the original buffer, typically the start of an edit) plus an offset into
+/// the inserted text.
+#[derive(Copy, Clone, Debug)]
+pub struct PredictedCursorPosition {
+    /// An anchor in the original buffer. If the cursor is inside an edit,
+    /// this points to the start of that edit's range.
+    pub anchor: language::Anchor,
+    /// Offset from the anchor into the new text. If the cursor is inside
+    /// inserted text, this is the offset within that insertion. If the cursor
+    /// is outside any edit, this is 0.
+    pub offset: usize,
+}
+
+impl PredictedCursorPosition {
+    pub fn new(anchor: language::Anchor, offset: usize) -> Self {
+        Self { anchor, offset }
+    }
+
+    /// Creates a predicted cursor position at an exact anchor location (offset = 0).
+    pub fn at_anchor(anchor: language::Anchor) -> Self {
+        Self { anchor, offset: 0 }
+    }
+}
 
 /// The display mode used when showing an edit prediction to the user.
 /// Used for metrics tracking.
@@ -29,6 +105,7 @@ pub enum EditPrediction {
     Local {
         id: Option<SharedString>,
         edits: Vec<(Range<language::Anchor>, Arc<str>)>,
+        cursor_position: Option<PredictedCursorPosition>,
         edit_preview: Option<language::EditPreview>,
     },
     /// Jump to a different file from the one that requested the prediction
@@ -81,12 +158,18 @@ pub trait EditPredictionDelegate: 'static + Sized {
         true
     }
 
+    fn icons(&self, cx: &App) -> EditPredictionIconSet;
+
     fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
         DataCollectionState::Unsupported
     }
 
     fn usage(&self, _cx: &App) -> Option<EditPredictionUsage> {
         None
+    }
+
+    fn can_toggle_data_collection(&self, _cx: &App) -> bool {
+        true
     }
 
     fn toggle_data_collection(&mut self, _cx: &mut App) {}
@@ -105,7 +188,7 @@ pub trait EditPredictionDelegate: 'static + Sized {
         cx: &mut Context<Self>,
     );
     fn accept(&mut self, cx: &mut Context<Self>);
-    fn discard(&mut self, cx: &mut Context<Self>);
+    fn discard(&mut self, reason: EditPredictionDiscardReason, cx: &mut Context<Self>);
     fn did_show(&mut self, _display_type: SuggestionDisplayType, _cx: &mut Context<Self>) {}
     fn suggest(
         &mut self,
@@ -127,8 +210,10 @@ pub trait EditPredictionDelegateHandle {
     fn show_predictions_in_menu(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
     fn supports_jump_to_edit(&self) -> bool;
+    fn icons(&self, cx: &App) -> EditPredictionIconSet;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
+    fn can_toggle_data_collection(&self, cx: &App) -> bool;
     fn toggle_data_collection(&self, cx: &mut App);
     fn is_refreshing(&self, cx: &App) -> bool;
     fn refresh(
@@ -140,7 +225,7 @@ pub trait EditPredictionDelegateHandle {
     );
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App);
     fn accept(&self, cx: &mut App);
-    fn discard(&self, cx: &mut App);
+    fn discard(&self, reason: EditPredictionDiscardReason, cx: &mut App);
     fn suggest(
         &self,
         buffer: &Entity<Buffer>,
@@ -173,12 +258,20 @@ where
         T::supports_jump_to_edit()
     }
 
+    fn icons(&self, cx: &App) -> EditPredictionIconSet {
+        self.read(cx).icons(cx)
+    }
+
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
         self.read(cx).data_collection_state(cx)
     }
 
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
         self.read(cx).usage(cx)
+    }
+
+    fn can_toggle_data_collection(&self, cx: &App) -> bool {
+        self.read(cx).can_toggle_data_collection(cx)
     }
 
     fn toggle_data_collection(&self, cx: &mut App) {
@@ -214,8 +307,8 @@ where
         self.update(cx, |this, cx| this.accept(cx))
     }
 
-    fn discard(&self, cx: &mut App) {
-        self.update(cx, |this, cx| this.discard(cx))
+    fn discard(&self, reason: EditPredictionDiscardReason, cx: &mut App) {
+        self.update(cx, |this, cx| this.discard(reason, cx))
     }
 
     fn did_show(&self, display_type: SuggestionDisplayType, cx: &mut App) {

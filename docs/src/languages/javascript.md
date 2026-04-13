@@ -1,3 +1,8 @@
+---
+title: JavaScript
+description: "Configure JavaScript language support in Zed, including language servers, formatting, and debugging."
+---
+
 # JavaScript
 
 JavaScript support is available natively in Zed.
@@ -14,7 +19,9 @@ But many JavaScript projects use other command-line code-formatting tools, such 
 You can use one of these tools by specifying an _external_ code formatter for JavaScript in your settings.
 See [the configuration docs](../reference/all-settings.md) for more information.
 
-For example, if you have Prettier installed and on your `PATH`, you can use it to format JavaScript files by adding the following to your `settings.json`:
+For example, if you have Prettier installed and on your `PATH`, you can use it to format JavaScript files.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > JavaScript, or add to your settings file:
 
 ```json [settings]
 {
@@ -44,7 +51,9 @@ Zed uses [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sit
 
 ## ESLint
 
-You can configure Zed to format code using `eslint --fix` by running the ESLint code action when formatting:
+You can configure Zed to format code using `eslint --fix` by running the ESLint code action when formatting.
+
+Configure code actions on format in Settings ({#kb zed::OpenSettings}) under Languages > JavaScript, or add to your settings file:
 
 ```json [settings]
 {
@@ -86,8 +95,9 @@ You can also only execute a single ESLint rule when using `fixAll`:
 > ESLint's rules, then they will overwrite what ESLint fixed and you end up with
 > errors.
 
-If you **only** want to run ESLint on save, you can configure code actions as
-the formatter:
+If you **only** want to run ESLint on save, you can configure code actions as the formatter.
+
+Configure in Settings ({#kb zed::OpenSettings}) under Languages > JavaScript, or add to your settings file:
 
 ```json [settings]
 {

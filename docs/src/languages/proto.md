@@ -1,3 +1,8 @@
+---
+title: Proto
+description: "Configure Proto language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Proto
 
 Proto/proto3 (Protocol Buffers definition language) support is available through the [Proto extension](https://github.com/zed-industries/zed/tree/main/extensions/proto).

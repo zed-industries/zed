@@ -1,3 +1,4 @@
+use collections::{BTreeMap, HashMap, HashSet};
 use gpui::SharedString;
 use linkify::LinkFinder;
 pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
@@ -5,12 +6,11 @@ use pulldown_cmark::{
     Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
 use std::{ops::Range, sync::Arc};
+use util::markdown::generate_heading_slug;
 
-use collections::HashSet;
+use crate::{html, path_range::PathWithRange};
 
-use crate::path_range::PathWithRange;
-
-const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
+pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
     .union(Options::ENABLE_STRIKETHROUGH)
     .union(Options::ENABLE_TASKLISTS)
@@ -22,17 +22,144 @@ const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_SUPERSCRIPT)
     .union(Options::ENABLE_SUBSCRIPT);
 
-pub fn parse_markdown(
+#[derive(Default)]
+struct ParseState {
+    events: Vec<(Range<usize>, MarkdownEvent)>,
+    root_block_starts: Vec<usize>,
+    depth: usize,
+}
+
+#[derive(Debug, Default)]
+#[cfg_attr(test, derive(PartialEq))]
+pub(crate) struct ParsedMarkdownData {
+    pub events: Vec<(Range<usize>, MarkdownEvent)>,
+    pub language_names: HashSet<SharedString>,
+    pub language_paths: HashSet<Arc<str>>,
+    pub root_block_starts: Vec<usize>,
+    pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub heading_slugs: HashMap<SharedString, usize>,
+    pub footnote_definitions: HashMap<SharedString, usize>,
+}
+
+impl ParseState {
+    fn push_event(&mut self, range: Range<usize>, event: MarkdownEvent) {
+        match &event {
+            MarkdownEvent::Start(_) => {
+                if self.depth == 0 {
+                    self.root_block_starts.push(range.start);
+                    self.events.push((range.clone(), MarkdownEvent::RootStart));
+                }
+                self.depth += 1;
+                self.events.push((range, event));
+            }
+            MarkdownEvent::End(_) => {
+                self.events.push((range.clone(), event));
+                if self.depth > 0 {
+                    self.depth -= 1;
+                    if self.depth == 0 {
+                        let root_block_index = self.root_block_starts.len() - 1;
+                        self.events
+                            .push((range, MarkdownEvent::RootEnd(root_block_index)));
+                    }
+                }
+            }
+            MarkdownEvent::Rule => {
+                if self.depth == 0 && !range.is_empty() {
+                    self.root_block_starts.push(range.start);
+                    let root_block_index = self.root_block_starts.len() - 1;
+                    self.events.push((range.clone(), MarkdownEvent::RootStart));
+                    self.events.push((range.clone(), event));
+                    self.events
+                        .push((range, MarkdownEvent::RootEnd(root_block_index)));
+                } else {
+                    self.events.push((range, event));
+                }
+            }
+            _ => {
+                self.events.push((range, event));
+            }
+        }
+    }
+}
+
+const MAX_DUPLICATE_HEADING_SLUGS: usize = 128;
+
+fn build_heading_slugs(
+    source: &str,
+    events: &[(Range<usize>, MarkdownEvent)],
+) -> HashMap<SharedString, usize> {
+    let mut slugs = HashMap::default();
+    let mut slug_counts: HashMap<String, usize> = HashMap::default();
+    let mut inside_heading = false;
+    let mut heading_text = String::new();
+    let mut heading_source_start: Option<usize> = None;
+
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::Heading { .. }) => {
+                inside_heading = true;
+                heading_text.clear();
+                heading_source_start = None;
+            }
+            MarkdownEvent::End(MarkdownTagEnd::Heading(_)) => {
+                if inside_heading {
+                    let source_offset = heading_source_start.unwrap_or(range.start);
+                    let base_slug = generate_heading_slug(&heading_text);
+                    let count = slug_counts.entry(base_slug.clone()).or_insert(0);
+                    let mut slug = if *count == 0 {
+                        base_slug.clone()
+                    } else {
+                        format!("{base_slug}-{count}")
+                    };
+                    *count += 1;
+                    while slugs.contains_key(slug.as_str()) {
+                        let Some(count) = slug_counts.get_mut(&base_slug) else {
+                            slug.clear();
+                            break;
+                        };
+                        if *count >= MAX_DUPLICATE_HEADING_SLUGS {
+                            slug.clear();
+                            break;
+                        }
+                        slug = format!("{base_slug}-{count}");
+                        *count += 1;
+                    }
+                    if !slug.is_empty() {
+                        slugs.insert(SharedString::from(slug), source_offset);
+                    }
+                    inside_heading = false;
+                }
+            }
+            MarkdownEvent::Text | MarkdownEvent::Code if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(&source[range.clone()]);
+            }
+            MarkdownEvent::SubstitutedText(substituted) if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(substituted);
+            }
+            _ => {}
+        }
+    }
+
+    slugs
+}
+
+pub(crate) fn parse_markdown_with_options(
     text: &str,
-) -> (
-    Vec<(Range<usize>, MarkdownEvent)>,
-    HashSet<SharedString>,
-    HashSet<Arc<str>>,
-) {
-    let mut events = Vec::new();
+    parse_html: bool,
+    parse_heading_slugs: bool,
+) -> ParsedMarkdownData {
+    let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
+    let mut html_blocks = BTreeMap::default();
     let mut within_link = false;
+    let mut within_code_block = false;
     let mut within_metadata = false;
     let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
         .into_offset_iter()
@@ -48,6 +175,32 @@ pub fn parse_markdown(
         }
         match pulldown_event {
             pulldown_cmark::Event::Start(tag) => {
+                if let pulldown_cmark::Tag::HtmlBlock = &tag {
+                    state.push_event(range.clone(), MarkdownEvent::Start(MarkdownTag::HtmlBlock));
+
+                    if parse_html {
+                        if let Some(block) =
+                            html::html_parser::parse_html_block(&text[range.clone()], range.clone())
+                        {
+                            html_blocks.insert(range.start, block);
+
+                            while let Some((event, end_range)) = parser.next() {
+                                if let pulldown_cmark::Event::End(
+                                    pulldown_cmark::TagEnd::HtmlBlock,
+                                ) = event
+                                {
+                                    state.push_event(
+                                        end_range,
+                                        MarkdownEvent::End(MarkdownTagEnd::HtmlBlock),
+                                    );
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
                 let tag = match tag {
                     pulldown_cmark::Tag::Link {
                         link_type,
@@ -63,11 +216,12 @@ pub fn parse_markdown(
                             id: SharedString::from(id.into_string()),
                         }
                     }
-                    pulldown_cmark::Tag::MetadataBlock(kind) => {
+                    pulldown_cmark::Tag::MetadataBlock(_kind) => {
                         within_metadata = true;
-                        MarkdownTag::MetadataBlock(kind)
+                        continue;
                     }
                     pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Indented) => {
+                        within_code_block = true;
                         MarkdownTag::CodeBlock {
                             kind: CodeBlockKind::Indented,
                             metadata: CodeBlockMetadata {
@@ -79,6 +233,7 @@ pub fn parse_markdown(
                     pulldown_cmark::Tag::CodeBlock(pulldown_cmark::CodeBlockKind::Fenced(
                         ref info,
                     )) => {
+                        within_code_block = true;
                         let content_range = extract_code_block_content_range(&text[range.clone()]);
                         let content_range =
                             content_range.start + range.start..content_range.end + range.start;
@@ -164,20 +319,22 @@ pub fn parse_markdown(
                         title: SharedString::from(title.into_string()),
                         id: SharedString::from(id.into_string()),
                     },
-                    pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock,
+                    pulldown_cmark::Tag::HtmlBlock => MarkdownTag::HtmlBlock, // this is handled above separately
                     pulldown_cmark::Tag::DefinitionList => MarkdownTag::DefinitionList,
                     pulldown_cmark::Tag::DefinitionListTitle => MarkdownTag::DefinitionListTitle,
                     pulldown_cmark::Tag::DefinitionListDefinition => {
                         MarkdownTag::DefinitionListDefinition
                     }
                 };
-                events.push((range, MarkdownEvent::Start(tag)))
+                state.push_event(range, MarkdownEvent::Start(tag))
             }
             pulldown_cmark::Event::End(tag) => {
                 if let pulldown_cmark::TagEnd::Link = tag {
                     within_link = false;
+                } else if let pulldown_cmark::TagEnd::CodeBlock = tag {
+                    within_code_block = false;
                 }
-                events.push((range, MarkdownEvent::End(tag)));
+                state.push_event(range, MarkdownEvent::End(tag));
             }
             pulldown_cmark::Event::Text(parsed) => {
                 fn event_for(
@@ -191,6 +348,13 @@ pub fn parse_markdown(
                         (range, MarkdownEvent::SubstitutedText(str.to_owned()))
                     }
                 }
+
+                if within_code_block {
+                    let (range, event) = event_for(text, range, &parsed);
+                    state.push_event(range, event);
+                    continue;
+                }
+
                 #[derive(Debug)]
                 struct TextRange<'a> {
                     source_range: Range<usize>,
@@ -205,16 +369,26 @@ pub fn parse_markdown(
                     parsed,
                 }];
 
-                while matches!(parser.peek(), Some((pulldown_cmark::Event::Text(_), _))) {
-                    let Some((pulldown_cmark::Event::Text(next_event), next_range)) = parser.next()
-                    else {
+                while matches!(parser.peek(), Some((pulldown_cmark::Event::Text(_), _)))
+                    || (parse_html
+                        && matches!(
+                            parser.peek(),
+                            Some((pulldown_cmark::Event::InlineHtml(_), _))
+                        ))
+                {
+                    let Some((next_event, next_range)) = parser.next() else {
                         unreachable!()
                     };
-                    let next_len = last_len + next_event.len();
+                    let next_text = match next_event {
+                        pulldown_cmark::Event::Text(next_event) => next_event,
+                        pulldown_cmark::Event::InlineHtml(_) => CowStr::Borrowed(""),
+                        _ => unreachable!(),
+                    };
+                    let next_len = last_len + next_text.len();
                     ranges.push(TextRange {
                         source_range: next_range.clone(),
                         merged_range: last_len..next_len,
-                        parsed: next_event,
+                        parsed: next_text,
                     });
                     last_len = next_len;
                 }
@@ -227,7 +401,7 @@ pub fn parse_markdown(
 
                 let mut ranges = ranges.into_iter().peekable();
 
-                if !within_link {
+                if !within_link && !within_code_block {
                     let mut finder = LinkFinder::new();
                     finder.kinds(&[linkify::LinkKind::Url]);
 
@@ -241,7 +415,8 @@ pub fn parse_markdown(
                             .is_some_and(|range| range.merged_range.end <= link_start_in_merged)
                         {
                             let range = ranges.next().unwrap();
-                            events.push(event_for(text, range.source_range, &range.parsed));
+                            let (range, event) = event_for(text, range.source_range, &range.parsed);
+                            state.push_event(range, event);
                         }
 
                         let Some(range) = ranges.peek_mut() else {
@@ -250,11 +425,12 @@ pub fn parse_markdown(
                         let prefix_len = link_start_in_merged - range.merged_range.start;
                         if prefix_len > 0 {
                             let (head, tail) = range.parsed.split_at(prefix_len);
-                            events.push(event_for(
+                            let (event_range, event) = event_for(
                                 text,
                                 range.source_range.start..range.source_range.start + prefix_len,
                                 head,
-                            ));
+                            );
+                            state.push_event(event_range, event);
                             range.parsed = CowStr::Boxed(tail.into());
                             range.merged_range.start += prefix_len;
                             range.source_range.start += prefix_len;
@@ -290,7 +466,7 @@ pub fn parse_markdown(
                         }
                         let link_range = link_start_in_source..link_end_in_source;
 
-                        events.push((
+                        state.push_event(
                             link_range.clone(),
                             MarkdownEvent::Start(MarkdownTag::Link {
                                 link_type: LinkType::Autolink,
@@ -298,37 +474,88 @@ pub fn parse_markdown(
                                 title: SharedString::default(),
                                 id: SharedString::default(),
                             }),
-                        ));
-                        events.extend(link_events);
-                        events.push((link_range.clone(), MarkdownEvent::End(MarkdownTagEnd::Link)));
+                        );
+                        for (range, event) in link_events {
+                            state.push_event(range, event);
+                        }
+                        state.push_event(
+                            link_range.clone(),
+                            MarkdownEvent::End(MarkdownTagEnd::Link),
+                        );
                     }
                 }
 
                 for range in ranges {
-                    events.push(event_for(text, range.source_range, &range.parsed));
+                    let (range, event) = event_for(text, range.source_range, &range.parsed);
+                    state.push_event(range, event);
                 }
             }
             pulldown_cmark::Event::Code(_) => {
                 let content_range = extract_code_content_range(&text[range.clone()]);
                 let content_range =
                     content_range.start + range.start..content_range.end + range.start;
-                events.push((content_range, MarkdownEvent::Code))
+                state.push_event(content_range, MarkdownEvent::Code)
             }
-            pulldown_cmark::Event::Html(_) => events.push((range, MarkdownEvent::Html)),
-            pulldown_cmark::Event::InlineHtml(_) => events.push((range, MarkdownEvent::InlineHtml)),
-            pulldown_cmark::Event::FootnoteReference(_) => {
-                events.push((range, MarkdownEvent::FootnoteReference))
+            pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
+            pulldown_cmark::Event::InlineHtml(_) => {
+                state.push_event(range, MarkdownEvent::InlineHtml)
             }
-            pulldown_cmark::Event::SoftBreak => events.push((range, MarkdownEvent::SoftBreak)),
-            pulldown_cmark::Event::HardBreak => events.push((range, MarkdownEvent::HardBreak)),
-            pulldown_cmark::Event::Rule => events.push((range, MarkdownEvent::Rule)),
+            pulldown_cmark::Event::FootnoteReference(label) => state.push_event(
+                range,
+                MarkdownEvent::FootnoteReference(SharedString::from(label.to_string())),
+            ),
+            pulldown_cmark::Event::SoftBreak => state.push_event(range, MarkdownEvent::SoftBreak),
+            pulldown_cmark::Event::HardBreak => state.push_event(range, MarkdownEvent::HardBreak),
+            pulldown_cmark::Event::Rule => state.push_event(range, MarkdownEvent::Rule),
             pulldown_cmark::Event::TaskListMarker(checked) => {
-                events.push((range, MarkdownEvent::TaskListMarker(checked)))
+                state.push_event(range, MarkdownEvent::TaskListMarker(checked))
             }
             pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
         }
     }
-    (events, language_names, language_paths)
+
+    let heading_slugs = if parse_heading_slugs {
+        build_heading_slugs(text, &state.events)
+    } else {
+        HashMap::default()
+    };
+    let footnote_definitions = build_footnote_definitions(&state.events);
+
+    ParsedMarkdownData {
+        events: state.events,
+        language_names,
+        language_paths,
+        root_block_starts: state.root_block_starts,
+        html_blocks,
+        heading_slugs,
+        footnote_definitions,
+    }
+}
+
+fn build_footnote_definitions(
+    events: &[(Range<usize>, MarkdownEvent)],
+) -> HashMap<SharedString, usize> {
+    let mut definitions = HashMap::default();
+    let mut current_label: Option<SharedString> = None;
+
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::FootnoteDefinition(label)) => {
+                current_label = Some(label.clone());
+            }
+            MarkdownEvent::End(MarkdownTagEnd::FootnoteDefinition) => {
+                current_label = None;
+            }
+            MarkdownEvent::Text if current_label.is_some() => {
+                if let Some(label) = current_label.take() {
+                    definitions.entry(label).or_insert(range.start);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    definitions
 }
 
 pub fn parse_links_only(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
@@ -392,7 +619,7 @@ pub enum MarkdownEvent {
     /// A reference to a footnote with given label, which may or may not be defined
     /// by an event with a `Tag::FootnoteDefinition` tag. Definitions and references to them may
     /// occur in any order.
-    FootnoteReference,
+    FootnoteReference(SharedString),
     /// A soft line break.
     SoftBreak,
     /// A hard line break.
@@ -401,6 +628,10 @@ pub enum MarkdownEvent {
     Rule,
     /// A task list marker, rendered as a checkbox in HTML. Contains a true when it is checked.
     TaskListMarker(bool),
+    /// Start of a root-level block (a top-level structural element like a paragraph, heading, list, etc.).
+    RootStart,
+    /// End of a root-level block. Contains the root block index.
+    RootEnd(usize),
 }
 
 /// Tags for elements that can contain other elements.
@@ -575,31 +806,40 @@ mod tests {
     #[test]
     fn test_html_comments() {
         assert_eq!(
-            parse_markdown("  <!--\nrdoc-file=string.c\n-->\nReturns"),
-            (
-                vec![
+            parse_markdown_with_options("  <!--\nrdoc-file=string.c\n-->\nReturns", false, false),
+            ParsedMarkdownData {
+                events: vec![
+                    (2..30, RootStart),
                     (2..30, Start(HtmlBlock)),
                     (2..2, SubstitutedText("  ".into())),
                     (2..7, Html),
                     (7..26, Html),
                     (26..30, Html),
                     (2..30, End(MarkdownTagEnd::HtmlBlock)),
+                    (2..30, RootEnd(0)),
+                    (30..37, RootStart),
                     (30..37, Start(Paragraph)),
                     (30..37, Text),
-                    (30..37, End(MarkdownTagEnd::Paragraph))
+                    (30..37, End(MarkdownTagEnd::Paragraph)),
+                    (30..37, RootEnd(1)),
                 ],
-                HashSet::default(),
-                HashSet::default()
-            )
+                root_block_starts: vec![2, 30],
+                ..Default::default()
+            }
         )
     }
 
     #[test]
     fn test_plain_urls_and_escaped_text() {
         assert_eq!(
-            parse_markdown("&nbsp;&nbsp; https://some.url some \\`&#9658;\\` text"),
-            (
-                vec![
+            parse_markdown_with_options(
+                "&nbsp;&nbsp; https://some.url some \\`&#9658;\\` text",
+                false,
+                false,
+            ),
+            ParsedMarkdownData {
+                events: vec![
+                    (0..51, RootStart),
                     (0..51, Start(Paragraph)),
                     (0..6, SubstitutedText("\u{a0}".into())),
                     (6..12, SubstitutedText("\u{a0}".into())),
@@ -620,19 +860,26 @@ mod tests {
                     (37..44, SubstitutedText("►".into())),
                     (45..46, Text), // Escaped backtick
                     (46..51, Text),
-                    (0..51, End(MarkdownTagEnd::Paragraph))
+                    (0..51, End(MarkdownTagEnd::Paragraph)),
+                    (0..51, RootEnd(0)),
                 ],
-                HashSet::default(),
-                HashSet::default()
-            )
+                root_block_starts: vec![0],
+                ..Default::default()
+            }
         );
     }
 
     #[test]
     fn test_incomplete_link() {
         assert_eq!(
-            parse_markdown("You can use the [GitHub Search API](https://docs.github.com/en").0,
+            parse_markdown_with_options(
+                "You can use the [GitHub Search API](https://docs.github.com/en",
+                false,
+                false,
+            )
+            .events,
             vec![
+                (0..62, RootStart),
                 (0..62, Start(Paragraph)),
                 (0..16, Text),
                 (16..17, Text),
@@ -650,7 +897,8 @@ mod tests {
                 ),
                 (36..62, Text),
                 (36..62, End(MarkdownTagEnd::Link)),
-                (0..62, End(MarkdownTagEnd::Paragraph))
+                (0..62, End(MarkdownTagEnd::Paragraph)),
+                (0..62, RootEnd(0)),
             ],
         );
     }
@@ -658,9 +906,14 @@ mod tests {
     #[test]
     fn test_smart_punctuation() {
         assert_eq!(
-            parse_markdown("-- --- ... \"double quoted\" 'single quoted' ----------"),
-            (
-                vec![
+            parse_markdown_with_options(
+                "-- --- ... \"double quoted\" 'single quoted' ----------",
+                false,
+                false,
+            ),
+            ParsedMarkdownData {
+                events: vec![
+                    (0..53, RootStart),
                     (0..53, Start(Paragraph)),
                     (0..2, SubstitutedText("–".into())),
                     (2..3, Text),
@@ -668,29 +921,31 @@ mod tests {
                     (6..7, Text),
                     (7..10, SubstitutedText("…".into())),
                     (10..11, Text),
-                    (11..12, SubstitutedText("“".into())),
+                    (11..12, SubstitutedText("\u{201c}".into())),
                     (12..25, Text),
-                    (25..26, SubstitutedText("”".into())),
+                    (25..26, SubstitutedText("\u{201d}".into())),
                     (26..27, Text),
-                    (27..28, SubstitutedText("‘".into())),
+                    (27..28, SubstitutedText("\u{2018}".into())),
                     (28..41, Text),
-                    (41..42, SubstitutedText("’".into())),
+                    (41..42, SubstitutedText("\u{2019}".into())),
                     (42..43, Text),
                     (43..53, SubstitutedText("–––––".into())),
-                    (0..53, End(MarkdownTagEnd::Paragraph))
+                    (0..53, End(MarkdownTagEnd::Paragraph)),
+                    (0..53, RootEnd(0)),
                 ],
-                HashSet::default(),
-                HashSet::default()
-            )
+                root_block_starts: vec![0],
+                ..Default::default()
+            }
         )
     }
 
     #[test]
     fn test_code_block_metadata() {
         assert_eq!(
-            parse_markdown("```rust\nfn main() {\n let a = 1;\n}\n```"),
-            (
-                vec![
+            parse_markdown_with_options("```rust\nfn main() {\n let a = 1;\n}\n```", false, false),
+            ParsedMarkdownData {
+                events: vec![
+                    (0..37, RootStart),
                     (
                         0..37,
                         Start(CodeBlock {
@@ -703,19 +958,22 @@ mod tests {
                     ),
                     (8..34, Text),
                     (0..37, End(MarkdownTagEnd::CodeBlock)),
+                    (0..37, RootEnd(0)),
                 ],
-                {
+                language_names: {
                     let mut h = HashSet::default();
                     h.insert("rust".into());
                     h
                 },
-                HashSet::default()
-            )
+                root_block_starts: vec![0],
+                ..Default::default()
+            }
         );
         assert_eq!(
-            parse_markdown("    fn main() {}"),
-            (
-                vec![
+            parse_markdown_with_options("    fn main() {}", false, false),
+            ParsedMarkdownData {
+                events: vec![
+                    (4..16, RootStart),
                     (
                         4..16,
                         Start(CodeBlock {
@@ -727,12 +985,126 @@ mod tests {
                         })
                     ),
                     (4..16, Text),
-                    (4..16, End(MarkdownTagEnd::CodeBlock))
+                    (4..16, End(MarkdownTagEnd::CodeBlock)),
+                    (4..16, RootEnd(0)),
                 ],
-                HashSet::default(),
-                HashSet::default()
-            )
+                root_block_starts: vec![4],
+                ..Default::default()
+            }
         );
+    }
+
+    fn assert_code_block_does_not_emit_links(markdown: &str) {
+        let parsed = parse_markdown_with_options(markdown, false, false);
+        let mut code_block_depth = 0;
+        let mut code_block_count = 0;
+        let mut saw_text_inside_code_block = false;
+
+        for (_, event) in &parsed.events {
+            match event {
+                Start(CodeBlock { .. }) => {
+                    code_block_depth += 1;
+                    code_block_count += 1;
+                }
+                End(MarkdownTagEnd::CodeBlock) => {
+                    assert!(
+                        code_block_depth > 0,
+                        "encountered a code block end without a matching start"
+                    );
+                    code_block_depth -= 1;
+                }
+                Start(Link { .. }) | End(MarkdownTagEnd::Link) => {
+                    assert_eq!(
+                        code_block_depth, 0,
+                        "code blocks should not emit link events"
+                    );
+                }
+                Text | SubstitutedText(_) if code_block_depth > 0 => {
+                    saw_text_inside_code_block = true;
+                }
+                _ => {}
+            }
+        }
+
+        assert_eq!(code_block_count, 1, "expected exactly one code block");
+        assert_eq!(code_block_depth, 0, "unterminated code block");
+        assert!(
+            saw_text_inside_code_block,
+            "expected text inside the code block"
+        );
+    }
+
+    #[test]
+    fn test_code_blocks_do_not_autolink_urls() {
+        assert_code_block_does_not_emit_links("```txt\nhttps://example.com\n```");
+        assert_code_block_does_not_emit_links("    https://example.com");
+        assert_code_block_does_not_emit_links(
+            "```txt\r\nhttps:/\\/example.com\r\nhttps://example&#46;com\r\n```",
+        );
+        assert_code_block_does_not_emit_links(
+            "    https:/\\/example.com\r\n    https://example&#46;com",
+        );
+    }
+
+    #[test]
+    fn test_metadata_blocks_do_not_affect_root_blocks() {
+        assert_eq!(
+            parse_markdown_with_options("+++\ntitle = \"Example\"\n+++\n\nParagraph", false, false),
+            ParsedMarkdownData {
+                events: vec![
+                    (27..36, RootStart),
+                    (27..36, Start(Paragraph)),
+                    (27..36, Text),
+                    (27..36, End(MarkdownTagEnd::Paragraph)),
+                    (27..36, RootEnd(0)),
+                ],
+                root_block_starts: vec![27],
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn test_table_checkboxes_remain_text_in_cells() {
+        let markdown = "\
+| Done | Task    |
+|------|---------|
+| [x]  | Fix bug |
+| [ ]  | Add feature |";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+
+        let mut in_table = false;
+        let mut saw_task_list_marker = false;
+        let mut cell_texts = Vec::new();
+        let mut current_cell = String::new();
+
+        for (range, event) in &parsed.events {
+            match event {
+                Start(Table(_)) => in_table = true,
+                End(MarkdownTagEnd::Table) => in_table = false,
+                Start(TableCell) => current_cell.clear(),
+                End(MarkdownTagEnd::TableCell) => {
+                    if in_table {
+                        cell_texts.push(current_cell.clone());
+                    }
+                }
+                Text if in_table => current_cell.push_str(&markdown[range.clone()]),
+                TaskListMarker(_) if in_table => saw_task_list_marker = true,
+                _ => {}
+            }
+        }
+
+        let checkbox_cells: Vec<&str> = cell_texts
+            .iter()
+            .map(|cell| cell.trim())
+            .filter(|cell| *cell == "[x]" || *cell == "[X]" || *cell == "[ ]")
+            .collect();
+
+        assert!(
+            !saw_task_list_marker,
+            "Table checkboxes should remain text, not task-list markers"
+        );
+        assert_eq!(checkbox_cells, vec!["[x]", "[ ]"]);
     }
 
     #[test]
@@ -770,14 +1142,62 @@ mod tests {
     }
 
     #[test]
+    fn test_footnotes() {
+        let parsed = parse_markdown_with_options(
+            "Text with a footnote[^1] and some more text.\n\n[^1]: This is the footnote content.",
+            false,
+            false,
+        );
+        assert_eq!(
+            parsed.events,
+            vec![
+                (0..45, RootStart),
+                (0..45, Start(Paragraph)),
+                (0..20, Text),
+                (20..24, FootnoteReference("1".into())),
+                (24..44, Text),
+                (0..45, End(MarkdownTagEnd::Paragraph)),
+                (0..45, RootEnd(0)),
+                (46..81, RootStart),
+                (46..81, Start(FootnoteDefinition("1".into()))),
+                (52..81, Start(Paragraph)),
+                (52..81, Text),
+                (52..81, End(MarkdownTagEnd::Paragraph)),
+                (46..81, End(MarkdownTagEnd::FootnoteDefinition)),
+                (46..81, RootEnd(1)),
+            ]
+        );
+        assert_eq!(parsed.footnote_definitions.len(), 1);
+        assert_eq!(parsed.footnote_definitions.get("1").copied(), Some(52));
+    }
+
+    #[test]
+    fn test_footnote_definitions_multiple() {
+        let parsed = parse_markdown_with_options(
+            "Text[^a] and[^b].\n\n[^a]: First.\n\n[^b]: Second.",
+            false,
+            false,
+        );
+        assert_eq!(parsed.footnote_definitions.len(), 2);
+        assert!(parsed.footnote_definitions.contains_key("a"));
+        assert!(parsed.footnote_definitions.contains_key("b"));
+    }
+
+    #[test]
     fn test_links_split_across_fragments() {
         // This test verifies that links split across multiple text fragments due to escaping or other issues
         // are correctly detected and processed
         // Note: In real usage, pulldown_cmark creates separate text events for the escaped character
         // We're verifying our parser can handle this correctly
         assert_eq!(
-            parse_markdown("https:/\\/example.com is equivalent to https://example&#46;com!").0,
+            parse_markdown_with_options(
+                "https:/\\/example.com is equivalent to https://example&#46;com!",
+                false,
+                false,
+            )
+            .events,
             vec![
+                (0..62, RootStart),
                 (0..62, Start(Paragraph)),
                 (
                     0..20,
@@ -806,13 +1226,20 @@ mod tests {
                 (58..61, Text),
                 (38..61, End(MarkdownTagEnd::Link)),
                 (61..62, Text),
-                (0..62, End(MarkdownTagEnd::Paragraph))
+                (0..62, End(MarkdownTagEnd::Paragraph)),
+                (0..62, RootEnd(0)),
             ],
         );
 
         assert_eq!(
-            parse_markdown("Visit https://example.com/cat\\/é&#8205;☕ for coffee!").0,
+            parse_markdown_with_options(
+                "Visit https://example.com/cat\\/é&#8205;☕ for coffee!",
+                false,
+                false,
+            )
+            .events,
             [
+                (0..55, RootStart),
                 (0..55, Start(Paragraph)),
                 (0..6, Text),
                 (
@@ -830,8 +1257,47 @@ mod tests {
                 (40..43, Text),
                 (6..43, End(MarkdownTagEnd::Link)),
                 (43..55, Text),
-                (0..55, End(MarkdownTagEnd::Paragraph))
+                (0..55, End(MarkdownTagEnd::Paragraph)),
+                (0..55, RootEnd(0)),
             ]
         );
+    }
+
+    #[test]
+    fn test_heading_slugs() {
+        let parsed = parse_markdown_with_options(
+            "# Hello World\n\n## Code `block`\n\n### Third Level\n\n#### Fourth Level\n\n## Hello World",
+            false,
+            true,
+        );
+        assert_eq!(parsed.heading_slugs.len(), 5);
+        assert!(parsed.heading_slugs.contains_key("hello-world"));
+        assert!(parsed.heading_slugs.contains_key("code-block"));
+        assert!(parsed.heading_slugs.contains_key("third-level"));
+        assert!(parsed.heading_slugs.contains_key("fourth-level"));
+        assert!(parsed.heading_slugs.contains_key("hello-world-1"));
+    }
+
+    #[test]
+    fn test_heading_source_index_for_slug() {
+        let parsed = parse_markdown_with_options(
+            "# Duplicate\n\nText\n\n## Duplicate\n\nMore text",
+            false,
+            true,
+        );
+        let first = parsed.heading_slugs.get("duplicate").copied();
+        let second = parsed.heading_slugs.get("duplicate-1").copied();
+        assert!(first.is_some());
+        assert!(second.is_some());
+        assert!(first.expect("first slug missing") < second.expect("second slug missing"));
+    }
+
+    #[test]
+    fn test_heading_slug_collision_with_dedup_suffix() {
+        let parsed = parse_markdown_with_options("# Foo\n\n## Foo\n\n## Foo 1", false, true);
+        assert_eq!(parsed.heading_slugs.len(), 3);
+        assert!(parsed.heading_slugs.contains_key("foo"));
+        assert!(parsed.heading_slugs.contains_key("foo-1"));
+        assert!(parsed.heading_slugs.contains_key("foo-1-1"));
     }
 }

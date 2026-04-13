@@ -4,15 +4,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::acp::AcpThreadHistory;
-use crate::user_slash_command::{self, CommandLoadError, UserSlashCommand};
-use acp_thread::{AgentSessionInfo, MentionUri};
+use crate::DEFAULT_THREAD_TITLE;
+use crate::ThreadHistory;
+use acp_thread::MentionUri;
+use agent_client_protocol as acp;
 use anyhow::Result;
-use collections::{HashMap, HashSet};
-use editor::{
-    CompletionProvider, Editor, ExcerptId, code_context_menus::COMPLETION_MENU_MAX_WIDTH,
-};
-use feature_flags::{FeatureFlagAppExt as _, UserSlashCommandsFeatureFlag};
+use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
 use fuzzy::{PathMatch, StringMatch, StringMatchCandidate};
 use gpui::{App, BackgroundExecutor, Entity, SharedString, Task, WeakEntity};
@@ -29,7 +26,7 @@ use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
 use settings::{Settings, TerminalDockPosition};
 use terminal::terminal_settings::TerminalSettings;
-use terminal_view::terminal_panel::TerminalPanel;
+use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::{Anchor, ToOffset as _, ToPoint as _};
 use ui::IconName;
 use ui::prelude::*;
@@ -66,6 +63,7 @@ pub(crate) enum PromptContextType {
     Thread,
     Rules,
     Diagnostics,
+    BranchDiff,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +102,7 @@ impl TryFrom<&str> for PromptContextType {
             "thread" => Ok(Self::Thread),
             "rule" => Ok(Self::Rules),
             "diagnostics" => Ok(Self::Diagnostics),
+            "diff" => Ok(Self::BranchDiff),
             _ => Err(format!("Invalid context picker mode: {}", value)),
         }
     }
@@ -118,6 +117,7 @@ impl PromptContextType {
             Self::Thread => "thread",
             Self::Rules => "rule",
             Self::Diagnostics => "diagnostics",
+            Self::BranchDiff => "branch diff",
         }
     }
 
@@ -129,6 +129,7 @@ impl PromptContextType {
             Self::Thread => "Threads",
             Self::Rules => "Rules",
             Self::Diagnostics => "Diagnostics",
+            Self::BranchDiff => "Branch Diff",
         }
     }
 
@@ -140,6 +141,7 @@ impl PromptContextType {
             Self::Thread => IconName::Thread,
             Self::Rules => IconName::Reader,
             Self::Diagnostics => IconName::Warning,
+            Self::BranchDiff => IconName::GitBranch,
         }
     }
 }
@@ -147,11 +149,17 @@ impl PromptContextType {
 pub(crate) enum Match {
     File(FileMatch),
     Symbol(SymbolMatch),
-    Thread(AgentSessionInfo),
-    RecentThread(AgentSessionInfo),
+    Thread(SessionMatch),
+    RecentThread(SessionMatch),
     Fetch(SharedString),
     Rules(RulesContextEntry),
     Entry(EntryMatch),
+    BranchDiff(BranchDiffMatch),
+}
+
+#[derive(Debug, Clone)]
+pub struct BranchDiffMatch {
+    pub base_ref: SharedString,
 }
 
 impl Match {
@@ -164,8 +172,15 @@ impl Match {
             Match::Symbol(_) => 1.,
             Match::Rules(_) => 1.,
             Match::Fetch(_) => 1.,
+            Match::BranchDiff(_) => 1.,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionMatch {
+    session_id: acp::SessionId,
+    title: SharedString,
 }
 
 pub struct EntryMatch {
@@ -173,12 +188,10 @@ pub struct EntryMatch {
     entry: PromptContextEntry,
 }
 
-fn session_title(session: &AgentSessionInfo) -> SharedString {
-    session
-        .title
-        .clone()
+fn session_title(title: Option<SharedString>) -> SharedString {
+    title
         .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| SharedString::new_static("New Thread"))
+        .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE))
 }
 
 #[derive(Debug, Clone)]
@@ -192,18 +205,6 @@ pub struct AvailableCommand {
     pub name: Arc<str>,
     pub description: Arc<str>,
     pub requires_argument: bool,
-    pub source: CommandSource,
-}
-
-/// The source of a slash command, used to differentiate UI behavior.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CommandSource {
-    /// Command provided by the ACP server
-    Server,
-    /// User-defined command from a markdown file
-    UserDefined { template: Arc<str> },
-    /// User-defined command that failed to load
-    UserDefinedError { error_message: Arc<str> },
 }
 
 pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
@@ -215,25 +216,13 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
 
     fn available_commands(&self, cx: &App) -> Vec<AvailableCommand>;
     fn confirm_command(&self, cx: &mut App);
-
-    /// Returns cached user-defined slash commands, if available.
-    /// Default implementation returns None, meaning commands will be loaded from disk.
-    fn cached_user_commands(&self, _cx: &App) -> Option<HashMap<String, UserSlashCommand>> {
-        None
-    }
-
-    /// Returns cached errors from loading user-defined slash commands, if available.
-    /// Default implementation returns None.
-    fn cached_user_command_errors(&self, _cx: &App) -> Option<Vec<CommandLoadError>> {
-        None
-    }
 }
 
 pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    history: WeakEntity<AcpThreadHistory>,
+    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
@@ -243,7 +232,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        history: WeakEntity<AcpThreadHistory>,
+        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -293,7 +282,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
     }
 
     fn completion_for_thread(
-        thread_entry: AgentSessionInfo,
+        session_id: acp::SessionId,
+        title: Option<SharedString>,
         source_range: Range<Anchor>,
         recent: bool,
         source: Arc<T>,
@@ -302,9 +292,9 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let title = session_title(&thread_entry);
+        let title = session_title(title);
         let uri = MentionUri::Thread {
-            id: thread_entry.session_id,
+            id: session_id,
             name: title.to_string(),
         };
 
@@ -570,8 +560,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .collect();
 
                 // Collect terminal selections from all terminal views if the terminal panel is visible
-                let terminal_selections: Vec<String> =
-                    terminal_selections_if_panel_open(workspace, cx);
+                let terminal_selections: Vec<String> = terminal_selections(workspace, cx);
 
                 const EDITOR_PLACEHOLDER: &str = "selection ";
                 const TERMINAL_PLACEHOLDER: &str = "terminal ";
@@ -630,7 +619,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                 for (terminal_text, terminal_range) in terminal_ranges {
                                     let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
                                     let Some(start) =
-                                        snapshot.as_singleton_anchor(source_range.start)
+                                        snapshot.anchor_in_excerpt(source_range.start)
                                     else {
                                         return;
                                     };
@@ -644,6 +633,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                                     let crease = crate::mention_set::crease_for_mention(
                                         mention_uri.name().into(),
                                         mention_uri.icon_path(cx),
+                                        None,
                                         range,
                                         editor.downgrade(),
                                     );
@@ -801,113 +791,54 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         }
     }
 
+    fn build_branch_diff_completion(
+        base_ref: SharedString,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let uri = MentionUri::GitDiff {
+            base_ref: base_ref.to_string(),
+        };
+        let crease_text: SharedString = format!("Branch Diff (vs {})", base_ref).into();
+        let display_text = format!("@{}", crease_text);
+        let new_text = format!("[{}]({}) ", display_text, uri.to_uri());
+        let new_text_len = new_text.len();
+        let icon_path = uri.icon_path(cx);
+
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(crease_text.to_string(), None),
+            documentation: None,
+            source: project::CompletionSource::Custom,
+            icon_path: Some(icon_path),
+            match_start: None,
+            snippet_deduplication_key: None,
+            insert_text_mode: None,
+            confirm: Some(confirm_completion_callback(
+                crease_text,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+        }
+    }
+
     fn search_slash_commands(&self, query: String, cx: &mut App) -> Task<Vec<AvailableCommand>> {
         let commands = self.source.available_commands(cx);
-        let server_command_names = commands
-            .iter()
-            .map(|command| command.name.as_ref().to_string())
-            .collect::<HashSet<_>>();
-
-        // Try to use cached user commands and errors first
-        let cached_user_commands = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            self.source.cached_user_commands(cx)
-        } else {
-            None
-        };
-
-        let cached_user_command_errors = if cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-            self.source.cached_user_command_errors(cx)
-        } else {
-            None
-        };
-
-        // Get fs and worktree roots for async command loading (only if not cached)
-        let (fs, worktree_roots) =
-            if cached_user_commands.is_none() && cx.has_flag::<UserSlashCommandsFeatureFlag>() {
-                let workspace = self.workspace.upgrade();
-                let fs = workspace
-                    .as_ref()
-                    .map(|w| w.read(cx).project().read(cx).fs().clone());
-                let roots: Vec<std::path::PathBuf> = workspace
-                    .map(|workspace| {
-                        workspace
-                            .read(cx)
-                            .visible_worktrees(cx)
-                            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                (fs, roots)
-            } else {
-                (None, Vec::new())
-            };
+        if commands.is_empty() {
+            return Task::ready(Vec::new());
+        }
 
         cx.spawn(async move |cx| {
-            let mut commands = commands;
-
-            // Use cached commands/errors if available, otherwise load from disk
-            let (mut user_commands, mut user_command_errors): (
-                Vec<UserSlashCommand>,
-                Vec<CommandLoadError>,
-            ) = if let Some(cached) = cached_user_commands {
-                let errors = cached_user_command_errors.unwrap_or_default();
-                (cached.into_values().collect(), errors)
-            } else if let Some(fs) = fs {
-                let load_result =
-                    crate::user_slash_command::load_all_commands_async(&fs, &worktree_roots).await;
-
-                (load_result.commands, load_result.errors)
-            } else {
-                (Vec::new(), Vec::new())
-            };
-
-            user_slash_command::apply_server_command_conflicts(
-                &mut user_commands,
-                &mut user_command_errors,
-                &server_command_names,
-            );
-
-            let conflicting_names: HashSet<String> = user_command_errors
-                .iter()
-                .filter_map(|error| error.command_name())
-                .filter(|name| server_command_names.contains(name))
-                .collect();
-
-            if !conflicting_names.is_empty() {
-                commands.retain(|command| !conflicting_names.contains(command.name.as_ref()));
-            }
-
-            for cmd in user_commands {
-                commands.push(AvailableCommand {
-                    name: cmd.name.clone(),
-                    description: cmd.description().into(),
-                    requires_argument: cmd.requires_arguments(),
-                    source: CommandSource::UserDefined {
-                        template: cmd.template.clone(),
-                    },
-                });
-            }
-
-            // Add errored commands so they show up in autocomplete with error indication.
-            // Errors for commands that don't match the query will be silently ignored here
-            // since the user will see them via the error callout in the thread view.
-            for error in user_command_errors {
-                if let Some(name) = error.command_name() {
-                    commands.push(AvailableCommand {
-                        name: name.into(),
-                        description: "".into(),
-                        requires_argument: false,
-                        source: CommandSource::UserDefinedError {
-                            error_message: error.message.into(),
-                        },
-                    });
-                }
-            }
-
-            if commands.is_empty() {
-                return Vec::new();
-            }
-
             let candidates = commands
                 .iter()
                 .enumerate()
@@ -930,6 +861,27 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 .map(|mat| commands[mat.candidate_id].clone())
                 .collect()
         })
+    }
+
+    fn fetch_branch_diff_match(
+        &self,
+        workspace: &Entity<Workspace>,
+        cx: &mut App,
+    ) -> Option<Task<Option<BranchDiffMatch>>> {
+        let project = workspace.read(cx).project().clone();
+        let repo = project.read(cx).active_repository(cx)?;
+
+        let default_branch_receiver = repo.update(cx, |repo, _| repo.default_branch(true));
+
+        Some(cx.spawn(async move |_cx| {
+            let base_ref = default_branch_receiver
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .flatten()?;
+
+            Some(BranchDiffMatch { base_ref })
+        }))
     }
 
     fn search_mentions(
@@ -966,8 +918,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             }
 
             Some(PromptContextType::Thread) => {
-                if let Some(history) = self.history.upgrade() {
-                    let sessions = history.read(cx).sessions().to_vec();
+                if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
+                    let sessions = history
+                        .read(cx)
+                        .sessions()
+                        .iter()
+                        .map(|session| SessionMatch {
+                            session_id: session.session_id.clone(),
+                            title: session_title(session.title.clone()),
+                        })
+                        .collect::<Vec<_>>();
                     let search_task =
                         filter_sessions_by_query(query, cancellation_flag, sessions, cx);
                     cx.spawn(async move |_cx| {
@@ -1004,6 +964,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
             Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
 
+            Some(PromptContextType::BranchDiff) => Task::ready(Vec::new()),
+
             None if query.is_empty() => {
                 let recent_task = self.recent_context_picker_entries(&workspace, cx);
                 let entries = self
@@ -1017,9 +979,25 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     })
                     .collect::<Vec<_>>();
 
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
+
                 cx.spawn(async move |_cx| {
                     let mut matches = recent_task.await;
                     matches.extend(entries);
+
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        if let Some(branch_diff_match) = branch_diff_task.await {
+                            matches.push(Match::BranchDiff(branch_diff_match));
+                        }
+                    }
+
                     matches
                 })
             }
@@ -1036,7 +1014,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     .map(|(ix, entry)| StringMatchCandidate::new(ix, entry.keyword()))
                     .collect::<Vec<_>>();
 
-                cx.background_spawn(async move {
+                let branch_diff_task = if self
+                    .source
+                    .supports_context(PromptContextType::BranchDiff, cx)
+                {
+                    self.fetch_branch_diff_match(&workspace, cx)
+                } else {
+                    None
+                };
+
+                cx.spawn(async move |cx| {
                     let mut matches = search_files_task
                         .await
                         .into_iter()
@@ -1060,6 +1047,26 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             mat: Some(mat),
                         })
                     }));
+
+                    if let Some(branch_diff_task) = branch_diff_task {
+                        let branch_diff_keyword = PromptContextType::BranchDiff.keyword();
+                        let branch_diff_matches = fuzzy::match_strings(
+                            &[StringMatchCandidate::new(0, branch_diff_keyword)],
+                            &query,
+                            false,
+                            true,
+                            1,
+                            &Arc::new(AtomicBool::default()),
+                            cx.background_executor().clone(),
+                        )
+                        .await;
+
+                        if !branch_diff_matches.is_empty() {
+                            if let Some(branch_diff_match) = branch_diff_task.await {
+                                matches.push(Match::BranchDiff(branch_diff_match));
+                            }
+                        }
+                    }
 
                     matches.sort_by(|a, b| {
                         b.score()
@@ -1089,11 +1096,11 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
             && let Some(thread) = agent_panel.read(cx).active_agent_thread(cx)
+            && let Some(title) = thread.read(cx).title()
         {
-            let thread = thread.read(cx);
             mentions.insert(MentionUri::Thread {
-                id: thread.session_id().clone(),
-                name: thread.title().into(),
+                id: thread.read(cx).session_id().clone(),
+                name: title.to_string(),
             });
         }
 
@@ -1137,22 +1144,25 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             return Task::ready(recent);
         }
 
-        if let Some(history) = self.history.upgrade() {
+        if let Some(history) = self.history.as_ref().and_then(|h| h.upgrade()) {
             const RECENT_COUNT: usize = 2;
             recent.extend(
                 history
                     .read(cx)
                     .sessions()
                     .into_iter()
+                    .map(|session| SessionMatch {
+                        session_id: session.session_id.clone(),
+                        title: session_title(session.title.clone()),
+                    })
                     .filter(|session| {
                         let uri = MentionUri::Thread {
                             id: session.session_id.clone(),
-                            name: session_title(session).to_string(),
+                            name: session.title.to_string(),
                         };
                         !mentions.contains(&uri)
                     })
                     .take(RECENT_COUNT)
-                    .cloned()
                     .map(Match::RecentThread),
             );
             return Task::ready(recent);
@@ -1185,7 +1195,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 })
             });
 
-        let has_terminal_selection = !terminal_selections_if_panel_open(workspace, cx).is_empty();
+        let has_terminal_selection = !terminal_selections(workspace, cx).is_empty();
 
         if has_editor_selection || has_terminal_selection {
             entries.push(PromptContextEntry::Action(
@@ -1223,7 +1233,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletionProvider<T> {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: Anchor,
         _trigger: CompletionContext,
@@ -1264,20 +1273,7 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                         .await
                         .into_iter()
                         .map(|command| {
-                            let is_error =
-                                matches!(command.source, CommandSource::UserDefinedError { .. });
-
-                            // For errored commands, show the name with "(load error)" suffix
-                            let label_text = if is_error {
-                                format!("{} (load error)", command.name)
-                            } else {
-                                command.name.to_string()
-                            };
-
-                            // For errored commands, we don't want to insert anything useful
-                            let new_text = if is_error {
-                                format!("/{}", command.name)
-                            } else if let Some(argument) = argument.as_ref() {
+                            let new_text = if let Some(argument) = argument.as_ref() {
                                 format!("/{} {}", command.name, argument)
                             } else {
                                 format!("/{} ", command.name)
@@ -1286,72 +1282,21 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                             let is_missing_argument =
                                 command.requires_argument && argument.is_none();
 
-                            // For errored commands, use a deprecated-style label to indicate the error
-                            let label = if is_error {
-                                // Create a label where the command name portion has a highlight
-                                // that will be rendered with strikethrough by the completion menu
-                                // (similar to deprecated LSP completions)
-                                CodeLabel::plain(label_text, None)
-                            } else {
-                                CodeLabel::plain(label_text, None)
-                            };
-
-                            // For errored commands, show the error message in documentation
-                            let documentation =
-                                if let CommandSource::UserDefinedError { error_message } =
-                                    &command.source
-                                {
-                                    Some(CompletionDocumentation::MultiLinePlainText(
-                                        error_message.to_string().into(),
-                                    ))
-                                } else if !command.description.is_empty() {
-                                    Some(CompletionDocumentation::MultiLinePlainText(
-                                        command.description.to_string().into(),
-                                    ))
-                                } else {
-                                    None
-                                };
-
-                            // For errored commands, use a red X icon
-                            let icon_path = if is_error {
-                                Some(IconName::XCircle.path().into())
-                            } else {
-                                None
-                            };
-
                             Completion {
                                 replace_range: source_range.clone(),
                                 new_text,
-                                label,
-                                documentation,
-                                source: if is_error {
-                                    // Use a custom source that marks this as deprecated/errored
-                                    // so the completion menu renders it with strikethrough
-                                    project::CompletionSource::Lsp {
-                                        insert_range: None,
-                                        server_id: language::LanguageServerId(0),
-                                        lsp_completion: Box::new(lsp::CompletionItem {
-                                            label: command.name.to_string(),
-                                            deprecated: Some(true),
-                                            ..Default::default()
-                                        }),
-                                        lsp_defaults: None,
-                                        resolved: true,
-                                    }
-                                } else {
-                                    project::CompletionSource::Custom
-                                },
-                                icon_path,
+                                label: CodeLabel::plain(command.name.to_string(), None),
+                                documentation: Some(CompletionDocumentation::MultiLinePlainText(
+                                    command.description.into(),
+                                )),
+                                source: project::CompletionSource::Custom,
+                                icon_path: None,
                                 match_start: None,
                                 snippet_deduplication_key: None,
                                 insert_text_mode: None,
                                 confirm: Some(Arc::new({
                                     let source = source.clone();
                                     move |intent, _window, cx| {
-                                        // Don't confirm errored commands
-                                        if is_error {
-                                            return false;
-                                        }
                                         if !is_missing_argument {
                                             cx.defer({
                                                 let source = source.clone();
@@ -1488,7 +1433,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     )
                                 }
                                 Match::Thread(thread) => Some(Self::completion_for_thread(
-                                    thread,
+                                    thread.session_id,
+                                    Some(thread.title),
                                     source_range.clone(),
                                     false,
                                     source.clone(),
@@ -1498,7 +1444,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     cx,
                                 )),
                                 Match::RecentThread(thread) => Some(Self::completion_for_thread(
-                                    thread,
+                                    thread.session_id,
+                                    Some(thread.title),
                                     source_range.clone(),
                                     true,
                                     source.clone(),
@@ -1534,6 +1481,17 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         &workspace,
                                         cx,
                                     )
+                                }
+                                Match::BranchDiff(branch_diff) => {
+                                    Some(Self::build_branch_diff_completion(
+                                        branch_diff.base_ref,
+                                        source_range.clone(),
+                                        source.clone(),
+                                        editor.clone(),
+                                        mention_set.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    ))
                                 }
                             })
                             .collect::<Vec<_>>()
@@ -1730,26 +1688,33 @@ impl MentionCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        let last_mention_start = line.rfind('@')?;
-
-        // No whitespace immediately after '@'
-        if line[last_mention_start + 1..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_whitespace())
-        {
-            return None;
-        }
-
-        //  Must be a word boundary before '@'
-        if last_mention_start > 0
-            && line[..last_mention_start]
+        // Find the rightmost '@' that has a word boundary before it and no whitespace immediately after
+        let mut last_mention_start = None;
+        for (idx, _) in line.rmatch_indices('@') {
+            // No whitespace immediately after '@'
+            if line[idx + 1..]
                 .chars()
-                .last()
-                .is_some_and(|c| !c.is_whitespace())
-        {
-            return None;
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+            {
+                continue;
+            }
+
+            // Must be a word boundary before '@'
+            if idx > 0
+                && line[..idx]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| !c.is_whitespace())
+            {
+                continue;
+            }
+
+            last_mention_start = Some(idx);
+            break;
         }
+
+        let last_mention_start = last_mention_start?;
 
         let rest_of_line = &line[last_mention_start + 1..];
 
@@ -2068,9 +2033,9 @@ pub(crate) fn search_symbols(
 fn filter_sessions_by_query(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    sessions: Vec<AgentSessionInfo>,
+    sessions: Vec<SessionMatch>,
     cx: &mut App,
-) -> Task<Vec<AgentSessionInfo>> {
+) -> Task<Vec<SessionMatch>> {
     if query.is_empty() {
         return Task::ready(sessions);
     }
@@ -2083,10 +2048,13 @@ fn filter_sessions_by_query(
 async fn filter_sessions(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    sessions: Vec<AgentSessionInfo>,
+    sessions: Vec<SessionMatch>,
     executor: BackgroundExecutor,
-) -> Vec<AgentSessionInfo> {
-    let titles = sessions.iter().map(session_title).collect::<Vec<_>>();
+) -> Vec<SessionMatch> {
+    let titles = sessions
+        .iter()
+        .map(|session| session.title.clone())
+        .collect::<Vec<_>>();
     let candidates = titles
         .iter()
         .enumerate()
@@ -2176,7 +2144,7 @@ fn build_code_label_for_path(
         .theme()
         .syntax()
         .highlight_id("variable")
-        .map(HighlightId);
+        .map(HighlightId::new);
     let mut label = CodeLabelBuilder::default();
 
     label.push_str(file, None);
@@ -2197,28 +2165,45 @@ fn build_code_label_for_path(
     label.build()
 }
 
-/// Returns terminal selections from all terminal views if the terminal panel is open.
-fn terminal_selections_if_panel_open(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
-    let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-        return Vec::new();
-    };
+fn terminal_selections(workspace: &Entity<Workspace>, cx: &App) -> Vec<String> {
+    let mut selections = Vec::new();
 
-    // Check if the dock containing this panel is open
-    let position = match TerminalSettings::get_global(cx).dock {
-        TerminalDockPosition::Left => DockPosition::Left,
-        TerminalDockPosition::Bottom => DockPosition::Bottom,
-        TerminalDockPosition::Right => DockPosition::Right,
-    };
-    let dock_is_open = workspace
+    // Check if the active item is a terminal (in a panel or not)
+    if let Some(terminal_view) = workspace
         .read(cx)
-        .dock_at_position(position)
-        .read(cx)
-        .is_open();
-    if !dock_is_open {
-        return Vec::new();
+        .active_item(cx)
+        .and_then(|item| item.act_as::<TerminalView>(cx))
+    {
+        if let Some(text) = terminal_view
+            .read(cx)
+            .terminal()
+            .read(cx)
+            .last_content
+            .selection_text
+            .clone()
+            .filter(|text| !text.is_empty())
+        {
+            selections.push(text);
+        }
     }
 
-    panel.read(cx).terminal_selections(cx)
+    if let Some(panel) = workspace.read(cx).panel::<TerminalPanel>(cx) {
+        let position = match TerminalSettings::get_global(cx).dock {
+            TerminalDockPosition::Left => DockPosition::Left,
+            TerminalDockPosition::Bottom => DockPosition::Bottom,
+            TerminalDockPosition::Right => DockPosition::Right,
+        };
+        let dock_is_open = workspace
+            .read(cx)
+            .dock_at_position(position)
+            .read(cx)
+            .is_open();
+        if dock_is_open {
+            selections.extend(panel.read(cx).terminal_selections(cx));
+        }
+    }
+
+    selections
 }
 
 fn selection_ranges(
@@ -2241,6 +2226,7 @@ fn selection_ranges(
 
         selections
             .into_iter()
+            .filter(|s| !s.is_empty())
             .map(|s| snapshot.anchor_after(s.start)..snapshot.anchor_before(s.end))
             .flat_map(|range| {
                 let (start_buffer, start) = buffer.text_anchor_for_position(range.start, cx)?;
@@ -2514,14 +2500,60 @@ mod tests {
             None,
             "Should not parse with a space after @ at the start of the line"
         );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://www.npmjs.com/package/@matterport/sdk",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..52,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://www.npmjs.com/package/@matterport/sdk".to_string()),
+            }),
+            "Should handle URLs with @ in the path"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@org/@repo/file",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..42,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@org/@repo/file".to_string()),
+            }),
+            "Should handle URLs with multiple @ characters"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(
+                "@fetch https://example.com/@",
+                0,
+                &[PromptContextType::Fetch]
+            ),
+            Some(MentionCompletion {
+                source_range: 0..28,
+                mode: Some(PromptContextType::Fetch),
+                argument: Some("https://example.com/@".to_string()),
+            }),
+            "Should parse URL ending with @ (even if URL is incomplete)"
+        );
     }
 
     #[gpui::test]
     async fn test_filter_sessions_by_query(cx: &mut TestAppContext) {
-        let mut alpha = AgentSessionInfo::new("session-alpha");
-        alpha.title = Some("Alpha Session".into());
-        let mut beta = AgentSessionInfo::new("session-beta");
-        beta.title = Some("Beta Session".into());
+        let alpha = SessionMatch {
+            session_id: acp::SessionId::new("session-alpha"),
+            title: "Alpha Session".into(),
+        };
+        let beta = SessionMatch {
+            session_id: acp::SessionId::new("session-beta"),
+            title: "Beta Session".into(),
+        };
 
         let sessions = vec![alpha.clone(), beta];
 
@@ -2545,11 +2577,11 @@ mod tests {
         use project::Project;
         use serde_json::json;
         use util::{path, rel_path::rel_path};
-        use workspace::AppState;
+        use workspace::{AppState, MultiWorkspace};
 
         let app_state = cx.update(|cx| {
             let state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             state
         });
@@ -2570,8 +2602,9 @@ mod tests {
             .await;
 
         let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| workspace::Workspace::test_new(project, window, cx));
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         let worktree_id = cx.read(|cx| {
             let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();

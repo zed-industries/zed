@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, FluentBuilder, NamedJob, named},
+    steps::{self, FluentBuilder, NamedJob, RepositoryTarget, TokenPermissions, named},
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -55,18 +55,18 @@ fn download_patch_artifact() -> Step<Use> {
 
 fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
     fn checkout_pr(pr_number: &WorkflowInput) -> Step<Run> {
-        named::bash(&format!("gh pr checkout {pr_number}"))
+        named::bash(r#"gh pr checkout "$PR_NUMBER""#)
+            .add_env(("PR_NUMBER", pr_number.to_string()))
             .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
 
     fn install_cargo_machete() -> Step<Use> {
         named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
+            "taiki-e",
+            "install-action",
+            "02cc5f8ca9f2301050c0c099055816a41ee05507",
         )
-        .add_with(("command", "install"))
-        .add_with(("args", "cargo-machete@0.7.0"))
+        .add_with(("tool", "cargo-machete@0.7.0"))
     }
 
     fn run_cargo_fmt() -> Step<Run> {
@@ -133,7 +133,9 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
 
 fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob {
     fn checkout_pr(pr_number: &WorkflowInput, token: &StepOutput) -> Step<Run> {
-        named::bash(&format!("gh pr checkout {pr_number}")).add_env(("GITHUB_TOKEN", token))
+        named::bash(r#"gh pr checkout "$PR_NUMBER""#)
+            .add_env(("PR_NUMBER", pr_number.to_string()))
+            .add_env(("GITHUB_TOKEN", token))
     }
 
     fn apply_patch() -> Step<Run> {
@@ -158,7 +160,13 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
         .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = steps::authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(RepositoryTarget::current())
+        .with_permissions([
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
+        ])
+        .into();
 
     named::job(
         Job::default()
@@ -169,7 +177,7 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
                 autofix_job.name
             )))
             .add_step(authenticate)
-            .add_step(steps::checkout_repo_with_token(&token))
+            .add_step(steps::checkout_repo().with_token(&token))
             .add_step(checkout_pr(pr_number, &token))
             .add_step(download_patch_artifact())
             .add_step(apply_patch())

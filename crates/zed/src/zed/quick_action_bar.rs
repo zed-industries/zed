@@ -110,11 +110,14 @@ impl Render for QuickActionBar {
         };
 
         let supports_inlay_hints = editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
+        let supports_semantic_tokens =
+            editor.update(cx, |editor, cx| editor.supports_semantic_tokens(cx));
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
-        let supports_diagnostics = editor_value.mode().is_full();
+        let semantic_highlights_enabled = editor_value.semantic_highlights_enabled();
+        let is_full = editor_value.mode().is_full();
         let diagnostics_enabled = editor_value.diagnostics_max_severity != DiagnosticSeverity::Off;
         let supports_inline_diagnostics = editor_value.inline_diagnostics_enabled();
         let inline_diagnostics_enabled = editor_value.show_inline_diagnostics();
@@ -378,6 +381,29 @@ impl Render for QuickActionBar {
                                 );
                             }
 
+                            if supports_semantic_tokens {
+                                menu = menu.toggleable_entry(
+                                    "Semantic Highlights",
+                                    semantic_highlights_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleSemanticHighlights.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_semantic_highlights(
+                                                        &editor::actions::ToggleSemanticHighlights,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+                            }
+
                             if supports_minimap {
                                 menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
                                     let editor = editor.clone();
@@ -426,7 +452,7 @@ impl Render for QuickActionBar {
 
                             menu = menu.separator();
 
-                            if supports_diagnostics {
+                            if is_full {
                                 menu = menu.toggleable_entry(
                                     "Diagnostics",
                                     diagnostics_enabled,
@@ -699,26 +725,36 @@ impl ToolbarItemView for QuickActionBar {
             self._inlay_hints_enabled_subscription.take();
 
             if let Some(editor) = active_item.downcast::<Editor>() {
-                let (mut inlay_hints_enabled, mut supports_inlay_hints) =
-                    editor.update(cx, |editor, cx| {
-                        (
-                            editor.inlay_hints_enabled(),
-                            editor.supports_inlay_hints(cx),
-                        )
-                    });
+                let (
+                    mut inlay_hints_enabled,
+                    mut supports_inlay_hints,
+                    mut supports_semantic_tokens,
+                ) = editor.update(cx, |editor, cx| {
+                    (
+                        editor.inlay_hints_enabled(),
+                        editor.supports_inlay_hints(cx),
+                        editor.supports_semantic_tokens(cx),
+                    )
+                });
                 self._inlay_hints_enabled_subscription =
                     Some(cx.observe(&editor, move |_, editor, cx| {
-                        let (new_inlay_hints_enabled, new_supports_inlay_hints) =
-                            editor.update(cx, |editor, cx| {
-                                (
-                                    editor.inlay_hints_enabled(),
-                                    editor.supports_inlay_hints(cx),
-                                )
-                            });
+                        let (
+                            new_inlay_hints_enabled,
+                            new_supports_inlay_hints,
+                            new_supports_semantic_tokens,
+                        ) = editor.update(cx, |editor, cx| {
+                            (
+                                editor.inlay_hints_enabled(),
+                                editor.supports_inlay_hints(cx),
+                                editor.supports_semantic_tokens(cx),
+                            )
+                        });
                         let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                            || supports_inlay_hints != new_supports_inlay_hints;
+                            || supports_inlay_hints != new_supports_inlay_hints
+                            || supports_semantic_tokens != new_supports_semantic_tokens;
                         inlay_hints_enabled = new_inlay_hints_enabled;
                         supports_inlay_hints = new_supports_inlay_hints;
+                        supports_semantic_tokens = new_supports_semantic_tokens;
                         if should_notify {
                             cx.notify()
                         }

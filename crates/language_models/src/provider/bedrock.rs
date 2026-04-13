@@ -1,5 +1,4 @@
 use std::pin::Pin;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -14,11 +13,12 @@ use bedrock::bedrock_client::types::{
     ReasoningContentBlockDelta, StopReason,
 };
 use bedrock::{
-    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockInnerContent,
-    BedrockMessage, BedrockModelMode, BedrockStreamingResponse, BedrockThinkingBlock,
-    BedrockThinkingTextBlock, BedrockTool, BedrockToolChoice, BedrockToolConfig,
-    BedrockToolInputSchema, BedrockToolResultBlock, BedrockToolResultContentBlock,
-    BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock, Model, value_to_aws_document,
+    BedrockAnyToolChoice, BedrockAutoToolChoice, BedrockBlob, BedrockError, BedrockImageBlock,
+    BedrockImageFormat, BedrockImageSource, BedrockInnerContent, BedrockMessage, BedrockModelMode,
+    BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock, BedrockTool,
+    BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema, BedrockToolResultBlock,
+    BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock,
+    Model, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -48,6 +48,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -111,6 +112,7 @@ pub struct AmazonBedrockSettings {
     pub role_arn: Option<String>,
     pub authentication_method: Option<BedrockAuthMethod>,
     pub allow_global: Option<bool>,
+    pub allow_extended_context: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, EnumIter, IntoStaticStr, JsonSchema)]
@@ -146,6 +148,9 @@ pub enum ModelMode {
         /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
         budget_tokens: Option<u64>,
     },
+    AdaptiveThinking {
+        effort: bedrock::BedrockAdaptiveThinkingEffort,
+    },
 }
 
 impl From<ModelMode> for BedrockModelMode {
@@ -153,6 +158,7 @@ impl From<ModelMode> for BedrockModelMode {
         match value {
             ModelMode::Default => BedrockModelMode::Default,
             ModelMode::Thinking { budget_tokens } => BedrockModelMode::Thinking { budget_tokens },
+            ModelMode::AdaptiveThinking { effort } => BedrockModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -162,6 +168,7 @@ impl From<BedrockModelMode> for ModelMode {
         match value {
             BedrockModelMode::Default => ModelMode::Default,
             BedrockModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+            BedrockModelMode::AdaptiveThinking { effort } => ModelMode::AdaptiveThinking { effort },
         }
     }
 }
@@ -188,12 +195,13 @@ pub struct State {
     settings: Option<AmazonBedrockSettings>,
     /// Whether credentials came from environment variables (only relevant for static credentials)
     credentials_from_env: bool,
+    credentials_provider: Arc<dyn CredentialsProvider>,
     _subscription: Subscription,
 }
 
 impl State {
     fn reset_auth(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .delete_credentials(AMAZON_AWS_URL, cx)
@@ -213,7 +221,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let auth = credentials.clone().into_auth();
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
                 .write_credentials(
@@ -280,7 +288,7 @@ impl State {
         &self,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), AuthenticateError>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+        let credentials_provider = self.credentials_provider.clone();
         cx.spawn(async move |this, cx| {
             // Try environment variables first
             let (auth, from_env) = if let Some(bearer_token) = &ZED_BEDROCK_BEARER_TOKEN_VAR.value {
@@ -337,7 +345,7 @@ impl State {
                 .ok_or(AuthenticateError::CredentialsNotFound)?;
 
             let credentials_str = String::from_utf8(credentials_bytes)
-                .context("invalid {PROVIDER_NAME} credentials")?;
+                .with_context(|| format!("invalid {PROVIDER_NAME} credentials"))?;
 
             let credentials: BedrockCredentials =
                 serde_json::from_str(&credentials_str).context("failed to parse credentials")?;
@@ -377,6 +385,13 @@ impl State {
             .and_then(|s| s.allow_global)
             .unwrap_or(false)
     }
+
+    fn get_allow_extended_context(&self) -> bool {
+        self.settings
+            .as_ref()
+            .and_then(|s| s.allow_extended_context)
+            .unwrap_or(false)
+    }
 }
 
 pub struct BedrockLanguageModelProvider {
@@ -386,11 +401,16 @@ pub struct BedrockLanguageModelProvider {
 }
 
 impl BedrockLanguageModelProvider {
-    pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         let state = cx.new(|cx| State {
             auth: None,
             settings: Some(AllLanguageModelSettings::get_global(cx).bedrock.clone()),
             credentials_from_env: false,
+            credentials_provider,
             _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
                 cx.notify();
             }),
@@ -586,18 +606,19 @@ impl BedrockModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
+        Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError>,
     > {
         let Ok(runtime_client) = self
             .get_or_init_client(cx)
             .cloned()
             .context("Bedrock client not initialized")
         else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(BedrockError::Other(anyhow!("App state dropped"))))
+                .boxed();
         };
 
         let task = Tokio::spawn(cx, bedrock::stream_completion(runtime_client, request));
-        async move { task.await.map_err(|err| anyhow!(err))? }.boxed()
+        async move { task.await.map_err(|e| BedrockError::Other(e.into()))? }.boxed()
     }
 }
 
@@ -623,7 +644,40 @@ impl LanguageModel for BedrockModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images()
+    }
+
+    fn supports_thinking(&self) -> bool {
+        self.model.supports_thinking()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
+        if self.model.supports_adaptive_thinking() {
+            vec![
+                language_model::LanguageModelEffortLevel {
+                    name: "Low".into(),
+                    value: "low".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Medium".into(),
+                    value: "medium".into(),
+                    is_default: false,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "High".into(),
+                    value: "high".into(),
+                    is_default: true,
+                },
+                language_model::LanguageModelEffortLevel {
+                    name: "Max".into(),
+                    value: "max".into(),
+                    is_default: false,
+                },
+            ]
+        } else {
+            Vec::new()
+        }
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -634,6 +688,10 @@ impl LanguageModel for BedrockModel {
             // Add support for None - we'll filter tool calls at response
             LanguageModelToolChoice::None => self.model.supports_tool_use(),
         }
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
     }
 
     fn telemetry_id(&self) -> String {
@@ -667,9 +725,14 @@ impl LanguageModel for BedrockModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (region, allow_global) = cx.read_entity(&self.state, |state, _cx| {
-            (state.get_region(), state.get_allow_global())
-        });
+        let (region, allow_global, allow_extended_context) =
+            cx.read_entity(&self.state, |state, _cx| {
+                (
+                    state.get_region(),
+                    state.get_allow_global(),
+                    state.get_allow_extended_context(),
+                )
+            });
 
         let model_id = match self.model.cross_region_inference_id(&region, allow_global) {
             Ok(s) => s,
@@ -680,21 +743,61 @@ impl LanguageModel for BedrockModel {
 
         let deny_tool_calls = request.tool_choice == Some(LanguageModelToolChoice::None);
 
+        let use_extended_context = allow_extended_context && self.model.supports_extended_context();
+
         let request = match into_bedrock(
             request,
             model_id,
             self.model.default_temperature(),
             self.model.max_output_tokens(),
-            self.model.mode(),
+            self.model.thinking_mode(),
             self.model.supports_caching(),
+            self.model.supports_tool_use(),
+            use_extended_context,
         ) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
         };
 
         let request = self.stream_completion(request, cx);
+        let display_name = self.model.display_name().to_string();
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
+            let response = request.await.map_err(|err| match err {
+                BedrockError::Validation(ref msg) => {
+                    if msg.contains("model identifier is invalid") {
+                        LanguageModelCompletionError::Other(anyhow!(
+                            "{display_name} is not available in {region}. \
+                                 Try switching to a region where this model is supported."
+                        ))
+                    } else {
+                        LanguageModelCompletionError::BadRequestFormat {
+                            provider: PROVIDER_NAME,
+                            message: msg.clone(),
+                        }
+                    }
+                }
+                BedrockError::RateLimited => LanguageModelCompletionError::RateLimitExceeded {
+                    provider: PROVIDER_NAME,
+                    retry_after: None,
+                },
+                BedrockError::ServiceUnavailable => {
+                    LanguageModelCompletionError::ServerOverloaded {
+                        provider: PROVIDER_NAME,
+                        retry_after: None,
+                    }
+                }
+                BedrockError::AccessDenied(msg) => LanguageModelCompletionError::PermissionError {
+                    provider: PROVIDER_NAME,
+                    message: msg,
+                },
+                BedrockError::InternalServer(msg) => {
+                    LanguageModelCompletionError::ApiInternalServerError {
+                        provider: PROVIDER_NAME,
+                        message: msg,
+                    }
+                }
+                other => LanguageModelCompletionError::Other(anyhow!(other)),
+            })?;
             let events = map_to_language_model_completion_events(response);
 
             if deny_tool_calls {
@@ -740,11 +843,17 @@ pub fn into_bedrock(
     model: String,
     default_temperature: f32,
     max_output_tokens: u64,
-    mode: BedrockModelMode,
+    thinking_mode: BedrockModelMode,
     supports_caching: bool,
+    supports_tool_use: bool,
+    allow_extended_context: bool,
 ) -> Result<bedrock::Request> {
     let mut new_messages: Vec<BedrockMessage> = Vec::new();
     let mut system_message = String::new();
+
+    // Track whether messages contain tool content - Bedrock requires toolConfig
+    // when tool blocks are present, so we may need to add a dummy tool
+    let mut messages_contain_tool_content = false;
 
     for message in request.messages {
         if message.contents_empty() {
@@ -770,6 +879,12 @@ pub fn into_bedrock(
                                 // And the AWS API demands that you strip them
                                 return None;
                             }
+                            if signature.is_none() {
+                                // Thinking blocks without a signature are invalid
+                                // (e.g. from cancellation mid-think) and must be
+                                // stripped to avoid API errors.
+                                return None;
+                            }
                             let thinking = BedrockThinkingTextBlock::builder()
                                 .text(text)
                                 .set_signature(signature)
@@ -793,6 +908,7 @@ pub fn into_bedrock(
                             Some(BedrockInnerContent::ReasoningContent(redacted))
                         }
                         MessageContent::ToolUse(tool_use) => {
+                            messages_contain_tool_content = true;
                             let input = if tool_use.input.is_null() {
                                 // Bedrock API requires valid JsonValue, not null, for tool use input
                                 value_to_aws_document(&serde_json::json!({}))
@@ -807,19 +923,51 @@ pub fn into_bedrock(
                                 .context("failed to build Bedrock tool use block")
                                 .log_err()
                                 .map(BedrockInnerContent::ToolUse)
-                        },
+                        }
                         MessageContent::ToolResult(tool_result) => {
+                            messages_contain_tool_content = true;
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
                                 .content(match tool_result.content {
                                     LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
-                                    LanguageModelToolResultContent::Image(_) => {
-                                        BedrockToolResultContentBlock::Text(
-                                            // TODO: Bedrock image support
-                                            "[Tool responded with an image, but Zed doesn't support these in Bedrock models yet]".to_string()
-                                        )
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        use base64::Engine;
+
+                                        match base64::engine::general_purpose::STANDARD
+                                            .decode(image.source.as_bytes())
+                                        {
+                                            Ok(image_bytes) => {
+                                                match BedrockImageBlock::builder()
+                                                    .format(BedrockImageFormat::Png)
+                                                    .source(BedrockImageSource::Bytes(
+                                                        BedrockBlob::new(image_bytes),
+                                                    ))
+                                                    .build()
+                                                {
+                                                    Ok(image_block) => {
+                                                        BedrockToolResultContentBlock::Image(
+                                                            image_block,
+                                                        )
+                                                    }
+                                                    Err(err) => {
+                                                        BedrockToolResultContentBlock::Text(
+                                                            format!(
+                                                                "[Failed to build image block: {}]",
+                                                                err
+                                                            ),
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Err(err) => {
+                                                BedrockToolResultContentBlock::Text(format!(
+                                                    "[Failed to decode tool result image: {}]",
+                                                    err
+                                                ))
+                                            }
+                                        }
                                     }
                                 })
                                 .status({
@@ -834,7 +982,22 @@ pub fn into_bedrock(
                                 .log_err()
                                 .map(BedrockInnerContent::ToolResult)
                         }
-                        _ => None,
+                        MessageContent::Image(image) => {
+                            use base64::Engine;
+
+                            let image_bytes = base64::engine::general_purpose::STANDARD
+                                .decode(image.source.as_bytes())
+                                .context("failed to decode base64 image data")
+                                .log_err()?;
+
+                            BedrockImageBlock::builder()
+                                .format(BedrockImageFormat::Png)
+                                .source(BedrockImageSource::Bytes(BedrockBlob::new(image_bytes)))
+                                .build()
+                                .context("failed to build Bedrock image block")
+                                .log_err()
+                                .map(BedrockInnerContent::Image)
+                        }
                     })
                     .collect();
                 if message.cache && supports_caching {
@@ -850,6 +1013,10 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
+                if bedrock_message_content.is_empty() {
+                    continue;
+                }
+
                 if let Some(last_message) = new_messages.last_mut()
                     && last_message.role == bedrock_role
                 {
@@ -873,22 +1040,43 @@ pub fn into_bedrock(
         }
     }
 
-    let mut tool_spec: Vec<BedrockTool> = request
-        .tools
-        .iter()
-        .filter_map(|tool| {
-            Some(BedrockTool::ToolSpec(
-                BedrockToolSpec::builder()
-                    .name(tool.name.clone())
-                    .description(tool.description.clone())
-                    .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
-                        &tool.input_schema,
-                    )))
-                    .build()
-                    .log_err()?,
-            ))
-        })
-        .collect();
+    let mut tool_spec: Vec<BedrockTool> = if supports_tool_use {
+        request
+            .tools
+            .iter()
+            .filter_map(|tool| {
+                Some(BedrockTool::ToolSpec(
+                    BedrockToolSpec::builder()
+                        .name(tool.name.clone())
+                        .description(tool.description.clone())
+                        .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
+                            &tool.input_schema,
+                        )))
+                        .build()
+                        .log_err()?,
+                ))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Bedrock requires toolConfig when messages contain tool use/result blocks.
+    // If no tools are defined but messages contain tool content (e.g., when
+    // summarising a conversation that used tools), add a dummy tool to satisfy
+    // the API requirement.
+    if supports_tool_use && tool_spec.is_empty() && messages_contain_tool_content {
+        tool_spec.push(BedrockTool::ToolSpec(
+            BedrockToolSpec::builder()
+                .name("_placeholder")
+                .description("Placeholder tool to satisfy Bedrock API requirements when conversation history contains tool usage")
+                .input_schema(BedrockToolInputSchema::Json(value_to_aws_document(
+                    &serde_json::json!({"type": "object", "properties": {}}),
+                )))
+                .build()
+                .context("failed to build placeholder tool spec")?,
+        ));
+    }
 
     if !tool_spec.is_empty() && supports_caching {
         tool_spec.push(BedrockTool::CachePoint(
@@ -911,21 +1099,46 @@ pub fn into_bedrock(
             BedrockToolChoice::Auto(BedrockAutoToolChoice::builder().build())
         }
     };
-    let tool_config: BedrockToolConfig = BedrockToolConfig::builder()
-        .set_tools(Some(tool_spec))
-        .tool_choice(tool_choice)
-        .build()?;
+    let tool_config = if tool_spec.is_empty() {
+        None
+    } else {
+        Some(
+            BedrockToolConfig::builder()
+                .set_tools(Some(tool_spec))
+                .tool_choice(tool_choice)
+                .build()?,
+        )
+    };
 
     Ok(bedrock::Request {
         model,
         messages: new_messages,
         max_tokens: max_output_tokens,
         system: Some(system_message),
-        tools: Some(tool_config),
-        thinking: if request.thinking_allowed
-            && let BedrockModelMode::Thinking { budget_tokens } = mode
-        {
-            Some(bedrock::Thinking::Enabled { budget_tokens })
+        tools: tool_config,
+        thinking: if request.thinking_allowed {
+            match thinking_mode {
+                BedrockModelMode::Thinking { budget_tokens } => {
+                    Some(bedrock::Thinking::Enabled { budget_tokens })
+                }
+                BedrockModelMode::AdaptiveThinking {
+                    effort: default_effort,
+                } => {
+                    let effort = request
+                        .thinking_effort
+                        .as_deref()
+                        .and_then(|e| match e {
+                            "low" => Some(bedrock::BedrockAdaptiveThinkingEffort::Low),
+                            "medium" => Some(bedrock::BedrockAdaptiveThinkingEffort::Medium),
+                            "high" => Some(bedrock::BedrockAdaptiveThinkingEffort::High),
+                            "max" => Some(bedrock::BedrockAdaptiveThinkingEffort::Max),
+                            _ => None,
+                        })
+                        .unwrap_or(default_effort);
+                    Some(bedrock::Thinking::Adaptive { effort })
+                }
+                BedrockModelMode::Default => None,
+            }
         } else {
             None
         },
@@ -934,6 +1147,7 @@ pub fn into_bedrock(
         temperature: request.temperature.or(Some(default_temperature)),
         top_k: None,
         top_p: None,
+        allow_extended_context,
     })
 }
 
@@ -1000,7 +1214,7 @@ pub fn get_bedrock_tokens(
 }
 
 pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+    events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, anyhow::Error>>>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
     struct RawToolUse {
         id: String,
@@ -1009,13 +1223,15 @@ pub fn map_to_language_model_completion_events(
     }
 
     struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, BedrockError>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<BedrockStreamingResponse, anyhow::Error>>>>,
         tool_uses_by_index: HashMap<i32, RawToolUse>,
+        emitted_tool_use: bool,
     }
 
     let initial_state = State {
         events,
         tool_uses_by_index: HashMap::default(),
+        emitted_tool_use: false,
     };
 
     futures::stream::unfold(initial_state, |mut state| async move {
@@ -1033,8 +1249,25 @@ pub fn map_to_language_model_completion_events(
                                     .get_mut(&cb_delta.content_block_index)
                                 {
                                     tool_use.input_json.push_str(tool_output.input());
+                                    if let Ok(input) = serde_json::from_str::<serde_json::Value>(
+                                        &fix_streamed_json(&tool_use.input_json),
+                                    ) {
+                                        Some(Ok(LanguageModelCompletionEvent::ToolUse(
+                                            LanguageModelToolUse {
+                                                id: tool_use.id.clone().into(),
+                                                name: tool_use.name.clone().into(),
+                                                is_input_complete: false,
+                                                raw_input: tool_use.input_json.clone(),
+                                                input,
+                                                thought_signature: None,
+                                            },
+                                        )))
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
                                 }
-                                None
                             }
                             Some(ContentBlockDelta::ReasoningContent(thinking)) => match thinking {
                                 ReasoningContentBlockDelta::Text(thoughts) => {
@@ -1074,16 +1307,15 @@ pub fn map_to_language_model_completion_events(
                             }
                             None
                         }
+                        ConverseStreamOutput::MessageStart(_) => None,
                         ConverseStreamOutput::ContentBlockStop(cb_stop) => state
                             .tool_uses_by_index
                             .remove(&cb_stop.content_block_index)
                             .map(|tool_use| {
-                                let input = if tool_use.input_json.is_empty() {
-                                    Value::Null
-                                } else {
-                                    serde_json::Value::from_str(&tool_use.input_json)
-                                        .unwrap_or(Value::Null)
-                                };
+                                state.emitted_tool_use = true;
+
+                                let input = parse_tool_arguments(&tool_use.input_json)
+                                    .unwrap_or_else(|_| Value::Object(Default::default()));
 
                                 Ok(LanguageModelCompletionEvent::ToolUse(
                                     LanguageModelToolUse {
@@ -1111,9 +1343,16 @@ pub fn map_to_language_model_completion_events(
                             }))
                         }),
                         ConverseStreamOutput::MessageStop(message_stop) => {
-                            let stop_reason = match message_stop.stop_reason {
-                                StopReason::ToolUse => language_model::StopReason::ToolUse,
-                                _ => language_model::StopReason::EndTurn,
+                            let stop_reason = if state.emitted_tool_use {
+                                // Some models (e.g. Kimi) send EndTurn even when
+                                // they've made tool calls. Trust the content over
+                                // the stop reason.
+                                language_model::StopReason::ToolUse
+                            } else {
+                                match message_stop.stop_reason {
+                                    StopReason::ToolUse => language_model::StopReason::ToolUse,
+                                    _ => language_model::StopReason::EndTurn,
+                                }
                             };
                             Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason)))
                         }
@@ -1380,7 +1619,8 @@ impl Render for ConfigurationView {
         }
 
         v_flex()
-            .size_full()
+            .min_w_0()
+            .w_full()
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))
@@ -1404,7 +1644,7 @@ impl Render for ConfigurationView {
                             .child(Label::new("Select the models you would like access to:"))
                             .child(ButtonLink::new(
                                 "Bedrock Model Catalog",
-                                "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess",
+                                "https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/model-catalog",
                             )),
                     ),
             )
