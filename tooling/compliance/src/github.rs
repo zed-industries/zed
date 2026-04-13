@@ -18,6 +18,7 @@ pub struct PullRequestData {
     pub number: u64,
     pub user: Option<GitHubUser>,
     pub merged_by: Option<GitHubUser>,
+    pub labels: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,7 +156,7 @@ pub trait GitHubApiClient {
         Ok(self.check_org_membership(login).await?
             || self.check_repo_write_permission(login).await?)
     }
-    async fn ensure_pull_request_has_label(&self, label: &str, pr_number: u64) -> Result<()>;
+    async fn add_label_to_issue(&self, label: &str, issue_number: u64) -> Result<()>;
 }
 
 #[derive(Deref)]
@@ -360,6 +361,9 @@ mod octo_client {
                 number: pr.number,
                 user: pr.user.map(|user| GitHubUser { login: user.login }),
                 merged_by: pr.merged_by.map(|user| GitHubUser { login: user.login }),
+                labels: pr
+                    .labels
+                    .map(|labels| labels.into_iter().map(|label| label.name).collect()),
             })
         }
 
@@ -477,27 +481,13 @@ mod octo_client {
                 .map_err(Into::into)
         }
 
-        async fn ensure_pull_request_has_label(&self, label: &str, pr_number: u64) -> Result<()> {
-            if self
-                .get_filtered(
-                    self.client
-                        .issues(ORG, REPO)
-                        .list_labels_for_issue(pr_number)
-                        .per_page(PAGE_SIZE)
-                        .send()
-                        .await?,
-                    |pr_label| pr_label.name == label,
-                )
+        async fn add_label_to_issue(&self, label: &str, issue_number: u64) -> Result<()> {
+            self.client
+                .issues(ORG, REPO)
+                .add_labels(issue_number, &[label.to_owned()])
                 .await
-                .is_ok_and(|l| l.is_empty())
-            {
-                self.client
-                    .issues(ORG, REPO)
-                    .add_labels(pr_number, &[label.to_owned()])
-                    .await?;
-            }
-
-            Ok(())
+                .map(|_| ())
+                .map_err(Into::into)
         }
     }
 }
