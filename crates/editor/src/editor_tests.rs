@@ -20297,6 +20297,86 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_select_inside_delimiters(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    #[track_caller]
+    fn assert(before: &str, after: &str, cx: &mut EditorLspTestContext) {
+        let _state_context = cx.set_state(before);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            editor.select_inside_delimiters(&SelectInsideDelimiters, window, cx)
+        });
+        cx.run_until_parked();
+        cx.assert_editor_state(after);
+    }
+
+    // Basic: cursor inside parens selects the contents
+    assert("foo(ˇbar);", "foo(«barˇ»);", &mut cx);
+
+    // Cursor between commas selects all of the arguments
+    assert("foo(a, ˇb, c);", "foo(«a, b, cˇ»);", &mut cx);
+
+    // Innermost: nested brackets pick the inner pair
+    assert("foo([1, ˇ2, 3]);", "foo([«1, 2, 3ˇ»]);", &mut cx);
+
+    // Braces work too
+    assert("let x = { aˇ: 1 };", "let x = {« a: 1 ˇ»};", &mut cx);
+
+    // Inside a string: selects string content (no quotes)
+    assert(
+        "const s = \"hello ˇworld\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
+
+    // Cursor inside string nested in a function call: prefers the string
+    assert(
+        "console.log(\"deˇbug\");",
+        "console.log(\"«debugˇ»\");",
+        &mut cx,
+    );
+
+    // No-op: no surrounding delimiter, selection unchanged
+    assert("let xˇ = 42;", "let xˇ = 42;", &mut cx);
+
+    // Already a selection inside brackets expands to full content
+    assert("foo(a, «bˇ», c);", "foo(«a, b, cˇ»);", &mut cx);
+}
+
+#[gpui::test]
+async fn test_select_around_delimiters(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    #[track_caller]
+    fn assert(before: &str, after: &str, cx: &mut EditorLspTestContext) {
+        let _state_context = cx.set_state(before);
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            editor.select_around_delimiters(&SelectAroundDelimiters, window, cx)
+        });
+        cx.run_until_parked();
+        cx.assert_editor_state(after);
+    }
+
+    // Basic: selects parens including the brackets themselves
+    assert("foo(ˇbar);", "foo«(bar)ˇ»;", &mut cx);
+
+    // Innermost: [] is closer than the outer (), so we select [1, 2, 3] with its brackets
+    assert("foo([1, ˇ2, 3]);", "foo(«[1, 2, 3]ˇ»);", &mut cx);
+
+    // Braces
+    assert("let x = {ˇ a: 1 };", "let x = «{ a: 1 }ˇ»;", &mut cx);
+
+    // No-op when not inside any brackets
+    assert("let xˇ = 42;", "let xˇ = 42;", &mut cx);
+}
+
+#[gpui::test]
 async fn test_move_to_enclosing_bracket_in_markdown_code_block(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let language_registry = Arc::new(language::LanguageRegistry::test(cx.executor()));

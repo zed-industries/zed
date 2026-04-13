@@ -17624,6 +17624,71 @@ impl Editor {
         });
     }
 
+    pub fn select_inside_delimiters(
+        &mut self,
+        _: &SelectInsideDelimiters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_delimiters_impl(false, window, cx);
+    }
+
+    pub fn select_around_delimiters(
+        &mut self,
+        _: &SelectAroundDelimiters,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_delimiters_impl(true, window, cx);
+    }
+
+    fn select_delimiters_impl(
+        &mut self,
+        include_brackets: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.move_offsets_with(&mut |snapshot, selection| {
+                // For languages that don't register quotes as bracket pairs in their
+                // brackets.scm (notably Markdown inline content), fall back to detecting
+                // string-like nodes via the syntax tree.
+                // The same node kinds are used by select_larger_syntax_node.
+                if !include_brackets {
+                    if let Some((node, node_range)) =
+                        snapshot.syntax_ancestor(selection.start..selection.end)
+                    {
+                        if ["string_content", "inline"].contains(&node.kind()) {
+                            selection.start = node_range.start;
+                            selection.end = node_range.end;
+                            selection.reversed = false;
+                            selection.goal = SelectionGoal::None;
+                            return;
+                        }
+                    }
+                }
+
+                // Fall back to the nearest bracket pair via tree-sitter.
+                let Some((open, close)) = snapshot
+                    .innermost_enclosing_bracket_ranges(selection.start..selection.end, None)
+                else {
+                    return;
+                };
+
+                let (start, end) = if include_brackets {
+                    (open.start, close.end)
+                } else {
+                    (open.end, close.start)
+                };
+                selection.start = start;
+                selection.end = end;
+                selection.reversed = false;
+                selection.goal = SelectionGoal::None;
+            })
+        });
+    }
+
     pub fn undo_selection(
         &mut self,
         _: &UndoSelection,
