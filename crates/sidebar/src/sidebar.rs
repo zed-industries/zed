@@ -3270,7 +3270,7 @@ impl Sidebar {
                         .unwrap_or_default()
                 });
 
-            let excluded = [workspace_to_remove.clone()];
+            let excluded = workspaces_to_remove.clone();
             let remove_task = multi_workspace.update(cx, |mw, cx| {
                 mw.remove(
                     workspaces_to_remove,
