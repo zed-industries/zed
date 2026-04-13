@@ -6,7 +6,6 @@ edition.workspace = true
 license = "Apache-2.0"
 
 [features]
-predict-edits = []
 test-support = []
 predict-edits = ["dep:zeta_prompt"]
 
