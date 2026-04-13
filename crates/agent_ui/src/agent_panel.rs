@@ -6389,6 +6389,7 @@ mod tests {
         )
         .await;
         fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
 
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
 
