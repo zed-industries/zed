@@ -52,13 +52,13 @@ Enable Expert by adding the following to your settings file:
 ```json [settings]
   "languages": {
     "Elixir": {
-      "language_servers": ["expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["expert", "!elixir-ls", "!dexter", "!next-ls", "!lexical", "..."]
     },
     "EEx": {
-      "language_servers": ["expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["expert", "!elixir-ls", "!dexter", "!next-ls", "!lexical", "..."]
     },
     "HEEx": {
-      "language_servers": ["expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["expert", "!elixir-ls", "!dexter", "!next-ls", "!lexical", "..."]
     }
   }
 ```
@@ -150,13 +150,13 @@ Enable Next LS by adding the following to your settings file:
 ```json [settings]
   "languages": {
     "Elixir": {
-      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!lexical", "..."]
+      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!dexter", "!lexical", "..."]
     },
     "EEx": {
-      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!lexical", "..."]
+      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!dexter", "!lexical", "..."]
     },
     "HEEx": {
-      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!lexical", "..."]
+      "language_servers": ["next-ls", "!expert", "!elixir-ls", "!dexter", "!lexical", "..."]
     }
   }
 ```
@@ -220,13 +220,13 @@ Enable Lexical by adding the following to your settings file:
 ```json [settings]
   "languages": {
     "Elixir": {
-      "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
+      "language_servers": ["lexical", "!expert", "!elixir-ls", "!dexter", "!next-ls", "..."]
     },
     "EEx": {
-      "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
+      "language_servers": ["lexical", "!expert", "!elixir-ls", "!dexter", "!next-ls", "..."]
     },
     "HEEx": {
-      "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
+      "language_servers": ["lexical", "!expert", "!elixir-ls", "!dexter", "!next-ls", "..."]
     }
   }
 ```
