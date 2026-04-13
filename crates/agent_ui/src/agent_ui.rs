@@ -516,7 +516,9 @@ pub fn init(
     .detach();
 
     let agent_v2_enabled = agent_v2_enabled(cx);
-    maybe_backfill_editor_layout(fs, is_new_install, agent_v2_enabled, cx);
+    if agent_v2_enabled {
+        maybe_backfill_editor_layout(fs, is_new_install, cx);
+    }
 
     SettingsStore::update_global(cx, |store, cx| {
         store.update_default_settings(cx, |defaults| {
@@ -543,16 +545,7 @@ fn agent_v2_enabled(cx: &App) -> bool {
     !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
 }
 
-fn maybe_backfill_editor_layout(
-    fs: Arc<dyn Fs>,
-    is_new_install: bool,
-    should_run: bool,
-    cx: &mut App,
-) {
-    if !should_run {
-        return;
-    }
-
+fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
     let kvp = db::kvp::KeyValueStore::global(cx);
     let already_backfilled =
         util::ResultExt::log_err(kvp.read_kvp(PARALLEL_AGENT_LAYOUT_BACKFILL_KEY))
@@ -889,7 +882,7 @@ mod tests {
                     .is_none()
             );
 
-            maybe_backfill_editor_layout(fs.clone(), false, true, cx);
+            maybe_backfill_editor_layout(fs.clone(), false, cx);
         });
 
         cx.run_until_parked();
@@ -908,7 +901,7 @@ mod tests {
         let fs = setup_backfill_test(cx).await;
 
         cx.update(|cx| {
-            maybe_backfill_editor_layout(fs.clone(), true, true, cx);
+            maybe_backfill_editor_layout(fs.clone(), true, cx);
         });
 
         cx.run_until_parked();
@@ -930,7 +923,7 @@ mod tests {
         let fs = setup_backfill_test(cx).await;
 
         cx.update(|cx| {
-            maybe_backfill_editor_layout(fs.clone(), false, true, cx);
+            maybe_backfill_editor_layout(fs.clone(), false, cx);
         });
 
         cx.run_until_parked();
@@ -938,7 +931,7 @@ mod tests {
         let after_first = fs.load(paths::settings_file().as_path()).await.unwrap();
 
         cx.update(|cx| {
-            maybe_backfill_editor_layout(fs.clone(), false, true, cx);
+            maybe_backfill_editor_layout(fs.clone(), false, cx);
         });
 
         cx.run_until_parked();
