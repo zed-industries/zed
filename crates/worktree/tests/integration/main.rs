@@ -354,7 +354,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
         .await;
 
     for _ in 0..50 {
-        let found = tree.read_with(cx, |tree, _|{
+        let found = tree.read_with(cx, |tree, _| {
             tree.entry_for_path(rel_path("deps/dep-dir3/src/new.rs"))
                 .is_some()
         });
