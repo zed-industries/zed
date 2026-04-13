@@ -48,7 +48,7 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
+use gpui::{Action, App, Context, Entity, SharedString, UpdateGlobal as _, Window, actions};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -58,9 +58,10 @@ use language_model::{
 };
 use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
+use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{DockPosition, DockSide, LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 use workspace::Workspace;
 
@@ -511,7 +512,14 @@ pub fn init(
     })
     .detach();
 
-    maybe_backfill_editor_layout(fs, is_new_install, cx);
+    let agent_v2_enabled = agent_v2_enabled(cx);
+    if agent_v2_enabled {
+        maybe_backfill_editor_layout(fs, is_new_install, cx);
+    }
+}
+
+fn agent_v2_enabled(cx: &App) -> bool {
+    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
@@ -539,6 +547,7 @@ fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let agent_v2_enabled = agent_v2_enabled(cx);
 
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
@@ -608,7 +617,11 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
 
-        filter.show_namespace("multi_workspace");
+        if agent_v2_enabled {
+            filter.show_namespace("multi_workspace");
+        } else {
+            filter.hide_namespace("multi_workspace");
+        }
     });
 }
 

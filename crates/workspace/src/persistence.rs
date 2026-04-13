@@ -2505,7 +2505,6 @@ mod tests {
             read_multi_workspace_state,
         },
     };
-    use feature_flags::FeatureFlagAppExt;
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
     use project::{Project, ProjectGroupKey};
@@ -2524,10 +2523,6 @@ mod tests {
     #[gpui::test]
     async fn test_multi_workspace_serializes_on_add_and_remove(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let project1 = Project::test(fs.clone(), [], cx).await;
@@ -4082,10 +4077,6 @@ mod tests {
     async fn test_flush_serialization_completes_before_quit(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
@@ -4125,10 +4116,6 @@ mod tests {
     #[gpui::test]
     async fn test_create_workspace_serialization(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
@@ -4181,10 +4168,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_workspace_clears_session_binding(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir = unique_test_dir(&fs, "remove").await;
@@ -4272,10 +4255,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_workspace_not_restored_as_zombie(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir1 = tempfile::TempDir::with_prefix("zombie_test1").unwrap();
@@ -4379,10 +4358,6 @@ mod tests {
     async fn test_pending_removal_tasks_drained_on_flush(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let dir = unique_test_dir(&fs, "pending-removal").await;
         let project1 = Project::test(fs.clone(), [], cx).await;
@@ -4483,10 +4458,6 @@ mod tests {
     async fn test_create_workspace_bounds_observer_uses_fresh_id(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
@@ -4538,10 +4509,6 @@ mod tests {
     #[gpui::test]
     async fn test_flush_serialization_writes_bounds(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir = tempfile::TempDir::with_prefix("flush_bounds_test").unwrap();
@@ -4697,10 +4664,6 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
 
@@ -4913,10 +4876,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_project_group_falls_back_to_neighbor(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-        cx.update(|cx| {
-            cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir_a = unique_test_dir(&fs, "group-a").await;
