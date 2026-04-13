@@ -787,6 +787,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _branch_name: String,
         _worktree_path: PathBuf,
+        _create: bool,
     ) -> BoxFuture<'_, Result<()>> {
         async { Ok(()) }.boxed()
     }

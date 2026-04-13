@@ -4,7 +4,6 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod agent_registry_ui;
-mod branch_names;
 mod buffer_codegen;
 mod completion_provider;
 mod config_options;
@@ -37,6 +36,7 @@ pub mod thread_worktree_archive;
 mod thread_worktree_picker;
 pub mod threads_archive_view;
 mod ui;
+mod worktree_names;
 
 use std::path::PathBuf;
 use std::rc::Rc;

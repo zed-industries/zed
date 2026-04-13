@@ -3097,7 +3097,7 @@ impl AgentPanel {
         worktree_name: Option<String>,
         existing_worktree_names: &[String],
         existing_worktree_paths: &HashSet<PathBuf>,
-        detach_from_ref: Option<String>,
+        base_sha: Option<String>,
         worktree_directory_setting: &str,
         rng: &mut impl rand::Rng,
         cx: &mut Context<Self>,
@@ -3115,7 +3115,7 @@ impl AgentPanel {
         let worktree_name = worktree_name.unwrap_or_else(|| {
             let existing_refs: Vec<&str> =
                 existing_worktree_names.iter().map(|s| s.as_str()).collect();
-            crate::branch_names::generate_branch_name(&existing_refs, rng)
+            crate::worktree_names::generate_worktree_name(&existing_refs, rng)
                 .unwrap_or_else(|| "worktree".to_string())
         });
 
@@ -3127,7 +3127,7 @@ impl AgentPanel {
                     anyhow::bail!("A worktree already exists at {}", new_path.display());
                 }
                 let target = git::repository::CreateWorktreeTarget::Detached {
-                    base_sha: detach_from_ref.clone(),
+                    base_sha: base_sha.clone(),
                 };
                 let receiver = repo.create_worktree(target, new_path.clone());
                 let work_dir = repo.work_directory_abs_path.clone();
@@ -3250,6 +3250,103 @@ impl AgentPanel {
             error_message.push_str(&rollback_failures.join(", "));
         }
         Err(anyhow!(error_message))
+    }
+
+    /// Attempts to check out a branch in a newly created worktree.
+    /// First tries checking out an existing branch, then tries creating a new
+    /// branch. If both fail, the worktree stays in detached HEAD state.
+    async fn try_checkout_branch_in_worktree(
+        repo: &Entity<project::git_store::Repository>,
+        branch_name: &str,
+        worktree_path: &PathBuf,
+        cx: &mut AsyncWindowContext,
+    ) {
+        // First, try checking out the branch (it may already exist).
+        let Ok(receiver) = cx.update(|_, cx| {
+            repo.update(cx, |repo, _cx| {
+                repo.checkout_branch_in_worktree(
+                    branch_name.to_string(),
+                    worktree_path.clone(),
+                    false,
+                )
+            })
+        }) else {
+            log::warn!(
+                "Failed to check out branch {branch_name} for worktree at {}. \
+             Staying in detached HEAD state.",
+                worktree_path.display(),
+            );
+
+            return;
+        };
+
+        let Ok(result) = receiver.await else {
+            log::warn!(
+                "Branch checkout was canceled for worktree at {}. \
+                   Staying in detached HEAD state.",
+                worktree_path.display()
+            );
+
+            return;
+        };
+
+        if let Err(err) = result {
+            log::info!(
+                "Branch '{branch_name}' not found in worktree at {}, \
+                         will try creating it: {err}",
+                worktree_path.display()
+            );
+        } else {
+            log::info!(
+                "Checked out branch '{branch_name}' in worktree at {}",
+                worktree_path.display()
+            );
+
+            return;
+        }
+
+        // Checkout failed, so try creating the branch.
+        let create_result = cx.update(|_, cx| {
+            repo.update(cx, |repo, _cx| {
+                repo.checkout_branch_in_worktree(
+                    branch_name.to_string(),
+                    worktree_path.clone(),
+                    true,
+                )
+            })
+        });
+
+        match create_result {
+            Ok(receiver) => match receiver.await {
+                Ok(Ok(())) => {
+                    log::info!(
+                        "Created and checked out branch '{branch_name}' in worktree at {}",
+                        worktree_path.display()
+                    );
+                }
+                Ok(Err(err)) => {
+                    log::warn!(
+                        "Failed to create branch '{branch_name}' in worktree at {}: {err}. \
+                         Staying in detached HEAD state.",
+                        worktree_path.display()
+                    );
+                }
+                Err(_) => {
+                    log::warn!(
+                        "Branch creation was canceled for worktree at {}. \
+                         Staying in detached HEAD state.",
+                        worktree_path.display()
+                    );
+                }
+            },
+            Err(err) => {
+                log::warn!(
+                    "Failed to dispatch branch creation for worktree at {}: {err}. \
+                     Staying in detached HEAD state.",
+                    worktree_path.display(),
+                );
+            }
+        }
     }
 
     fn set_worktree_creation_error(
@@ -3393,7 +3490,7 @@ impl AgentPanel {
 
                     let mut rng = rand::rng();
 
-                    let (branch_to_checkout, detach_from_ref) =
+                    let (branch_to_checkout, base_sha) =
                         Self::resolve_worktree_branch_target(&branch_target);
 
                     let (creation_infos, path_remapping) =
@@ -3403,7 +3500,7 @@ impl AgentPanel {
                                 worktree_name,
                                 &existing_worktree_names,
                                 &existing_worktree_paths,
-                                detach_from_ref,
+                                base_sha,
                                 &worktree_directory_setting,
                                 &mut rng,
                                 cx,
@@ -3449,44 +3546,13 @@ impl AgentPanel {
 
                     if let Some(ref branch_name) = branch_to_checkout {
                         for (repo, worktree_path) in &repo_paths {
-                            let checkout_result = cx.update(|_, cx| {
-                                repo.update(cx, |repo, _cx| {
-                                    repo.checkout_branch_in_worktree(
-                                        branch_name.clone(),
-                                        worktree_path.clone(),
-                                    )
-                                })
-                            });
-                            match checkout_result {
-                                Ok(receiver) => match receiver.await {
-                                    Ok(Ok(())) => {
-                                        log::info!(
-                                            "Checked out branch '{}' in worktree at {}",
-                                            branch_name,
-                                            worktree_path.display()
-                                        );
-                                    }
-                                    Ok(Err(err)) => {
-                                        log::warn!(
-                                            "Failed to check out branch '{}' in worktree at {}: {err}. Staying in detached HEAD state.",
-                                            branch_name,
-                                            worktree_path.display()
-                                        );
-                                    }
-                                    Err(_) => {
-                                        log::warn!(
-                                            "Branch checkout was canceled for worktree at {}. Staying in detached HEAD state.",
-                                            worktree_path.display()
-                                        );
-                                    }
-                                },
-                                Err(err) => {
-                                    log::warn!(
-                                        "Failed to dispatch branch checkout for worktree at {}: {err}. Staying in detached HEAD state.",
-                                        worktree_path.display()
-                                    );
-                                }
-                            }
+                            Self::try_checkout_branch_in_worktree(
+                                repo,
+                                branch_name,
+                                worktree_path,
+                                cx,
+                            )
+                            .await;
                         }
                     }
 

@@ -6102,25 +6102,26 @@ impl Repository {
         &mut self,
         branch_name: String,
         worktree_path: PathBuf,
+        create: bool,
     ) -> oneshot::Receiver<Result<()>> {
-        self.send_job(
-            Some(format!("git checkout {branch_name}").into()),
-            move |repo, _cx| async move {
-                match repo {
-                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend
-                            .checkout_branch_in_worktree(branch_name, worktree_path)
-                            .await
-                    }
-                    RepositoryState::Remote(_) => {
-                        log::warn!(
-                            "checkout_branch_in_worktree not supported for remote repositories"
-                        );
-                        Ok(())
-                    }
+        let description = if create {
+            format!("git checkout -b {branch_name}")
+        } else {
+            format!("git checkout {branch_name}")
+        };
+        self.send_job(Some(description.into()), move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend
+                        .checkout_branch_in_worktree(branch_name, worktree_path, create)
+                        .await
                 }
-            },
-        )
+                RepositoryState::Remote(_) => {
+                    log::warn!("checkout_branch_in_worktree not supported for remote repositories");
+                    Ok(())
+                }
+            }
+        })
     }
 
     pub fn head_sha(&mut self) -> oneshot::Receiver<Result<Option<String>>> {
