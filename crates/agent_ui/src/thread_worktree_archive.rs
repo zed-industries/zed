@@ -280,19 +280,15 @@ fn remove_empty_parent_dirs_up_to_worktrees_base(
 /// an ancestor of `child_path`, nothing is removed. If any directory is
 /// non-empty (i.e. `std::fs::remove_dir` fails), the walk stops.
 fn remove_empty_ancestors(child_path: &Path, base_path: &Path) {
-    if !child_path.starts_with(base_path) {
-        return;
-    }
-
-    let mut current = child_path.to_path_buf();
-    while let Some(parent) = current.parent().map(Path::to_path_buf) {
-        if parent == *base_path {
+    let mut current = child_path;
+    while let Some(parent) = current.parent() {
+        if parent == base_path {
             break;
         }
         if !parent.starts_with(base_path) {
             break;
         }
-        match std::fs::remove_dir(&parent) {
+        match std::fs::remove_dir(parent) {
             Ok(()) => {
                 log::info!("Removed empty parent directory: {}", parent.display());
             }
