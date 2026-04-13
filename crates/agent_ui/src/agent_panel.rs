@@ -3407,6 +3407,11 @@ impl AgentPanel {
             }
         }
 
+        let project = self
+            .workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone());
+
         let workspace = self.workspace.clone();
         let window_handle = window
             .window_handle()
@@ -3568,6 +3573,7 @@ impl AgentPanel {
                 this,
                 all_paths,
                 window_handle,
+                project,
                 active_file_path,
                 path_remapping,
                 non_git_paths,
@@ -3601,6 +3607,7 @@ impl AgentPanel {
         this: WeakEntity<Self>,
         all_paths: Vec<PathBuf>,
         window_handle: Option<gpui::WindowHandle<workspace::MultiWorkspace>>,
+        project: Option<Entity<Project>>,
         active_file_path: Option<PathBuf>,
         path_remapping: Vec<(PathBuf, PathBuf)>,
         non_git_paths: Vec<PathBuf>,
@@ -3613,62 +3620,119 @@ impl AgentPanel {
         let window_handle = window_handle
             .ok_or_else(|| anyhow!("No window handle available for workspace creation"))?;
 
-        let (workspace_task, modal_workspace) =
-            window_handle.update(cx, |multi_workspace, window, cx| {
-                let path_list = PathList::new(&all_paths);
-                let active_workspace = multi_workspace.workspace().clone();
-                let modal_workspace = active_workspace.clone();
+        let is_remote = match &project {
+            Some(project) => cx.update(|_window, cx| project.read(cx).is_via_remote_server())?,
+            None => false,
+        };
 
-                let task = multi_workspace.find_or_create_workspace(
-                    path_list,
-                    remote_connection_options,
-                    None,
-                    move |connection_options, window, cx| {
-                        remote_connection::connect_with_modal(
-                            &active_workspace,
-                            connection_options,
-                            window,
-                            cx,
-                        )
-                    },
-                    window,
-                    cx,
-                );
-                (task, modal_workspace)
+        let new_workspace = if is_remote {
+            // For remote projects (SSH/devcontainer), reuse the existing
+            // Project entity instead of creating a new connection, which
+            // would kill the proxy (zed#53624).
+            let project = project.context("Remote project required")?;
+
+            for path in &all_paths {
+                let path = path.clone();
+                let project = project.clone();
+                cx.update(|_window, cx| {
+                    project.update(cx, |project, cx| {
+                        project.find_or_create_worktree(&path, true, cx)
+                    })
+                })?
+                .await?;
+            }
+
+            {
+                let project = project.clone();
+                cx.update(|_window, cx| project.read(cx).wait_for_initial_scan(cx))?
+            }
+            .await;
+
+            let new_workspace = window_handle.update(cx, |multi_workspace, window, cx| {
+                let app_state = multi_workspace.workspace().read(cx).app_state().clone();
+                let workspace =
+                    cx.new(|cx| Workspace::new(None, project, app_state, window, cx));
+                multi_workspace.activate(workspace.clone(), window, cx);
+                workspace
             })?;
 
-        let result = workspace_task.await;
-        remote_connection::dismiss_connection_modal(&modal_workspace, cx);
-        let new_workspace = result?;
+            // Create the AgentPanel directly — the background panels task
+            // deadlocks on shared-project workspaces (zed#53624).
+            let has_panel = new_workspace.update(cx, |workspace, cx| {
+                workspace.panel::<AgentPanel>(cx).is_some()
+            });
+            if !has_panel {
+                window_handle.update(cx, |_multi_workspace, window, cx| {
+                    new_workspace.update(cx, |workspace, cx| {
+                        let agent_panel =
+                            cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+                        workspace.add_panel(agent_panel, window, cx);
+                    });
+                })?;
+            }
 
-        let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
+            new_workspace
+        } else {
+            let (workspace_task, modal_workspace) =
+                window_handle.update(cx, |multi_workspace, window, cx| {
+                    let path_list = PathList::new(&all_paths);
+                    let active_workspace = multi_workspace.workspace().clone();
+                    let modal_workspace = active_workspace.clone();
 
-        if let Some(task) = panels_task {
-            task.await.log_err();
-        }
+                    let task = multi_workspace.find_or_create_workspace(
+                        path_list,
+                        remote_connection_options,
+                        None,
+                        move |connection_options, window, cx| {
+                            remote_connection::connect_with_modal(
+                                &active_workspace,
+                                connection_options,
+                                window,
+                                cx,
+                            )
+                        },
+                        window,
+                        cx,
+                    );
+                    (task, modal_workspace)
+                })?;
 
-        new_workspace
-            .update(cx, |workspace, cx| {
-                workspace.project().read(cx).wait_for_initial_scan(cx)
-            })
-            .await;
+            let result = workspace_task.await;
+            remote_connection::dismiss_connection_modal(&modal_workspace, cx);
+            let new_workspace = result?;
 
-        new_workspace
-            .update(cx, |workspace, cx| {
-                let repos = workspace
-                    .project()
-                    .read(cx)
-                    .repositories(cx)
-                    .values()
-                    .cloned()
-                    .collect::<Vec<_>>();
+            let panels_task =
+                new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
 
-                let tasks = repos
-                    .into_iter()
-                    .map(|repo| repo.update(cx, |repo, _| repo.barrier()));
-                futures::future::join_all(tasks)
-            })
-            .await;
+            if let Some(task) = panels_task {
+                task.await.log_err();
+            }
+
+            new_workspace
+                .update(cx, |workspace, cx| {
+                    workspace.project().read(cx).wait_for_initial_scan(cx)
+                })
+                .await;
+
+            new_workspace
+                .update(cx, |workspace, cx| {
+                    let repos = workspace
+                        .project()
+                        .read(cx)
+                        .repositories(cx)
+                        .values()
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    let tasks = repos
+                        .into_iter()
+                        .map(|repo| repo.update(cx, |repo, _| repo.barrier()));
+                    futures::future::join_all(tasks)
+                })
+                .await;
+
+            new_workspace
+        };
 
         let initial_content = AgentInitialContent::ContentBlock {
             blocks: content,
@@ -3742,7 +3806,6 @@ impl AgentPanel {
                 // (equivalent to cmd-esc fullscreen behavior).
                 // This must happen after focus_panel, which activates
                 // and opens the panel in the dock.
-
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
                         panel.external_thread(
