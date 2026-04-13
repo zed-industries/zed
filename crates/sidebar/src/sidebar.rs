@@ -3217,7 +3217,7 @@ impl Sidebar {
 
                 if !items_to_close.is_empty() {
                     let task = pane.update(cx, |pane, cx| {
-                        pane.close_items(window, cx, SaveIntent::Skip, &|item_id| {
+                        pane.close_items(window, cx, SaveIntent::Close, &|item_id| {
                             items_to_close.contains(&item_id)
                         })
                     });
@@ -3226,14 +3226,10 @@ impl Sidebar {
             }
         }
 
-        if !workspaces_to_remove.is_empty() || !close_item_tasks.is_empty() {
+        if !workspaces_to_remove.is_empty() {
             let multi_workspace = self.multi_workspace.upgrade().unwrap();
             let session_id = session_id.clone();
-            let has_workspaces_to_remove = !workspaces_to_remove.is_empty();
 
-            // For the workspace-removal fallback, use the neighbor's workspace
-            // paths if available, otherwise fall back to the project group key
-            // of the first workspace being removed.
             let fallback_paths = neighbor
                 .as_ref()
                 .map(|(_, paths)| paths.clone())
@@ -3258,31 +3254,56 @@ impl Sidebar {
             let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
             let thread_folder_paths = thread_folder_paths.clone();
             cx.spawn_in(window, async move |this, cx| {
+                if !remove_task.await? {
+                    return anyhow::Ok(());
+                }
+
                 for task in close_item_tasks {
                     let result: anyhow::Result<()> = task.await;
                     result.log_err();
                 }
-                let removed = remove_task.await?;
-                // `removed` is false either because the user cancelled the
-                // save dialog, or because there were no workspaces to remove
-                // (only close_item_tasks). In the latter case we still need
-                // to proceed with archiving.
-                if removed || !has_workspaces_to_remove {
-                    this.update_in(cx, |this, window, cx| {
-                        let in_flight = thread_id.and_then(|tid| {
-                            this.start_archive_worktree_task(tid, roots_to_archive, cx)
-                        });
-                        this.archive_and_activate(
-                            &session_id,
-                            thread_id,
-                            neighbor_metadata.as_ref(),
-                            thread_folder_paths.as_ref(),
-                            in_flight,
-                            window,
-                            cx,
-                        );
-                    })?;
+
+                this.update_in(cx, |this, window, cx| {
+                    let in_flight = thread_id.and_then(|tid| {
+                        this.start_archive_worktree_task(tid, roots_to_archive, cx)
+                    });
+                    this.archive_and_activate(
+                        &session_id,
+                        thread_id,
+                        neighbor_metadata.as_ref(),
+                        thread_folder_paths.as_ref(),
+                        in_flight,
+                        window,
+                        cx,
+                    );
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        } else if !close_item_tasks.is_empty() {
+            let session_id = session_id.clone();
+            let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
+            let thread_folder_paths = thread_folder_paths.clone();
+            cx.spawn_in(window, async move |this, cx| {
+                for task in close_item_tasks {
+                    let result: anyhow::Result<()> = task.await;
+                    result.log_err();
                 }
+
+                this.update_in(cx, |this, window, cx| {
+                    let in_flight = thread_id.and_then(|tid| {
+                        this.start_archive_worktree_task(tid, roots_to_archive, cx)
+                    });
+                    this.archive_and_activate(
+                        &session_id,
+                        thread_id,
+                        neighbor_metadata.as_ref(),
+                        thread_folder_paths.as_ref(),
+                        in_flight,
+                        window,
+                        cx,
+                    );
+                })?;
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);

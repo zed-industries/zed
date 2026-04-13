@@ -270,7 +270,7 @@ async fn remove_empty_parent_dirs_up_to_worktrees_base(
 ) {
     let worktrees_base = cx.update(|cx| {
         let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-        worktrees_directory_for_repo(&main_repo_path, setting).ok()
+        worktrees_directory_for_repo(&main_repo_path, setting).log_err()
     });
 
     if let Some(worktrees_base) = worktrees_base {
