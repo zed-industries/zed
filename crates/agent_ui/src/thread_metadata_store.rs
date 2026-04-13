@@ -274,7 +274,6 @@ pub struct ThreadMetadata {
 impl ThreadMetadata {
     pub fn new_draft(
         thread_id: ThreadId,
-        session_id: Option<acp::SessionId>,
         agent_id: AgentId,
         title: Option<SharedString>,
         worktree_paths: WorktreePaths,
@@ -283,7 +282,7 @@ impl ThreadMetadata {
         let now = Utc::now();
         Self {
             thread_id,
-            session_id,
+            session_id: None,
             agent_id,
             title,
             updated_at: now,
