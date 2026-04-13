@@ -280,20 +280,28 @@ fn remove_empty_parent_dirs_up_to_worktrees_base(
         worktrees_directory_for_repo(main_repo_path, setting).ok()
     });
 
-    let Some(worktrees_base) = worktrees_base else {
-        return;
-    };
+    if let Some(worktrees_base) = worktrees_base {
+        remove_empty_ancestors(root_path, &worktrees_base);
+    }
+}
 
-    if !root_path.starts_with(&worktrees_base) {
+/// Removes empty directories between `child_path` and `base_path`.
+///
+/// Walks upward from `child_path`, removing each empty parent directory,
+/// stopping before `base_path` itself is removed. If `base_path` is not
+/// an ancestor of `child_path`, nothing is removed. If any directory is
+/// non-empty (i.e. `std::fs::remove_dir` fails), the walk stops.
+fn remove_empty_ancestors(child_path: &Path, base_path: &Path) {
+    if !child_path.starts_with(base_path) {
         return;
     }
 
-    let mut current = root_path.to_path_buf();
+    let mut current = child_path.to_path_buf();
     while let Some(parent) = current.parent().map(Path::to_path_buf) {
-        if parent == worktrees_base {
+        if parent == *base_path {
             break;
         }
-        if !parent.starts_with(&worktrees_base) {
+        if !parent.starts_with(base_path) {
             break;
         }
         match std::fs::remove_dir(&parent) {
@@ -774,4 +782,121 @@ fn current_app_state(cx: &mut AsyncApp) -> Option<Arc<AppState>> {
             .next()
             .map(|workspace| workspace.read(cx).app_state().clone())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_remove_empty_ancestors_single_empty_parent() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        let branch_dir = base.join("my-branch");
+        let child = branch_dir.join("zed");
+
+        std::fs::create_dir_all(&child).unwrap();
+        // Simulate git worktree remove having deleted the child.
+        std::fs::remove_dir(&child).unwrap();
+
+        assert!(branch_dir.exists());
+        remove_empty_ancestors(&child, &base);
+        assert!(!branch_dir.exists(), "empty parent should be removed");
+        assert!(base.exists(), "base directory should be preserved");
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_nested_empty_parents() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        // Branch name with slash creates nested dirs: fix/thing/zed
+        let child = base.join("fix").join("thing").join("zed");
+
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::remove_dir(&child).unwrap();
+
+        assert!(base.join("fix").join("thing").exists());
+        remove_empty_ancestors(&child, &base);
+        assert!(!base.join("fix").join("thing").exists());
+        assert!(
+            !base.join("fix").exists(),
+            "all empty ancestors should be removed"
+        );
+        assert!(base.exists(), "base directory should be preserved");
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_stops_at_non_empty_parent() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        let branch_dir = base.join("my-branch");
+        let child = branch_dir.join("zed");
+        let sibling = branch_dir.join("other-file.txt");
+
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(&sibling, "content").unwrap();
+        std::fs::remove_dir(&child).unwrap();
+
+        remove_empty_ancestors(&child, &base);
+        assert!(branch_dir.exists(), "non-empty parent should be preserved");
+        assert!(sibling.exists());
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_not_an_ancestor() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        let unrelated = tmp.path().join("other-place").join("branch").join("zed");
+
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(&unrelated).unwrap();
+        std::fs::remove_dir(&unrelated).unwrap();
+
+        let parent = unrelated.parent().unwrap();
+        assert!(parent.exists());
+        remove_empty_ancestors(&unrelated, &base);
+        assert!(parent.exists(), "should not remove dirs outside base");
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_child_is_direct_child_of_base() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        let child = base.join("zed");
+
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::remove_dir(&child).unwrap();
+
+        remove_empty_ancestors(&child, &base);
+        assert!(base.exists(), "base directory should be preserved");
+    }
+
+    #[test]
+    fn test_remove_empty_ancestors_partially_non_empty_chain() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path().join("worktrees");
+        // Structure: base/a/b/c/zed where a/ has another child besides b/
+        let child = base.join("a").join("b").join("c").join("zed");
+        let other_in_a = base.join("a").join("other-branch");
+
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::create_dir_all(&other_in_a).unwrap();
+        std::fs::remove_dir(&child).unwrap();
+
+        remove_empty_ancestors(&child, &base);
+        assert!(
+            !base.join("a").join("b").join("c").exists(),
+            "c/ should be removed (empty)"
+        );
+        assert!(
+            !base.join("a").join("b").exists(),
+            "b/ should be removed (empty)"
+        );
+        assert!(
+            base.join("a").exists(),
+            "a/ should be preserved (has other-branch sibling)"
+        );
+        assert!(other_in_a.exists());
+    }
 }
