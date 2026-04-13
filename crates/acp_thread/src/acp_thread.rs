@@ -2162,17 +2162,13 @@ impl AcpThread {
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
-        let message_id = if self.connection.truncate(&self.session_id, cx).is_some() {
-            Some(UserMessageId::new())
-        } else {
-            None
-        };
+        let message_id = UserMessageId::new();
 
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
                 this.push_entry(
                     AgentThreadEntry::UserMessage(UserMessage {
-                        id: message_id.clone(),
+                        id: Some(message_id.clone()),
                         content: block,
                         chunks: message,
                         checkpoint: None,
@@ -4469,7 +4465,7 @@ mod tests {
 
         fn prompt(
             &self,
-            _id: Option<UserMessageId>,
+            _id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
