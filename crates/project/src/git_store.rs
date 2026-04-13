@@ -6098,6 +6098,31 @@ impl Repository {
         )
     }
 
+    pub fn checkout_branch_in_worktree(
+        &mut self,
+        branch_name: String,
+        worktree_path: PathBuf,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.send_job(
+            Some(format!("git checkout {branch_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend
+                            .checkout_branch_in_worktree(branch_name, worktree_path)
+                            .await
+                    }
+                    RepositoryState::Remote(_) => {
+                        log::warn!(
+                            "checkout_branch_in_worktree not supported for remote repositories"
+                        );
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     pub fn head_sha(&mut self) -> oneshot::Receiver<Result<Option<String>>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {

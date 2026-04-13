@@ -320,11 +320,9 @@ impl ThreadBranchPickerDelegate {
     fn branch_aside_text(&self, branch_name: &str, is_remote: bool) -> Option<SharedString> {
         if self.is_branch_occupied(branch_name) {
             Some(
-                format!(
-                    "This branch is already checked out in another worktree. \
-                     A new branch will be created from {branch_name}."
-                )
-                .into(),
+                "This branch is already checked out in another worktree. \
+                 The new worktree may start in detached HEAD state."
+                    .into(),
             )
         } else if is_remote {
             Some("A new local branch will be created from this remote branch.".into())
@@ -726,28 +724,20 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                     .default_branch_name
                     .as_ref()
                     .filter(|name| *name != &self.current_branch_name)?;
-                let is_occupied = self.is_branch_occupied(default_branch_name);
-
-                let item = ListItem::new("default-branch")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .child(Label::new(default_branch_name.clone()));
 
                 Some(
-                    if is_occupied {
-                        item.start_slot(Icon::new(IconName::GitBranchPlus).color(Color::Muted))
-                    } else {
-                        item
-                    }
-                    .into_any_element(),
+                    ListItem::new("default-branch")
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .child(Label::new(default_branch_name.clone()))
+                        .into_any_element(),
                 )
             }
             ThreadBranchEntry::ExistingBranch {
                 branch, positions, ..
             } => {
                 let branch_name = branch.name().to_string();
-                let needs_new_branch = self.is_branch_occupied(&branch_name) || branch.is_remote();
 
                 Some(
                     ListItem::new(SharedString::from(format!("branch-{ix}")))
@@ -762,7 +752,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
                                     HighlightedLabel::new(branch_name, positions.clone())
                                         .truncate(),
                                 )
-                                .when(needs_new_branch, |item| {
+                                .when(branch.is_remote(), |item| {
                                     item.child(
                                         Icon::new(IconName::GitBranchPlus)
                                             .size(IconSize::Small)
