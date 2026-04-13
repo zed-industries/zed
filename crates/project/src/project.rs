@@ -51,6 +51,7 @@ pub use git_store::{
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
+pub use worktree_store::WorktreePaths;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -246,6 +247,7 @@ pub struct Project {
     toolchain_store: Option<Entity<ToolchainStore>>,
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
+    last_worktree_paths: WorktreePaths,
 }
 
 struct DownloadingFile {
@@ -361,6 +363,9 @@ pub enum Event {
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedRootRepoCommonDir(WorktreeId),
+    WorktreePathsChanged {
+        old_worktree_paths: WorktreePaths,
+    },
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -1339,6 +1344,7 @@ impl Project {
 
                 agent_location: None,
                 downloading_files: Default::default(),
+                last_worktree_paths: WorktreePaths::default(),
             }
         })
     }
@@ -1576,6 +1582,7 @@ impl Project {
                 toolchain_store: Some(toolchain_store),
                 agent_location: None,
                 downloading_files: Default::default(),
+                last_worktree_paths: WorktreePaths::default(),
             };
 
             // remote server -> local machine handlers
@@ -1857,6 +1864,7 @@ impl Project {
                 toolchain_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
+                last_worktree_paths: WorktreePaths::default(),
             };
             project.set_role(role, cx);
             for worktree in worktrees {
@@ -2065,6 +2073,40 @@ impl Project {
                 .await;
         }
         project
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn add_test_remote_worktree(
+        &mut self,
+        abs_path: &str,
+        cx: &mut Context<Self>,
+    ) -> Entity<Worktree> {
+        use rpc::NoopProtoClient;
+        use util::paths::PathStyle;
+
+        let root_name = std::path::Path::new(abs_path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        let client = AnyProtoClient::new(NoopProtoClient::new());
+        let worktree = Worktree::remote(
+            0,
+            ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 100 + self.visible_worktrees(cx).count() as u64,
+                root_name,
+                visible: true,
+                abs_path: abs_path.to_string(),
+                root_repo_common_dir: None,
+            },
+            client,
+            PathStyle::Posix,
+            cx,
+        );
+        self.worktree_store
+            .update(cx, |store, cx| store.add(&worktree, cx));
+        worktree
     }
 
     #[inline]
@@ -2351,20 +2393,13 @@ impl Project {
             .find(|tree| tree.read(cx).root_name() == root_name)
     }
 
-    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
-        let roots = self
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                let snapshot = worktree.read(cx).snapshot();
-                snapshot
-                    .root_repo_common_dir()
-                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
-                    .unwrap_or(snapshot.abs_path().to_path_buf())
-            })
-            .collect::<Vec<_>>();
-        let host = self.remote_connection_options(cx);
-        let path_list = PathList::new(&roots);
-        ProjectGroupKey::new(host, path_list)
+    fn emit_group_key_changed_if_needed(&mut self, cx: &mut Context<Self>) {
+        let new_worktree_paths = self.worktree_paths(cx);
+        if new_worktree_paths != self.last_worktree_paths {
+            let old_worktree_paths =
+                std::mem::replace(&mut self.last_worktree_paths, new_worktree_paths);
+            cx.emit(Event::WorktreePathsChanged { old_worktree_paths });
+        }
     }
 
     #[inline]
@@ -2566,7 +2601,7 @@ impl Project {
         path: ProjectPath,
         trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let entry = self.entry_for_path(&path, cx)?;
         self.delete_entry(entry.id, trash, cx)
     }
@@ -2577,11 +2612,32 @@ impl Project {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         cx.emit(Event::DeletedEntry(worktree.read(cx).id(), entry_id));
         worktree.update(cx, |worktree, cx| {
             worktree.delete_entry(entry_id, trash, cx)
+        })
+    }
+
+    #[inline]
+    pub fn restore_entry(
+        &self,
+        worktree_id: WorktreeId,
+        trash_entry: TrashedEntry,
+        cx: &mut Context<'_, Self>,
+    ) -> Task<Result<ProjectPath>> {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("No worktree for id {worktree_id:?}")));
+        };
+
+        cx.spawn(async move |_, cx| {
+            Worktree::restore_entry(trash_entry, worktree, cx)
+                .await
+                .map(|rel_path_buf| ProjectPath {
+                    worktree_id: worktree_id,
+                    path: Arc::from(rel_path_buf.as_rel_path()),
+                })
         })
     }
 
@@ -3662,9 +3718,11 @@ impl Project {
             WorktreeStoreEvent::WorktreeAdded(worktree) => {
                 self.on_worktree_added(worktree, cx);
                 cx.emit(Event::WorktreeAdded(worktree.read(cx).id()));
+                self.emit_group_key_changed_if_needed(cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => {
                 cx.emit(Event::WorktreeRemoved(*id));
+                self.emit_group_key_changed_if_needed(cx);
             }
             WorktreeStoreEvent::WorktreeReleased(_, id) => {
                 self.on_worktree_released(*id, cx);
@@ -3684,6 +3742,7 @@ impl Project {
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(_, _) => {}
             WorktreeStoreEvent::WorktreeUpdatedRootRepoCommonDir(worktree_id) => {
                 cx.emit(Event::WorktreeUpdatedRootRepoCommonDir(*worktree_id));
+                self.emit_group_key_changed_if_needed(cx);
             }
         }
     }
@@ -6088,6 +6147,14 @@ impl Project {
                 worktree.read(cx).entry_for_path(rel_path).is_some()
             })
     }
+
+    pub fn worktree_paths(&self, cx: &App) -> WorktreePaths {
+        self.worktree_store.read(cx).paths(cx)
+    }
+
+    pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
+        ProjectGroupKey::from_project(self, cx)
+    }
 }
 
 /// Identifies a project group by a set of paths the workspaces in this group
@@ -6095,7 +6162,7 @@ impl Project {
 ///
 /// Paths are mapped to their main worktree path first so we can group
 /// workspaces by main repos.
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Debug, Default)]
 pub struct ProjectGroupKey {
     /// The paths of the main worktrees for this project group.
     paths: PathList,
@@ -6110,18 +6177,22 @@ impl ProjectGroupKey {
         Self { paths, host }
     }
 
-    pub fn display_name(&self) -> SharedString {
-        let mut names = Vec::with_capacity(self.paths.paths().len());
-        for abs_path in self.paths.paths() {
-            if let Some(name) = abs_path.file_name() {
-                names.push(name.to_string_lossy().to_string());
-            }
+    pub fn from_project(project: &Project, cx: &App) -> Self {
+        let paths = project.worktree_paths(cx);
+        let host = project.remote_connection_options(cx);
+        Self {
+            paths: paths.main_worktree_path_list().clone(),
+            host,
         }
-        if names.is_empty() {
-            // TODO: Can we do something better in this case?
-            "Empty Workspace".into()
-        } else {
-            names.join(", ").into()
+    }
+
+    pub fn from_worktree_paths(
+        paths: &WorktreePaths,
+        host: Option<RemoteConnectionOptions>,
+    ) -> Self {
+        Self {
+            paths: paths.main_worktree_path_list().clone(),
+            host,
         }
     }
 
@@ -6129,9 +6200,42 @@ impl ProjectGroupKey {
         &self.paths
     }
 
+    pub fn display_name(
+        &self,
+        path_detail_map: &std::collections::HashMap<PathBuf, usize>,
+    ) -> SharedString {
+        let mut names = Vec::with_capacity(self.paths.paths().len());
+        for abs_path in self.paths.ordered_paths() {
+            let detail = path_detail_map.get(abs_path).copied().unwrap_or(0);
+            let suffix = path_suffix(abs_path, detail);
+            if !suffix.is_empty() {
+                names.push(suffix);
+            }
+        }
+        if names.is_empty() {
+            "Empty Workspace".into()
+        } else {
+            names.join(", ").into()
+        }
+    }
+
     pub fn host(&self) -> Option<RemoteConnectionOptions> {
         self.host.clone()
     }
+}
+
+pub fn path_suffix(path: &Path, detail: usize) -> String {
+    let mut components: Vec<_> = path
+        .components()
+        .rev()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy()),
+            _ => None,
+        })
+        .take(detail + 1)
+        .collect();
+    components.reverse();
+    components.join("/")
 }
 
 pub struct PathMatchCandidateSet {

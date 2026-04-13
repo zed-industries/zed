@@ -378,6 +378,7 @@ impl MarkdownCell {
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
+            editor.disable_mouse_wheel_zoom();
             editor
         });
 
@@ -641,6 +642,7 @@ impl CodeCell {
                 ..Default::default()
             };
 
+            editor.disable_mouse_wheel_zoom();
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);
             editor.set_use_modal_editing(true);
@@ -718,6 +720,7 @@ impl CodeCell {
                 ..Default::default()
             };
 
+            editor.disable_mouse_wheel_zoom();
             editor.set_text(source.clone(), window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_text_style_refinement(refinement);

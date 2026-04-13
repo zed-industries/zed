@@ -4416,7 +4416,7 @@ impl LspStore {
                     worktree::Event::UpdatedGitRepositories(_)
                     | worktree::Event::DeletedEntry(_)
                     | worktree::Event::Deleted
-                    | worktree::Event::UpdatedRootRepoCommonDir => {}
+                    | worktree::Event::UpdatedRootRepoCommonDir { .. } => {}
                 })
                 .detach()
             }

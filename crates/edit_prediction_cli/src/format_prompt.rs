@@ -43,7 +43,7 @@ pub async fn run_format_prompt(
             let prompt = TeacherPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: String::new(),
+                expected_output: None,
                 rejected_output: None,
                 prefill: None,
                 provider: args.provider,
@@ -61,7 +61,7 @@ pub async fn run_format_prompt(
                 TeacherMultiRegionPrompt::format_prompt(example, editable_range, context_range);
             example.prompt = Some(ExamplePrompt {
                 input: prompt,
-                expected_output: String::new(),
+                expected_output: None,
                 rejected_output: None,
                 prefill: None,
                 provider: args.provider,
@@ -85,8 +85,7 @@ pub async fn run_format_prompt(
                         zeta_format,
                     )
                     .ok()
-                })
-                .unwrap_or_default();
+                });
 
             let rejected_output = example.spec.rejected_patch.as_ref().and_then(|patch| {
                 zeta2_output_for_patch(prompt_inputs, patch, None, zeta_format).ok()

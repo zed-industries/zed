@@ -183,8 +183,6 @@ members = [
     "crates/snippets_ui",
     "crates/sqlez",
     "crates/sqlez_macros",
-    "crates/story",
-    "crates/storybook",
     "crates/streaming_diff",
     "crates/sum_tree",
     "crates/svg_preview",
@@ -297,6 +295,7 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 compliance = { path = "tooling/compliance" }
 component = { path = "crates/component" }
 component_preview = { path = "crates/component_preview" }
+console = "0.16"
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
 copilot_chat = { path = "crates/copilot_chat" }
@@ -315,6 +314,7 @@ deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
+dialoguer = { version = "0.12", default-features = false }
 editor = { path = "crates/editor" }
 encoding_selector = { path = "crates/encoding_selector" }
 env_var = { path = "crates/env_var" }
@@ -437,7 +437,6 @@ snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
 sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
-story = { path = "crates/story" }
 streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 codestral = { path = "crates/codestral" }
@@ -574,7 +573,7 @@ encoding_rs = "0.8"
 exec = "0.3.1"
 fancy-regex = "0.17.0"
 fork = "0.4.0"
-futures = "0.3"
+futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
@@ -935,7 +934,6 @@ session = { codegen-units = 1 }
 sidebar = { codegen-units = 1 }
 snippet = { codegen-units = 1 }
 snippets_ui = { codegen-units = 1 }
-story = { codegen-units = 1 }
 telemetry_events = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }

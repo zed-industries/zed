@@ -2620,6 +2620,18 @@ impl CollabPanel {
         cx.write_to_clipboard(item)
     }
 
+    fn render_disabled_by_organization(&mut self, _cx: &mut Context<Self>) -> Div {
+        v_flex()
+            .p_4()
+            .gap_4()
+            .size_full()
+            .text_center()
+            .justify_center()
+            .child(Label::new(
+                "Collaboration is disabled for this organization.",
+            ))
+    }
+
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
@@ -3645,6 +3657,12 @@ impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = *self.client.status().borrow();
 
+        let is_collaboration_disabled = self
+            .user_store
+            .read(cx)
+            .current_organization_configuration()
+            .is_some_and(|config| !config.is_collaboration_enabled);
+
         v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
@@ -3664,7 +3682,9 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if !status.is_or_was_connected() || status.is_signing_in() {
+            .child(if is_collaboration_disabled {
+                self.render_disabled_by_organization(cx)
+            } else if !status.is_or_was_connected() || status.is_signing_in() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)

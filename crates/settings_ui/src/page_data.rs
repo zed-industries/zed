@@ -80,7 +80,7 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
 }
 
 fn general_page() -> SettingsPage {
-    fn general_settings_section() -> [SettingsPageItem; 8] {
+    fn general_settings_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -138,6 +138,27 @@ fn general_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "CLI Default Open Behavior",
+                description: "How `zed <path>` opens directories when no `-e` or `-n` flag is specified.",
+                field: Box::new(SettingField {
+                    json_path: Some("cli_default_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .cli_default_open_behavior
+                            .as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.workspace.cli_default_open_behavior = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1571,7 +1592,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn scrolling_section() -> [SettingsPageItem; 8] {
+    fn scrolling_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Scrolling"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1627,6 +1648,19 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.scroll_sensitivity.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.scroll_sensitivity = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Mouse Wheel Zoom",
+                description: "Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key.",
+                field: Box::new(SettingField {
+                    json_path: Some("mouse_wheel_zoom"),
+                    pick: |settings_content| settings_content.editor.mouse_wheel_zoom.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.mouse_wheel_zoom = value;
                     },
                 }),
                 metadata: None,
@@ -1736,7 +1770,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn hover_popover_section() -> [SettingsPageItem; 3] {
+    fn hover_popover_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Hover Popover"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1761,6 +1795,35 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| settings_content.editor.hover_popover_delay.as_ref(),
                     write: |settings_content, value| {
                         settings_content.editor.hover_popover_delay = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sticky",
+                description: "Whether the hover popover sticks when the mouse moves toward it, allowing interaction with its contents.",
+                field: Box::new(SettingField {
+                    json_path: Some("hover_popover_sticky"),
+                    pick: |settings_content| settings_content.editor.hover_popover_sticky.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.editor.hover_popover_sticky = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            // todo(settings ui): add units to this number input
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hiding Delay",
+                description: "Time to wait in milliseconds before hiding the hover popover after the mouse moves away.",
+                field: Box::new(SettingField {
+                    json_path: Some("hover_popover_hiding_delay"),
+                    pick: |settings_content| {
+                        settings_content.editor.hover_popover_hiding_delay.as_ref()
+                    },
+                    write: |settings_content, value| {
+                        settings_content.editor.hover_popover_hiding_delay = value;
                     },
                 }),
                 metadata: None,
@@ -7186,7 +7249,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 2] {
+    fn general_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7201,6 +7264,19 @@ fn ai_page(cx: &App) -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar Side",
+                description: "Which side of the window the threads sidebar appears on.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.sidebar_side"),
+                    pick: |settings_content| settings_content.agent.as_ref()?.sidebar_side.as_ref(),
+                    write: |settings_content, value| {
+                        settings_content.agent.get_or_insert_default().sidebar_side = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }

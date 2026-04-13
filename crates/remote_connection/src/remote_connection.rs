@@ -574,6 +574,23 @@ pub fn connect_with_modal(
     })
 }
 
+/// Dismisses any active [`RemoteConnectionModal`] on the given workspace.
+///
+/// This should be called after a remote connection attempt completes
+/// (success or failure) when the modal was shown on a workspace that may
+/// outlive the connection flow — for example, when the modal is shown
+/// on a local workspace before switching to a newly-created remote
+/// workspace.
+pub fn dismiss_connection_modal(workspace: &Entity<Workspace>, cx: &mut gpui::AsyncWindowContext) {
+    workspace
+        .update_in(cx, |workspace, _window, cx| {
+            if let Some(modal) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                modal.update(cx, |modal, cx| modal.finished(cx));
+            }
+        })
+        .ok();
+}
+
 /// Creates a [`RemoteClient`] by reusing an existing connection from the
 /// global pool. No interactive UI is shown. This should only be called
 /// when [`remote::has_active_connection`] returns `true`.
