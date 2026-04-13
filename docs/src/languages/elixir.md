@@ -21,7 +21,7 @@ Furthermore, the extension provides support for [EEx](https://hexdocs.pm/eex/EEx
 
 ## Language Servers
 
-The Elixir extension offers language server support for Dexter, ElixirLS, Expert, Next LS, and Lexical. By default, only ElixirLS is enabled. You can change or disable the enabled language servers in your settings ({#kb zed::OpenSettings}) under Languages > Elixir/EEx/HEEx or directly within your settings file.
+The Elixir extension offers language server support for ElixirLS, Expert, Dexter, Next LS, and Lexical. By default, only ElixirLS is enabled. You can change or disable the enabled language servers in your settings ({#kb zed::OpenSettings}) under Languages > Elixir/EEx/HEEx or directly within your settings file.
 
 Some of the language servers can also accept initialization or workspace configuration options. See the sections below for an outline of what each server supports. The configuration can be passed in your settings file via `lsp.{language-server-id}.initialization_options` and `lsp.{language-server-id}.settings` respectively.
 
@@ -49,7 +49,9 @@ Enable Dexter by adding the following to your settings file:
 
 The Dexter binary will be downloaded automatically on first use. If you already have Dexter installed (e.g. via [mise](https://mise.jdx.dev/)), the extension will use your local binary from PATH instead.
 
-Dexter can accept initialization options. The following example disables following `defdelegate` to the target function:
+Dexter can accept initialization options.
+
+The following example disables following `defdelegate` to the target function:
 
 ```json [settings]
   "lsp": {
