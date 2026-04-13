@@ -3157,26 +3157,25 @@ impl Sidebar {
         // and blocking git worktree removal indefinitely.
         let mut workspaces_to_remove: Vec<Entity<Workspace>> =
             workspace_to_remove.into_iter().collect();
+
         if let Some(multi_workspace) = self.multi_workspace.upgrade() {
             let mw = multi_workspace.read(cx);
             for root in &roots_to_archive {
                 for workspace in mw.workspaces() {
-                    if workspaces_to_remove.contains(workspace) {
-                        continue;
-                    }
-                    let has_worktree = workspace
-                        .read(cx)
-                        .project()
-                        .read(cx)
-                        .visible_worktrees(cx)
-                        .any(|wt| wt.read(cx).abs_path().as_ref() == root.root_path.as_path());
-                    if !has_worktree {
-                        continue;
-                    }
-                    let group_key = workspace.read(cx).project_group_key(cx);
-                    let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
-                    if root_paths != *group_key.path_list() {
-                        workspaces_to_remove.push(workspace.clone());
+                    if !workspaces_to_remove.contains(workspace)
+                        && !workspace
+                            .read(cx)
+                            .project()
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .any(|wt| wt.read(cx).abs_path().as_ref() == root.root_path.as_path())
+                    {
+                        let group_key = workspace.read(cx).project_group_key(cx);
+                        let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
+
+                        if root_paths != *group_key.path_list() {
+                            workspaces_to_remove.push(workspace.clone());
+                        }
                     }
                 }
             }
