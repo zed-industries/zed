@@ -681,3 +681,127 @@ fn current_app_state(cx: &mut AsyncApp) -> Option<Arc<AppState>> {
             .map(|workspace| workspace.read(cx).app_state().clone())
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use git::repository::Worktree as GitWorktree;
+    use gpui::TestAppContext;
+    use project::Project;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_returns_none_for_main_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // The main worktree should NOT produce a root plan.
+        workspace.read_with(cx, |_workspace, cx| {
+            let plan = build_root_plan(Path::new("/project"), &[workspace.clone()], cx);
+            assert!(
+                plan.is_none(),
+                "build_root_plan should return None for a main worktree",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_returns_some_for_linked_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/linked-worktree"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project"), Path::new("/linked-worktree")],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |_workspace, cx| {
+            // The linked worktree SHOULD produce a root plan.
+            let plan = build_root_plan(Path::new("/linked-worktree"), &[workspace.clone()], cx);
+            assert!(
+                plan.is_some(),
+                "build_root_plan should return Some for a linked worktree",
+            );
+            let plan = plan.unwrap();
+            assert_eq!(plan.root_path, PathBuf::from("/linked-worktree"));
+            assert_eq!(plan.main_repo_path, PathBuf::from("/project"));
+
+            // The main worktree should still return None.
+            let main_plan = build_root_plan(Path::new("/project"), &[workspace.clone()], cx);
+            assert!(
+                main_plan.is_none(),
+                "build_root_plan should return None for the main worktree \
+                 even when a linked worktree exists",
+            );
+        });
+    }
+}
