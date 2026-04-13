@@ -4301,6 +4301,7 @@ impl Render for TokenUsageTooltip {
         let model_name = self.model_name.clone();
 
         ui::tooltip_container(cx, move |container, cx| {
+            let border_variant_color = cx.theme().colors().border_variant;
             container
                 .min_w_40()
                 .child(
@@ -4437,7 +4438,7 @@ impl Render for TokenUsageTooltip {
                                 .pb_0p5()
                                 .gap_0p5()
                                 .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
+                                .border_color(border_variant_color)
                                 .child(
                                     Label::new("Session Usage")
                                         .color(Color::Muted)

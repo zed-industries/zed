@@ -1631,13 +1631,13 @@ impl Thread {
     }
 
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
-        let Some(last_user_message) = self.last_user_message() else {
+        let Some(message_id) = self.last_user_message().map(|m| m.id.clone()) else {
             return;
         };
 
         let previous = self
             .request_token_usage
-            .get(&last_user_message.id)
+            .get(&message_id)
             .copied()
             .unwrap_or_default();
         let delta = language_model::TokenUsage {
@@ -1652,8 +1652,7 @@ impl Thread {
         };
         self.cumulative_token_usage = self.cumulative_token_usage + delta;
 
-        self.request_token_usage
-            .insert(last_user_message.id.clone(), update);
+        self.request_token_usage.insert(message_id, update);
         cx.emit(TokenUsageUpdated(self.latest_token_usage()));
         cx.notify();
     }

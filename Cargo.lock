@@ -1161,13 +1161,16 @@ name = "audio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "block",
  "collections",
  "cpal",
  "crossbeam",
  "denoise",
+ "futures 0.3.32",
  "gpui",
  "libwebrtc",
  "log",
+ "objc",
  "parking_lot",
  "rodio",
  "serde",

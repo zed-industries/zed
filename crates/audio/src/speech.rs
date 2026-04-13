@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::channel::mpsc;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, Task};
 
 /// Events emitted by the speech recognizer during a dictation session.
 #[derive(Debug, Clone)]

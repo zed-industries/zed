@@ -4,14 +4,12 @@ use futures::channel::mpsc;
 use gpui::{App, Task};
 use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 use parking_lot::Mutex;
-use std::ffi::c_void;
-use std::sync::Arc;
 
 #[link(name = "Speech", kind = "framework")]
-extern "C" {}
+unsafe extern "C" {}
 
 #[link(name = "AVFoundation", kind = "framework")]
-extern "C" {}
+unsafe extern "C" {}
 
 type Id = *mut Object;
 const NIL: Id = std::ptr::null_mut();
@@ -45,87 +43,46 @@ impl SpeechRecognizer for MacSpeechRecognizer {
         }
     }
 
-    fn request_authorization(cx: &mut App) -> Task<Result<bool>> {
-        cx.background_spawn(async {
-            let (sender, receiver) = futures::channel::oneshot::channel();
-            let sender = Arc::new(Mutex::new(Some(sender)));
+    fn request_authorization(_cx: &mut App) -> Task<Result<bool>> {
+        let authorized = unsafe {
+            let recognizer_class = class!(SFSpeechRecognizer);
+            let status: isize = msg_send![recognizer_class, authorizationStatus];
 
-            unsafe {
-                let sender_ptr = Arc::into_raw(sender) as *mut c_void;
-
-                extern "C" fn auth_callback(status: isize, context: *mut c_void) {
-                    let sender = unsafe {
-                        Arc::from_raw(context as *const Mutex<Option<futures::channel::oneshot::Sender<bool>>>)
-                    };
-                    if let Some(sender) = sender.lock().take() {
-                        // 2 = SFSpeechRecognizerAuthorizationStatusAuthorized
-                        let _ = sender.send(status == 2);
+            match status {
+                // 0 = notDetermined — creating a recognizer triggers the system prompt
+                0 => {
+                    let recognizer: Id = msg_send![recognizer_class, new];
+                    if !recognizer.is_null() {
+                        let _: () = msg_send![recognizer, release];
                     }
+                    let new_status: isize = msg_send![recognizer_class, authorizationStatus];
+                    new_status == 2
                 }
-
-                // SFSpeechRecognizer.requestAuthorization uses a block, which is complex
-                // to create from Rust. Instead, check the current status directly.
-                let recognizer_class = class!(SFSpeechRecognizer);
-                let status: isize = msg_send![recognizer_class, authorizationStatus];
-
-                // Reconstruct the Arc so it's properly dropped
-                let sender = Arc::from_raw(sender_ptr as *const Mutex<Option<futures::channel::oneshot::Sender<bool>>>);
-
-                match status {
-                    // 0 = notDetermined — trigger the system dialog
-                    0 => {
-                        // For notDetermined, we need the system to prompt.
-                        // Creating a recognizer triggers the prompt on first use.
-                        let recognizer: Id = msg_send![recognizer_class, new];
-                        if !recognizer.is_null() {
-                            let _: () = msg_send![recognizer, release];
-                        }
-                        // Re-check after prompt
-                        let new_status: isize = msg_send![recognizer_class, authorizationStatus];
-                        if let Some(sender) = sender.lock().take() {
-                            let _ = sender.send(new_status == 2);
-                        }
-                    }
-                    // 2 = authorized
-                    2 => {
-                        if let Some(sender) = sender.lock().take() {
-                            let _ = sender.send(true);
-                        }
-                    }
-                    // 1 = denied, 3 = restricted
-                    _ => {
-                        if let Some(sender) = sender.lock().take() {
-                            let _ = sender.send(false);
-                        }
-                    }
-                }
+                // 2 = authorized
+                2 => true,
+                // 1 = denied, 3 = restricted
+                _ => false,
             }
-
-            receiver
-                .await
-                .map_err(|_| anyhow!("Authorization check canceled"))
-        })
+        };
+        Task::ready(Ok(authorized))
     }
 
-    fn start(cx: &mut App) -> Result<mpsc::UnboundedReceiver<SpeechEvent>> {
+    fn start(_cx: &mut App) -> Result<mpsc::UnboundedReceiver<SpeechEvent>> {
         if !Self::is_available() {
             return Err(anyhow!("Speech recognition is not available"));
         }
 
-        // Stop any existing session first
         Self::stop();
 
         let (sender, receiver) = mpsc::unbounded();
 
         unsafe {
-            // Create SFSpeechRecognizer
             let recognizer_class = class!(SFSpeechRecognizer);
             let recognizer: Id = msg_send![recognizer_class, new];
             if recognizer.is_null() {
                 return Err(anyhow!("Failed to create speech recognizer"));
             }
 
-            // Create SFSpeechAudioBufferRecognitionRequest
             let request_class = class!(SFSpeechAudioBufferRecognitionRequest);
             let request: Id = msg_send![request_class, new];
             if request.is_null() {
@@ -134,7 +91,6 @@ impl SpeechRecognizer for MacSpeechRecognizer {
             }
             let _: () = msg_send![request, setShouldReportPartialResults: true];
 
-            // Create AVAudioEngine
             let engine_class = class!(AVAudioEngine);
             let audio_engine: Id = msg_send![engine_class, new];
             if audio_engine.is_null() {
@@ -143,7 +99,6 @@ impl SpeechRecognizer for MacSpeechRecognizer {
                 return Err(anyhow!("Failed to create audio engine"));
             }
 
-            // Get the input node
             let input_node: Id = msg_send![audio_engine, inputNode];
             if input_node.is_null() {
                 let _: () = msg_send![audio_engine, release];
@@ -152,11 +107,9 @@ impl SpeechRecognizer for MacSpeechRecognizer {
                 return Err(anyhow!("No audio input available"));
             }
 
-            // Get the recording format from the input node
             let bus: u64 = 0;
             let format: Id = msg_send![input_node, outputFormatForBus: bus];
 
-            // Install a tap on the input node to feed audio to the request
             let request_for_tap = request;
             let tap_block = block::ConcreteBlock::new(
                 move |buffer: Id, _when: Id| {
@@ -173,7 +126,6 @@ impl SpeechRecognizer for MacSpeechRecognizer {
                 block: &*tap_block
             ];
 
-            // Start the recognition task with a result handler block
             let sender_for_block = sender.clone();
             let result_block = block::ConcreteBlock::new(
                 move |result: Id, error: Id| {
@@ -221,7 +173,6 @@ impl SpeechRecognizer for MacSpeechRecognizer {
                 resultHandler: &*result_block
             ];
 
-            // Start the audio engine
             let mut error: Id = NIL;
             let started: bool = msg_send![audio_engine, startAndReturnError: &mut error];
             if !started {
