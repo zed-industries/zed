@@ -814,7 +814,14 @@ impl ToolCallContent {
                 .get(&terminal_id)
                 .cloned()
                 .map(|terminal| Some(Self::Terminal(terminal)))
-                .ok_or_else(|| anyhow::anyhow!("Terminal with id `{}` not found", terminal_id)),
+                .ok_or_else(|| {
+                    log::warn!(
+                        "ToolCallContent::from_acp: terminal {:?} not found ({} registered)",
+                        terminal_id,
+                        terminals.len(),
+                    );
+                    anyhow::anyhow!("Terminal with id `{}` not found", terminal_id)
+                }),
             _ => Ok(None),
         }
     }
@@ -1874,6 +1881,11 @@ impl AcpThread {
         }
 
         if let Some(ix) = self.index_for_tool_call(&id) {
+            log::info!(
+                "upsert_tool_call_inner: UPDATE path for {:?} ({} terminals registered)",
+                id,
+                self.terminals.len(),
+            );
             let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
                 unreachable!()
             };
@@ -1890,6 +1902,11 @@ impl AcpThread {
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
+            log::info!(
+                "upsert_tool_call_inner: CREATE path for {:?} ({} terminals registered)",
+                id,
+                self.terminals.len(),
+            );
             let call = ToolCall::from_acp(
                 update.try_into()?,
                 status,
@@ -2861,6 +2878,11 @@ impl AcpThread {
             )
         });
         self.terminals.insert(terminal_id.clone(), entity.clone());
+        log::info!(
+            "register_terminal_created: terminal {:?} registered ({} total)",
+            terminal_id,
+            self.terminals.len(),
+        );
         entity
     }
 

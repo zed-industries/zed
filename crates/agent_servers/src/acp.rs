@@ -1572,6 +1572,16 @@ impl acp::Client for ClientDelegate {
 
         // Pre-handle: if a ToolCall carries terminal_info, create/register a display-only terminal.
         if let acp::SessionUpdate::ToolCall(tc) = &update_clone {
+            let has_terminal_content = tc
+                .content
+                .iter()
+                .any(|c| matches!(c, acp::ToolCallContent::Terminal(_)));
+            log::info!(
+                "session_notification: ToolCall {:?} has_terminal_content={}, has_terminal_info_meta={}",
+                tc.tool_call_id,
+                has_terminal_content,
+                tc.meta.as_ref().and_then(|m| m.get("terminal_info")).is_some(),
+            );
             if let Some(meta) = &tc.meta {
                 if let Some(terminal_info) = meta.get("terminal_info") {
                     if let Some(id_str) = terminal_info.get("terminal_id").and_then(|v| v.as_str())
