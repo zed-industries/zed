@@ -9590,10 +9590,19 @@ mod property_test {
         raw_operations: Vec<u32>,
         cx: &mut TestAppContext,
     ) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT_PROPTEST_DB: AtomicUsize = AtomicUsize::new(0);
+
         agent_ui::test_support::init_test(cx);
         cx.update(|cx| {
             cx.set_global(db::AppDatabase::test_new());
             cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
+            cx.set_global(agent_ui::thread_metadata_store::TestMetadataDbName(
+                format!(
+                    "PROPTEST_THREAD_METADATA_{}",
+                    NEXT_PROPTEST_DB.fetch_add(1, Ordering::SeqCst)
+                ),
+            ));
 
             ThreadStore::init_global(cx);
             ThreadMetadataStore::init_global(cx);

@@ -402,6 +402,28 @@ impl DbOperation {
     }
 }
 
+/// Override for the test DB name used by `ThreadMetadataStore::init_global`.
+/// When set as a GPUI global, `init_global` uses this name instead of
+/// deriving one from the thread name. This prevents data from leaking
+/// across proptest cases that share a thread name.
+#[cfg(any(test, feature = "test-support"))]
+pub struct TestMetadataDbName(pub String);
+#[cfg(any(test, feature = "test-support"))]
+impl gpui::Global for TestMetadataDbName {}
+
+#[cfg(any(test, feature = "test-support"))]
+impl TestMetadataDbName {
+    pub fn global(cx: &App) -> String {
+        cx.try_global::<Self>()
+            .map(|g| g.0.clone())
+            .unwrap_or_else(|| {
+                let thread = std::thread::current();
+                let test_name = thread.name().unwrap_or("unknown_test");
+                format!("THREAD_METADATA_DB_{}", test_name)
+            })
+    }
+}
+
 impl ThreadMetadataStore {
     #[cfg(not(any(test, feature = "test-support")))]
     pub fn init_global(cx: &mut App) {
@@ -416,11 +438,7 @@ impl ThreadMetadataStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn init_global(cx: &mut App) {
-        static NEXT_DB_ID: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let thread = std::thread::current();
-        let test_name = thread.name().unwrap_or("unknown_test");
-        let unique_id = NEXT_DB_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let db_name = format!("THREAD_METADATA_DB_{}_{}", test_name, unique_id);
+        let db_name = TestMetadataDbName::global(cx);
         let db = smol::block_on(db::open_test_db::<ThreadMetadataDb>(&db_name));
         let thread_store = cx.new(|cx| Self::new(ThreadMetadataDb(db), cx));
         cx.set_global(GlobalThreadMetadataStore(thread_store));
