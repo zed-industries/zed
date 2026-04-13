@@ -749,6 +749,7 @@ async fn initialize_agent_panel(
         if !cfg!(test) {
             workspace
                 .register_action(agent_ui::AgentPanel::toggle_focus)
+                .register_action(agent_ui::AgentPanel::focus)
                 .register_action(agent_ui::AgentPanel::toggle)
                 .register_action(agent_ui::InlineAssistant::inline_assist);
         }

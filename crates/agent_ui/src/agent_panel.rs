@@ -19,9 +19,14 @@ use project::AgentId;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use zed_actions::agent::{
-    AddSelectionToThread, ConflictContent, ReauthenticateAgent, ResolveConflictedFilesWithAgent,
-    ResolveConflictsWithAgent, ReviewBranchDiff,
+use zed_actions::{
+    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
+    agent::{
+        AddSelectionToThread, ConflictContent, OpenSettings, ReauthenticateAgent, ResetAgentZoom,
+        ResetOnboarding, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
+        ReviewBranchDiff,
+    },
+    assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
 use crate::DEFAULT_THREAD_TITLE;
@@ -82,11 +87,6 @@ use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
     ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId, WorkspaceSidebarDelegate,
     dock::{DockPosition, Panel, PanelEvent},
-};
-use zed_actions::{
-    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenSettings, ResetAgentZoom, ResetOnboarding},
-    assistant::{OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -1287,6 +1287,20 @@ impl AgentPanel {
             .is_some_and(|panel| panel.read(cx).enabled(cx))
         {
             workspace.toggle_panel_focus::<Self>(window, cx);
+        }
+    }
+
+    pub fn focus(
+        workspace: &mut Workspace,
+        _: &FocusAgent,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            workspace.focus_panel::<Self>(window, cx);
         }
     }
 
