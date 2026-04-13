@@ -2800,9 +2800,7 @@ impl AgentPanel {
                 .iter()
                 .filter_map(|(id, repo)| {
                     let work_dir = repo.read(cx).work_directory_abs_path.clone();
-                    if wt_path.starts_with(work_dir.as_ref())
-                        || work_dir.starts_with(wt_path.as_ref())
-                    {
+                    if wt_path.starts_with(work_dir.as_ref()) {
                         Some((*id, repo.clone(), work_dir.as_ref().components().count()))
                     } else {
                         None
@@ -7443,6 +7441,104 @@ mod tests {
             assert_eq!(
                 panel.selected_agent, stub_agent,
                 "selected_agent should sync to the loaded thread's agent"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_classify_worktrees_skips_non_git_root_with_nested_repo(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo_a",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/repo_b",
+            json!({
+                ".git": {},
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+        // `plain_dir` is NOT a git repo, but contains a nested git repo.
+        fs.insert_tree(
+            "/plain_dir",
+            json!({
+                "nested_repo": {
+                    ".git": {},
+                    "src": { "lib.rs": "" }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/repo_a"),
+                Path::new("/repo_b"),
+                Path::new("/plain_dir"),
+            ],
+            cx,
+        )
+        .await;
+
+        // Let the worktree scanner discover all `.git` directories.
+        cx.executor().run_until_parked();
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            let (git_repos, non_git_paths) = panel.classify_worktrees(cx);
+
+            let git_work_dirs: Vec<PathBuf> = git_repos
+                .iter()
+                .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
+                .collect();
+
+            assert_eq!(
+                git_repos.len(),
+                2,
+                "only repo_a and repo_b should be classified as git repos, \
+                 but got: {git_work_dirs:?}"
+            );
+            assert!(
+                git_work_dirs.contains(&PathBuf::from("/repo_a")),
+                "repo_a should be in git_repos: {git_work_dirs:?}"
+            );
+            assert!(
+                git_work_dirs.contains(&PathBuf::from("/repo_b")),
+                "repo_b should be in git_repos: {git_work_dirs:?}"
+            );
+
+            assert_eq!(
+                non_git_paths,
+                vec![PathBuf::from("/plain_dir")],
+                "plain_dir should be classified as a non-git path \
+                 (not matched to nested_repo inside it)"
             );
         });
     }
