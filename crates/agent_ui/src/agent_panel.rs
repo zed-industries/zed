@@ -1044,6 +1044,10 @@ impl AgentPanel {
                             cx,
                         );
                     });
+                } else {
+                    panel.update(cx, |panel, cx| {
+                        panel.show_or_create_empty_draft(window, cx);
+                    });
                 }
                 panel
             })?;
@@ -5350,8 +5354,8 @@ mod tests {
             );
         });
 
-        // Workspace B should restore its own agent type, with no thread
-        loaded_b.read_with(cx, |panel, _cx| {
+        // Workspace B should restore its own agent type and seed an empty draft.
+        loaded_b.read_with(cx, |panel, cx| {
             assert_eq!(
                 panel.selected_agent,
                 Agent::Custom {
@@ -5360,8 +5364,12 @@ mod tests {
                 "workspace B agent type should be restored"
             );
             assert!(
-                panel.active_conversation_view().is_none(),
-                "workspace B should have no active thread"
+                panel.active_conversation_view().is_some(),
+                "workspace B should show an empty draft"
+            );
+            assert!(
+                panel.active_thread_is_draft(cx),
+                "workspace B should seed a draft in an empty workspace"
             );
         });
     }
@@ -5423,10 +5431,14 @@ mod tests {
             .expect("panel load should succeed");
         cx.run_until_parked();
 
-        loaded.read_with(cx, |panel, _cx| {
+        loaded.read_with(cx, |panel, cx| {
             assert!(
-                panel.active_conversation_view().is_none(),
-                "thread without metadata should not be restored"
+                panel.active_conversation_view().is_some(),
+                "empty workspaces should still show a draft after load"
+            );
+            assert!(
+                panel.active_thread_is_draft(cx),
+                "thread without metadata should not be restored; the panel should fall back to a fresh draft"
             );
         });
     }
