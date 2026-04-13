@@ -1187,8 +1187,8 @@ impl GitGraph {
     fn render_chip(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
         Chip::new(name.clone())
             .label_size(LabelSize::Small)
-            .bg_color(accent_color.opacity(0.1))
-            .border_color(accent_color.opacity(0.5))
+            .bg_color(accent_color.opacity(0.08))
+            .border_color(accent_color.opacity(0.25))
             .truncate()
     }
 
