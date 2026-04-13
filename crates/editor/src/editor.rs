@@ -9103,10 +9103,28 @@ impl Editor {
         bookmark_display_points
     }
 
-    fn render_bookmark(&self) -> Icon {
-        Icon::new(IconName::Bookmark)
-            .size(IconSize::XSmall)
-            .color(Color::Info)
+    fn render_bookmark(&self, row: DisplayRow, cx: &mut Context<Self>) -> IconButton {
+        let focus_handle = self.focus_handle.clone();
+        IconButton::new(("bookmark indicator", row.0 as usize), IconName::Bookmark)
+            .icon_size(IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(Color::Info)
+            .style(ButtonStyle::Transparent)
+            .on_click(cx.listener(move |editor, _: &ClickEvent, window, cx| {
+                editor.toggle_bookmark(&ToggleBookmark, window, cx);
+            }))
+            .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+                editor.set_gutter_context_menu(row, None, event.position(), window, cx);
+            }))
+            .tooltip(move |_window, cx| {
+                Tooltip::with_meta_in(
+                    "Remove bookmark",
+                    Some(&ToggleBookmark),
+                    SharedString::from("Right-click for more options."),
+                    &focus_handle,
+                    cx,
+                )
+            })
     }
 
     /// Get all display points of breakpoints that will be rendered within editor
@@ -9353,6 +9371,20 @@ impl Editor {
         })
     }
 
+    /// TODO!(yara) This renders two kinds of breakpoints:
+    /// - a phantom breakpoint, aka a button to add a breakpoint
+    /// - an already set breakpoint
+    ///
+    /// To me it does not make sense to have the phantom breakpoint aka
+    /// add breakpoint button (only ever one) be set as part of looping
+    /// over all the actual existing breakpoints. This feels like forced
+    /// deduplication.
+    ///
+    /// We need to not show an add breakpoint button when there is a bookmark
+    /// such that we can click the bookmark to remove it.
+    ///
+    /// => Can we get rid of the phantom breakpoint in the breakpoint "list"?
+    ///    Then 'just' call this separately, since its a separate concern right?
     fn render_breakpoint(
         &self,
         position: Anchor,
@@ -9362,20 +9394,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> IconButton {
         let is_rejected = state.is_some_and(|s| !s.verified);
-        // Is it a breakpoint that shows up when hovering over gutter?
-        let (is_phantom, collides_with_existing) = self.gutter_breakpoint_indicator.0.map_or(
-            (false, false),
-            |PhantomBreakpointIndicator {
-                 is_active,
-                 display_row,
-                 collides_with_existing_breakpoint,
-             }| {
-                (
-                    is_active && display_row == row,
-                    collides_with_existing_breakpoint,
-                )
-            },
-        );
 
         let (color, icon) = {
             let icon = match (&breakpoint.message.is_some(), breakpoint.is_disabled()) {
@@ -9385,19 +9403,7 @@ impl Editor {
                 (true, true) => ui::IconName::DebugDisabledLogBreakpoint,
             };
 
-            let theme_colors = cx.theme().colors();
-
-            let color = if is_phantom {
-                if collides_with_existing {
-                    Color::Custom(
-                        theme_colors
-                            .debugger_accent
-                            .blend(theme_colors.text.opacity(0.6)),
-                    )
-                } else {
-                    Color::Hint
-                }
-            } else if is_rejected {
+            let color = if is_rejected {
                 Color::Disabled
             } else {
                 Color::Debugger
@@ -9412,18 +9418,12 @@ impl Editor {
             modifiers: Modifiers::secondary_key(),
             ..Default::default()
         };
-        let primary_action_text = if breakpoint.is_disabled() {
-            "Enable breakpoint"
-        } else if is_phantom && !collides_with_existing {
-            "Set breakpoint"
-        } else {
-            "Unset breakpoint"
-        };
+        let primary_action_text = "Unset breakpoint";
         let focus_handle = self.focus_handle.clone();
 
         let meta = if is_rejected {
             SharedString::from("No executable code is associated with this line.")
-        } else if collides_with_existing && !breakpoint.is_disabled() {
+        } else if !breakpoint.is_disabled() {
             SharedString::from(format!(
                 "{alt_as_text}-click to disable,\nright-click for more options."
             ))
@@ -9468,6 +9468,53 @@ impl Editor {
                     cx,
                 )
             })
+    }
+
+    // We add the gutter breakpoint indicator to breakpoint_rows after painting
+    // line numbers so we don't paint a line number debug accent color if a user
+    // has their mouse over that line when a breakpoint isn't there
+    fn render_phantom_breakpoint(
+        &self,
+        position: Anchor,
+        row: DisplayRow,
+        cx: &mut Context<Self>,
+    ) -> IconButton {
+        let meta = SharedString::from("Right-click for more options.");
+        let proposed_breakpoint = Breakpoint::new_standard();
+
+        let focus_handle = self.focus_handle.clone();
+        IconButton::new(
+            ("add_breakpoint_button", row.0 as usize),
+            ui::IconName::DebugBreakpoint,
+        )
+        .icon_size(IconSize::XSmall)
+        .size(ui::ButtonSize::None)
+        .icon_color(Color::Hint)
+        .style(ButtonStyle::Transparent)
+        .on_click(cx.listener({
+            move |editor, _: &ClickEvent, window, cx| {
+                window.focus(&editor.focus_handle(cx), cx);
+                editor.update_breakpoint_collision_on_toggle(row, &BreakpointEditAction::Toggle);
+                editor.edit_breakpoint_at_anchor(
+                    position,
+                    proposed_breakpoint.clone(),
+                    BreakpointEditAction::Toggle,
+                    cx,
+                );
+            }
+        }))
+        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+            editor.set_gutter_context_menu(row, Some(position), event.position(), window, cx);
+        }))
+        .tooltip(move |_window, cx| {
+            Tooltip::with_meta_in(
+                "Set breakpoint",
+                Some(&ToggleBreakpoint),
+                meta.clone(),
+                &focus_handle,
+                cx,
+            )
+        })
     }
 
     fn build_tasks_context(
@@ -12185,7 +12232,6 @@ impl Editor {
         self.bookmark_at_anchor(bookmark_position, &snapshot, cx)
     }
 
-    // TODO(austincummings): This is largely the same as breakpoint_at_anchor, maybe an opportunity to refactor this
     pub(crate) fn bookmark_at_anchor(
         &self,
         bookmark_position: Anchor,

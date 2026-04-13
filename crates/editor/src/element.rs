@@ -3136,7 +3136,7 @@ impl EditorElement {
     fn layout_bookmarks(
         &self,
         gutter: &Gutter<'_>,
-        bookmarks: HashSet<DisplayRow>,
+        bookmarks: &HashSet<DisplayRow>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -3146,11 +3146,11 @@ impl EditorElement {
 
         self.editor.update(cx, |editor, cx| {
             bookmarks
-                .into_iter()
-                .filter_map(|display_row| {
+                .iter()
+                .filter_map(|row| {
                     gutter.layout_item_skipping_folds(
-                        display_row,
-                        |_| editor.render_bookmark().into_any_element(),
+                        *row,
+                        |cx| editor.render_bookmark(*row, cx).into_any_element(),
                         window,
                         cx,
                     )
@@ -3159,10 +3159,36 @@ impl EditorElement {
         })
     }
 
+    fn layout_breakpoint_button(
+        &self,
+        gutter: &Gutter,
+        position: Anchor,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        if self.split_side == Some(SplitSide::Left) {
+            return None;
+        }
+
+        self.editor.update(cx, |editor, cx| {
+            gutter.layout_item_skipping_folds(
+                row,
+                |cx| {
+                    editor
+                        .render_phantom_breakpoint(position, row, cx)
+                        .into_any_element()
+                },
+                window,
+                cx,
+            )
+        })
+    }
+
     fn layout_breakpoints(
         &self,
         gutter: &Gutter,
-        breakpoints: HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
+        breakpoints: &HashMap<DisplayRow, (Anchor, Breakpoint, Option<BreakpointSessionState>)>,
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<AnyElement> {
@@ -3172,13 +3198,13 @@ impl EditorElement {
 
         self.editor.update(cx, |editor, cx| {
             breakpoints
-                .into_iter()
-                .filter_map(|(display_row, (text_anchor, bp, state))| {
+                .iter()
+                .filter_map(|(row, (text_anchor, bp, state))| {
                     gutter.layout_item_skipping_folds(
-                        display_row,
+                        *row,
                         |cx| {
                             editor
-                                .render_breakpoint(text_anchor, display_row, &bp, state, cx)
+                                .render_breakpoint(*text_anchor, *row, &bp, *state, cx)
                                 .into_any_element()
                         },
                         window,
@@ -10126,31 +10152,6 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    // We add the gutter breakpoint indicator to breakpoint_rows after painting
-                    // line numbers so we don't paint a line number debug accent color if a user
-                    // has their mouse over that line when a breakpoint isn't there
-                    self.editor.update(cx, |editor, _| {
-                        if let Some(phantom_breakpoint) = &mut editor
-                            .gutter_breakpoint_indicator
-                            .0
-                            .filter(|phantom_breakpoint| phantom_breakpoint.is_active)
-                        {
-                            // Is there a non-phantom breakpoint on this line?
-                            phantom_breakpoint.collides_with_existing_breakpoint = true;
-                            breakpoint_rows
-                                .entry(phantom_breakpoint.display_row)
-                                .or_insert_with(|| {
-                                    let position = snapshot.display_point_to_anchor(
-                                        DisplayPoint::new(phantom_breakpoint.display_row, 0),
-                                        Bias::Right,
-                                    );
-                                    let breakpoint = Breakpoint::new_standard();
-                                    phantom_breakpoint.collides_with_existing_breakpoint = false;
-                                    (position, breakpoint, None)
-                                });
-                        }
-                    });
-
                     let mut expand_toggles =
                         window.with_element_namespace("expand_toggles", |window| {
                             self.layout_expand_toggles(
@@ -10754,7 +10755,7 @@ impl Element for EditorElement {
                     });
 
                     let bookmarks = if show_bookmarks {
-                        self.layout_bookmarks(&gutter, bookmark_rows, window, cx)
+                        self.layout_bookmarks(&gutter, &bookmark_rows, window, cx)
                     } else {
                         Vec::new()
                     };
@@ -10764,11 +10765,31 @@ impl Element for EditorElement {
                         .unwrap_or(gutter_settings.breakpoints);
 
                     breakpoint_rows.retain(|k, _| !run_indicator_rows.contains(k));
-                    let breakpoints = if show_breakpoints {
-                        self.layout_breakpoints(&gutter, breakpoint_rows, window, cx)
+                    let mut breakpoints = if show_breakpoints {
+                        self.layout_breakpoints(&gutter, &breakpoint_rows, window, cx)
                     } else {
                         Vec::new()
                     };
+
+                    let phantom_breakpoint = self
+                        .editor
+                        .read(cx)
+                        .gutter_breakpoint_indicator
+                        .0
+                        .filter(|phantom| phantom.is_active)
+                        .map(|phantom| phantom.display_row);
+
+                    if let Some(row) = phantom_breakpoint
+                        && !breakpoint_rows.contains_key(&row)
+                        && !run_indicator_rows.contains(&row)
+                        && !bookmark_rows.contains(&row)
+                    {
+                        let position = snapshot
+                            .display_point_to_anchor(DisplayPoint::new(row, 0), Bias::Right);
+                        breakpoints.extend(
+                            self.layout_breakpoint_button(&gutter, position, row, window, cx),
+                        );
+                    }
 
                     let git_gutter_width = Self::gutter_strip_width(line_height)
                         + gutter_dimensions
