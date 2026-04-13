@@ -1,6 +1,5 @@
 use std::{path::PathBuf, sync::Arc};
 
-use acp_thread::AcpThreadEvent;
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol as acp;
 use anyhow::Context as _;
@@ -273,6 +272,28 @@ pub struct ThreadMetadata {
 }
 
 impl ThreadMetadata {
+    pub fn new_draft(
+        thread_id: ThreadId,
+        session_id: Option<acp::SessionId>,
+        agent_id: AgentId,
+        title: Option<SharedString>,
+        worktree_paths: WorktreePaths,
+        remote_connection: Option<RemoteConnectionOptions>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            thread_id,
+            session_id,
+            agent_id,
+            title,
+            updated_at: now,
+            created_at: Some(now),
+            worktree_paths: worktree_paths.clone(),
+            remote_connection,
+            archived: worktree_paths.is_empty(),
+        }
+    }
+
     pub fn is_draft(&self) -> bool {
         self.session_id.is_none()
     }
@@ -352,15 +373,15 @@ pub struct ArchivedGitWorktree {
 
 /// The store holds all metadata needed to show threads in the sidebar/the archive.
 ///
-/// Automatically listens to AcpThread events and updates metadata if it has changed.
+/// Listens to ConversationView events and updates metadata when the root thread changes.
 pub struct ThreadMetadataStore {
     db: ThreadMetadataDb,
     threads: HashMap<ThreadId, ThreadMetadata>,
     threads_by_paths: HashMap<PathList, HashSet<ThreadId>>,
     threads_by_main_paths: HashMap<PathList, HashSet<ThreadId>>,
-    sessions: HashMap<acp::SessionId, ThreadId>,
+    threads_by_session: HashMap<acp::SessionId, ThreadId>,
     reload_task: Option<Shared<Task<()>>>,
-    session_subscriptions: HashMap<acp::SessionId, Subscription>,
+    conversation_subscriptions: HashMap<gpui::EntityId, Subscription>,
     pending_thread_ops_tx: smol::channel::Sender<DbOperation>,
     in_flight_archives: HashMap<ThreadId, (Task<()>, smol::channel::Sender<()>)>,
     _db_operations_task: Task<()>,
@@ -426,22 +447,9 @@ impl ThreadMetadataStore {
         self.threads.get(&thread_id)
     }
 
-    /// Associates a session with a thread_id so that when
-    /// `handle_thread_event` fires later, it reuses this ThreadId instead
-    /// of generating a new one.
-    pub fn associate_session(&mut self, session_id: acp::SessionId, thread_id: ThreadId) {
-        self.sessions.insert(session_id, thread_id);
-    }
-
-    /// Returns the `ThreadId` associated with an ACP session, including
-    /// associations made via `associate_session` that haven't been saved yet.
-    pub fn thread_id_for_session(&self, session_id: &acp::SessionId) -> Option<ThreadId> {
-        self.sessions.get(session_id).copied()
-    }
-
     /// Returns the metadata for a thread identified by its ACP session ID.
     pub fn entry_by_session(&self, session_id: &acp::SessionId) -> Option<&ThreadMetadata> {
-        let thread_id = self.sessions.get(session_id)?;
+        let thread_id = self.threads_by_session.get(session_id)?;
         self.threads.get(thread_id)
     }
 
@@ -500,11 +508,11 @@ impl ThreadMetadataStore {
                     this.threads.clear();
                     this.threads_by_paths.clear();
                     this.threads_by_main_paths.clear();
-                    this.sessions.clear();
+                    this.threads_by_session.clear();
 
                     for row in rows {
                         if let Some(sid) = &row.session_id {
-                            this.sessions.insert(sid.clone(), row.thread_id);
+                            this.threads_by_session.insert(sid.clone(), row.thread_id);
                         }
                         this.threads_by_paths
                             .entry(row.folder_paths().clone())
@@ -565,7 +573,8 @@ impl ThreadMetadataStore {
         }
 
         if let Some(sid) = &metadata.session_id {
-            self.sessions.insert(sid.clone(), metadata.thread_id);
+            self.threads_by_session
+                .insert(sid.clone(), metadata.thread_id);
         }
 
         self.threads.insert(metadata.thread_id, metadata.clone());
@@ -627,21 +636,6 @@ impl ThreadMetadataStore {
             changed = true;
         }
         if changed {
-            cx.notify();
-        }
-    }
-
-    pub fn assign_session(
-        &mut self,
-        thread_id: ThreadId,
-        session_id: acp::SessionId,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(thread) = self.threads.get(&thread_id) {
-            self.save_internal(ThreadMetadata {
-                session_id: Some(session_id),
-                ..thread.clone()
-            });
             cx.notify();
         }
     }
@@ -896,6 +890,9 @@ impl ThreadMetadataStore {
 
     pub fn delete(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
         if let Some(thread) = self.threads.get(&thread_id) {
+            if let Some(sid) = &thread.session_id {
+                self.threads_by_session.remove(sid);
+            }
             if let Some(thread_ids) = self.threads_by_paths.get_mut(thread.folder_paths()) {
                 thread_ids.remove(&thread_id);
             }
@@ -906,9 +903,6 @@ impl ThreadMetadataStore {
                 {
                     thread_ids.remove(&thread_id);
                 }
-            }
-            if let Some(sid) = &thread.session_id {
-                self.sessions.remove(sid);
             }
         }
         self.threads.remove(&thread_id);
@@ -921,21 +915,16 @@ impl ThreadMetadataStore {
     fn new(db: ThreadMetadataDb, cx: &mut Context<Self>) -> Self {
         let weak_store = cx.weak_entity();
 
-        cx.observe_new::<acp_thread::AcpThread>(move |thread, _window, cx| {
-            // Don't track subagent threads in the sidebar.
-            if thread.parent_session_id().is_some() {
-                return;
-            }
-
-            let thread_entity = cx.entity();
+        cx.observe_new::<crate::ConversationView>(move |_view, _window, cx| {
+            let view_entity = cx.entity();
+            let entity_id = view_entity.entity_id();
 
             cx.on_release({
                 let weak_store = weak_store.clone();
-                move |thread, cx| {
+                move |_view, cx| {
                     weak_store
                         .update(cx, |store, _cx| {
-                            let session_id = thread.session_id().clone();
-                            store.session_subscriptions.remove(&session_id);
+                            store.conversation_subscriptions.remove(&entity_id);
                         })
                         .ok();
                 }
@@ -944,9 +933,9 @@ impl ThreadMetadataStore {
 
             weak_store
                 .update(cx, |this, cx| {
-                    let subscription = cx.subscribe(&thread_entity, Self::handle_thread_event);
-                    this.session_subscriptions
-                        .insert(thread.session_id().clone(), subscription);
+                    let subscription = cx.subscribe(&view_entity, Self::handle_conversation_event);
+                    this.conversation_subscriptions
+                        .insert(entity_id, subscription);
                 })
                 .ok();
         })
@@ -981,9 +970,9 @@ impl ThreadMetadataStore {
             threads: HashMap::default(),
             threads_by_paths: HashMap::default(),
             threads_by_main_paths: HashMap::default(),
-            sessions: HashMap::default(),
+            threads_by_session: HashMap::default(),
             reload_task: None,
-            session_subscriptions: HashMap::default(),
+            conversation_subscriptions: HashMap::default(),
             pending_thread_ops_tx: tx,
             in_flight_archives: HashMap::default(),
             _db_operations_task,
@@ -1003,90 +992,61 @@ impl ThreadMetadataStore {
         ops.into_values().collect()
     }
 
-    fn handle_thread_event(
+    fn handle_conversation_event(
         &mut self,
-        thread: Entity<acp_thread::AcpThread>,
-        event: &AcpThreadEvent,
+        conversation_view: Entity<crate::ConversationView>,
+        _event: &crate::conversation_view::RootThreadUpdated,
         cx: &mut Context<Self>,
     ) {
-        // Don't track subagent threads in the sidebar.
-        if thread.read(cx).parent_session_id().is_some() {
+        let view = conversation_view.read(cx);
+        let thread_id = view.thread_id;
+        let Some(thread) = view.root_acp_thread(cx) else {
+            return;
+        };
+
+        let thread_ref = thread.read(cx);
+        if thread_ref.entries().is_empty() {
             return;
         }
 
-        match event {
-            AcpThreadEvent::NewEntry
-            | AcpThreadEvent::TitleUpdated
-            | AcpThreadEvent::EntryUpdated(_)
-            | AcpThreadEvent::EntriesRemoved(_)
-            | AcpThreadEvent::ToolAuthorizationRequested(_)
-            | AcpThreadEvent::ToolAuthorizationReceived(_)
-            | AcpThreadEvent::Retry(_)
-            | AcpThreadEvent::Stopped(_)
-            | AcpThreadEvent::Error
-            | AcpThreadEvent::LoadError(_)
-            | AcpThreadEvent::Refusal
-            | AcpThreadEvent::WorkingDirectoriesUpdated => {
-                let thread_ref = thread.read(cx);
-                if thread_ref.entries().is_empty() {
-                    return;
-                }
+        let existing_thread = self.entry(thread_id);
+        let session_id = Some(thread_ref.session_id().clone());
+        let title = thread_ref.title();
 
-                let existing_thread = self.entry_by_session(thread_ref.session_id());
-                let session_id = Some(thread_ref.session_id().clone());
-                let title = thread_ref.title();
+        let updated_at = Utc::now();
 
-                let updated_at = Utc::now();
+        let created_at = existing_thread
+            .and_then(|t| t.created_at)
+            .unwrap_or_else(|| updated_at);
 
-                let created_at = existing_thread
-                    .and_then(|t| t.created_at)
-                    .unwrap_or_else(|| updated_at);
+        let agent_id = thread_ref.connection().agent_id();
 
-                let agent_id = thread_ref.connection().agent_id();
+        let project = thread_ref.project().read(cx);
+        let worktree_paths = project.worktree_paths(cx);
 
-                let project = thread_ref.project().read(cx);
-                let worktree_paths = project.worktree_paths(cx);
+        let remote_connection = project.remote_connection_options(cx);
 
-                let remote_connection = project.remote_connection_options(cx);
+        // Threads without a folder path (e.g. started in an empty
+        // window) are archived by default so they don't get lost,
+        // because they won't show up in the sidebar. Users can reload
+        // them from the archive.
+        let archived = existing_thread
+            .map(|t| t.archived)
+            .unwrap_or(worktree_paths.is_empty());
 
-                // Threads without a folder path (e.g. started in an empty
-                // window) are archived by default so they don't get lost,
-                // because they won't show up in the sidebar. Users can reload
-                // them from the archive.
-                let archived = existing_thread
-                    .map(|t| t.archived)
-                    .unwrap_or(worktree_paths.is_empty());
+        let metadata = ThreadMetadata {
+            thread_id,
+            session_id,
+            agent_id,
+            title,
+            created_at: Some(created_at),
+            updated_at,
+            worktree_paths,
+            remote_connection,
+            archived,
+        };
 
-                let thread_id = existing_thread
-                    .map(|t| t.thread_id)
-                    .or_else(|| {
-                        session_id
-                            .as_ref()
-                            .and_then(|sid| self.sessions.get(sid).copied())
-                    })
-                    .unwrap_or_else(ThreadId::new);
-
-                let metadata = ThreadMetadata {
-                    thread_id,
-                    session_id,
-                    agent_id,
-                    title,
-                    created_at: Some(created_at),
-                    updated_at,
-                    worktree_paths,
-                    remote_connection,
-                    archived,
-                };
-
-                self.save(metadata, cx);
-            }
-            AcpThreadEvent::TokenUsageUpdated
-            | AcpThreadEvent::SubagentSpawned(_)
-            | AcpThreadEvent::PromptCapabilitiesUpdated
-            | AcpThreadEvent::AvailableCommandsUpdated(_)
-            | AcpThreadEvent::ModeUpdated(_)
-            | AcpThreadEvent::ConfigOptionsUpdated(_) => {}
-        }
+        self.save(metadata, cx);
     }
 }
 
@@ -1482,17 +1442,18 @@ impl Column for ArchivedGitWorktree {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use acp_thread::{AgentConnection, StubAgentConnection};
+    use acp_thread::StubAgentConnection;
     use action_log::ActionLog;
     use agent::DbThread;
     use agent_client_protocol as acp;
 
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use project::FakeFs;
     use project::Project;
     use remote::WslConnectionOptions;
     use std::path::Path;
     use std::rc::Rc;
+    use workspace::MultiWorkspace;
 
     fn make_db_thread(title: &str, updated_at: DateTime<Utc>) -> DbThread {
         DbThread {
@@ -1543,11 +1504,32 @@ mod tests {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            release_channel::init("0.0.0".parse().unwrap(), cx);
+            prompt_store::init(cx);
             <dyn Fs>::set_global(fs, cx);
             ThreadMetadataStore::init_global(cx);
             ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
         });
         cx.run_until_parked();
+    }
+
+    fn setup_panel_with_project(
+        project: Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<crate::AgentPanel>, VisualTestContext) {
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace_entity = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let mut vcx = VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace_entity.update_in(&mut vcx, |workspace, window, cx| {
+            cx.new(|cx| crate::AgentPanel::new(workspace, None, window, cx))
+        });
+        (panel, vcx)
     }
 
     fn clear_thread_metadata_remote_connection_backfill(cx: &mut TestAppContext) {
@@ -2111,48 +2093,54 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None::<&Path>, cx).await;
-        let connection = Rc::new(StubAgentConnection::new());
+        let connection = StubAgentConnection::new();
 
-        let thread = cx
-            .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), PathList::default(), cx)
-            })
-            .await
-            .unwrap();
-        let session_id = cx.read(|cx| thread.read(cx).session_id().clone());
+        let (panel, mut vcx) = setup_panel_with_project(project, cx);
+        crate::test_support::open_thread_with_connection(&panel, connection, &mut vcx);
 
-        cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                thread.set_title("Draft Thread".into(), cx).detach();
-            });
-        });
-        cx.run_until_parked();
+        let thread = panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        let session_id = thread.read_with(&vcx, |t, _| t.session_id().clone());
+        let thread_id = crate::test_support::active_thread_id(&panel, &vcx);
 
-        let metadata_ids = cx.update(|cx| {
-            ThreadMetadataStore::global(cx)
-                .read(cx)
-                .entry_ids()
-                .collect::<Vec<_>>()
-        });
-        assert!(
-            metadata_ids.is_empty(),
-            "expected empty draft thread title updates to be ignored"
-        );
-
-        cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                thread.push_user_content_block(None, "Hello".into(), cx);
-            });
-        });
-        cx.run_until_parked();
-
-        cx.update(|cx| {
-            let store = ThreadMetadataStore::global(cx);
-            let store = store.read(cx);
+        // Initial metadata was created by the panel with session_id: None.
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
             assert_eq!(store.entry_ids().count(), 1);
-            assert!(store.entry_by_session(&session_id).is_some());
+            assert!(
+                store.entry(thread_id).unwrap().session_id.is_none(),
+                "expected initial panel metadata to have no session_id"
+            );
+        });
+
+        // Setting a title on an empty thread should be ignored by the
+        // event handler (entries are empty), leaving session_id as None.
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.set_title("Draft Thread".into(), cx).detach();
+        });
+        vcx.run_until_parked();
+
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            assert!(
+                store.entry(thread_id).unwrap().session_id.is_none(),
+                "expected title updates on empty thread to be ignored by event handler"
+            );
+        });
+
+        // Pushing content makes entries non-empty, so the event handler
+        // should now update metadata with the real session_id.
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "Hello".into(), cx);
+        });
+        vcx.run_until_parked();
+
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            assert_eq!(store.entry_ids().count(), 1);
+            assert_eq!(
+                store.entry(thread_id).unwrap().session_id.as_ref(),
+                Some(&session_id),
+            );
         });
     }
 
@@ -2162,39 +2150,32 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, None::<&Path>, cx).await;
-        let connection = Rc::new(StubAgentConnection::new());
+        let connection = StubAgentConnection::new();
 
-        let thread = cx
-            .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), PathList::default(), cx)
-            })
-            .await
-            .unwrap();
-        let session_id = cx.read(|cx| thread.read(cx).session_id().clone());
+        let (panel, mut vcx) = setup_panel_with_project(project, cx);
+        crate::test_support::open_thread_with_connection(&panel, connection, &mut vcx);
 
-        cx.update(|cx| {
-            thread.update(cx, |thread, cx| {
-                thread.push_user_content_block(None, "Hello".into(), cx);
-            });
+        let session_id = crate::test_support::active_session_id(&panel, &vcx);
+        let thread = panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "Hello".into(), cx);
         });
-        cx.run_until_parked();
+        vcx.run_until_parked();
 
-        cx.update(|cx| {
-            let store = ThreadMetadataStore::global(cx);
-            let store = store.read(cx);
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
             assert_eq!(store.entry_ids().count(), 1);
             assert!(store.entry_by_session(&session_id).is_some());
         });
 
-        drop(thread);
+        // Dropping the panel releases the ConversationView and its thread.
+        drop(panel);
         cx.update(|_| {});
         cx.run_until_parked();
 
-        cx.update(|cx| {
-            let store = ThreadMetadataStore::global(cx);
-            let store = store.read(cx);
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
             assert_eq!(store.entry_ids().count(), 1);
             assert!(store.entry_by_session(&session_id).is_some());
         });
@@ -2209,49 +2190,40 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
         let project_without_worktree = Project::test(fs.clone(), None::<&Path>, cx).await;
         let project_with_worktree = Project::test(fs, [Path::new("/project-a")], cx).await;
-        let connection = Rc::new(StubAgentConnection::new());
 
-        let thread_without_worktree = cx
-            .update(|cx| {
-                connection.clone().new_session(
-                    project_without_worktree.clone(),
-                    PathList::default(),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+        // Thread in project without worktree
+        let (panel_no_wt, mut vcx_no_wt) = setup_panel_with_project(project_without_worktree, cx);
+        crate::test_support::open_thread_with_connection(
+            &panel_no_wt,
+            StubAgentConnection::new(),
+            &mut vcx_no_wt,
+        );
+        let thread_no_wt = panel_no_wt.read_with(&vcx_no_wt, |panel, cx| {
+            panel.active_agent_thread(cx).unwrap()
+        });
+        thread_no_wt.update_in(&mut vcx_no_wt, |thread, _window, cx| {
+            thread.push_user_content_block(None, "content".into(), cx);
+            thread.set_title("No Project Thread".into(), cx).detach();
+        });
+        vcx_no_wt.run_until_parked();
         let session_without_worktree =
-            cx.read(|cx| thread_without_worktree.read(cx).session_id().clone());
+            crate::test_support::active_session_id(&panel_no_wt, &vcx_no_wt);
 
-        cx.update(|cx| {
-            thread_without_worktree.update(cx, |thread, cx| {
-                thread.push_user_content_block(None, "content".into(), cx);
-                thread.set_title("No Project Thread".into(), cx).detach();
-            });
+        // Thread in project with worktree
+        let (panel_wt, mut vcx_wt) = setup_panel_with_project(project_with_worktree, cx);
+        crate::test_support::open_thread_with_connection(
+            &panel_wt,
+            StubAgentConnection::new(),
+            &mut vcx_wt,
+        );
+        let thread_wt =
+            panel_wt.read_with(&vcx_wt, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        thread_wt.update_in(&mut vcx_wt, |thread, _window, cx| {
+            thread.push_user_content_block(None, "content".into(), cx);
+            thread.set_title("Project Thread".into(), cx).detach();
         });
-        cx.run_until_parked();
-
-        let thread_with_worktree = cx
-            .update(|cx| {
-                connection.clone().new_session(
-                    project_with_worktree.clone(),
-                    PathList::default(),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        let session_with_worktree =
-            cx.read(|cx| thread_with_worktree.read(cx).session_id().clone());
-
-        cx.update(|cx| {
-            thread_with_worktree.update(cx, |thread, cx| {
-                thread.push_user_content_block(None, "content".into(), cx);
-                thread.set_title("Project Thread".into(), cx).detach();
-            });
-        });
-        cx.run_until_parked();
+        vcx_wt.run_until_parked();
+        let session_with_worktree = crate::test_support::active_session_id(&panel_wt, &vcx_wt);
 
         cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -2288,28 +2260,24 @@ mod tests {
         let project = Project::test(fs, None::<&Path>, cx).await;
         let connection = Rc::new(StubAgentConnection::new());
 
-        // Create a regular (non-subagent) AcpThread.
-        let regular_thread = cx
-            .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), PathList::default(), cx)
-            })
-            .await
-            .unwrap();
+        // Create a regular (non-subagent) thread through the panel.
+        let (panel, mut vcx) = setup_panel_with_project(project.clone(), cx);
+        crate::test_support::open_thread_with_connection(&panel, (*connection).clone(), &mut vcx);
 
-        let regular_session_id = cx.read(|cx| regular_thread.read(cx).session_id().clone());
+        let regular_thread =
+            panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        let regular_session_id = regular_thread.read_with(&vcx, |t, _| t.session_id().clone());
 
-        // Set a title on the regular thread to trigger a save via handle_thread_update.
-        cx.update(|cx| {
-            regular_thread.update(cx, |thread, cx| {
-                thread.push_user_content_block(None, "content".into(), cx);
-                thread.set_title("Regular Thread".into(), cx).detach();
-            });
+        regular_thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "content".into(), cx);
+            thread.set_title("Regular Thread".into(), cx).detach();
         });
-        cx.run_until_parked();
+        vcx.run_until_parked();
 
-        // Create a subagent AcpThread
+        // Create a standalone subagent AcpThread (not wrapped in a
+        // ConversationView). The ThreadMetadataStore only observes
+        // ConversationView events, so this thread's events should
+        // have no effect on sidebar metadata.
         let subagent_session_id = acp::SessionId::new("subagent-session");
         let subagent_thread = cx.update(|cx| {
             let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -2328,7 +2296,6 @@ mod tests {
             })
         });
 
-        // Set a title on the subagent thread to trigger handle_thread_update.
         cx.update(|cx| {
             subagent_thread.update(cx, |thread, cx| {
                 thread
@@ -2338,14 +2305,14 @@ mod tests {
         });
         cx.run_until_parked();
 
-        // List all metadata from the store cache.
+        // Only the regular thread should appear in sidebar metadata.
+        // The subagent thread is excluded because the metadata store
+        // only observes ConversationView events.
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
             store.read(cx).entries().cloned().collect::<Vec<_>>()
         });
 
-        // The subagent thread should NOT appear in the sidebar metadata.
-        // Only the regular thread should be listed.
         assert_eq!(
             list.len(),
             1,

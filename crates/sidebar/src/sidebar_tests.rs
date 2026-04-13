@@ -264,7 +264,9 @@ fn save_thread_metadata(
         let worktree_paths = project.read(cx).worktree_paths(cx);
         let thread_id = ThreadMetadataStore::global(cx)
             .read(cx)
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
             .unwrap_or_else(ThreadId::new);
         let metadata = ThreadMetadata {
             thread_id,
@@ -295,7 +297,9 @@ fn save_thread_metadata_with_main_paths(
     let thread_id = cx.update(|cx| {
         ThreadMetadataStore::global(cx)
             .read(cx)
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
             .unwrap_or_else(ThreadId::new)
     });
     let metadata = ThreadMetadata {
@@ -1672,11 +1676,7 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     let subagent_thread = panel.read_with(cx, |panel, cx| {
         panel
             .active_conversation_view()
-            .and_then(|conversation| {
-                conversation
-                    .read(cx)
-                    .thread_view_for_session(&subagent_session_id, cx)
-            })
+            .and_then(|conversation| conversation.read(cx).thread_view(&subagent_session_id, cx))
             .map(|thread_view| thread_view.read(cx).thread.clone())
             .expect("Expected subagent thread to be loaded into the conversation")
     });
@@ -2463,12 +2463,14 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
     let expected_thread_id = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
             .read(cx)
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
             .expect("metadata should still map session id to thread id")
     });
 
     assert_eq!(
-        panel.read_with(cx, |panel, _| panel.active_thread_id()),
+        panel.read_with(cx, |panel, cx| panel.active_thread_id(cx)),
         Some(expected_thread_id),
         "expected the agent panel to activate the real historical thread rather than a draft"
     );
@@ -3216,7 +3218,7 @@ async fn test_draft_title_survives_folder_addition(cx: &mut TestAppContext) {
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("Initial text", window, cx);
     });
-    let thread_id = panel.read_with(cx, |panel, _| panel.active_thread_id().unwrap());
+    let thread_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
     cx.run_until_parked();
 
     // The thread without a title should show the editor text via
@@ -3424,7 +3426,7 @@ async fn test_sending_message_from_draft_removes_draft(cx: &mut TestAppContext) 
     // the NativeAgentServer in tests, so replicate the key steps:
     // remove the draft, open a real thread with a stub connection,
     // and send.
-    let thread_id = panel.read_with(cx, |panel, _| panel.active_thread_id().unwrap());
+    let thread_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
     panel.update_in(cx, |panel, _window, cx| {
         panel.remove_thread(thread_id, cx);
     });
@@ -5985,7 +5987,9 @@ async fn test_unarchive_only_shows_restored_thread(cx: &mut TestAppContext) {
     let thread_id = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
             .read(cx)
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
             .expect("thread should exist")
     });
     let metadata = cx.update(|_, cx| {
@@ -6196,7 +6200,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
             .expect("expected unarchive to install an agent panel in the new workspace")
     });
 
-    let restored_thread_id = restored_panel.read_with(cx, |panel, _| panel.active_thread_id());
+    let restored_thread_id = restored_panel.read_with(cx, |panel, cx| panel.active_thread_id(cx));
     assert_eq!(
         restored_thread_id,
         Some(original_thread_id),
@@ -6229,7 +6233,9 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
     let mapped_thread_id = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
             .read(cx)
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
     });
     assert_eq!(
         mapped_thread_id,
@@ -6306,7 +6312,9 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
     let thread_id = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
             .read(cx)
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
             .expect("thread should exist in store")
     });
     let metadata = cx.update(|_, cx| {
@@ -6494,7 +6502,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
         )
     });
     let immediate_active_thread_id =
-        panel_b_before_settle.read_with(cx, |panel, _| panel.active_thread_id());
+        panel_b_before_settle.read_with(cx, |panel, cx| panel.active_thread_id(cx));
     let immediate_draft_ids =
         panel_b_before_settle.read_with(cx, |panel, cx| panel.draft_thread_ids(cx));
 
@@ -6516,7 +6524,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
             .expect("target workspace should still have an agent panel")
     });
     assert_eq!(
-        panel_b.read_with(cx, |panel, _| panel.active_thread_id()),
+        panel_b.read_with(cx, |panel, cx| panel.active_thread_id(cx)),
         Some(thread_id),
         "expected target panel to activate the restored thread id"
     );
@@ -6599,7 +6607,9 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
     let archived_metadata = cx.update(|_, cx| {
         let store = ThreadMetadataStore::global(cx).read(cx);
         let thread_id = store
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
             .expect("archived thread should still exist in metadata store");
         let metadata = store
             .entry(thread_id)
@@ -6654,11 +6664,13 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
     let restored_thread_id = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
             .read(cx)
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
             .expect("session should still map to restored thread id")
     });
     assert_eq!(
-        restored_panel.read_with(cx, |panel, _| panel.active_thread_id()),
+        restored_panel.read_with(cx, |panel, cx| panel.active_thread_id(cx)),
         Some(restored_thread_id),
         "expected unarchive after project removal to activate the restored real thread"
     );
@@ -6722,7 +6734,9 @@ async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(cx: &mut 
     let original_thread_id = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
             .read(cx)
-            .thread_id_for_session(&session_id)
+            .entries()
+            .find(|e| e.session_id.as_ref() == Some(&session_id))
+            .map(|e| e.thread_id)
             .expect("thread should exist in store before archiving")
     });
 
@@ -6885,7 +6899,9 @@ async fn test_archived_threads_excluded_from_sidebar_entries(cx: &mut TestAppCon
     cx.update(|_, cx| {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
             let thread_id = store
-                .thread_id_for_session(&archived_thread_session_id)
+                .entries()
+                .find(|e| e.session_id.as_ref() == Some(&archived_thread_session_id))
+                .map(|e| e.thread_id)
                 .unwrap();
             store.archive(thread_id, None, cx)
         })
@@ -9431,7 +9447,7 @@ mod property_test {
         //    when the workspace just changed and the new panel has no
         //    content yet.
         let panel = active_workspace.read(cx).panel::<AgentPanel>(cx).unwrap();
-        let panel_has_content = panel.read(cx).active_thread_id().is_some()
+        let panel_has_content = panel.read(cx).active_thread_id(cx).is_some()
             || panel.read(cx).active_conversation_view().is_some();
 
         let Some(entry) = sidebar.active_entry.as_ref() else {
@@ -9458,7 +9474,7 @@ mod property_test {
         );
 
         // 3. The entry must match the agent panel's current state.
-        if panel.read(cx).active_thread_id().is_some() {
+        if panel.read(cx).active_thread_id(cx).is_some() {
             anyhow::ensure!(
                 matches!(entry, ActiveEntry { .. }),
                 "panel shows a tracked draft but active_entry is {:?}",
@@ -9467,7 +9483,7 @@ mod property_test {
         } else if let Some(thread_id) = panel
             .read(cx)
             .active_conversation_view()
-            .and_then(|cv| cv.read(cx).parent_id(cx))
+            .map(|cv| cv.read(cx).parent_id())
         {
             anyhow::ensure!(
                 matches!(entry, ActiveEntry { thread_id: tid, .. } if *tid == thread_id),

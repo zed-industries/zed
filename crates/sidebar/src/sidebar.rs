@@ -841,7 +841,7 @@ impl Sidebar {
         if let Some(pending_thread_id) = self.pending_thread_activation {
             let panel_thread_id = panel
                 .active_conversation_view()
-                .and_then(|cv| cv.read(cx).parent_id(cx));
+                .map(|cv| cv.read(cx).parent_id());
 
             if panel_thread_id == Some(pending_thread_id) {
                 let session_id = panel
@@ -859,7 +859,7 @@ impl Sidebar {
             return false;
         }
 
-        if let Some(thread_id) = panel.active_thread_id() {
+        if let Some(thread_id) = panel.active_thread_id(cx) {
             let session_id = panel
                 .active_agent_thread(cx)
                 .map(|thread| thread.read(cx).session_id().clone());
@@ -3176,8 +3176,9 @@ impl Sidebar {
                 let removed = remove_task.await?;
                 if removed {
                     this.update_in(cx, |this, window, cx| {
-                        let in_flight =
-                            this.start_archive_worktree_task(&session_id, roots_to_archive, cx);
+                        let in_flight = thread_id.and_then(|tid| {
+                            this.start_archive_worktree_task(tid, roots_to_archive, cx)
+                        });
                         this.archive_and_activate(
                             &session_id,
                             thread_id,
@@ -3194,7 +3195,8 @@ impl Sidebar {
             .detach_and_log_err(cx);
         } else {
             let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
-            let in_flight = self.start_archive_worktree_task(session_id, roots_to_archive, cx);
+            let in_flight = thread_id
+                .and_then(|tid| self.start_archive_worktree_task(tid, roots_to_archive, cx));
             self.archive_and_activate(
                 session_id,
                 thread_id,
@@ -3262,7 +3264,7 @@ impl Sidebar {
                         let panel_shows_archived = panel
                             .read(cx)
                             .active_conversation_view()
-                            .and_then(|cv| cv.read(cx).parent_id(cx))
+                            .map(|cv| cv.read(cx).parent_id())
                             .is_some_and(|live_thread_id| {
                                 thread_id.is_some_and(|id| id == live_thread_id)
                             });
@@ -3328,17 +3330,13 @@ impl Sidebar {
 
     fn start_archive_worktree_task(
         &self,
-        session_id: &acp::SessionId,
+        thread_id: ThreadId,
         roots: Vec<thread_worktree_archive::RootPlan>,
         cx: &mut Context<Self>,
     ) -> Option<(Task<()>, smol::channel::Sender<()>)> {
         if roots.is_empty() {
             return None;
         }
-
-        let thread_id = ThreadMetadataStore::global(cx)
-            .read(cx)
-            .thread_id_for_session(session_id)?;
 
         let (cancel_tx, cancel_rx) = smol::channel::bounded::<()>(1);
         let task = cx.spawn(async move |_this, cx| {
@@ -4073,7 +4071,7 @@ impl Sidebar {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
                 if let Some(id) = panel.draft_thread_ids(cx).first().copied() {
-                    if panel.active_thread_id() != Some(id) {
+                    if panel.active_thread_id(cx) != Some(id) {
                         panel.activate_retained_thread(id, true, window, cx);
                     }
                     id
@@ -4998,6 +4996,7 @@ fn all_thread_infos_for_workspace(
             let has_pending_tool_call = conversation_view
                 .read(cx)
                 .root_thread_has_pending_tool_call(cx);
+            let conversation_thread_id = conversation_view.read(cx).parent_id();
             let thread_view = conversation_view.read(cx).root_thread(cx)?;
             let thread_view_ref = thread_view.read(cx);
             let thread = thread_view_ref.thread.read(cx);
@@ -5010,7 +5009,7 @@ fn all_thread_infos_for_workspace(
             let is_native = thread_view_ref.as_native_thread(cx).is_some();
             let is_title_generating = is_native && thread.has_provisional_title();
             let session_id = thread.session_id().clone();
-            let is_background = agent_panel.is_retained_thread(&thread_view_ref.id);
+            let is_background = agent_panel.is_retained_thread(&conversation_thread_id);
 
             let status = if has_pending_tool_call {
                 AgentThreadStatus::WaitingForConfirmation
