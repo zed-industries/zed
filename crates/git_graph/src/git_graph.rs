@@ -1184,11 +1184,33 @@ impl GitGraph {
         git_store.repositories().get(&self.repo_id).cloned()
     }
 
-    fn render_chip(&self, name: &SharedString, accent_color: gpui::Hsla) -> impl IntoElement {
+    /// Checks whether a ref name from git's `%D` decoration
+    ///  format refers to the currently checked-out branch.
+    fn is_head_ref(ref_name: &str, head_branch_name: &Option<SharedString>) -> bool {
+        head_branch_name.as_ref().is_some_and(|head| {
+            ref_name == head.as_ref() || ref_name.strip_prefix("HEAD -> ") == Some(head.as_ref())
+        })
+    }
+
+    fn render_chip(
+        &self,
+        name: &SharedString,
+        accent_color: gpui::Hsla,
+        is_head: bool,
+    ) -> impl IntoElement {
         Chip::new(name.clone())
             .label_size(LabelSize::Small)
-            .bg_color(accent_color.opacity(0.1))
-            .border_color(accent_color.opacity(0.5))
+            .truncate()
+            .map(|chip| {
+                if is_head {
+                    chip.icon(IconName::Check)
+                        .bg_color(accent_color.opacity(0.25))
+                        .border_color(accent_color.opacity(0.5))
+                } else {
+                    chip.bg_color(accent_color.opacity(0.08))
+                        .border_color(accent_color.opacity(0.25))
+                }
+            })
     }
 
     fn render_table_rows(
@@ -1198,6 +1220,14 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) -> Vec<Vec<AnyElement>> {
         let repository = self.get_repository(cx);
+
+        let head_branch_name: Option<SharedString> = repository.as_ref().and_then(|repo| {
+            repo.read(cx)
+                .snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+        });
 
         let row_height = self.row_height;
 
@@ -1311,13 +1341,13 @@ impl GitGraph {
                                 .gap_2()
                                 .overflow_hidden()
                                 .children((!commit.data.ref_names.is_empty()).then(|| {
-                                    h_flex().gap_1().children(
-                                        commit
-                                            .data
-                                            .ref_names
-                                            .iter()
-                                            .map(|name| self.render_chip(name, accent_color)),
-                                    )
+                                    h_flex().gap_1().children(commit.data.ref_names.iter().map(
+                                        |name| {
+                                            let is_head =
+                                                Self::is_head_ref(name.as_ref(), &head_branch_name);
+                                            self.render_chip(name, accent_color, is_head)
+                                        },
+                                    ))
                                 }))
                                 .child(subject_label),
                         )
@@ -1652,7 +1682,7 @@ impl GitGraph {
                     .px_1p5()
                     .gap_1()
                     .border_1()
-                    .border_color(color.border)
+                    .border_color(color.border_variant)
                     .rounded_md()
                     .bg(color.toolbar_background)
                     .on_action(cx.listener(Self::confirm_search))
@@ -1784,6 +1814,13 @@ impl GitGraph {
         let full_sha: SharedString = commit_entry.data.sha.to_string().into();
         let ref_names = commit_entry.data.ref_names.clone();
 
+        let head_branch_name: Option<SharedString> = repository
+            .read(cx)
+            .snapshot()
+            .branch
+            .as_ref()
+            .map(|branch| SharedString::from(branch.name().to_string()));
+
         let accent_colors = cx.theme().accents();
         let accent_color = accent_colors
             .0
@@ -1855,7 +1892,7 @@ impl GitGraph {
         v_flex()
             .min_w(px(300.))
             .h_full()
-            .bg(cx.theme().colors().surface_background)
+            .bg(cx.theme().colors().editor_background)
             .flex_basis(DefiniteLength::Fraction(
                 self.commit_details_split_state.read(cx).right_ratio(),
             ))
@@ -1898,9 +1935,10 @@ impl GitGraph {
                     )
                     .children((!ref_names.is_empty()).then(|| {
                         h_flex().gap_1().flex_wrap().justify_center().children(
-                            ref_names
-                                .iter()
-                                .map(|name| self.render_chip(name, accent_color)),
+                            ref_names.iter().map(|name| {
+                                let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
+                                self.render_chip(name, accent_color, is_head)
+                            }),
                         )
                     }))
                     .child(
@@ -2059,6 +2097,8 @@ impl GitGraph {
                     .child(
                         h_flex()
                             .gap_1()
+                            .w_full()
+                            .justify_between()
                             .child(
                                 Label::new(format!("{} Changed Files", changed_files_count))
                                     .size(LabelSize::Small)
@@ -2110,7 +2150,7 @@ impl GitGraph {
                 h_flex().p_1p5().w_full().child(
                     Button::new("view-commit", "View Commit")
                         .full_width()
-                        .style(ButtonStyle::Outlined)
+                        .style(ButtonStyle::OutlinedGhost)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_selected_commit_view(window, cx);
                         })),

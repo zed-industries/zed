@@ -234,6 +234,10 @@ impl ProfileProvider for Entity<agent::Thread> {
             .model()
             .is_some_and(|model| model.supports_tools())
     }
+
+    fn model_selected(&self, cx: &App) -> bool {
+        self.read(cx).model().is_some()
+    }
 }
 
 #[derive(Default)]
