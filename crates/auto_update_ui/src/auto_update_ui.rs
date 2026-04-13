@@ -34,14 +34,19 @@ actions!(
 
 pub fn init(cx: &mut App) {
     notify_if_app_was_updated(cx);
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace
-            .register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
-                view_release_notes_locally(workspace, window, cx);
-            })
-            .register_action(|_workspace, _: &ShowUpdateNotification, _window, cx| {
+    cx.observe_new(|workspace: &mut Workspace, _window, cx| {
+        workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
+            view_release_notes_locally(workspace, window, cx);
+        });
+
+        if matches!(
+            ReleaseChannel::global(cx),
+            ReleaseChannel::Nightly | ReleaseChannel::Dev
+        ) {
+            workspace.register_action(|_workspace, _: &ShowUpdateNotification, _window, cx| {
                 show_update_notification(cx);
             });
+        }
     })
     .detach();
 }
@@ -212,12 +217,29 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                         let already_agent_layout =
                             matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
 
+                        let update;
                         if !already_agent_layout {
-                            AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
+                            update = Some(AgentSettings::set_layout(
+                                WindowLayout::Agent(None),
+                                fs.clone(),
+                                cx,
+                            ));
+                        } else {
+                            update = None;
                         }
 
-                        window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
-                        window.dispatch_action(Box::new(FocusAgent), cx);
+                        window
+                            .spawn(cx, async move |cx| {
+                                if let Some(update) = update {
+                                    update.await.ok();
+                                }
+
+                                cx.update(|window, cx| {
+                                    window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
+                                    window.dispatch_action(Box::new(FocusAgent), cx);
+                                })
+                            })
+                            .detach();
                     })),
                     on_dismiss: Some(Arc::new(|cx| {
                         ParallelAgentAnnouncement::set_dismissed(true, cx)

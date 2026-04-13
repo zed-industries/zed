@@ -1138,7 +1138,7 @@ impl AgentPanel {
                 let fs = fs.clone();
                 let weak_panel = weak_panel.clone();
                 move |_window, cx| {
-                    AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
+                    let _ = AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
                     weak_panel
                         .update(cx, |panel, cx| {
                             panel.dismiss_agent_layout_onboarding(cx);
@@ -1150,7 +1150,7 @@ impl AgentPanel {
                 let fs = fs.clone();
                 let weak_panel = weak_panel.clone();
                 move |_window, cx| {
-                    AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
+                    let _ = AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
                     weak_panel
                         .update(cx, |panel, cx| {
                             panel.dismiss_agent_layout_onboarding(cx);
