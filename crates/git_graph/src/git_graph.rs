@@ -2060,6 +2060,8 @@ impl GitGraph {
                     .child(
                         h_flex()
                             .gap_1()
+                            .w_full()
+                            .justify_between()
                             .child(
                                 Label::new(format!("{} Changed Files", changed_files_count))
                                     .size(LabelSize::Small)
@@ -2111,7 +2113,7 @@ impl GitGraph {
                 h_flex().p_1p5().w_full().child(
                     Button::new("view-commit", "View Commit")
                         .full_width()
-                        .style(ButtonStyle::Outlined)
+                        .style(ButtonStyle::OutlinedGhost)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_selected_commit_view(window, cx);
                         })),
