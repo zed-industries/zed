@@ -27,57 +27,6 @@ Some of the language servers can also accept initialization or workspace configu
 
 Visit the [Configuring Zed](../configuring-zed.md#settings-files) guide for more information on how to edit your settings file.
 
-### Using Dexter
-
-[Dexter](https://github.com/remoteoss/dexter) is a fast, full-featured Elixir language server optimized for large codebases. It works by parsing source files directly, no compilation required. Supports go-to-definition, references, hover docs, autocompletion, rename, and format on save.
-
-Enable Dexter by adding the following to your settings file:
-
-```json [settings]
-  "languages": {
-    "Elixir": {
-      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
-    },
-    "EEx": {
-      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
-    },
-    "HEEx": {
-      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
-    }
-  }
-```
-
-The Dexter binary will be downloaded automatically on first use. If you already have Dexter installed (e.g. via [mise](https://mise.jdx.dev/)), the extension will use your local binary from PATH instead.
-
-Dexter can accept initialization options.
-
-The following example disables following `defdelegate` to the target function:
-
-```json [settings]
-  "lsp": {
-    "dexter": {
-      "initialization_options": {
-        "followDelegates": false
-      }
-    }
-  }
-```
-
-To use a custom Dexter binary, add the following to your settings file:
-
-```json [settings]
-  "lsp": {
-    "dexter": {
-      "binary": {
-        "path": "/path/to/dexter",
-        "arguments": ["lsp"]
-      }
-    }
-  }
-```
-
-See the [Dexter documentation](https://github.com/remoteoss/dexter) for more details.
-
 ### Using ElixirLS
 
 ElixirLS can accept workspace configuration options.
@@ -144,6 +93,55 @@ To use a custom Expert build, add the following to your settings file:
     }
   }
 ```
+
+### Using Dexter
+
+[Dexter](https://github.com/remoteoss/dexter) is a fast, full-featured Elixir language server optimized for large codebases. It works by parsing source files directly, no compilation required. Supports go-to-definition, references, hover docs, autocompletion, rename, and format on save.
+
+Enable Dexter by adding the following to your settings file:
+
+```json [settings]
+  "languages": {
+    "Elixir": {
+      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "EEx": {
+      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+    },
+    "HEEx": {
+      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+    }
+  }
+```
+
+Dexter can accept initialization options.
+
+The following example disables following `defdelegate` to the target function:
+
+```json [settings]
+  "lsp": {
+    "dexter": {
+      "initialization_options": {
+        "followDelegates": false
+      }
+    }
+  }
+```
+
+To use a custom Dexter binary, add the following to your settings file:
+
+```json [settings]
+  "lsp": {
+    "dexter": {
+      "binary": {
+        "path": "/path/to/dexter",
+        "arguments": ["lsp"]
+      }
+    }
+  }
+```
+
+See the [Dexter documentation](https://github.com/remoteoss/dexter) for more details.
 
 ### Using Next LS
 
