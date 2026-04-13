@@ -292,7 +292,14 @@ fn remove_empty_ancestors(child_path: &Path, base_path: &Path) {
             Ok(()) => {
                 log::info!("Removed empty parent directory: {}", parent.display());
             }
-            Err(_) => break,
+            Err(err) if err.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+            Err(err) => {
+                log::error!(
+                    "Failed to remove parent directory {}: {err}",
+                    parent.display()
+                );
+                break;
+            }
         }
         current = parent;
     }

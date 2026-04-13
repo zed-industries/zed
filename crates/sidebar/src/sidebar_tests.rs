@@ -10256,13 +10256,14 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
             PathBuf::from("/nonexistent"),
         ]),
         PathList::new(&[PathBuf::from("/project"), PathBuf::from("/nonexistent")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
         cx,
     );
 
     // Also save a main thread so the sidebar has something to show.
     save_thread_metadata(
         acp::SessionId::new(Arc::from("main-thread")),
-        "Main Thread".into(),
+        Some("Main Thread".into()),
         chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
         None,
         &main_project,
@@ -10304,7 +10305,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
     let still_archived = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
             .read(cx)
-            .entry(&wt_thread_id)
+            .entry_by_session(&wt_thread_id)
             .map(|t| t.archived)
     });
     assert_eq!(

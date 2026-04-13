@@ -3163,7 +3163,7 @@ impl Sidebar {
             for root in &roots_to_archive {
                 for workspace in mw.workspaces() {
                     if !workspaces_to_remove.contains(workspace)
-                        && !workspace
+                        && workspace
                             .read(cx)
                             .project()
                             .read(cx)
