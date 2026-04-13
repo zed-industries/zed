@@ -16,7 +16,7 @@ use agent_ui::{
 use chrono::{DateTime, Utc};
 use editor::Editor;
 use gpui::{
-    Action as _, AnyElement, App, Context, DismissEvent, Entity, EntityId, FocusHandle, Focusable,
+    Action as _, AnyElement, App, Context, DismissEvent, Entity, FocusHandle, Focusable,
     KeyContext, ListState, Pixels, Render, SharedString, Task, WeakEntity, Window, WindowHandle,
     linear_color_stop, linear_gradient, list, prelude::*, px,
 };
@@ -485,6 +485,11 @@ impl Sidebar {
                     this.update_entries(cx);
                     this.reconcile_groups(window, cx);
                 }
+                MultiWorkspaceEvent::ProjectGroupKeyUpdated { old_key, new_key } => {
+                    this.move_threads_for_key_change(old_key, new_key, cx);
+                    this.update_entries(cx);
+                    this.reconcile_groups(window, cx);
+                }
             },
         )
         .detach();
@@ -672,6 +677,49 @@ impl Sidebar {
             self.subscribe_to_agent_panel(&agent_panel, window, cx);
             self.observe_draft_editors(cx);
         }
+    }
+
+    fn move_threads_for_key_change(
+        &mut self,
+        old_key: &ProjectGroupKey,
+        new_key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) {
+        let old_main_paths = old_key.path_list();
+        let new_main_paths = new_key.path_list();
+
+        let added_paths: Vec<PathBuf> = new_main_paths
+            .paths()
+            .iter()
+            .filter(|p| !old_main_paths.paths().contains(p))
+            .cloned()
+            .collect();
+
+        let removed_paths: Vec<PathBuf> = old_main_paths
+            .paths()
+            .iter()
+            .filter(|p| !new_main_paths.paths().contains(p))
+            .cloned()
+            .collect();
+
+        if added_paths.is_empty() && removed_paths.is_empty() {
+            return;
+        }
+
+        ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
+            store.change_worktree_paths_by_main(
+                old_main_paths,
+                |paths| {
+                    for path in &added_paths {
+                        paths.add_path(path, path);
+                    }
+                    for path in &removed_paths {
+                        paths.remove_main_path(path);
+                    }
+                },
+                store_cx,
+            );
+        });
     }
 
     fn move_thread_paths(

@@ -876,6 +876,96 @@ async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_adding_folder_to_non_backed_group_migrates_threads(cx: &mut TestAppContext) {
+    // When a project group has no backing workspace (e.g. the workspace was
+    // closed but the group and its threads remain), adding a folder via
+    // `add_folders_to_project_group` should still migrate thread metadata
+    // to the new key and cause the sidebar to rerender.
+    let (_fs, project) =
+        init_multi_project_test(&["/active-project", "/orphan-a", "/orphan-b"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    // Insert a standalone project group for [/orphan-a] with no backing
+    // workspace — simulating a group that persisted after its workspace
+    // was closed.
+    let group_key = ProjectGroupKey::new(None, PathList::new(&[PathBuf::from("/orphan-a")]));
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(ProjectGroup {
+            key: group_key.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+            visible_thread_count: None,
+        });
+    });
+
+    // Verify the group has no backing workspaces.
+    multi_workspace.read_with(cx, |mw, cx| {
+        let group = mw
+            .project_groups(cx)
+            .into_iter()
+            .find(|g| g.key == group_key)
+            .expect("group should exist");
+        assert!(
+            group.workspaces.is_empty(),
+            "group should have no backing workspaces"
+        );
+    });
+
+    // Save threads directly into the metadata store under [/orphan-a].
+    save_thread_metadata_with_main_paths(
+        "t-1",
+        "Thread One",
+        PathList::new(&[PathBuf::from("/orphan-a")]),
+        PathList::new(&[PathBuf::from("/orphan-a")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "t-2",
+        "Thread Two",
+        PathList::new(&[PathBuf::from("/orphan-a")]),
+        PathList::new(&[PathBuf::from("/orphan-a")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
+        cx,
+    );
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // Verify threads show under the standalone group.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [active-project]",
+            "v [orphan-a]",
+            "  Thread Two",
+            "  Thread One",
+        ]
+    );
+
+    // Add /orphan-b to the non-backed group.
+    multi_workspace.update(cx, |mw, cx| {
+        mw.add_folders_to_project_group(&group_key, vec![PathBuf::from("/orphan-b")], cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    // Threads should now appear under the combined key.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [active-project]",
+            "v [orphan-a, orphan-b]",
+            "  Thread Two",
+            "  Thread One",
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =

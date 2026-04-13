@@ -10,7 +10,6 @@ use project::{DirectoryLister, DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
-use std::collections::HashSet;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
@@ -102,6 +101,10 @@ pub enum MultiWorkspaceEvent {
     ActiveWorkspaceChanged,
     WorkspaceAdded(Entity<Workspace>),
     WorkspaceRemoved(EntityId),
+    ProjectGroupKeyUpdated {
+        old_key: ProjectGroupKey,
+        new_key: ProjectGroupKey,
+    },
 }
 
 pub enum SidebarEvent {
@@ -575,7 +578,10 @@ impl MultiWorkspace {
             return;
         }
 
-        self.update_project_group_key(old_key, &new_key, cx);
+        // Re-key the group without emitting ProjectGroupKeyUpdated —
+        // the Project already emitted WorktreePathsChanged which the
+        // sidebar handles for thread migration.
+        self.rekey_project_group(old_key, &new_key, cx);
         self.serialize(cx);
         cx.notify();
     }
@@ -617,11 +623,13 @@ impl MultiWorkspace {
     /// Transitions a project group from `old_key` to `new_key`.
     ///
     /// On collision (both keys have groups), the active workspace's
+    /// Re-keys a project group from `old_key` to `new_key`, handling
+    /// collisions. When two groups collide, the active workspace's
     /// group always wins. Otherwise the old key's state is preserved
     /// — it represents the group the user or system just acted on.
     /// The losing group is removed, and the winner is re-keyed in
     /// place to preserve sidebar order.
-    fn update_project_group_key(
+    fn rekey_project_group(
         &mut self,
         old_key: &ProjectGroupKey,
         new_key: &ProjectGroupKey,
@@ -639,31 +647,43 @@ impl MultiWorkspace {
         let new_key_exists = self.project_groups.iter().any(|g| g.key == *new_key);
 
         if !old_key_exists {
-            // Old key has no group — it was already transitioned or never
-            // existed. Just ensure the new key has a group.
             self.ensure_project_group_state(new_key.clone());
             return;
         }
 
         if new_key_exists {
-            // Collision — decide who wins.
             let active_key = self.active_workspace.read(cx).project_group_key(cx);
             if active_key == *new_key {
-                // The active workspace owns the new key's group — it wins.
-                // Just remove the old key's group.
                 self.project_groups.retain(|g| g.key != *old_key);
             } else {
-                // Old key wins — remove the new key's group, re-key old in place.
                 self.project_groups.retain(|g| g.key != *new_key);
                 if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *old_key) {
                     group.key = new_key.clone();
                 }
             }
         } else {
-            // No collision — re-key old group in place.
             if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == *old_key) {
                 group.key = new_key.clone();
             }
+        }
+    }
+
+    /// Re-keys a project group and emits `ProjectGroupKeyUpdated` so
+    /// the sidebar can migrate thread metadata. Used for direct group
+    /// manipulation (add/remove folder) where no Project event fires.
+    fn update_project_group_key(
+        &mut self,
+        old_key: &ProjectGroupKey,
+        new_key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) {
+        self.rekey_project_group(old_key, new_key, cx);
+
+        if old_key != new_key && !new_key.path_list().paths().is_empty() {
+            cx.emit(MultiWorkspaceEvent::ProjectGroupKeyUpdated {
+                old_key: old_key.clone(),
+                new_key: new_key.clone(),
+            });
         }
     }
 
@@ -897,7 +917,17 @@ impl MultiWorkspace {
             return;
         };
 
-        let mut all_paths: Vec<PathBuf> = group.key.path_list().paths().to_vec();
+        let existing_paths = group.key.path_list().paths();
+        let new_paths: Vec<PathBuf> = new_paths
+            .into_iter()
+            .filter(|p| !existing_paths.contains(p))
+            .collect();
+
+        if new_paths.is_empty() {
+            return;
+        }
+
+        let mut all_paths: Vec<PathBuf> = existing_paths.to_vec();
         all_paths.extend(new_paths.iter().cloned());
         let new_path_list = PathList::new(&all_paths);
         let new_key = ProjectGroupKey::new(group.key.host(), new_path_list);
@@ -983,13 +1013,17 @@ impl MultiWorkspace {
         host: Option<&RemoteConnectionOptions>,
         cx: &App,
     ) -> Option<Entity<Workspace>> {
-        self.workspaces()
-            .find(|workspace| {
-                let key = workspace.read(cx).project_group_key(cx);
-                key.host().as_ref() == host
-                    && PathList::new(&workspace.read(cx).root_paths(cx)) == *path_list
-            })
-            .cloned()
+        for workspace in self.workspaces() {
+            let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
+            let key = workspace.read(cx).project_group_key(cx);
+            let host_matches = key.host().as_ref() == host;
+            let paths_match = root_paths == *path_list;
+            if host_matches && paths_match {
+                return Some(workspace.clone());
+            }
+        }
+
+        None
     }
 
     /// Finds an existing workspace whose paths match, or creates a new one.

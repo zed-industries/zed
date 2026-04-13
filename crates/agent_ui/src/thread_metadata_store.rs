@@ -743,11 +743,41 @@ impl ThreadMetadataStore {
             .copied()
             .collect();
 
+        self.mutate_thread_paths(&thread_ids, mutate, cx);
+    }
+
+    /// Like `change_worktree_paths`, but looks up threads by their
+    /// `main_worktree_paths` instead of `folder_paths`. Used when
+    /// migrating threads for project group key changes where the
+    /// lookup key is the group key's main paths.
+    pub fn change_worktree_paths_by_main(
+        &mut self,
+        current_main_paths: &PathList,
+        mutate: impl Fn(&mut WorktreePaths),
+        cx: &mut Context<Self>,
+    ) {
+        let thread_ids: Vec<_> = self
+            .threads_by_main_paths
+            .get(current_main_paths)
+            .into_iter()
+            .flatten()
+            .copied()
+            .collect();
+
+        self.mutate_thread_paths(&thread_ids, mutate, cx);
+    }
+
+    fn mutate_thread_paths(
+        &mut self,
+        thread_ids: &[ThreadId],
+        mutate: impl Fn(&mut WorktreePaths),
+        cx: &mut Context<Self>,
+    ) {
         if thread_ids.is_empty() {
             return;
         }
 
-        for thread_id in &thread_ids {
+        for thread_id in thread_ids {
             if let Some(thread) = self.threads.get_mut(thread_id) {
                 if let Some(ids) = self
                     .threads_by_main_paths
