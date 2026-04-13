@@ -57,6 +57,17 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<DelayMs>,
+    /// Whether the hover popover sticks when the mouse moves toward it,
+    /// allowing interaction with its contents before it disappears.
+    ///
+    /// Default: true
+    pub hover_popover_sticky: Option<bool>,
+    /// Time to wait in milliseconds before hiding the hover popover
+    /// after the mouse moves away from the hover target.
+    /// Only applies when `hover_popover_sticky` is enabled.
+    ///
+    /// Default: 300
+    pub hover_popover_hiding_delay: Option<DelayMs>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings

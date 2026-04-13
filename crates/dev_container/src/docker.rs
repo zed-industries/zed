@@ -487,10 +487,18 @@ where
     let s: Option<String> = Option::deserialize(deserializer)?;
     match s {
         Some(json_string) => {
+            // The devcontainer metadata label can be either a JSON array (e.g. from
+            // image-based devcontainers) or a single JSON object (e.g. from
+            // docker-compose-based devcontainers created by the devcontainer CLI).
+            // Handle both formats.
             let parsed: Vec<HashMap<String, serde_json_lenient::Value>> =
-                serde_json_lenient::from_str(&json_string).map_err(|e| {
-                    log::error!("Error deserializing metadata: {e}");
-                    serde::de::Error::custom(e)
+                serde_json_lenient::from_str(&json_string).or_else(|_| {
+                    let single: HashMap<String, serde_json_lenient::Value> =
+                        serde_json_lenient::from_str(&json_string).map_err(|e| {
+                            log::error!("Error deserializing metadata: {e}");
+                            serde::de::Error::custom(e)
+                        })?;
+                    Ok(vec![single])
                 })?;
             Ok(Some(parsed))
         }
@@ -934,6 +942,30 @@ mod test {
 
         assert!(target_dir.is_ok());
         assert_eq!(target_dir.unwrap(), "/workspaces/cli/".to_string());
+    }
+
+    #[test]
+    fn should_deserialize_object_metadata_from_docker_compose_container() {
+        // The devcontainer CLI writes metadata as a bare JSON object (not an array)
+        // when there is only one metadata entry (e.g. docker-compose with no features).
+        // See https://github.com/devcontainers/cli/issues/1054
+        let given_config = r#"
+    {
+      "Id": "dc4e7b8ff4bf",
+      "Config": {
+        "Labels": {
+          "devcontainer.metadata": "{\"remoteUser\":\"ubuntu\"}"
+        }
+      }
+    }
+                "#;
+        let config = serde_json_lenient::from_str::<DockerInspect>(given_config).unwrap();
+
+        assert!(config.config.labels.metadata.is_some());
+        let metadata = config.config.labels.metadata.unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert!(metadata[0].contains_key("remoteUser"));
+        assert_eq!(metadata[0]["remoteUser"], "ubuntu");
     }
 
     #[test]

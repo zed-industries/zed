@@ -123,6 +123,13 @@
   // Time to wait in milliseconds before showing the informational hover box.
   // This delay also applies to auto signature help when `auto_signature_help` is enabled.
   "hover_popover_delay": 300,
+  // Whether the hover popover sticks when the mouse moves toward it,
+  // allowing interaction with its contents before it disappears.
+  "hover_popover_sticky": true,
+  // Time to wait in milliseconds before hiding the hover popover
+  // after the mouse moves away from the hover target.
+  // Only applies when `hover_popover_sticky` is enabled.
+  "hover_popover_hiding_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened
@@ -134,6 +141,15 @@
   //  3. Do not restore previous workspaces
   //         "restore_on_startup": "none",
   "restore_on_startup": "last_session",
+  // The default behavior when opening paths from the CLI without
+  // an explicit `-e` (existing window) or `-n` (new window) flag.
+  //
+  // May take 2 values:
+  //  1. Add to the existing Zed window
+  //         "cli_default_open_behavior": "existing_window"
+  //  2. Open a new Zed window
+  //         "cli_default_open_behavior": "new_window"
+  "cli_default_open_behavior": "existing_window",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.

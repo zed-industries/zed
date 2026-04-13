@@ -73,6 +73,9 @@ pub fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        cx.set_global(acp_thread::StubSessionCounter(
+            std::sync::atomic::AtomicUsize::new(0),
+        ));
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         release_channel::init("0.0.0".parse().unwrap(), cx);
@@ -127,4 +130,11 @@ pub fn active_session_id(panel: &Entity<AgentPanel>, cx: &VisualTestContext) -> 
         let thread = panel.active_agent_thread(cx).unwrap();
         thread.read(cx).session_id().clone()
     })
+}
+
+pub fn active_thread_id(
+    panel: &Entity<AgentPanel>,
+    cx: &VisualTestContext,
+) -> crate::thread_metadata_store::ThreadId {
+    panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap())
 }
