@@ -5158,6 +5158,81 @@ impl LspStore {
             .collect()
     }
 
+    pub fn prepare_rename_across_servers<T: language::ToPointUtf16>(
+        &mut self,
+        buffer: Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(crate::PrepareRenameResponse, Option<LanguageServerId>)>> {
+        use crate::PrepareRenameResponse;
+
+        let position = position.to_point_utf16(buffer.read(cx));
+        let request = PrepareRename { position };
+
+        let capable_server_ids: Vec<LanguageServerId> = buffer.update(cx, |buffer, cx| {
+            let Some(local) = self.as_local() else {
+                return Vec::new();
+            };
+            local
+                .language_servers_for_buffer(buffer, cx)
+                .filter(|(_, server)| {
+                    request.check_capabilities(server.adapter_server_capabilities())
+                })
+                .map(|(_, server)| server.server_id())
+                .collect()
+        });
+
+        if capable_server_ids.len() <= 1 {
+            let task = self.request_lsp(buffer, LanguageServerToQuery::FirstCapable, request, cx);
+            return cx.background_spawn(async move { Ok((task.await?, None)) });
+        }
+
+        let tasks: Vec<(LanguageServerId, Task<Result<PrepareRenameResponse>>)> =
+            capable_server_ids
+                .into_iter()
+                .map(|server_id| {
+                    let task = self.request_lsp(
+                        buffer.clone(),
+                        LanguageServerToQuery::Other(server_id),
+                        PrepareRename { position },
+                        cx,
+                    );
+                    (server_id, task)
+                })
+                .collect();
+
+        cx.background_spawn(async move {
+            for (server_id, task) in tasks {
+                match task.await {
+                    Ok(response @ PrepareRenameResponse::Success(_))
+                    | Ok(response @ PrepareRenameResponse::OnlyUnpreparedRenameSupported) => {
+                        log::debug!(
+                            "[rename-fallback] Server {server_id:?} succeeded for prepare rename",
+                        );
+                        return Ok((response, Some(server_id)));
+                    }
+                    Ok(PrepareRenameResponse::InvalidPosition) => {
+                        log::info!(
+                            "[rename-fallback] Server {server_id:?} returned InvalidPosition, \
+                             trying next server",
+                        );
+                        continue;
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "[rename-fallback] Server {server_id:?} errored: {err}, \
+                             trying next server",
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            log::debug!("[rename-fallback] All servers exhausted, returning InvalidPosition");
+            Ok((PrepareRenameResponse::InvalidPosition, None))
+        })
+    }
+
     pub fn request_lsp<R>(
         &mut self,
         buffer: Entity<Buffer>,
@@ -5182,12 +5257,18 @@ impl LspStore {
 
         let Some(language_server) = buffer.update(cx, |buffer, cx| match server {
             LanguageServerToQuery::FirstCapable => self.as_local().and_then(|local| {
-                local
+                let result = local
                     .language_servers_for_buffer(buffer, cx)
                     .find(|(_, server)| {
                         request.check_capabilities(server.adapter_server_capabilities())
                     })
-                    .map(|(_, server)| server.clone())
+                    .map(|(_, server)| server.clone());
+                log::debug!(
+                    "FirstCapable for '{}': selected {:?}",
+                    request.display_name(),
+                    result.as_ref().map(|s| s.name())
+                );
+                result
             }),
             LanguageServerToQuery::Other(id) => self
                 .language_server_for_local_buffer(buffer, id, cx)
@@ -5275,6 +5356,12 @@ impl LspStore {
             };
 
             let result = lsp_request.await.into_response();
+            log::debug!(
+                "'{}' via {} result: ok={}",
+                request.display_name(),
+                language_server.name(),
+                result.is_ok()
+            );
 
             let response = result.map_err(|err| {
                 let message = format!(
