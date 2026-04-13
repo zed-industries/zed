@@ -348,6 +348,30 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
             )
         ]
     );
+
+    // After an external symlink subtree is loaded, changes in the target should be reflected.
+    fs.insert_file(Path::new("/root/dir3/src/new.rs"), b"".to_vec())
+        .await;
+
+    for _ in 0..50 {
+        let found = tree.read_with(cx, |tree, _|{
+            tree.entry_for_path(rel_path("deps/dep-dir3/src/new.rs"))
+                .is_some()
+        });
+        if found {
+            break;
+        }
+        cx.executor().run_until_parked();
+        cx.background_executor
+            .timer(std::time::Duration::from_millis(10))
+            .await;
+    }
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("deps/dep-dir3/src/new.rs"))
+                .is_some()
+        );
+    });
 }
 
 #[cfg(target_os = "macos")]
