@@ -641,14 +641,12 @@ fn build_conflicted_files_resolution_prompt(
 }
 
 pub(crate) struct AgentThread {
-    thread_id: ThreadId,
     conversation_view: Entity<ConversationView>,
 }
 
 enum BaseView {
     Uninitialized,
     AgentThread {
-        thread_id: ThreadId,
         conversation_view: Entity<ConversationView>,
     },
 }
@@ -656,7 +654,6 @@ enum BaseView {
 impl From<AgentThread> for BaseView {
     fn from(thread: AgentThread) -> Self {
         BaseView::AgentThread {
-            thread_id: thread.thread_id,
             conversation_view: thread.conversation_view,
         }
     }
@@ -1406,7 +1403,7 @@ impl AgentPanel {
             self.selected_agent.clone()
         };
         let thread = self.create_agent_thread(agent, None, None, None, None, window, cx);
-        let thread_id = thread.thread_id;
+        let thread_id = thread.conversation_view.read(cx).thread_id;
         self.retained_threads
             .insert(thread_id, thread.conversation_view);
         thread_id
@@ -1423,10 +1420,7 @@ impl AgentPanel {
             return;
         };
         self.set_base_view(
-            BaseView::AgentThread {
-                thread_id: id,
-                conversation_view,
-            },
+            BaseView::AgentThread { conversation_view },
             focus,
             window,
             cx,
@@ -1439,7 +1433,7 @@ impl AgentPanel {
             store.delete(id, cx);
         });
 
-        if self.active_thread_id() == Some(id) && self.active_thread_is_draft(cx) {
+        if self.active_thread_id(cx) == Some(id) && self.active_thread_is_draft(cx) {
             self.base_view = BaseView::Uninitialized;
             self.clear_overlay_state();
             self._thread_view_subscription = None;
@@ -1451,9 +1445,11 @@ impl AgentPanel {
         }
     }
 
-    pub fn active_thread_id(&self) -> Option<ThreadId> {
+    pub fn active_thread_id(&self, cx: &App) -> Option<ThreadId> {
         match &self.base_view {
-            BaseView::AgentThread { thread_id, .. } => Some(*thread_id),
+            BaseView::AgentThread { conversation_view } => {
+                Some(conversation_view.read(cx).thread_id)
+            }
             _ => None,
         }
     }
@@ -1474,13 +1470,10 @@ impl AgentPanel {
             .map(|(id, _)| *id)
             .collect();
 
-        if let BaseView::AgentThread {
-            thread_id,
-            conversation_view,
-        } = &self.base_view
-        {
-            if is_draft(conversation_view) && !ids.contains(thread_id) {
-                ids.push(*thread_id);
+        if let BaseView::AgentThread { conversation_view } = &self.base_view {
+            let thread_id = conversation_view.read(cx).thread_id;
+            if is_draft(conversation_view) && !ids.contains(&thread_id) {
+                ids.push(thread_id);
             }
         }
 
@@ -1500,10 +1493,11 @@ impl AgentPanel {
             .retained_threads
             .get(&id)
             .or_else(|| match &self.base_view {
-                BaseView::AgentThread {
-                    thread_id,
-                    conversation_view,
-                } if *thread_id == id => Some(conversation_view),
+                BaseView::AgentThread { conversation_view }
+                    if conversation_view.read(cx).thread_id == id =>
+                {
+                    Some(conversation_view)
+                }
                 _ => None,
             })?;
         let tv = cv.read(cx).active_thread()?;
@@ -1520,10 +1514,11 @@ impl AgentPanel {
             .retained_threads
             .get(&id)
             .or_else(|| match &self.base_view {
-                BaseView::AgentThread {
-                    thread_id,
-                    conversation_view,
-                } if *thread_id == id => Some(conversation_view),
+                BaseView::AgentThread { conversation_view }
+                    if conversation_view.read(cx).thread_id == id =>
+                {
+                    Some(conversation_view)
+                }
                 _ => None,
             });
         let Some(cv) = cv else { return };
@@ -2105,9 +2100,7 @@ impl AgentPanel {
 
     pub fn active_conversation_view(&self) -> Option<&Entity<ConversationView>> {
         match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => Some(conversation_view),
+            BaseView::AgentThread { conversation_view } => Some(conversation_view),
             _ => None,
         }
     }
@@ -2127,9 +2120,7 @@ impl AgentPanel {
 
     pub fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => conversation_view
+            BaseView::AgentThread { conversation_view } => conversation_view
                 .read(cx)
                 .active_thread()
                 .map(|r| r.read(cx).thread.clone()),
@@ -2148,9 +2139,11 @@ impl AgentPanel {
             .chain(self.retained_threads.values());
 
         for conversation_view in conversation_views {
-            if let Some(thread_view) = conversation_view.read(cx).thread_view(thread_id) {
-                thread_view.update(cx, |view, cx| view.cancel_generation(cx));
-                return true;
+            if *thread_id == conversation_view.read(cx).thread_id {
+                if let Some(thread_view) = conversation_view.read(cx).root_thread_view(cx) {
+                    thread_view.update(cx, |view, cx| view.cancel_generation(cx));
+                    return true;
+                }
             }
         }
         false
@@ -2197,7 +2190,7 @@ impl AgentPanel {
         // before a worktree was added would have stale paths and not
         // appear under the correct sidebar group.
         let mut thread_ids: Vec<ThreadId> = self.retained_threads.keys().copied().collect();
-        if let Some(active_id) = self.active_thread_id() {
+        if let Some(active_id) = self.active_thread_id(cx) {
             thread_ids.push(active_id);
         }
         if !thread_ids.is_empty() {
@@ -2208,13 +2201,11 @@ impl AgentPanel {
     }
 
     fn retain_running_thread(&mut self, old_view: BaseView, cx: &mut Context<Self>) {
-        let BaseView::AgentThread {
-            thread_id,
-            conversation_view,
-        } = old_view
-        else {
+        let BaseView::AgentThread { conversation_view } = old_view else {
             return;
         };
+
+        let thread_id = conversation_view.read(cx).thread_id;
 
         if self.retained_threads.contains_key(&thread_id) {
             return;
@@ -2307,9 +2298,9 @@ impl AgentPanel {
 
     pub(crate) fn active_native_agent_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
         match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => conversation_view.read(cx).as_native_thread(cx),
+            BaseView::AgentThread { conversation_view } => {
+                conversation_view.read(cx).as_native_thread(cx)
+            }
             _ => None,
         }
     }
@@ -2326,10 +2317,7 @@ impl AgentPanel {
         let old_view = std::mem::replace(&mut self.base_view, new_view);
         self.retain_running_thread(old_view, cx);
 
-        if let BaseView::AgentThread {
-            conversation_view, ..
-        } = &self.base_view
-        {
+        if let BaseView::AgentThread { conversation_view } = &self.base_view {
             let thread_agent = conversation_view.read(cx).agent_key().clone();
             if self.selected_agent != thread_agent {
                 self.selected_agent = thread_agent;
@@ -2387,9 +2375,7 @@ impl AgentPanel {
 
     fn refresh_base_view_subscriptions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self._base_view_observation = match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => {
+            BaseView::AgentThread { conversation_view } => {
                 self._thread_view_subscription =
                     Self::subscribe_to_active_thread_view(conversation_view, window, cx);
                 let focus_handle = conversation_view.focus_handle(cx);
@@ -2431,9 +2417,9 @@ impl AgentPanel {
 
         match &self.base_view {
             BaseView::Uninitialized => VisibleSurface::Uninitialized,
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => VisibleSurface::AgentThread(conversation_view),
+            BaseView::AgentThread { conversation_view } => {
+                VisibleSurface::AgentThread(conversation_view)
+            }
         }
     }
 
@@ -2523,15 +2509,10 @@ impl AgentPanel {
                         this.handle_first_send_requested(view.clone(), content.clone(), window, cx);
                     }
                     AcpThreadViewEvent::MessageSentOrQueued => {
-                        let Some(thread_id) = this.active_thread_id() else {
+                        let Some(thread_id) = this.active_thread_id(cx) else {
                             return;
                         };
-                        let session_id = view.read(cx).thread.read(cx).session_id().clone();
-                        if this.retained_threads.remove(&thread_id).is_some() {
-                            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                                store.assign_session(thread_id, session_id.clone(), cx);
-                            });
-                        }
+                        this.retained_threads.remove(&thread_id);
                         cx.emit(AgentPanelEvent::MessageSentOrQueued { thread_id });
                     }
                 },
@@ -2823,61 +2804,37 @@ impl AgentPanel {
             });
         }
 
-        let thread_id = ThreadMetadataStore::try_global(cx)
-            .and_then(|store| store.read(cx).thread_id_for_session(&session_id))
-            .or_else(|| {
-                // Fallback: scan active/background threads by ACP session_id
-                let find_thread_id = |cv: &Entity<ConversationView>| -> Option<ThreadId> {
-                    cv.read(cx).active_thread().and_then(|tv| {
-                        let tv = tv.read(cx);
-                        (tv.thread.read(cx).session_id() == &session_id).then_some(tv.id)
-                    })
-                };
-                if let BaseView::AgentThread {
-                    conversation_view, ..
-                } = &self.base_view
-                {
-                    if let Some(id) = find_thread_id(conversation_view) {
-                        return Some(id);
-                    }
-                }
-                for cv in self.retained_threads.values() {
-                    if let Some(id) = find_thread_id(cv) {
-                        return Some(id);
-                    }
-                }
-                None
-            });
+        let has_session = |cv: &Entity<ConversationView>| -> bool {
+            cv.read(cx)
+                .active_thread()
+                .is_some_and(|tv| tv.read(cx).thread.read(cx).session_id() == &session_id)
+        };
 
-        if let Some(thread_id) = thread_id {
+        // Check if the active view already has this session.
+        if let BaseView::AgentThread { conversation_view } = &self.base_view {
+            if has_session(conversation_view) {
+                self.clear_overlay_state();
+                cx.emit(AgentPanelEvent::ActiveViewChanged);
+                return;
+            }
+        }
+
+        // Check if a retained thread has this session — promote it.
+        let retained_key = self
+            .retained_threads
+            .iter()
+            .find(|(_, cv)| has_session(cv))
+            .map(|(id, _)| *id);
+        if let Some(thread_id) = retained_key {
             if let Some(conversation_view) = self.retained_threads.remove(&thread_id) {
                 self.set_base_view(
-                    BaseView::AgentThread {
-                        thread_id,
-                        conversation_view,
-                    },
+                    BaseView::AgentThread { conversation_view },
                     focus,
                     window,
                     cx,
                 );
                 self.remove_empty_draft(cx);
                 return;
-            }
-
-            if let BaseView::AgentThread {
-                conversation_view, ..
-            } = &self.base_view
-            {
-                if conversation_view
-                    .read(cx)
-                    .active_thread()
-                    .map(|t| t.read(cx).id)
-                    == Some(thread_id)
-                {
-                    self.clear_overlay_state();
-                    cx.emit(AgentPanelEvent::ActiveViewChanged);
-                    return;
-                }
             }
         }
 
@@ -2938,17 +2895,14 @@ impl AgentPanel {
         let project = self.project.clone();
         let worktree_paths = ThreadWorktreePaths::from_project(project.read(cx), cx);
         let remote_connection = project.read(cx).project_group_key(cx).host();
-        let metadata = ThreadMetadata {
+        let metadata = ThreadMetadata::new_draft(
             thread_id,
-            session_id: resume_session_id.clone(),
-            agent_id: agent.id(),
-            title: title.clone(),
-            updated_at: chrono::Utc::now(),
-            created_at: Some(chrono::Utc::now()),
+            resume_session_id.clone(),
+            agent.id(),
+            title.clone(),
             worktree_paths,
             remote_connection,
-            archived: false,
-        };
+        );
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
             store.save_all(vec![metadata], cx);
         });
@@ -3010,10 +2964,7 @@ impl AgentPanel {
         })
         .detach();
 
-        AgentThread {
-            thread_id,
-            conversation_view,
-        }
+        AgentThread { conversation_view }
     }
 
     fn active_thread_has_messages(&self, cx: &App) -> bool {
@@ -4007,21 +3958,19 @@ impl AgentPanel {
         let focus_handle = self.focus_handle(cx);
 
         let conversation_view = match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => Some(conversation_view.clone()),
+            BaseView::AgentThread { conversation_view } => Some(conversation_view.clone()),
             _ => None,
         };
         let thread_with_messages = match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => conversation_view.read(cx).has_user_submitted_prompt(cx),
+            BaseView::AgentThread { conversation_view } => {
+                conversation_view.read(cx).has_user_submitted_prompt(cx)
+            }
             _ => false,
         };
         let has_auth_methods = match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => conversation_view.read(cx).has_auth_methods(),
+            BaseView::AgentThread { conversation_view } => {
+                conversation_view.read(cx).has_auth_methods()
+            }
             _ => false,
         };
 
@@ -4242,9 +4191,9 @@ impl AgentPanel {
             };
 
         let active_thread = match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => conversation_view.read(cx).as_native_thread(cx),
+            BaseView::AgentThread { conversation_view } => {
+                conversation_view.read(cx).as_native_thread(cx)
+            }
             BaseView::Uninitialized => None,
         };
 
@@ -4814,12 +4763,12 @@ impl AgentPanel {
 
         match &self.base_view {
             BaseView::Uninitialized => false,
-            BaseView::AgentThread {
-                conversation_view, ..
-            } if conversation_view.read(cx).as_native_thread(cx).is_none() => false,
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => {
+            BaseView::AgentThread { conversation_view }
+                if conversation_view.read(cx).as_native_thread(cx).is_none() =>
+            {
+                false
+            }
+            BaseView::AgentThread { conversation_view } => {
                 let history_is_empty = conversation_view
                     .read(cx)
                     .history()
@@ -4941,9 +4890,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         match &self.base_view {
-            BaseView::AgentThread {
-                conversation_view, ..
-            } => {
+            BaseView::AgentThread { conversation_view } => {
                 conversation_view.update(cx, |conversation_view, cx| {
                     conversation_view.insert_dragged_files(paths, added_worktrees, window, cx);
                 });
@@ -5160,7 +5107,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let active_id = self.active_thread_id();
+        let active_id = self.active_thread_id(cx);
         let empty_draft_ids: Vec<ThreadId> = self
             .draft_thread_ids(cx)
             .into_iter()
@@ -6187,7 +6134,7 @@ mod tests {
         cx.run_until_parked();
 
         panel.read_with(&cx, |panel, cx| {
-            assert_eq!(panel.active_thread_id(), Some(retained_draft_id));
+            assert_eq!(panel.active_thread_id(cx), Some(retained_draft_id));
             assert!(panel.active_thread_is_draft(cx));
             assert_eq!(panel.draft_thread_ids(cx), vec![retained_draft_id]);
         });

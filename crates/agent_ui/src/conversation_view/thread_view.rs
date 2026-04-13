@@ -10,7 +10,7 @@ use editor::actions::OpenExcerpts;
 
 use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
-use crate::thread_metadata_store::ThreadId;
+
 use gpui::{Corner, List};
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
@@ -263,8 +263,8 @@ impl PermissionSelection {
 }
 
 pub struct ThreadView {
-    pub id: ThreadId,
-    pub parent_id: Option<ThreadId>,
+    pub session_id: acp::SessionId,
+    pub parent_session_id: Option<acp::SessionId>,
     pub thread: Entity<AcpThread>,
     pub(crate) conversation: Entity<super::Conversation>,
     pub server_view: WeakEntity<ConversationView>,
@@ -295,7 +295,7 @@ pub struct ThreadView {
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
-    pub subagent_scroll_handles: RefCell<HashMap<ThreadId, ScrollHandle>>,
+    pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
     pub queue_expanded: bool,
@@ -338,7 +338,7 @@ pub struct ThreadView {
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        if self.parent_id.is_some() {
+        if self.parent_session_id.is_some() {
             self.focus_handle.clone()
         } else {
             self.active_editor(cx).focus_handle(cx)
@@ -358,8 +358,6 @@ pub struct TurnFields {
 
 impl ThreadView {
     pub(crate) fn new(
-        parent_id: Option<ThreadId>,
-        thread_id: ThreadId,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
         server_view: WeakEntity<ConversationView>,
@@ -385,7 +383,8 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let id = thread_id;
+        let session_id = thread.read(cx).session_id().clone();
+        let parent_session_id = thread.read(cx).parent_session_id().cloned();
 
         let has_commands = !session_capabilities.read().available_commands().is_empty();
         let placeholder = placeholder_text(agent_display_name.as_ref(), has_commands);
@@ -509,8 +508,8 @@ impl ThreadView {
             .unwrap_or_default();
 
         let mut this = Self {
-            id,
-            parent_id,
+            session_id,
+            parent_session_id,
             focus_handle: cx.focus_handle(),
             thread,
             conversation,
@@ -698,7 +697,7 @@ impl ThreadView {
     }
 
     fn is_subagent(&self) -> bool {
-        self.parent_id.is_some()
+        self.parent_session_id.is_some()
     }
 
     /// Returns the currently active editor, either for a message that is being
@@ -1708,14 +1707,14 @@ impl ThreadView {
 
     pub fn authorize_tool_call(
         &mut self,
-        thread_id: ThreadId,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         outcome: SelectedPermissionOutcome,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.conversation.update(cx, |conversation, cx| {
-            conversation.authorize_tool_call(thread_id, tool_call_id, outcome, cx);
+            conversation.authorize_tool_call(session_id, tool_call_id, outcome, cx);
         });
         if self.should_be_following {
             self.workspace
@@ -1745,8 +1744,9 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        let session_id = self.thread.read(cx).session_id().clone();
         self.conversation.update(cx, |conversation, cx| {
-            conversation.authorize_pending_tool_call(&self.id, kind, cx)
+            conversation.authorize_pending_tool_call(&session_id, kind, cx)
         })?;
         if self.should_be_following {
             self.workspace
@@ -1786,8 +1786,9 @@ impl ThreadView {
             _ => acp::PermissionOptionKind::AllowOnce,
         };
 
+        let session_id = self.thread.read(cx).session_id().clone();
         self.authorize_tool_call(
-            self.id,
+            session_id,
             tool_call_id,
             SelectedPermissionOutcome::new(option_id, option_kind),
             window,
@@ -1865,15 +1866,25 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let (thread_id, tool_call_id, options) =
-            self.conversation.read(cx).pending_tool_call(&self.id, cx)?;
+        let session_id = self.thread.read(cx).session_id().clone();
+        let (returned_session_id, tool_call_id, options) = self
+            .conversation
+            .read(cx)
+            .pending_tool_call(&session_id, cx)?;
         let options = options.clone();
-        self.authorize_with_granularity(thread_id, tool_call_id, &options, is_allow, window, cx)
+        self.authorize_with_granularity(
+            returned_session_id,
+            tool_call_id,
+            &options,
+            is_allow,
+            window,
+            cx,
+        )
     }
 
     fn authorize_with_granularity(
         &mut self,
-        thread_id: ThreadId,
+        session_id: acp::SessionId,
         tool_call_id: acp::ToolCallId,
         options: &PermissionOptions,
         is_allow: bool,
@@ -1898,7 +1909,7 @@ impl ThreadView {
         // When in per-command pattern mode, use the checked patterns.
         if let Some(PermissionSelection::SelectedPatterns(checked)) = selection {
             if let Some(outcome) = options.build_outcome_for_checked_patterns(checked, is_allow) {
-                self.authorize_tool_call(thread_id, tool_call_id, outcome, window, cx);
+                self.authorize_tool_call(session_id, tool_call_id, outcome, window, cx);
                 return Some(());
             }
         }
@@ -1911,7 +1922,7 @@ impl ThreadView {
         let selected_choice = choices.get(selected_index).or(choices.last())?;
         let outcome = selected_choice.build_outcome(is_allow);
 
-        self.authorize_tool_call(thread_id, tool_call_id, outcome, window, cx);
+        self.authorize_tool_call(session_id, tool_call_id, outcome, window, cx);
 
         Some(())
     }
@@ -2592,17 +2603,7 @@ impl ThreadView {
 
         let awaiting_session_ids: Vec<_> = awaiting
             .iter()
-            .filter_map(|(thread_id, _)| {
-                self.server_view.upgrade().and_then(|server_view| {
-                    server_view
-                        .read(cx)
-                        .as_connected()
-                        .and_then(|connected| connected.threads.get(thread_id))
-                        .map(|thread_view| {
-                            thread_view.read(cx).thread.read(cx).session_id().clone()
-                        })
-                })
-            })
+            .map(|(session_id, _)| session_id.clone())
             .collect();
 
         let thread = self.thread.read(cx);
@@ -3122,7 +3123,7 @@ impl ThreadView {
     }
 
     fn is_subagent_canceled_or_failed(&self, cx: &App) -> bool {
-        let Some(parent_session_id) = self.parent_id.as_ref() else {
+        let Some(parent_session_id) = self.parent_session_id.as_ref() else {
             return false;
         };
 
@@ -3130,7 +3131,7 @@ impl ThreadView {
 
         self.server_view
             .upgrade()
-            .and_then(|sv| sv.read(cx).thread_view(parent_session_id))
+            .and_then(|sv| sv.read(cx).thread_view(parent_session_id, cx))
             .is_some_and(|parent_view| {
                 parent_view
                     .read(cx)
@@ -3149,9 +3150,10 @@ impl ThreadView {
     }
 
     pub(crate) fn render_subagent_titlebar(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let Some(parent_session_id) = self.parent_id else {
+        if self.parent_session_id.is_none() {
             return None;
-        };
+        }
+        let parent_session_id = self.thread.read(cx).parent_session_id()?.clone();
 
         let server_view = self.server_view.clone();
         let thread = self.thread.clone();
@@ -3220,7 +3222,7 @@ impl ThreadView {
                                         .on_click(move |_, window, cx| {
                                             let _ = server_view.update(cx, |server_view, cx| {
                                                 server_view.navigate_to_thread(
-                                                    parent_session_id,
+                                                    parent_session_id.clone(),
                                                     window,
                                                     cx,
                                                 );
@@ -4720,7 +4722,7 @@ impl ThreadView {
             }
             AgentThreadEntry::ToolCall(tool_call) => self
                 .render_any_tool_call(
-                    &self.id,
+                    self.thread.read(cx).session_id(),
                     entry_ix,
                     tool_call,
                     &self.focus_handle(cx),
@@ -5875,7 +5877,7 @@ impl ThreadView {
 
     fn render_terminal_tool_call(
         &self,
-        active_thread_id: &ThreadId,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
@@ -6152,9 +6154,9 @@ impl ThreadView {
                 )
             })
             .when_some(confirmation_options, |this, options| {
-                let is_first = self.is_first_tool_call(active_thread_id, &tool_call.id, cx);
+                let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
                 this.child(self.render_permission_buttons(
-                    self.id,
+                    self.thread.read(cx).session_id().clone(),
                     is_first,
                     options,
                     entry_ix,
@@ -6168,21 +6170,22 @@ impl ThreadView {
 
     fn is_first_tool_call(
         &self,
-        active_thread_id: &ThreadId,
+        active_session_id: &acp::SessionId,
         tool_call_id: &acp::ToolCallId,
         cx: &App,
     ) -> bool {
         self.conversation
             .read(cx)
-            .pending_tool_call(active_thread_id, cx)
-            .map_or(false, |(pending_thread_id, pending_tool_call_id, _)| {
-                self.id == pending_thread_id && tool_call_id == &pending_tool_call_id
+            .pending_tool_call(active_session_id, cx)
+            .map_or(false, |(pending_session_id, pending_tool_call_id, _)| {
+                self.thread.read(cx).session_id() == &pending_session_id
+                    && tool_call_id == &pending_tool_call_id
             })
     }
 
     fn render_any_tool_call(
         &self,
-        active_thread_id: &ThreadId,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
@@ -6196,7 +6199,7 @@ impl ThreadView {
             if tool_call.is_subagent() {
                 this.child(
                     self.render_subagent_tool_call(
-                        active_thread_id,
+                        active_session_id,
                         entry_ix,
                         tool_call,
                         tool_call
@@ -6211,7 +6214,7 @@ impl ThreadView {
             } else if has_terminals {
                 this.children(tool_call.terminals().map(|terminal| {
                     self.render_terminal_tool_call(
-                        active_thread_id,
+                        active_session_id,
                         entry_ix,
                         terminal,
                         tool_call,
@@ -6223,7 +6226,7 @@ impl ThreadView {
                 }))
             } else {
                 this.child(self.render_tool_call(
-                    active_thread_id,
+                    active_session_id,
                     entry_ix,
                     tool_call,
                     focus_handle,
@@ -6237,7 +6240,7 @@ impl ThreadView {
 
     fn render_tool_call(
         &self,
-        active_thread_id: &ThreadId,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
@@ -6308,7 +6311,7 @@ impl ThreadView {
                             .map(|(content_ix, content)| {
                                 div()
                                     .child(self.render_tool_call_content(
-                                        active_thread_id,
+                                        active_session_id,
                                         entry_ix,
                                         content,
                                         content_ix,
@@ -6388,8 +6391,8 @@ impl ThreadView {
                         )
                     })
                     .child(self.render_permission_buttons(
-                        self.id,
-                        self.is_first_tool_call(active_thread_id, &tool_call.id, cx),
+                        self.thread.read(cx).session_id().clone(),
+                        self.is_first_tool_call(active_session_id, &tool_call.id, cx),
                         options,
                         entry_ix,
                         tool_call.id.clone(),
@@ -6438,7 +6441,7 @@ impl ThreadView {
                             .map(|(content_ix, content)| {
                                 div().id(("tool-call-output", entry_ix)).child(
                                     self.render_tool_call_content(
-                                        active_thread_id,
+                                        active_session_id,
                                         entry_ix,
                                         content,
                                         content_ix,
@@ -6663,7 +6666,7 @@ impl ThreadView {
 
     fn render_permission_buttons(
         &self,
-        thread_id: ThreadId,
+        session_id: acp::SessionId,
         is_first: bool,
         options: &PermissionOptions,
         entry_ix: usize,
@@ -6673,7 +6676,7 @@ impl ThreadView {
     ) -> Div {
         match options {
             PermissionOptions::Flat(options) => self.render_permission_buttons_flat(
-                thread_id,
+                session_id,
                 is_first,
                 options,
                 entry_ix,
@@ -7080,7 +7083,7 @@ impl ThreadView {
 
     fn render_permission_buttons_flat(
         &self,
-        thread_id: ThreadId,
+        session_id: acp::SessionId,
         is_first: bool,
         options: &[acp::PermissionOption],
         entry_ix: usize,
@@ -7150,9 +7153,10 @@ impl ThreadView {
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.option_id.clone();
                         let option_kind = option.kind;
+                        let session_id = session_id.clone();
                         move |this, _, window, cx| {
                             this.authorize_tool_call(
-                                thread_id,
+                                session_id.clone(),
                                 tool_call_id.clone(),
                                 SelectedPermissionOutcome::new(option_id.clone(), option_kind),
                                 window,
@@ -7410,7 +7414,7 @@ impl ThreadView {
 
     fn render_tool_call_content(
         &self,
-        thread_id: &ThreadId,
+        session_id: &acp::SessionId,
         entry_ix: usize,
         content: &ToolCallContent,
         context_ix: usize,
@@ -7453,7 +7457,7 @@ impl ThreadView {
                 self.render_diff_editor(entry_ix, diff, tool_call, has_failed, cx)
             }
             ToolCallContent::Terminal(terminal) => self.render_terminal_tool_call(
-                thread_id,
+                session_id,
                 entry_ix,
                 terminal,
                 tool_call,
@@ -7694,7 +7698,7 @@ impl ThreadView {
 
     fn render_subagent_tool_call(
         &self,
-        active_thread_id: &ThreadId,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         tool_call: &ToolCall,
         subagent_session_id: Option<acp::SessionId>,
@@ -7706,16 +7710,11 @@ impl ThreadView {
             self.server_view
                 .upgrade()
                 .and_then(|server_view| server_view.read(cx).as_connected())
-                .and_then(|connected| {
-                    connected
-                        .threads
-                        .values()
-                        .find(|tv| tv.read(cx).thread.read(cx).session_id() == &session_id)
-                })
+                .and_then(|connected| connected.threads.get(&session_id))
         });
 
         let content = self.render_subagent_card(
-            active_thread_id,
+            active_session_id,
             entry_ix,
             subagent_thread_view,
             tool_call,
@@ -7729,7 +7728,7 @@ impl ThreadView {
 
     fn render_subagent_card(
         &self,
-        active_thread_id: &ThreadId,
+        active_session_id: &acp::SessionId,
         entry_ix: usize,
         thread_view: Option<&Entity<ThreadView>>,
         tool_call: &ToolCall,
@@ -7751,9 +7750,8 @@ impl ThreadView {
         let is_pending_tool_call = thread_view
             .as_ref()
             .and_then(|tv| {
-                self.conversation
-                    .read(cx)
-                    .pending_tool_call(&tv.read(cx).id, cx)
+                let sid = tv.read(cx).thread.read(cx).session_id();
+                self.conversation.read(cx).pending_tool_call(sid, cx)
             })
             .is_some();
 
@@ -7979,12 +7977,13 @@ impl ThreadView {
             )
             .when_some(thread_view, |this, thread_view| {
                 let thread = &thread_view.read(cx).thread;
+                let tv_session_id = thread.read(cx).session_id();
                 let pending_tool_call = self
                     .conversation
                     .read(cx)
-                    .pending_tool_call(&thread_view.read(cx).id, cx);
+                    .pending_tool_call(tv_session_id, cx);
 
-                let nav_thread_id = thread_view.read(cx).id;
+                let nav_session_id = tv_session_id.clone();
 
                 let fullscreen_toggle = h_flex()
                     .id(entry_ix)
@@ -8006,7 +8005,7 @@ impl ThreadView {
                         telemetry::event!("Subagent Maximized");
                         this.server_view
                             .update(cx, |this, cx| {
-                                this.navigate_to_thread(nav_thread_id, window, cx);
+                                this.navigate_to_thread(nav_session_id.clone(), window, cx);
                             })
                             .ok();
                     }));
@@ -8017,7 +8016,7 @@ impl ThreadView {
                     {
                         this.child(Divider::horizontal().color(DividerColor::Border))
                             .child(thread_view.read(cx).render_any_tool_call(
-                                active_thread_id,
+                                active_session_id,
                                 entry_ix,
                                 tool_call,
                                 focus_handle,
@@ -8103,7 +8102,7 @@ impl ThreadView {
         let scroll_handle = self
             .subagent_scroll_handles
             .borrow_mut()
-            .entry(subagent_view.id)
+            .entry(subagent_view.session_id.clone())
             .or_default()
             .clone();
 
@@ -8903,15 +8902,15 @@ impl Render for ThreadView {
             .key_context("AcpThread")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                if this.parent_id.is_none() {
+                if this.parent_session_id.is_none() {
                     this.cancel_generation(cx);
                 }
             }))
             .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
-                if let Some(parent_thread_id) = this.parent_id {
+                if let Some(parent_session_id) = this.thread.read(cx).parent_session_id().cloned() {
                     this.server_view
                         .update(cx, |view, cx| {
-                            view.navigate_to_thread(parent_thread_id, window, cx);
+                            view.navigate_to_thread(parent_session_id, window, cx);
                         })
                         .ok();
                 }

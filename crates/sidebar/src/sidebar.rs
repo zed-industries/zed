@@ -841,7 +841,7 @@ impl Sidebar {
         if let Some(pending_thread_id) = self.pending_thread_activation {
             let panel_thread_id = panel
                 .active_conversation_view()
-                .and_then(|cv| cv.read(cx).parent_id(cx));
+                .map(|cv| cv.read(cx).parent_id());
 
             if panel_thread_id == Some(pending_thread_id) {
                 let session_id = panel
@@ -859,7 +859,7 @@ impl Sidebar {
             return false;
         }
 
-        if let Some(thread_id) = panel.active_thread_id() {
+        if let Some(thread_id) = panel.active_thread_id(cx) {
             let session_id = panel
                 .active_agent_thread(cx)
                 .map(|thread| thread.read(cx).session_id().clone());
@@ -2415,13 +2415,11 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let load_thread = |
-            agent_panel: Entity<AgentPanel>,
-            metadata: &ThreadMetadata,
-            focus: bool,
-            window: &mut Window,
-            cx: &mut App,
-        | {
+        let load_thread = |agent_panel: Entity<AgentPanel>,
+                           metadata: &ThreadMetadata,
+                           focus: bool,
+                           window: &mut Window,
+                           cx: &mut App| {
             let Some(session_id) = metadata.session_id.clone() else {
                 return;
             };
@@ -2475,11 +2473,7 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
-    fn clear_empty_group_drafts(
-        &mut self,
-        workspace: &Entity<Workspace>,
-        cx: &mut Context<Self>,
-    ) {
+    fn clear_empty_group_drafts(&mut self, workspace: &Entity<Workspace>, cx: &mut Context<Self>) {
         let Some(multi_workspace) = self.multi_workspace.upgrade() else {
             return;
         };
@@ -3268,7 +3262,7 @@ impl Sidebar {
                         let panel_shows_archived = panel
                             .read(cx)
                             .active_conversation_view()
-                            .and_then(|cv| cv.read(cx).parent_id(cx))
+                            .map(|cv| cv.read(cx).parent_id())
                             .is_some_and(|live_thread_id| {
                                 thread_id.is_some_and(|id| id == live_thread_id)
                             });
@@ -4079,7 +4073,7 @@ impl Sidebar {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
                 if let Some(id) = panel.draft_thread_ids(cx).first().copied() {
-                    if panel.active_thread_id() != Some(id) {
+                    if panel.active_thread_id(cx) != Some(id) {
                         panel.activate_retained_thread(id, true, window, cx);
                     }
                     id
@@ -5004,6 +4998,7 @@ fn all_thread_infos_for_workspace(
             let has_pending_tool_call = conversation_view
                 .read(cx)
                 .root_thread_has_pending_tool_call(cx);
+            let conversation_thread_id = conversation_view.read(cx).parent_id();
             let thread_view = conversation_view.read(cx).root_thread(cx)?;
             let thread_view_ref = thread_view.read(cx);
             let thread = thread_view_ref.thread.read(cx);
@@ -5016,7 +5011,7 @@ fn all_thread_infos_for_workspace(
             let is_native = thread_view_ref.as_native_thread(cx).is_some();
             let is_title_generating = is_native && thread.has_provisional_title();
             let session_id = thread.session_id().clone();
-            let is_background = agent_panel.is_retained_thread(&thread_view_ref.id);
+            let is_background = agent_panel.is_retained_thread(&conversation_thread_id);
 
             let status = if has_pending_tool_call {
                 AgentThreadStatus::WaitingForConfirmation
