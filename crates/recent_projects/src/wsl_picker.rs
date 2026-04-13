@@ -101,7 +101,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
         &mut self,
         query: String,
         _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         use fuzzy_nucleo::StringMatchCandidate;
 
