@@ -4479,8 +4479,7 @@ impl BackgroundScanner {
                                 .as_ref()
                                 .map(|path| path.as_ref().to_path_buf())
                                 .unwrap_or_else(|| root_path.join(ancestor.as_std_path()))
-                        }
-                        else {
+                        } else {
                             root_path.join(ancestor.as_std_path())
                         };
                         state
@@ -4761,8 +4760,7 @@ impl BackgroundScanner {
             }
 
             if child_entry.is_dir() {
-                child_entry.is_ignored =
-                    ignore_stack.is_abs_path_ignored(&child_abs_path, true);
+                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, true);
                 child_entry.is_always_included =
                     self.settings.is_path_always_included(&child_path, true);
 
@@ -4787,8 +4785,7 @@ impl BackgroundScanner {
                     }));
                 }
             } else {
-                child_entry.is_ignored =
-                    ignore_stack.is_abs_path_ignored(&child_abs_path, false);
+                child_entry.is_ignored = ignore_stack.is_abs_path_ignored(&child_abs_path, false);
                 child_entry.is_always_included =
                     self.settings.is_path_always_included(&child_path, false);
             }
