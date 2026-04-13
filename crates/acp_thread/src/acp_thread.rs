@@ -2944,6 +2944,17 @@ impl AcpThread {
                     });
                 }
 
+                for (ix, entry) in self.entries.iter_mut().enumerate() {
+                    if let AgentThreadEntry::ToolCall(call) = entry {
+                        if call.pending_terminal_id.as_ref() == Some(&terminal_id) {
+                            call.content
+                                .push(ToolCallContent::Terminal(entity.clone()));
+                            call.pending_terminal_id = None;
+                            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                        }
+                    }
+                }
+
                 cx.notify();
             }
             TerminalProviderEvent::Output { terminal_id, data } => {
@@ -3257,6 +3268,98 @@ mod tests {
         assert!(
             result.is_ok(),
             "Should succeed even though the terminal doesn't exist yet"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pending_terminal_resolved_on_creation(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project,
+                    PathList::new(&[std::path::Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new("pending-terminal");
+        let tool_call_id = acp::ToolCallId::new("test-bash-tool");
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "odin test .")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::InProgress)
+                            .content(vec![acp::ToolCallContent::Terminal(
+                                acp::Terminal::new(terminal_id.clone()),
+                            )]),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        let has_terminal_content = thread.read_with(cx, |thread, _cx| {
+            if let Some(AgentThreadEntry::ToolCall(call)) = thread.entries.last() {
+                call.content
+                    .iter()
+                    .any(|c| matches!(c, ToolCallContent::Terminal(_)))
+            } else {
+                false
+            }
+        });
+        assert!(
+            !has_terminal_content,
+            "Tool call should have no terminal content yet"
+        );
+
+        let lower = cx.new(|cx| {
+            let builder = ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap();
+            builder.subscribe(cx)
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "odin test .".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower,
+                },
+                cx,
+            );
+        });
+
+        let has_terminal_content_after = thread.read_with(cx, |thread, _cx| {
+            if let Some(AgentThreadEntry::ToolCall(call)) = thread.entries.last() {
+                call.content
+                    .iter()
+                    .any(|c| matches!(c, ToolCallContent::Terminal(_)))
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_terminal_content_after,
+            "Tool call should have terminal content after terminal creation"
         );
     }
 
