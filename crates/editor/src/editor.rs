@@ -29607,6 +29607,8 @@ fn render_diff_hunk_controls(
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let all_hunks_expanded = editor.read(cx).buffer().read(cx).all_diff_hunks_expanded();
+
     h_flex()
         .h(line_height)
         .mr_1()
@@ -29618,7 +29620,6 @@ fn render_diff_hunk_controls(
         .border_color(cx.theme().colors().border_variant)
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
-        .gap_1()
         .block_mouse_except_scroll()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
@@ -29679,7 +29680,12 @@ fn render_diff_hunk_controls(
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
                     move |_window, cx| {
-                        Tooltip::for_action_in("Restore Hunk", &::git::Restore, &focus_handle, cx)
+                        Tooltip::for_action_in(
+                            "Restore Hunk",
+                            &::git::Restore,
+                            &focus_handle,
+                            cx,
+                        )
                     }
                 })
                 .on_click({
@@ -29687,7 +29693,8 @@ fn render_diff_hunk_controls(
                     move |_event, window, cx| {
                         editor.update(cx, |editor, cx| {
                             let snapshot = editor.snapshot(window, cx);
-                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot());
+                            let point =
+                                hunk_range.start.to_point(&snapshot.buffer_snapshot());
                             editor.restore_hunks_in_ranges(vec![point..point], window, cx);
                         });
                     }
@@ -29695,13 +29702,12 @@ fn render_diff_hunk_controls(
                 .disabled(is_created_file),
         )
         .when(
-            !editor.read(cx).buffer().read(cx).all_diff_hunks_expanded(),
+            !all_hunks_expanded,
             |el| {
                 el.child(
                     IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
-                        // .disabled(!has_multiple_hunks)
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
                             move |_window, cx| {
@@ -29732,7 +29738,6 @@ fn render_diff_hunk_controls(
                     IconButton::new(("prev-hunk", row as u64), IconName::ArrowUp)
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
-                        // .disabled(!has_multiple_hunks)
                         .tooltip({
                             let focus_handle = editor.focus_handle(cx);
                             move |_window, cx| {
