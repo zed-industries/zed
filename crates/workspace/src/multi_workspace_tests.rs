@@ -202,6 +202,62 @@ async fn test_open_new_window_does_not_open_sidebar_on_existing_window(cx: &mut 
 }
 
 #[gpui::test]
+async fn test_open_directory_in_empty_workspace_does_not_open_sidebar(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project"), json!({ "file.txt": "" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let window = cx.add_window(|window, cx| {
+        let mw = MultiWorkspace::test_new(project, window, cx);
+        // Simulate a blank project that has an untitled editor tab,
+        // so that workspace_windows_for_location finds this window.
+        mw.workspace().update(cx, |workspace, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                let item = cx.new(|cx| item::test::TestItem::new(cx));
+                pane.add_item(Box::new(item), false, false, None, window, cx);
+            });
+        });
+        mw
+    });
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(!mw.sidebar_open(), "sidebar should start closed");
+        })
+        .unwrap();
+
+    // Simulate what open_workspace_for_paths does for an empty workspace:
+    // it downgrades OpenMode::NewWindow to Activate and sets requesting_window.
+    cx.update(|cx| {
+        open_paths(
+            &[PathBuf::from(path!("/project"))],
+            app_state,
+            OpenOptions {
+                requesting_window: Some(window),
+                open_mode: OpenMode::Activate,
+                ..OpenOptions::default()
+            },
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(
+                !mw.sidebar_open(),
+                "opening a directory in a blank project via the file picker must not open the sidebar",
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 async fn test_project_group_keys_duplicate_not_added(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.executor());

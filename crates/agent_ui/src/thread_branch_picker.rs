@@ -1,18 +1,18 @@
-use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use collections::HashSet as CollectionsHashSet;
+use collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use fuzzy::StringMatchCandidate;
-use git::repository::Branch as GitBranch;
+use git::repository::{Branch as GitBranch, Worktree as GitWorktree};
 use gpui::{
     AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ParentElement, Render, SharedString, Styled, Task, Window, rems,
+    IntoElement, ParentElement, Render, SharedString, Styled, Subscription, Task, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
+use project::git_store::RepositoryEvent;
 use ui::{
     Divider, DocumentationAside, HighlightedLabel, Icon, IconName, Label, LabelCommon, ListItem,
     ListItemSpacing, prelude::*,
@@ -24,7 +24,7 @@ use crate::{NewWorktreeBranchTarget, StartThreadIn};
 pub(crate) struct ThreadBranchPicker {
     picker: Entity<Picker<ThreadBranchPickerDelegate>>,
     focus_handle: FocusHandle,
-    _subscription: gpui::Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl ThreadBranchPicker {
@@ -57,13 +57,21 @@ impl ThreadBranchPicker {
         } else {
             project.read(cx).active_repository(cx)
         };
-        let branches_request = repository
-            .clone()
-            .map(|repo| repo.update(cx, |repo, _| repo.branches()));
+
+        let (all_branches, occupied_branches) = repository
+            .as_ref()
+            .map(|repo| {
+                let snapshot = repo.read(cx);
+                let branches = process_branches(&snapshot.branch_list);
+                let occupied =
+                    compute_occupied_branches(&snapshot.linked_worktrees, &project_worktree_paths);
+                (branches, occupied)
+            })
+            .unwrap_or_default();
+
         let default_branch_request = repository
             .clone()
             .map(|repo| repo.update(cx, |repo, _| repo.default_branch(false)));
-        let worktrees_request = repository.map(|repo| repo.update(cx, |repo, _| repo.worktrees()));
 
         let (worktree_name, branch_target) = match current_target {
             StartThreadIn::NewWorktree {
@@ -75,8 +83,8 @@ impl ThreadBranchPicker {
 
         let delegate = ThreadBranchPickerDelegate {
             matches: vec![ThreadBranchEntry::CurrentBranch],
-            all_branches: None,
-            occupied_branches: None,
+            all_branches,
+            occupied_branches,
             selected_index: 0,
             worktree_name,
             branch_target,
@@ -95,74 +103,50 @@ impl ThreadBranchPicker {
 
         let focus_handle = picker.focus_handle(cx);
 
-        if let (Some(branches_request), Some(default_branch_request), Some(worktrees_request)) =
-            (branches_request, default_branch_request, worktrees_request)
-        {
+        let mut subscriptions = Vec::new();
+
+        if let Some(repo) = &repository {
+            subscriptions.push(cx.subscribe_in(
+                repo,
+                window,
+                |this, repo, event: &RepositoryEvent, window, cx| match event {
+                    RepositoryEvent::BranchListChanged => {
+                        let all_branches = process_branches(&repo.read(cx).branch_list);
+                        this.picker.update(cx, |picker, cx| {
+                            picker.delegate.all_branches = all_branches;
+                            picker.refresh(window, cx);
+                        });
+                    }
+                    RepositoryEvent::GitWorktreeListChanged => {
+                        let project_worktree_paths =
+                            this.picker.read(cx).delegate.project_worktree_paths.clone();
+                        let occupied = compute_occupied_branches(
+                            &repo.read(cx).linked_worktrees,
+                            &project_worktree_paths,
+                        );
+                        this.picker.update(cx, |picker, cx| {
+                            picker.delegate.occupied_branches = occupied;
+                            picker.refresh(window, cx);
+                        });
+                    }
+                    _ => {}
+                },
+            ));
+        }
+
+        // Fetch default branch asynchronously since it requires a git operation
+        if let Some(default_branch_request) = default_branch_request {
             let picker_handle = picker.downgrade();
             cx.spawn_in(window, async move |_this, cx| {
-                let branches = branches_request.await??;
-                let default_branch = default_branch_request.await.ok().and_then(Result::ok).flatten();
-                let worktrees = worktrees_request.await??;
-
-                let remote_upstreams: CollectionsHashSet<_> = branches
-                    .iter()
-                    .filter_map(|branch| {
-                        branch
-                            .upstream
-                            .as_ref()
-                            .filter(|upstream| upstream.is_remote())
-                            .map(|upstream| upstream.ref_name.clone())
-                    })
-                    .collect();
-
-                let mut occupied_branches = HashMap::new();
-                for worktree in worktrees {
-                    let Some(branch_name) = worktree.branch_name().map(ToOwned::to_owned) else {
-                        continue;
-                    };
-
-                    let reason = if picker_handle
-                        .read_with(cx, |picker, _| {
-                            picker
-                                .delegate
-                                .project_worktree_paths
-                                .contains(&worktree.path)
-                        })
-                        .unwrap_or(false)
-                    {
-                        format!(
-                            "This branch is already checked out in the current project worktree at {}.",
-                            worktree.path.display()
-                        )
-                    } else {
-                        format!(
-                            "This branch is already checked out in a linked worktree at {}.",
-                            worktree.path.display()
-                        )
-                    };
-
-                    occupied_branches.insert(branch_name, reason);
-                }
-
-                let mut all_branches: Vec<_> = branches
-                    .into_iter()
-                    .filter(|branch| !remote_upstreams.contains(&branch.ref_name))
-                    .collect();
-                all_branches.sort_by_key(|branch| {
-                    (
-                        branch.is_remote(),
-                        !branch.is_head,
-                        branch
-                            .most_recent_commit
-                            .as_ref()
-                            .map(|commit| 0 - commit.commit_timestamp),
-                    )
-                });
+                let default_branch = default_branch_request
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .flatten();
 
                 picker_handle.update_in(cx, |picker, window, cx| {
-                    picker.delegate.all_branches = Some(all_branches);
-                    picker.delegate.occupied_branches = Some(occupied_branches);
-                    picker.delegate.default_branch_name = default_branch.map(|branch| branch.to_string());
+                    picker.delegate.default_branch_name =
+                        default_branch.map(|branch| branch.to_string());
                     picker.refresh(window, cx);
                 })?;
 
@@ -171,14 +155,14 @@ impl ThreadBranchPicker {
             .detach_and_log_err(cx);
         }
 
-        let subscription = cx.subscribe(&picker, |_, _, _, cx| {
+        subscriptions.push(cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
-        });
+        }));
 
         Self {
             picker,
             focus_handle,
-            _subscription: subscription,
+            _subscriptions: subscriptions,
         }
     }
 }
@@ -219,8 +203,8 @@ enum ThreadBranchEntry {
 
 pub(crate) struct ThreadBranchPickerDelegate {
     matches: Vec<ThreadBranchEntry>,
-    all_branches: Option<Vec<GitBranch>>,
-    occupied_branches: Option<HashMap<String, String>>,
+    all_branches: Vec<GitBranch>,
+    occupied_branches: HashMap<String, String>,
     selected_index: usize,
     worktree_name: Option<String>,
     branch_target: NewWorktreeBranchTarget,
@@ -228,6 +212,65 @@ pub(crate) struct ThreadBranchPickerDelegate {
     current_branch_name: String,
     default_branch_name: Option<String>,
     has_multiple_repositories: bool,
+}
+
+fn process_branches(branches: &Arc<[GitBranch]>) -> Vec<GitBranch> {
+    let remote_upstreams: HashSet<_> = branches
+        .iter()
+        .filter_map(|branch| {
+            branch
+                .upstream
+                .as_ref()
+                .filter(|upstream| upstream.is_remote())
+                .map(|upstream| upstream.ref_name.clone())
+        })
+        .collect();
+
+    let mut result: Vec<GitBranch> = branches
+        .iter()
+        .filter(|branch| !remote_upstreams.contains(&branch.ref_name))
+        .cloned()
+        .collect();
+
+    result.sort_by_key(|branch| {
+        (
+            branch.is_remote(),
+            !branch.is_head,
+            branch
+                .most_recent_commit
+                .as_ref()
+                .map(|commit| 0 - commit.commit_timestamp),
+        )
+    });
+
+    result
+}
+
+fn compute_occupied_branches(
+    worktrees: &[GitWorktree],
+    project_worktree_paths: &HashSet<PathBuf>,
+) -> HashMap<String, String> {
+    let mut occupied_branches = HashMap::default();
+    for worktree in worktrees {
+        let Some(branch_name) = worktree.branch_name().map(ToOwned::to_owned) else {
+            continue;
+        };
+
+        let reason = if project_worktree_paths.contains(&worktree.path) {
+            format!(
+                "This branch is already checked out in the current project worktree at {}.",
+                worktree.path.display()
+            )
+        } else {
+            format!(
+                "This branch is already checked out in a linked worktree at {}.",
+                worktree.path.display()
+            )
+        };
+
+        occupied_branches.insert(branch_name, reason);
+    }
+    occupied_branches
 }
 
 impl ThreadBranchPickerDelegate {
@@ -271,9 +314,7 @@ impl ThreadBranchPickerDelegate {
     }
 
     fn is_branch_occupied(&self, branch_name: &str) -> bool {
-        self.occupied_branches
-            .as_ref()
-            .is_some_and(|occupied| occupied.contains_key(branch_name))
+        self.occupied_branches.contains_key(branch_name)
     }
 
     fn branch_aside_text(&self, branch_name: &str, is_remote: bool) -> Option<SharedString> {
@@ -456,11 +497,7 @@ impl PickerDelegate for ThreadBranchPickerDelegate {
             return Task::ready(());
         }
 
-        let Some(all_branches) = self.all_branches.clone() else {
-            self.matches = self.fixed_matches();
-            self.selected_index = 0;
-            return Task::ready(());
-        };
+        let all_branches = self.all_branches.clone();
 
         if query.is_empty() {
             let mut matches = self.fixed_matches();

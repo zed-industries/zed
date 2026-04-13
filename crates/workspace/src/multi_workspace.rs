@@ -54,6 +54,8 @@ actions!(
         ShowFewerThreads,
         /// Creates a new thread in the current workspace.
         NewThread,
+        /// Moves the active project to a new window.
+        MoveProjectToNewWindow,
     ]
 );
 
@@ -1017,6 +1019,50 @@ impl MultiWorkspace {
         )
     }
 
+    /// Goes through sqlite: serialize -> close -> open new window
+    /// This avoids issues with pending tasks having the wrong window
+    pub fn open_project_group_in_new_window(
+        &mut self,
+        key: &ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let paths: Vec<PathBuf> = key.path_list().ordered_paths().cloned().collect();
+        if paths.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let app_state = self.workspace().read(cx).app_state().clone();
+
+        let workspaces: Vec<_> = self
+            .workspaces_for_project_group(key, cx)
+            .unwrap_or_default();
+        let mut serialization_tasks = Vec::new();
+        for workspace in &workspaces {
+            serialization_tasks.push(workspace.update(cx, |workspace, inner_cx| {
+                workspace.flush_serialization(window, inner_cx)
+            }));
+        }
+
+        let remove_task = self.remove_project_group(key, window, cx);
+
+        cx.spawn(async move |_this, cx| {
+            futures::future::join_all(serialization_tasks).await;
+
+            let removed = remove_task.await?;
+            if !removed {
+                return Ok(());
+            }
+
+            cx.update(|cx| {
+                Workspace::new_local(paths, app_state, None, None, None, OpenMode::NewWindow, cx)
+            })
+            .await?;
+
+            Ok(())
+        })
+    }
+
     /// Finds an existing workspace whose root paths and host exactly match.
     pub fn workspace_for_paths(
         &self,
@@ -1836,13 +1882,23 @@ impl Render for MultiWorkspace {
                             sidebar.cycle_thread(true, window, cx);
                         }
                     }))
-                    .on_action(cx.listener(
-                        |this: &mut Self, _: &PreviousThread, window, cx| {
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &PreviousThread, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
                                 sidebar.cycle_thread(false, window, cx);
                             }
-                        },
-                    ))
+                        }),
+                    )
+                    .when(self.project_group_keys().len() >= 2, |el| {
+                        el.on_action(cx.listener(
+                            |this: &mut Self, _: &MoveProjectToNewWindow, window, cx| {
+                                let key =
+                                    this.project_group_key_for_workspace(this.workspace(), cx);
+                                this.open_project_group_in_new_window(&key, window, cx)
+                                    .detach_and_log_err(cx);
+                            },
+                        ))
+                    })
                 })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),
