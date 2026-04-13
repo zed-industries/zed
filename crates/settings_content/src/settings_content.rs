@@ -74,6 +74,8 @@ pub use util::serde::default_true;
 pub enum ParseStatus {
     /// Settings were parsed successfully
     Success,
+    /// Settings file was not changed, so no parsing was performed
+    Unchanged,
     /// Settings failed to parse
     Failed { error: String },
 }

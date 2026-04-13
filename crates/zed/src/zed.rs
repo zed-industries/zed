@@ -27,7 +27,6 @@ use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt as _, PanicFeatureFlag};
 use fs::Fs;
 use futures::FutureExt as _;
-use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
@@ -64,7 +63,7 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, MigrationStatus, Settings, SettingsStore, VIM_KEYMAP_PATH,
+    KeymapFileLoadResult, MigrationStatus, Settings, SettingsFile, SettingsStore, VIM_KEYMAP_PATH,
     initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
     update_settings_file,
 };
@@ -749,6 +748,7 @@ async fn initialize_agent_panel(
         if !cfg!(test) {
             workspace
                 .register_action(agent_ui::AgentPanel::toggle_focus)
+                .register_action(agent_ui::AgentPanel::focus)
                 .register_action(agent_ui::AgentPanel::toggle)
                 .register_action(agent_ui::InlineAssistant::inline_assist);
         }
@@ -1677,6 +1677,7 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
     let error = match result.parse_status {
         settings::ParseStatus::Failed { error } => Some(anyhow::format_err!(error)),
         settings::ParseStatus::Success => None,
+        settings::ParseStatus::Unchanged => return,
     };
     let id = NotificationId::Named(format!("failed-to-parse-settings-{is_user}").into());
 
@@ -1740,67 +1741,25 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
     };
 }
 
-pub fn handle_settings_file_changes(
-    mut user_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    user_settings_watcher: gpui::Task<()>,
-    mut global_settings_file_rx: mpsc::UnboundedReceiver<String>,
-    global_settings_watcher: gpui::Task<()>,
-    cx: &mut App,
-) {
+pub fn watch_settings_files(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
-    // Initial load of both settings files
-    let global_content = cx
-        .foreground_executor()
-        .block_on(global_settings_file_rx.next())
-        .unwrap();
-    let user_content = cx
-        .foreground_executor()
-        .block_on(user_settings_file_rx.next())
-        .unwrap();
-
-    SettingsStore::update_global(cx, |store, cx| {
-        notify_settings_errors(store.set_user_settings(&user_content, cx), true, cx);
-        notify_settings_errors(store.set_global_settings(&global_content, cx), false, cx);
-    });
-
-    // Watch for changes in both files
-    cx.spawn(async move |cx| {
-        let _user_settings_watcher = user_settings_watcher;
-        let _global_settings_watcher = global_settings_watcher;
-        let mut settings_streams = futures::stream::select(
-            global_settings_file_rx.map(Either::Left),
-            user_settings_file_rx.map(Either::Right),
-        );
-
-        while let Some(content) = settings_streams.next().await {
-            let (content, is_user) = match content {
-                Either::Left(content) => (content, false),
-                Either::Right(content) => (content, true),
-            };
-
-            cx.update_global(|store: &mut SettingsStore, cx| {
-                let result = if is_user {
-                    store.set_user_settings(&content, cx)
-                } else {
-                    store.set_global_settings(&content, cx)
-                };
-                let migrating_in_memory =
-                    matches!(&result.migration_status, MigrationStatus::Succeeded);
-                notify_settings_errors(result, is_user, cx);
-                if let Some(notifier) = MigrationNotification::try_global(cx) {
-                    notifier.update(cx, |_, cx| {
-                        cx.emit(MigrationEvent::ContentChanged {
-                            migration_type: MigrationType::Settings,
-                            migrating_in_memory,
-                        });
+    SettingsStore::update_global(cx, move |store, cx| {
+        store.watch_settings_files(fs, cx, |settings_file, result, cx| {
+            let is_user = matches!(settings_file, SettingsFile::User);
+            let migrating_in_memory =
+                matches!(&result.migration_status, MigrationStatus::Succeeded);
+            notify_settings_errors(result, is_user, cx);
+            if let Some(notifier) = MigrationNotification::try_global(cx) {
+                notifier.update(cx, |_, cx| {
+                    cx.emit(MigrationEvent::ContentChanged {
+                        migration_type: MigrationType::Settings,
+                        migrating_in_memory,
                     });
-                }
-                cx.refresh_windows();
-            });
-        }
-    })
-    .detach();
+                });
+            }
+        });
+    });
 }
 
 pub fn handle_keymap_file_changes(
@@ -4804,7 +4763,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
@@ -4822,28 +4781,12 @@ mod tests {
             .unwrap();
         executor.run_until_parked();
         cx.update(|cx| {
-            let (settings_rx, settings_watcher) = watch_config_file(
-                &executor,
-                app_state.fs.clone(),
-                PathBuf::from("/settings.json"),
-            );
             let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
-            let (global_settings_rx, global_settings_watcher) = watch_config_file(
-                &executor,
-                app_state.fs.clone(),
-                PathBuf::from("/global_settings.json"),
-            );
-            handle_settings_file_changes(
-                settings_rx,
-                settings_watcher,
-                global_settings_rx,
-                global_settings_watcher,
-                cx,
-            );
+            watch_settings_files(app_state.fs.clone(), cx);
             handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
         window
@@ -4890,7 +4833,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
@@ -4939,7 +4882,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
@@ -4956,29 +4899,13 @@ mod tests {
             .unwrap();
 
         cx.update(|cx| {
-            let (settings_rx, settings_watcher) = watch_config_file(
-                &executor,
-                app_state.fs.clone(),
-                PathBuf::from("/settings.json"),
-            );
             let (keymap_rx, keymap_watcher) = watch_config_file(
                 &executor,
                 app_state.fs.clone(),
                 PathBuf::from("/keymap.json"),
             );
 
-            let (global_settings_rx, global_settings_watcher) = watch_config_file(
-                &executor,
-                app_state.fs.clone(),
-                PathBuf::from("/global_settings.json"),
-            );
-            handle_settings_file_changes(
-                settings_rx,
-                settings_watcher,
-                global_settings_rx,
-                global_settings_watcher,
-                cx,
-            );
+            watch_settings_files(app_state.fs.clone(), cx);
             handle_keymap_file_changes(keymap_rx, keymap_watcher, cx);
         });
 
@@ -5017,7 +4944,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )

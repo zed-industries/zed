@@ -22,6 +22,7 @@ use workspace::{
         simple_message_notification::MessageNotification,
     },
 };
+use zed_actions::{ShowUpdateNotification, assistant::FocusAgent};
 
 actions!(
     auto_update,
@@ -33,10 +34,19 @@ actions!(
 
 pub fn init(cx: &mut App) {
     notify_if_app_was_updated(cx);
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new(|workspace: &mut Workspace, _window, cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
         });
+
+        if matches!(
+            ReleaseChannel::global(cx),
+            ReleaseChannel::Nightly | ReleaseChannel::Dev
+        ) {
+            workspace.register_action(|_workspace, _: &ShowUpdateNotification, _window, cx| {
+                show_update_notification(cx);
+            });
+        }
     })
     .detach();
 }
@@ -187,7 +197,7 @@ impl Dismissable for ParallelAgentAnnouncement {
 
 fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementContent> {
     match (version.major, version.minor, version.patch) {
-        (0, 232, _) => {
+        (0, _, _) => {
             if ParallelAgentAnnouncement::dismissed(cx) {
                 None
             } else {
@@ -207,12 +217,29 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
                         let already_agent_layout =
                             matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
 
+                        let update;
                         if !already_agent_layout {
-                            AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
+                            update = Some(AgentSettings::set_layout(
+                                WindowLayout::Agent(None),
+                                fs.clone(),
+                                cx,
+                            ));
+                        } else {
+                            update = None;
                         }
 
-                        window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
-                        window.dispatch_action(Box::new(zed_actions::assistant::ToggleFocus), cx);
+                        window
+                            .spawn(cx, async move |cx| {
+                                if let Some(update) = update {
+                                    update.await.ok();
+                                }
+
+                                cx.update(|window, cx| {
+                                    window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
+                                    window.dispatch_action(Box::new(FocusAgent), cx);
+                                })
+                            })
+                            .detach();
                     })),
                     on_dismiss: Some(Arc::new(|cx| {
                         ParallelAgentAnnouncement::set_dismissed(true, cx)
@@ -299,6 +326,48 @@ impl Render for AnnouncementToastNotification {
     }
 }
 
+struct UpdateNotification;
+
+fn show_update_notification(cx: &mut App) {
+    let Some(updater) = AutoUpdater::get(cx) else {
+        return;
+    };
+
+    let mut version = updater.read(cx).current_version();
+    version.pre = semver::Prerelease::EMPTY;
+    version.build = semver::BuildMetadata::EMPTY;
+    let app_name = ReleaseChannel::global(cx).display_name();
+
+    if let Some(content) = announcement_for_version(&version, cx) {
+        show_app_notification(
+            NotificationId::unique::<UpdateNotification>(),
+            cx,
+            move |cx| cx.new(|cx| AnnouncementToastNotification::new(content.clone(), cx)),
+        );
+    } else {
+        show_app_notification(
+            NotificationId::unique::<UpdateNotification>(),
+            cx,
+            move |cx| {
+                let workspace_handle = cx.entity().downgrade();
+                cx.new(|cx| {
+                    MessageNotification::new(format!("Updated to {app_name} {}", version), cx)
+                        .primary_message("View Release Notes")
+                        .primary_on_click(move |window, cx| {
+                            if let Some(workspace) = workspace_handle.upgrade() {
+                                workspace.update(cx, |workspace, cx| {
+                                    crate::view_release_notes_locally(workspace, window, cx);
+                                })
+                            }
+                            cx.emit(DismissEvent);
+                        })
+                        .show_suppress_button(false)
+                })
+            },
+        );
+    }
+}
+
 /// Shows a notification across all workspaces if an update was previously automatically installed
 /// and this notification had not yet been shown.
 pub fn notify_if_app_was_updated(cx: &mut App) {
@@ -310,55 +379,12 @@ pub fn notify_if_app_was_updated(cx: &mut App) {
         return;
     }
 
-    struct UpdateNotification;
-
     let should_show_notification = updater.read(cx).should_show_update_notification(cx);
     cx.spawn(async move |cx| {
         let should_show_notification = should_show_notification.await?;
-        // if true { // Hardcode it to true for testing it outside of the component preview
         if should_show_notification {
             cx.update(|cx| {
-                let mut version = updater.read(cx).current_version();
-                version.pre = semver::Prerelease::EMPTY;
-                version.build = semver::BuildMetadata::EMPTY;
-                let app_name = ReleaseChannel::global(cx).display_name();
-
-                if let Some(content) = announcement_for_version(&version, cx) {
-                    show_app_notification(
-                        NotificationId::unique::<UpdateNotification>(),
-                        cx,
-                        move |cx| {
-                            cx.new(|cx| AnnouncementToastNotification::new(content.clone(), cx))
-                        },
-                    );
-                } else {
-                    show_app_notification(
-                        NotificationId::unique::<UpdateNotification>(),
-                        cx,
-                        move |cx| {
-                            let workspace_handle = cx.entity().downgrade();
-                            cx.new(|cx| {
-                                MessageNotification::new(
-                                    format!("Updated to {app_name} {}", version),
-                                    cx,
-                                )
-                                .primary_message("View Release Notes")
-                                .primary_on_click(move |window, cx| {
-                                    if let Some(workspace) = workspace_handle.upgrade() {
-                                        workspace.update(cx, |workspace, cx| {
-                                            crate::view_release_notes_locally(
-                                                workspace, window, cx,
-                                            );
-                                        })
-                                    }
-                                    cx.emit(DismissEvent);
-                                })
-                                .show_suppress_button(false)
-                            })
-                        },
-                    );
-                }
-
+                show_update_notification(cx);
                 updater.update(cx, |updater, cx| {
                     updater
                         .set_should_show_update_notification(false, cx)

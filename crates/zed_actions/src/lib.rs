@@ -72,6 +72,8 @@ actions!(
         OpenPerformanceProfiler,
         /// Opens the onboarding view.
         OpenOnboarding,
+        /// Shows the auto-update notification for testing.
+        ShowUpdateNotification,
     ]
 );
 
@@ -518,7 +520,8 @@ pub mod assistant {
             /// Toggles the agent panel.
             Toggle,
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
-            ToggleFocus
+            ToggleFocus,
+            FocusAgent,
         ]
     );
 
