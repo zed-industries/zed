@@ -8,8 +8,10 @@ use anyhow::{Context as _, Result, anyhow};
 use gpui::{App, AsyncApp, Entity, Task};
 use project::{
     LocalProjectFlags, Project, WorktreeId,
-    git_store::{Repository, resolve_git_worktree_to_main_repo},
+    git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
+    project_settings::ProjectSettings,
 };
+use settings::Settings;
 use util::ResultExt;
 use workspace::{AppState, MultiWorkspace, Workspace};
 
@@ -254,7 +256,54 @@ async fn remove_root_after_worktree_removal(
         .map_err(|_| anyhow!("git worktree removal was canceled"))?;
     // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
     drop(_temp_project);
-    result
+    result?;
+
+    remove_empty_parent_dirs_up_to_worktrees_base(&root.root_path, &root.main_repo_path, cx);
+
+    Ok(())
+}
+
+/// After `git worktree remove` deletes the worktree directory, clean up any
+/// empty parent directories between it and the Zed-managed worktrees base
+/// directory (configured via `git.worktree_directory`). The base directory
+/// itself is never removed.
+///
+/// If the base directory is not an ancestor of `root_path`, no parent
+/// directories are removed.
+fn remove_empty_parent_dirs_up_to_worktrees_base(
+    root_path: &Path,
+    main_repo_path: &Path,
+    cx: &mut AsyncApp,
+) {
+    let worktrees_base = cx.update(|cx| {
+        let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
+        worktrees_directory_for_repo(main_repo_path, setting).ok()
+    });
+
+    let Some(worktrees_base) = worktrees_base else {
+        return;
+    };
+
+    if !root_path.starts_with(&worktrees_base) {
+        return;
+    }
+
+    let mut current = root_path.to_path_buf();
+    while let Some(parent) = current.parent().map(Path::to_path_buf) {
+        if parent == worktrees_base {
+            break;
+        }
+        if !parent.starts_with(&worktrees_base) {
+            break;
+        }
+        match std::fs::remove_dir(&parent) {
+            Ok(()) => {
+                log::info!("Removed empty parent directory: {}", parent.display());
+            }
+            Err(_) => break,
+        }
+        current = parent;
+    }
 }
 
 /// Finds a live `Repository` entity for the given path, or creates a temporary
