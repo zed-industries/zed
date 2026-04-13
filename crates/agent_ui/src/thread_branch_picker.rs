@@ -58,7 +58,6 @@ impl ThreadBranchPicker {
             project.read(cx).active_repository(cx)
         };
 
-        let now = std::time::Instant::now();
         let (all_branches, occupied_branches) = repository
             .as_ref()
             .map(|repo| {
@@ -69,7 +68,6 @@ impl ThreadBranchPicker {
                 (branches, occupied)
             })
             .unwrap_or_default();
-        dbg!(now.elapsed());
 
         let default_branch_request = repository
             .clone()
