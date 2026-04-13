@@ -4962,10 +4962,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_fallback_skips_excluded_workspaces(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-        cx.update(|cx| {
-            cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir = unique_test_dir(&fs, "shared").await;
