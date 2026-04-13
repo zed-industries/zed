@@ -1,12 +1,14 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::AsyncApp;
-use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
+use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain, language_settings::AllLanguageSettings};
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::lsp_store::language_server_settings;
 use semver::Version;
 use serde_json::json;
+use settings::{Settings, SettingsLocation};
+use util::rel_path::RelPath;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
@@ -148,14 +150,34 @@ impl LspAdapter for CssLspAdapter {
         _: Option<Uri>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
+        let location = SettingsLocation {
+            worktree_id: delegate.worktree_id(),
+            path: RelPath::empty(),
+        };
+
+        let tab_size = cx.update(|cx| {
+            AllLanguageSettings::get(Some(location), cx)
+                .language(Some(location), Some(&"CSS".into()), cx)
+                .tab_size
+        });
+
         let mut default_config = json!({
             "css": {
+                "format": {
+                    "tabSize": tab_size
+                },
                 "lint": {}
             },
             "less": {
+                "format": {
+                    "tabSize": tab_size
+                },
                 "lint": {}
             },
             "scss": {
+                "format": {
+                    "tabSize": tab_size
+                },
                 "lint": {}
             }
         });

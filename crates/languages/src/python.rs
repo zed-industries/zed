@@ -7,7 +7,7 @@ use futures::lock::OwnedMutexGuard;
 use futures::{AsyncBufReadExt, StreamExt as _};
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
-use language::language_settings::LanguageSettings;
+use language::language_settings::{AllLanguageSettings, LanguageSettings};
 use language::{
     Buffer, ContextLocation, DynLspInstaller, LanguageToolchainStore, LspInstaller, Symbol,
 };
@@ -26,7 +26,7 @@ use project::lsp_store::language_server_settings;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use settings::{SemanticTokenRules, Settings};
+use settings::{SemanticTokenRules, Settings, SettingsLocation};
 use terminal::terminal_settings::TerminalSettings;
 
 use smol::lock::OnceCell;
@@ -49,7 +49,7 @@ use std::{
     sync::Arc,
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, merge_json_value_into};
 
 pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
     let content = grammars::get_file("python/semantic_token_rules.json")
@@ -2410,6 +2410,42 @@ impl RuffLspAdapter {
 impl LspAdapter for RuffLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
+        _: Option<Toolchain>,
+        _: Option<Uri>,
+        cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        let location = SettingsLocation {
+            worktree_id: adapter.worktree_id(),
+            path: RelPath::empty(),
+        };
+
+        let tab_size = cx.update(|cx| {
+            AllLanguageSettings::get(Some(location), cx)
+                .language(Some(location), Some(&"Python".into()), cx)
+                .tab_size
+        });
+
+        let mut config = json!({
+            "format": {
+                "indent-width": tab_size
+            }
+        });
+
+        let project_options = cx.update(|cx| {
+            language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+        });
+
+        if let Some(override_options) = project_options {
+            merge_json_value_into(override_options, &mut config);
+        }
+
+        Ok(config)
     }
 
     async fn initialization_options_schema(
