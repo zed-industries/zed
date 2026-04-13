@@ -9329,6 +9329,12 @@ pub struct OpenOptions {
     pub open_in_dev_container: bool,
 }
 
+impl OpenOptions {
+    fn should_reuse_existing_window(&self) -> bool {
+        self.open_new_workspace.is_none() && self.open_mode != OpenMode::NewWindow
+    }
+}
+
 /// The result of opening a workspace via [`open_paths`], [`Workspace::new_local`],
 /// or [`Workspace::open_workspace_for_paths`].
 pub struct OpenResult {
@@ -9476,7 +9482,7 @@ pub fn open_paths(
 
         // Fallback: if no workspace contains the paths and all paths are files,
         // prefer an existing local workspace window (active window first).
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
+        if open_options.should_reuse_existing_window() && existing.is_none() {
             let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
@@ -9509,7 +9515,7 @@ pub fn open_paths(
         // workspace matched, check the user's setting to decide whether to add
         // the directory as a new workspace in the active window's MultiWorkspace
         // or open a new window.
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
+        if open_options.should_reuse_existing_window() && existing.is_none() {
             let use_existing_window = open_options.force_existing_window
                 || cx.update(|cx| {
                     WorkspaceSettings::get_global(cx).cli_default_open_behavior

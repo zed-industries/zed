@@ -1,9 +1,12 @@
+use std::path::PathBuf;
+
 use super::*;
 use fs::FakeFs;
 use gpui::TestAppContext;
 use project::{DisableAiSettings, ProjectGroupKey};
 use serde_json::json;
 use settings::SettingsStore;
+use util::path;
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -150,6 +153,51 @@ async fn test_project_group_keys_add_workspace(cx: &mut TestAppContext) {
         assert_eq!(*keys[0], key_b);
         assert_eq!(*keys[1], key_a);
     });
+}
+
+#[gpui::test]
+async fn test_open_new_window_does_not_open_sidebar_on_existing_window(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let app_state = cx.update(AppState::test);
+    let fs = app_state.fs.as_fake();
+    fs.insert_tree(path!("/project_a"), json!({ "file.txt": "" }))
+        .await;
+    fs.insert_tree(path!("/project_b"), json!({ "file.txt": "" }))
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project_a").as_ref()], cx).await;
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(!mw.sidebar_open(), "sidebar should start closed",);
+        })
+        .unwrap();
+
+    cx.update(|cx| {
+        open_paths(
+            &[PathBuf::from(path!("/project_b"))],
+            app_state,
+            OpenOptions {
+                open_mode: OpenMode::NewWindow,
+                ..OpenOptions::default()
+            },
+            cx,
+        )
+    })
+    .await
+    .unwrap();
+
+    window
+        .read_with(cx, |mw, _cx| {
+            assert!(
+                !mw.sidebar_open(),
+                "opening a project in a new window must not open the sidebar on the original window",
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
