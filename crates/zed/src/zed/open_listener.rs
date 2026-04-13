@@ -561,7 +561,7 @@ async fn resolve_open_behavior(
 ) -> Option<settings::CliDefaultOpenBehavior> {
     let cli_prompt_enabled = cx.update(|cx| cx.has_flag::<feature_flags::AgentV2FeatureFlag>());
     if !cli_prompt_enabled {
-        return None;
+        return Some(settings::CliDefaultOpenBehavior::NewWindow);
     }
 
     let has_existing_windows = cx.update(|cx| {
