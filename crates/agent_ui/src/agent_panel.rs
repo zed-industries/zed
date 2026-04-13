@@ -19,9 +19,14 @@ use project::AgentId;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use zed_actions::agent::{
-    AddSelectionToThread, ConflictContent, ReauthenticateAgent, ResolveConflictedFilesWithAgent,
-    ResolveConflictsWithAgent, ReviewBranchDiff,
+use zed_actions::{
+    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
+    agent::{
+        AddSelectionToThread, ConflictContent, OpenSettings, ReauthenticateAgent, ResetAgentZoom,
+        ResetOnboarding, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
+        ReviewBranchDiff,
+    },
+    assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
 use crate::thread_metadata_store::ThreadMetadataStore;
@@ -1077,7 +1082,7 @@ impl AgentPanel {
                 let fs = fs.clone();
                 let weak_panel = weak_panel.clone();
                 move |_window, cx| {
-                    AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
+                    let _ = AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
                     weak_panel
                         .update(cx, |panel, cx| {
                             panel.dismiss_agent_layout_onboarding(cx);
@@ -1089,7 +1094,7 @@ impl AgentPanel {
                 let fs = fs.clone();
                 let weak_panel = weak_panel.clone();
                 move |_window, cx| {
-                    AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
+                    let _ = AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
                     weak_panel
                         .update(cx, |panel, cx| {
                             panel.dismiss_agent_layout_onboarding(cx);
@@ -1225,6 +1230,20 @@ impl AgentPanel {
             .is_some_and(|panel| panel.read(cx).enabled(cx))
         {
             workspace.toggle_panel_focus::<Self>(window, cx);
+        }
+    }
+
+    pub fn focus(
+        workspace: &mut Workspace,
+        _: &FocusAgent,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            workspace.focus_panel::<Self>(window, cx);
         }
     }
 
