@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         Arc,
@@ -3079,7 +3079,9 @@ impl AgentPanel {
     ) -> (Option<String>, Option<String>) {
         match branch_target {
             NewWorktreeBranchTarget::CurrentBranch => (None, None),
-            NewWorktreeBranchTarget::ExistingBranch { name } => (Some(name.clone()), None),
+            NewWorktreeBranchTarget::ExistingBranch { name } => {
+                (Some(name.clone()), Some(name.clone()))
+            }
             NewWorktreeBranchTarget::CreateBranch { name, from_ref } => {
                 (Some(name.clone()), from_ref.clone())
             }
@@ -3097,7 +3099,7 @@ impl AgentPanel {
         worktree_name: Option<String>,
         existing_worktree_names: &[String],
         existing_worktree_paths: &HashSet<PathBuf>,
-        base_sha: Option<String>,
+        base_ref: Option<String>,
         worktree_directory_setting: &str,
         rng: &mut impl rand::Rng,
         cx: &mut Context<Self>,
@@ -3127,7 +3129,7 @@ impl AgentPanel {
                     anyhow::bail!("A worktree already exists at {}", new_path.display());
                 }
                 let target = git::repository::CreateWorktreeTarget::Detached {
-                    base_sha: base_sha.clone(),
+                    base_sha: base_ref.clone(),
                 };
                 let receiver = repo.create_worktree(target, new_path.clone());
                 let work_dir = repo.work_directory_abs_path.clone();
@@ -3258,7 +3260,7 @@ impl AgentPanel {
     async fn try_checkout_branch_in_worktree(
         repo: &Entity<project::git_store::Repository>,
         branch_name: &str,
-        worktree_path: &PathBuf,
+        worktree_path: &Path,
         cx: &mut AsyncWindowContext,
     ) {
         // First, try checking out the branch (it may already exist).
@@ -3266,14 +3268,14 @@ impl AgentPanel {
             repo.update(cx, |repo, _cx| {
                 repo.checkout_branch_in_worktree(
                     branch_name.to_string(),
-                    worktree_path.clone(),
+                    worktree_path.to_path_buf(),
                     false,
                 )
             })
         }) else {
             log::warn!(
                 "Failed to check out branch {branch_name} for worktree at {}. \
-             Staying in detached HEAD state.",
+                 Staying in detached HEAD state.",
                 worktree_path.display(),
             );
 
@@ -3283,7 +3285,7 @@ impl AgentPanel {
         let Ok(result) = receiver.await else {
             log::warn!(
                 "Branch checkout was canceled for worktree at {}. \
-                   Staying in detached HEAD state.",
+                 Staying in detached HEAD state.",
                 worktree_path.display()
             );
 
@@ -3292,7 +3294,7 @@ impl AgentPanel {
 
         if let Err(err) = result {
             log::info!(
-                "Branch '{branch_name}' not found in worktree at {}, \
+                "Failed to check out branch '{branch_name}' in worktree at {}, \
                          will try creating it: {err}",
                 worktree_path.display()
             );
@@ -3310,7 +3312,7 @@ impl AgentPanel {
             repo.update(cx, |repo, _cx| {
                 repo.checkout_branch_in_worktree(
                     branch_name.to_string(),
-                    worktree_path.clone(),
+                    worktree_path.to_path_buf(),
                     true,
                 )
             })
@@ -3490,7 +3492,7 @@ impl AgentPanel {
 
                     let mut rng = rand::rng();
 
-                    let (branch_to_checkout, base_sha) =
+                    let (branch_to_checkout, base_ref) =
                         Self::resolve_worktree_branch_target(&branch_target);
 
                     let (creation_infos, path_remapping) =
@@ -3500,7 +3502,7 @@ impl AgentPanel {
                                 worktree_name,
                                 &existing_worktree_names,
                                 &existing_worktree_paths,
-                                base_sha,
+                                base_ref,
                                 &worktree_directory_setting,
                                 &mut rng,
                                 cx,
