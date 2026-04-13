@@ -38,6 +38,9 @@ Enable Dexter by adding the following to your settings file:
     "Elixir": {
       "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
     },
+    "EEx": {
+      "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
+    },
     "HEEx": {
       "language_servers": ["dexter", "!expert", "!elixir-ls", "!next-ls", "!lexical", "..."]
     }
