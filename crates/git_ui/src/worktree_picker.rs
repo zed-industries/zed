@@ -889,7 +889,7 @@ impl PickerDelegate for WorktreeListDelegate {
                                 })
                                 .size(IconSize::Small),
                         )
-                        .child(v_flex().w_full().child(branch_name).map(|this| {
+                        .child(v_flex().w_full().min_w_0().child(branch_name).map(|this| {
                             if entry.is_new {
                                 this.child(
                                     Label::new(sublabel)
