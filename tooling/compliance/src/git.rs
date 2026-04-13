@@ -110,6 +110,10 @@ impl ToString for VersionTag {
 pub struct CommitSha(pub(crate) String);
 
 impl CommitSha {
+    pub fn new(sha: String) -> Self {
+        Self(sha)
+    }
+
     pub fn short(&self) -> &str {
         self.0.as_str().split_at(8).0
     }
