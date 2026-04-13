@@ -1041,6 +1041,10 @@ impl AgentPanel {
                             cx,
                         );
                     });
+                } else {
+                    panel.update(cx, |panel, cx| {
+                        panel.show_or_create_empty_draft(window, cx);
+                    });
                 }
                 panel
             })?;
@@ -3098,11 +3102,11 @@ impl AgentPanel {
         branch_target: &NewWorktreeBranchTarget,
         existing_branches: &HashSet<String>,
         occupied_branches: &HashSet<String>,
+        rng: &mut impl rand::Rng,
     ) -> Result<(String, bool, Option<String>)> {
-        let generate_branch_name = || -> Result<String> {
+        let mut generate_branch_name = || {
             let refs: Vec<&str> = existing_branches.iter().map(|s| s.as_str()).collect();
-            let mut rng = rand::rng();
-            crate::branch_names::generate_branch_name(&refs, &mut rng)
+            crate::branch_names::generate_branch_name(&refs, rng)
                 .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))
         };
 
@@ -3130,10 +3134,13 @@ impl AgentPanel {
     fn start_worktree_creations(
         git_repos: &[Entity<project::git_store::Repository>],
         worktree_name: Option<String>,
+        existing_worktree_names: &[String],
+        existing_worktree_paths: &HashSet<PathBuf>,
         branch_name: &str,
         use_existing_branch: bool,
         start_point: Option<String>,
         worktree_directory_setting: &str,
+        rng: &mut impl rand::Rng,
         cx: &mut Context<Self>,
     ) -> Result<(
         Vec<(
@@ -3146,12 +3153,20 @@ impl AgentPanel {
         let mut creation_infos = Vec::new();
         let mut path_remapping = Vec::new();
 
-        let worktree_name = worktree_name.unwrap_or_else(|| branch_name.to_string());
+        let worktree_name = worktree_name.unwrap_or_else(|| {
+            let existing_refs: Vec<&str> =
+                existing_worktree_names.iter().map(|s| s.as_str()).collect();
+            crate::branch_names::generate_branch_name(&existing_refs, rng)
+                .unwrap_or_else(|| branch_name.to_string())
+        });
 
         for repo in git_repos {
             let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
                 let new_path =
                     repo.path_for_new_linked_worktree(&worktree_name, worktree_directory_setting)?;
+                if existing_worktree_paths.contains(&new_path) {
+                    anyhow::bail!("A worktree already exists at {}", new_path.display());
+                }
                 let target = if use_existing_branch {
                     debug_assert!(
                         git_repos.len() == 1,
@@ -3217,7 +3232,8 @@ impl AgentPanel {
             return Ok(created_paths);
         };
 
-        // Rollback all attempted worktrees (both successful and failed)
+        // Rollback all attempted worktrees (both successful and failed,
+        // since a failed creation may have left an orphan directory).
         let mut rollback_futures = Vec::new();
         for (rollback_repo, rollback_path) in &repos_and_paths {
             let receiver = cx
@@ -3427,6 +3443,8 @@ impl AgentPanel {
                     }
 
                     let mut occupied_branches = HashSet::default();
+                    let mut existing_worktree_names = Vec::new();
+                    let mut existing_worktree_paths = HashSet::default();
                     for result in futures::future::join_all(worktree_receivers).await {
                         match result {
                             Ok(Ok(worktrees)) => {
@@ -3434,6 +3452,15 @@ impl AgentPanel {
                                     if let Some(branch_name) = worktree.branch_name() {
                                         occupied_branches.insert(branch_name.to_string());
                                     }
+                                    if let Some(name) = worktree
+                                        .path
+                                        .parent()
+                                        .and_then(|p| p.file_name())
+                                        .and_then(|n| n.to_str())
+                                    {
+                                        existing_worktree_names.push(name.to_string());
+                                    }
+                                    existing_worktree_paths.insert(worktree.path.clone());
                                 }
                             }
                             Ok(Err(err)) => {
@@ -3443,11 +3470,14 @@ impl AgentPanel {
                         }
                     }
 
+                    let mut rng = rand::rng();
+
                     let (branch_name, use_existing_branch, start_point) =
                         match Self::resolve_worktree_branch_target(
                             &branch_target,
                             &existing_branches,
                             &occupied_branches,
+                            &mut rng,
                         ) {
                             Ok(target) => target,
                             Err(err) => {
@@ -3467,10 +3497,13 @@ impl AgentPanel {
                             Self::start_worktree_creations(
                                 &git_repos,
                                 worktree_name,
+                                &existing_worktree_names,
+                                &existing_worktree_paths,
                                 &branch_name,
                                 use_existing_branch,
                                 start_point,
                                 &worktree_directory_setting,
+                                &mut rng,
                                 cx,
                             )
                         }) {
@@ -5236,6 +5269,7 @@ mod tests {
     use fs::FakeFs;
     use gpui::{TestAppContext, VisualTestContext};
     use project::Project;
+    use rand::rngs::StdRng;
     use serde_json::json;
     use std::path::Path;
     use std::time::Instant;
@@ -5347,8 +5381,8 @@ mod tests {
             );
         });
 
-        // Workspace B should restore its own agent type, with no thread
-        loaded_b.read_with(cx, |panel, _cx| {
+        // Workspace B should restore its own agent type and seed an empty draft.
+        loaded_b.read_with(cx, |panel, cx| {
             assert_eq!(
                 panel.selected_agent,
                 Agent::Custom {
@@ -5357,8 +5391,12 @@ mod tests {
                 "workspace B agent type should be restored"
             );
             assert!(
-                panel.active_conversation_view().is_none(),
-                "workspace B should have no active thread"
+                panel.active_conversation_view().is_some(),
+                "workspace B should show an empty draft"
+            );
+            assert!(
+                panel.active_thread_is_draft(cx),
+                "workspace B should seed a draft in an empty workspace"
             );
         });
     }
@@ -5420,10 +5458,14 @@ mod tests {
             .expect("panel load should succeed");
         cx.run_until_parked();
 
-        loaded.read_with(cx, |panel, _cx| {
+        loaded.read_with(cx, |panel, cx| {
             assert!(
-                panel.active_conversation_view().is_none(),
-                "thread without metadata should not be restored"
+                panel.active_conversation_view().is_some(),
+                "empty workspaces should still show a draft after load"
+            );
+            assert!(
+                panel.active_thread_is_draft(cx),
+                "thread without metadata should not be restored; the panel should fall back to a fresh draft"
             );
         });
     }
@@ -6377,6 +6419,7 @@ mod tests {
         )
         .await;
         fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
 
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
 
@@ -6556,8 +6599,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_resolve_worktree_branch_target() {
+    #[gpui::test(iterations = 10)]
+    fn test_resolve_worktree_branch_target(mut rng: StdRng) {
         let existing_branches = HashSet::from_iter([
             "main".to_string(),
             "feature".to_string(),
@@ -6571,6 +6614,7 @@ mod tests {
             },
             &existing_branches,
             &HashSet::from_iter(["main".to_string()]),
+            &mut rng,
         )
         .unwrap();
         assert_eq!(
@@ -6584,6 +6628,7 @@ mod tests {
             },
             &existing_branches,
             &HashSet::default(),
+            &mut rng,
         )
         .unwrap();
         assert_eq!(resolved, ("feature".to_string(), true, None));
@@ -6594,6 +6639,7 @@ mod tests {
             },
             &existing_branches,
             &HashSet::from_iter(["main".to_string()]),
+            &mut rng,
         )
         .unwrap();
         assert_eq!(resolved.1, false);
@@ -6601,6 +6647,151 @@ mod tests {
         assert_ne!(resolved.0, "main");
         assert!(existing_branches.contains("main"));
         assert!(!existing_branches.contains(&resolved.0));
+    }
+
+    #[gpui::test]
+    async fn test_worktree_dir_name_is_random_when_using_existing_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let app_state = workspace::AppState::test(cx);
+            workspace::init(app_state.clone(), cx);
+            app_state
+        });
+
+        let fs = app_state.fs.as_fake();
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
+        )
+        .await;
+        // Put the main worktree on "develop" so that "main" is NOT
+        // occupied by any worktree.
+        fs.set_branch_name(Path::new("/project/.git"), Some("develop"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "develop"]);
+
+        let project = Project::test(app_state.fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        cx.update(|cx| {
+            cx.observe_new(
+                |workspace: &mut Workspace,
+                 window: Option<&mut Window>,
+                 cx: &mut Context<Workspace>| {
+                    if let Some(window) = window {
+                        let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Select "main" as an existing branch — this should NOT make the
+        // worktree directory named "main"; it should get a random name.
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_requested(
+                content,
+                WorktreeCreationArgs::New {
+                    worktree_name: None,
+                    branch_target: NewWorktreeBranchTarget::ExistingBranch {
+                        name: "main".to_string(),
+                    },
+                },
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Find the new workspace and check its worktree path.
+        let new_worktree_path = multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                let new_workspace = multi_workspace
+                    .workspaces()
+                    .find(|ws| ws.entity_id() != workspace.entity_id())
+                    .expect("a new workspace should have been created");
+
+                let new_project = new_workspace.read(cx).project().clone();
+                let worktree = new_project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .next()
+                    .expect("new workspace should have a worktree");
+                worktree.read(cx).abs_path().to_path_buf()
+            })
+            .unwrap();
+
+        // The worktree directory path should contain a random adjective-noun
+        // name, NOT the branch name "main".
+        let path_str = new_worktree_path.to_string_lossy();
+        assert!(
+            !path_str.contains("/main/"),
+            "worktree directory should use a random name, not the branch name. \
+             Got path: {path_str}",
+        );
+        // Verify it looks like an adjective-noun pair (contains a hyphen in
+        // the directory component above the project name).
+        let parent = new_worktree_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .expect("should have a parent directory name");
+        assert!(
+            parent.contains('-'),
+            "worktree parent directory should be an adjective-noun pair (e.g. 'swift-falcon'), \
+             got: {parent}",
+        );
     }
 
     #[gpui::test]

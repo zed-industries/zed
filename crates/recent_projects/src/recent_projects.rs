@@ -1135,8 +1135,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                     cx.defer(move |cx| {
                         if let Some(task) = handle
                             .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace
-                                    .find_or_create_local_workspace(path_list, window, cx)
+                                multi_workspace.find_or_create_local_workspace(
+                                    path_list,
+                                    &[],
+                                    window,
+                                    cx,
+                                )
                             })
                             .log_err()
                         {

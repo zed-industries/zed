@@ -1115,7 +1115,9 @@ impl TitleBar {
                                     .w_full()
                                     .justify_between()
                                     .child(Label::new(user_login))
-                                    .child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
+                                    .when(!has_organization, |parent| {
+                                        parent.child(PlanChip::new(plan.unwrap_or(Plan::ZedFree)))
+                                    })
                                     .into_any_element()
                             },
                             move |_, cx| {

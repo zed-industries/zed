@@ -375,11 +375,7 @@ mod tests {
             Ok(false)
         }
 
-        async fn ensure_pull_request_has_label(
-            &self,
-            _label: &str,
-            _pr_number: u64,
-        ) -> anyhow::Result<()> {
+        async fn add_label_to_issue(&self, _label: &str, _pr_number: u64) -> anyhow::Result<()> {
             Ok(())
         }
     }
@@ -439,6 +435,7 @@ mod tests {
                         login: "alice".to_owned(),
                     }),
                     merged_by: None,
+                    labels: None,
                 },
                 reviews: vec![],
                 comments: vec![],
@@ -609,11 +606,11 @@ mod tests {
                         "email": "alice@test.com",
                         "user": { "login": "alice" }
                     },
-                    "authors": [{
+                    "authors": { "nodes": [{
                         "name": "Charlie",
                         "email": "charlie@test.com",
                         "user": { "login": "charlie" }
-                    }]
+                    }] }
                 }
             }))
             .with_commit(make_commit(
@@ -639,11 +636,11 @@ mod tests {
                         "email": "alice@test.com",
                         "user": { "login": "alice" }
                     },
-                    "authors": [{
+                    "authors": { "nodes": [{
                         "name": "Bob",
                         "email": "bob@test.com",
                         "user": { "login": "bob" }
-                    }]
+                    }] }
                 }
             }))
             .with_commit(make_commit(

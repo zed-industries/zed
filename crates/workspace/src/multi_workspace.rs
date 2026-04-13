@@ -54,6 +54,8 @@ actions!(
         ShowFewerThreads,
         /// Creates a new thread in the current workspace.
         NewThread,
+        /// Moves the active project to a new window.
+        MoveProjectToNewWindow,
     ]
 );
 
@@ -985,12 +987,14 @@ impl MultiWorkspace {
         // Now remove the group.
         self.project_groups.retain(|group| group.key != *group_key);
 
+        let excluded_workspaces = workspaces.clone();
         self.remove(
             workspaces,
             move |this, window, cx| {
                 if let Some(neighbor_key) = neighbor_key {
                     return this.find_or_create_local_workspace(
                         neighbor_key.path_list().clone(),
+                        &excluded_workspaces,
                         window,
                         cx,
                     );
@@ -1017,6 +1021,50 @@ impl MultiWorkspace {
         )
     }
 
+    /// Goes through sqlite: serialize -> close -> open new window
+    /// This avoids issues with pending tasks having the wrong window
+    pub fn open_project_group_in_new_window(
+        &mut self,
+        key: &ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let paths: Vec<PathBuf> = key.path_list().ordered_paths().cloned().collect();
+        if paths.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let app_state = self.workspace().read(cx).app_state().clone();
+
+        let workspaces: Vec<_> = self
+            .workspaces_for_project_group(key, cx)
+            .unwrap_or_default();
+        let mut serialization_tasks = Vec::new();
+        for workspace in &workspaces {
+            serialization_tasks.push(workspace.update(cx, |workspace, inner_cx| {
+                workspace.flush_serialization(window, inner_cx)
+            }));
+        }
+
+        let remove_task = self.remove_project_group(key, window, cx);
+
+        cx.spawn(async move |_this, cx| {
+            futures::future::join_all(serialization_tasks).await;
+
+            let removed = remove_task.await?;
+            if !removed {
+                return Ok(());
+            }
+
+            cx.update(|cx| {
+                Workspace::new_local(paths, app_state, None, None, None, OpenMode::NewWindow, cx)
+            })
+            .await?;
+
+            Ok(())
+        })
+    }
+
     /// Finds an existing workspace whose root paths and host exactly match.
     pub fn workspace_for_paths(
         &self,
@@ -1024,7 +1072,20 @@ impl MultiWorkspace {
         host: Option<&RemoteConnectionOptions>,
         cx: &App,
     ) -> Option<Entity<Workspace>> {
+        self.workspace_for_paths_excluding(path_list, host, &[], cx)
+    }
+
+    fn workspace_for_paths_excluding(
+        &self,
+        path_list: &PathList,
+        host: Option<&RemoteConnectionOptions>,
+        excluding: &[Entity<Workspace>],
+        cx: &App,
+    ) -> Option<Entity<Workspace>> {
         for workspace in self.workspaces() {
+            if excluding.contains(workspace) {
+                continue;
+            }
             let root_paths = PathList::new(&workspace.read(cx).root_paths(cx));
             let key = workspace.read(cx).project_group_key(cx);
             let host_matches = key.host().as_ref() == host;
@@ -1070,7 +1131,7 @@ impl MultiWorkspace {
         }
 
         let Some(connection_options) = host else {
-            return self.find_or_create_local_workspace(paths, window, cx);
+            return self.find_or_create_local_workspace(paths, &[], window, cx);
         };
 
         let app_state = self.workspace().read(cx).app_state().clone();
@@ -1122,13 +1183,18 @@ impl MultiWorkspace {
     /// or creates a new one (deserializing its saved state from the database).
     /// Never searches other windows or matches workspaces with a superset of
     /// the requested paths.
+    ///
+    /// `excluding` lists workspaces that should be skipped during the search
+    /// (e.g. workspaces that are about to be removed).
     pub fn find_or_create_local_workspace(
         &mut self,
         path_list: PathList,
+        excluding: &[Entity<Workspace>],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self.workspace_for_paths(&path_list, None, cx) {
+        if let Some(workspace) = self.workspace_for_paths_excluding(&path_list, None, excluding, cx)
+        {
             self.activate(workspace.clone(), window, cx);
             return Task::ready(Ok(workspace));
         }
@@ -1687,7 +1753,7 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(PathList::new(&paths), window, cx)
+            self.find_or_create_local_workspace(PathList::new(&paths), &[], window, cx)
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {
@@ -1836,13 +1902,23 @@ impl Render for MultiWorkspace {
                             sidebar.cycle_thread(true, window, cx);
                         }
                     }))
-                    .on_action(cx.listener(
-                        |this: &mut Self, _: &PreviousThread, window, cx| {
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &PreviousThread, window, cx| {
                             if let Some(sidebar) = &this.sidebar {
                                 sidebar.cycle_thread(false, window, cx);
                             }
-                        },
-                    ))
+                        }),
+                    )
+                    .when(self.project_group_keys().len() >= 2, |el| {
+                        el.on_action(cx.listener(
+                            |this: &mut Self, _: &MoveProjectToNewWindow, window, cx| {
+                                let key =
+                                    this.project_group_key_for_workspace(this.workspace(), cx);
+                                this.open_project_group_in_new_window(&key, window, cx)
+                                    .detach_and_log_err(cx);
+                            },
+                        ))
+                    })
                 })
                 .when(
                     self.sidebar_open() && self.multi_workspace_enabled(cx),
