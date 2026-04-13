@@ -76,7 +76,7 @@ impl zed::Extension for HtmlExtension {
         } else {
             let server_path = self.server_script_path(language_server_id)?;
             env::current_dir()
-                .unwrap()
+                .map_err(|e| format!("failed to get current directory: {e}"))?
                 .join(&server_path)
                 .to_string_lossy()
                 .to_string()
