@@ -11047,8 +11047,20 @@ impl Element for EditorElement {
                         diff_hunk_control_bounds,
                     });
 
-                    self.editor.update(cx, |editor, _| {
-                        editor.last_position_map = Some(position_map.clone())
+                    self.editor.update(cx, |editor, cx| {
+                        let old_position_map = editor.last_position_map.replace(position_map.clone());
+                        if matches!(
+                            editor.mode(),
+                            EditorMode::Full { sizing_behavior: SizingBehavior::SizeByContent, .. }
+                        ) {
+                            let had_overflow = old_position_map
+                                .as_ref()
+                                .is_some_and(|pm| pm.scroll_max.x > 0.01);
+                            let has_overflow = position_map.scroll_max.x > 0.01;
+                            if had_overflow != has_overflow {
+                                cx.notify();
+                            }
+                        }
                     });
 
                     EditorLayout {
@@ -12475,51 +12487,33 @@ fn compute_size_by_content_layout(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Option<Size<Pixels>> {
-    let width = known_dimensions.width.or({
-        if let AvailableSpace::Definite(available_width) = available_width {
-            Some(available_width)
-        } else {
-            None
-        }
+    let width = known_dimensions.width.or(match available_width {
+        AvailableSpace::Definite(w) => Some(w),
+        _ => None,
     })?;
     if let Some(height) = known_dimensions.height {
         return Some(size(width, height));
     }
 
     let style = editor.style.as_ref().unwrap_or(editor_style);
-    let font_id = window.text_system().resolve_font(&style.text.font());
-    let font_size = style.text.font_size.to_pixels(window.rem_size());
     let line_height = style.text.line_height_in_pixels(window.rem_size());
-    let em_width = window.text_system().em_width(font_id, font_size).ok()?;
-
     let snapshot = editor.snapshot(window, cx);
-    let gutter_dimensions = snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
-    let text_width = width - gutter_dimensions.width;
-    let editor_width = text_width - gutter_dimensions.margin - 2. * em_width;
 
     let mut scroll_height =
         (snapshot.max_point().row().next_row().0 as f32) * line_height;
 
-    let horizontal_scrollbar_enabled = editor.show_scrollbars.horizontal
+    let had_horizontal_overflow = editor
+        .last_position_map
+        .as_ref()
+        .is_some_and(|pm| pm.scroll_max.x > 0.01);
+
+    let scrollbar_enabled = editor.show_scrollbars.horizontal
         && EditorSettings::get_global(cx).scrollbar.axes.horizontal
         && EditorSettings::get_global(cx).scrollbar.show != ShowScrollbar::Never
         && !scrollbar_width.is_zero();
 
-    if horizontal_scrollbar_enabled {
-        let longest_line_width = layout_line(
-            snapshot.longest_row(),
-            &snapshot,
-            style,
-            editor_width,
-            |_| false,
-            window,
-            cx,
-        )
-        .width;
-
-        if longest_line_width > editor_width {
-            scroll_height += scrollbar_width;
-        }
+    if had_horizontal_overflow && scrollbar_enabled {
+        scroll_height += scrollbar_width;
     }
 
     Some(size(width, scroll_height))
@@ -13726,9 +13720,22 @@ mod tests {
             |window: WindowHandle<Editor>, cx: &mut TestAppContext| -> (Pixels, Pixels) {
                 let visual_cx = &mut VisualTestContext::from_window(*window, cx);
                 let editor = window.root(visual_cx).unwrap();
-                let style = visual_cx
-                    .update(|_, cx| editor.update(cx, |editor: &mut Editor, cx| editor.style(cx).clone()));
 
+                // Draw twice: the first draw populates last_position_map, and
+                // if horizontal overflow changed, prepaint notifies to trigger
+                // re-layout. The second draw uses the converged state.
+                let style = visual_cx.update(|_, cx| {
+                    editor.update(cx, |editor: &mut Editor, cx| editor.style(cx).clone())
+                });
+                visual_cx.draw(
+                    Default::default(),
+                    size(px(200.), px(500.)),
+                    |_, _| EditorElement::new(&editor, style),
+                );
+
+                let style = visual_cx.update(|_, cx| {
+                    editor.update(cx, |editor: &mut Editor, cx| editor.style(cx).clone())
+                });
                 let (_, state) = visual_cx.draw(
                     Default::default(),
                     size(px(200.), px(500.)),
