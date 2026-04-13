@@ -5018,41 +5018,26 @@ impl LspStore {
                 .collect();
         }
 
-        let relevant_language_servers = self.relevant_server_names_for_capability_check(buffer, cx);
-        self.language_server_statuses
-            .iter()
-            .filter_map(|(server_id, server_status)| {
-                relevant_language_servers
-                    .contains(&server_status.name)
-                    .then_some(*server_id)
-            })
-            .collect()
-    }
-
-    fn relevant_server_names_for_capability_check(
-        &self,
-        buffer: &Entity<Buffer>,
-        cx: &App,
-    ) -> HashSet<LanguageServerName> {
         let Some(language) = buffer.read(cx).language().cloned() else {
-            return HashSet::default();
+            return Vec::default();
         };
-
-        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
-        if !settings.enable_language_server {
-            return HashSet::default();
-        }
-
-        let available_language_servers = self
+        let registered_language_servers = self
             .languages
             .lsp_adapters(&language.name())
             .into_iter()
             .map(|lsp_adapter| lsp_adapter.name())
-            .collect::<Vec<_>>();
-
-        settings
-            .customized_language_servers(&available_language_servers)
-            .into_iter()
+            .collect::<HashSet<_>>();
+        self.language_server_statuses
+            .iter()
+            .filter_map(|(server_id, server_status)| {
+                // Include servers that are either registered for this language OR
+                // available to be loaded (for SSH remote mode where adapters like
+                // ty/pylsp/pyright are registered via register_available_lsp_adapter
+                // but only loaded on the server side)
+                let is_relevant = registered_language_servers.contains(&server_status.name)
+                    || self.languages.is_lsp_adapter_available(&server_status.name);
+                is_relevant.then_some(*server_id)
+            })
             .collect()
     }
 
