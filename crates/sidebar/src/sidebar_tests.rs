@@ -2366,7 +2366,7 @@ async fn test_confirm_on_historical_thread_preserves_historical_timestamp_and_or
     let newer_session_id = acp::SessionId::new(Arc::from("newer-historical-thread"));
     let newer_timestamp = chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 2, 0, 0, 0).unwrap();
     save_thread_metadata(
-        newer_session_id.clone(),
+        newer_session_id,
         Some("Newer Historical Thread".into()),
         newer_timestamp,
         Some(newer_timestamp),
