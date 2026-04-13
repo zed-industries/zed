@@ -1605,7 +1605,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{num::NonZeroU32, path::Path};
+    use std::{cell::RefCell, num::NonZeroU32};
 
     use crate::{
         ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
@@ -1614,7 +1614,6 @@ mod tests {
 
     use super::*;
     use fs::FakeFs;
-    use serde_json::json;
     use unindent::Unindent;
     use util::rel_path::rel_path;
 
@@ -1681,34 +1680,51 @@ mod tests {
 
     #[gpui::test]
     async fn test_update_settings_file_updates_store_before_watcher(cx: &mut gpui::TestAppContext) {
-        cx.executor().allow_parking();
-
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.create_dir(paths::settings_file().parent().unwrap())
             .await
             .unwrap();
-        fs.insert_tree(
-            Path::new("/"),
-            json!({
-                "root": {}
-            }),
-        )
-        .await;
         fs.insert_file(
             paths::settings_file(),
-            b"{\"tabs\":{\"close_position\":\"right\"}}".to_vec(),
+            r#"{ "tabs": { "close_position": "right" } }"#.as_bytes().to_vec(),
         )
         .await;
+        fs.pause_events();
+        cx.run_until_parked();
+
+        let success = SettingsParseResult {
+            parse_status: ParseStatus::Success,
+            migration_status: MigrationStatus::NotNeeded,
+        };
+        let parse_results = Rc::new(RefCell::new(Vec::new()));
 
         cx.update(|cx| {
             let mut store = SettingsStore::new(cx, &default_settings());
             store.register_setting::<ItemSettings>();
-            store
-                .set_user_settings(r#"{ "tabs": { "close_position": "right" } }"#, cx)
-                .unwrap();
+            store.watch_settings_files(fs.clone(), cx, {
+                let parse_results = parse_results.clone();
+                move |_, result, _| {
+                    parse_results.borrow_mut().push(result);
+                }
+            });
             cx.set_global(store);
         });
 
+        // Calling watch_settings_files loads user and global settings.
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[success.clone(), success.clone()]
+        );
+        cx.update(|cx| {
+            assert_eq!(
+                cx.global::<SettingsStore>()
+                    .get::<ItemSettings>(None)
+                    .close_position,
+                ClosePosition::Right
+            );
+        });
+
+        // Updating the settings file returns a channel that resolves once the settings are loaded.
         let rx = cx.update(|cx| {
             cx.global::<SettingsStore>()
                 .update_settings_file_with_completion(fs.clone(), move |settings, _| {
@@ -1716,7 +1732,11 @@ mod tests {
                         Some(ClosePosition::Left);
                 })
         });
-
+        assert!(rx.await.unwrap().is_ok());
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[success.clone(), success.clone()]
+        );
         cx.update(|cx| {
             assert_eq!(
                 cx.global::<SettingsStore>()
@@ -1726,7 +1746,20 @@ mod tests {
             );
         });
 
-        assert!(rx.await.unwrap().is_ok());
+        // When the FS event occurs, the settings are recognized as unchanged.
+        fs.flush_events(100);
+        cx.run_until_parked();
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[
+                success.clone(),
+                success.clone(),
+                SettingsParseResult {
+                    parse_status: ParseStatus::Unchanged,
+                    migration_status: MigrationStatus::NotNeeded
+                }
+            ]
+        );
     }
 
     #[gpui::test]

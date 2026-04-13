@@ -4763,7 +4763,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
@@ -4833,7 +4833,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
@@ -4882,7 +4882,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "Atom"}"#.into(),
                 Default::default(),
             )
@@ -4944,7 +4944,7 @@ mod tests {
         app_state
             .fs
             .save(
-                "/settings.json".as_ref(),
+                paths::settings_file(),
                 &r#"{"base_keymap": "JetBrains"}"#.into(),
                 Default::default(),
             )
