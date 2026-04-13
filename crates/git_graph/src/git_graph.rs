@@ -1189,6 +1189,7 @@ impl GitGraph {
             .label_size(LabelSize::Small)
             .bg_color(accent_color.opacity(0.1))
             .border_color(accent_color.opacity(0.5))
+            .truncate()
     }
 
     fn render_table_rows(

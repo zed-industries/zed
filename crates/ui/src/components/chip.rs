@@ -18,6 +18,7 @@ pub struct Chip {
     bg_color: Option<Hsla>,
     border_color: Option<Hsla>,
     height: Option<Pixels>,
+    truncate: bool,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
 }
 
@@ -31,6 +32,7 @@ impl Chip {
             bg_color: None,
             border_color: None,
             height: None,
+            truncate: false,
             tooltip: None,
         }
     }
@@ -65,6 +67,12 @@ impl Chip {
         self
     }
 
+    /// Allows the chip to shrink and truncate its label when space is limited.
+    pub fn truncate(mut self) -> Self {
+        self.truncate = true;
+        self
+    }
+
     pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
@@ -81,7 +89,8 @@ impl RenderOnce for Chip {
 
         h_flex()
             .when_some(self.height, |this, h| this.h(h))
-            .flex_none()
+            .when(self.truncate, |this| this.min_w_0())
+            .when(!self.truncate, |this| this.flex_none())
             .px_1()
             .border_1()
             .rounded_sm()
