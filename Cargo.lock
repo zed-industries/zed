@@ -3595,7 +3595,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "collections",
- "dirs 4.0.0",
+ "dirs",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -4892,52 +4892,11 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "4.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca3aa72a6f96ea37bbc5aa912f6788242832f75369bdfdadcb0e38423f100059"
-dependencies = [
- "dirs-sys 0.3.7",
-]
-
-[[package]]
-name = "dirs"
-version = "5.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
-dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
-name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys 0.5.0",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b1d1d91c932ef41c0f2663aa8b0ca0342d444d842c06914aa0a7e352d0bada6"
-dependencies = [
- "libc",
- "redox_users 0.4.6",
- "winapi",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.4.6",
- "windows-sys 0.48.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -4948,7 +4907,7 @@ checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
 dependencies = [
  "libc",
  "option-ext",
- "redox_users 0.5.2",
+ "redox_users",
  "windows-sys 0.61.2",
 ]
 
@@ -5243,7 +5202,7 @@ dependencies = [
  "collections",
  "db",
  "debug_adapter_extension",
- "dirs 4.0.0",
+ "dirs",
  "edit_prediction",
  "extension",
  "flate2",
@@ -5275,7 +5234,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "similar",
  "smol",
  "sqlez",
@@ -5826,7 +5785,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "terminal_view",
  "util",
  "watch",
@@ -9070,7 +9029,7 @@ dependencies = [
  "log",
  "serde",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "workspace",
 ]
 
@@ -9339,7 +9298,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "smallvec",
  "smol",
  "streaming-iterator",
@@ -12083,7 +12042,7 @@ dependencies = [
 name = "paths"
 version = "0.1.0"
 dependencies = [
- "dirs 4.0.0",
+ "dirs",
  "ignore",
  "util",
 ]
@@ -13321,7 +13280,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sha2",
- "shellexpand 2.1.2",
+ "shellexpand",
  "smallvec",
  "smol",
  "snippet",
@@ -14268,17 +14227,6 @@ dependencies = [
 
 [[package]]
 name = "redox_users"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba009ff324d1fc1b900bd1fdb31564febe58a8ccc8a6fdbb93b543d33b13ca43"
-dependencies = [
- "getrandom 0.2.16",
- "libredox",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "redox_users"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
@@ -14498,7 +14446,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "smol",
  "sysinfo 0.37.2",
  "task",
@@ -14935,13 +14883,13 @@ dependencies = [
  "bytes 1.11.1",
  "chrono",
  "data-encoding",
- "dirs 6.0.0",
+ "dirs",
  "futures 0.3.32",
  "glob",
  "jupyter-protocol",
  "serde",
  "serde_json",
- "shellexpand 3.1.1",
+ "shellexpand",
  "smol",
  "thiserror 2.0.17",
  "uuid",
@@ -16037,20 +15985,11 @@ dependencies = [
 
 [[package]]
 name = "shellexpand"
-version = "2.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ccc8076840c4da029af4f87e4e8daeb0fca6b87bbb02e10cb60b791450e11e4"
-dependencies = [
- "dirs 4.0.0",
-]
-
-[[package]]
-name = "shellexpand"
 version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b1fdf65dd6331831494dd616b30351c38e96e45921a27745cf98490458b90bb"
 dependencies = [
- "dirs 6.0.0",
+ "dirs",
 ]
 
 [[package]]
@@ -17471,7 +17410,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "sha2",
- "shellexpand 2.1.2",
+ "shellexpand",
  "util",
  "zed_actions",
 ]
@@ -17605,7 +17544,7 @@ dependencies = [
  "breadcrumbs",
  "collections",
  "db",
- "dirs 4.0.0",
+ "dirs",
  "editor",
  "futures 0.3.32",
  "gpui",
@@ -17620,7 +17559,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shellexpand 2.1.2",
+ "shellexpand",
  "task",
  "terminal",
  "theme",
@@ -19138,7 +19077,7 @@ dependencies = [
  "async_zip",
  "collections",
  "command-fds",
- "dirs 4.0.0",
+ "dirs",
  "dunce",
  "futures 0.3.32",
  "futures-lite 1.13.0",
@@ -22295,7 +22234,7 @@ dependencies = [
  "settings",
  "settings_profile_selector",
  "settings_ui",
- "shellexpand 2.1.2",
+ "shellexpand",
  "sidebar",
  "smol",
  "snippet_provider",
@@ -22345,14 +22284,14 @@ dependencies = [
 [[package]]
 name = "zed-font-kit"
 version = "0.14.1-zed"
-source = "git+https://github.com/zed-industries/font-kit?rev=110523127440aefb11ce0cf280ae7c5071337ec5#110523127440aefb11ce0cf280ae7c5071337ec5"
+source = "git+https://github.com/zed-industries/font-kit?rev=94b0f28166665e8fd2f53ff6d268a14955c82269#94b0f28166665e8fd2f53ff6d268a14955c82269"
 dependencies = [
  "bitflags 2.10.0",
  "byteorder",
  "core-foundation 0.10.0",
  "core-graphics 0.24.0",
  "core-text",
- "dirs 5.0.1",
+ "dirs",
  "dwrote",
  "float-ord",
  "freetype-sys",

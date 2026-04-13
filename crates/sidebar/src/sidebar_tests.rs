@@ -279,7 +279,7 @@ fn save_thread_metadata(
             archived: false,
             remote_connection: None,
         };
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx));
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
     cx.run_until_parked();
 }
@@ -314,7 +314,7 @@ fn save_thread_metadata_with_main_paths(
         remote_connection: None,
     };
     cx.update(|cx| {
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx));
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
     cx.run_until_parked();
 }
@@ -2351,6 +2351,101 @@ async fn test_confirm_on_historical_thread_activates_workspace(cx: &mut TestAppC
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
         workspace_0
+    );
+}
+
+#[gpui::test]
+async fn test_confirm_on_historical_thread_preserves_historical_timestamp_and_order(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, _panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let newer_session_id = acp::SessionId::new(Arc::from("newer-historical-thread"));
+    let newer_timestamp = chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 2, 0, 0, 0).unwrap();
+    save_thread_metadata(
+        newer_session_id,
+        Some("Newer Historical Thread".into()),
+        newer_timestamp,
+        Some(newer_timestamp),
+        &project,
+        cx,
+    );
+
+    let older_session_id = acp::SessionId::new(Arc::from("older-historical-thread"));
+    let older_timestamp = chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap();
+    save_thread_metadata(
+        older_session_id.clone(),
+        Some("Older Historical Thread".into()),
+        older_timestamp,
+        Some(older_timestamp),
+        &project,
+        cx,
+    );
+
+    cx.run_until_parked();
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    let historical_entries_before: Vec<_> = visible_entries_as_strings(&sidebar, cx)
+        .into_iter()
+        .filter(|entry| entry.contains("Historical Thread"))
+        .collect();
+    assert_eq!(
+        historical_entries_before,
+        vec![
+            "  Newer Historical Thread".to_string(),
+            "  Older Historical Thread".to_string(),
+        ],
+        "expected the sidebar to sort historical threads by their saved timestamp before activation"
+    );
+
+    let older_entry_index = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| {
+                matches!(entry, ListEntry::Thread(thread)
+                    if thread.metadata.session_id.as_ref() == Some(&older_session_id))
+            })
+            .expect("expected Older Historical Thread to appear in the sidebar")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.selection = Some(older_entry_index);
+        sidebar.confirm(&Confirm, window, cx);
+    });
+    cx.run_until_parked();
+    cx.run_until_parked();
+    cx.run_until_parked();
+
+    let older_metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&older_session_id)
+            .cloned()
+            .expect("expected metadata for Older Historical Thread after activation")
+    });
+    assert_eq!(
+        older_metadata.created_at,
+        Some(older_timestamp),
+        "activating a historical thread should not rewrite its saved created_at timestamp"
+    );
+
+    let historical_entries_after: Vec<_> = visible_entries_as_strings(&sidebar, cx)
+        .into_iter()
+        .filter(|entry| entry.contains("Historical Thread"))
+        .collect();
+    assert_eq!(
+        historical_entries_after,
+        vec![
+            "  Newer Historical Thread".to_string(),
+            "  Older Historical Thread".to_string(),
+        ],
+        "activating an older historical thread should not reorder it ahead of a newer historical thread"
     );
 }
 
@@ -6039,7 +6134,7 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
     let thread_id = ThreadId::new();
     cx.update(|_, cx| {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save_manually(
+            store.save(
                 ThreadMetadata {
                     thread_id,
                     session_id: Some(session_id.clone()),
@@ -6131,7 +6226,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
     let original_thread_id = ThreadId::new();
     cx.update(|_, cx| {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save_manually(
+            store.save(
                 ThreadMetadata {
                     thread_id: original_thread_id,
                     session_id: Some(session_id.clone()),
@@ -6446,7 +6541,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
     let thread_id = ThreadId::new();
     cx.update(|_, cx| {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save_manually(
+            store.save(
                 ThreadMetadata {
                     thread_id,
                     session_id: Some(session_id.clone()),
@@ -7296,7 +7391,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
 
     cx.update(|_, cx| {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.save_manually(
+            store.save(
                 ThreadMetadata {
                     thread_id: original_thread_id,
                     session_id: Some(session_id.clone()),
@@ -8016,7 +8111,7 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             archived: false,
             remote_connection: None,
         };
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx));
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
     cx.run_until_parked();
 
@@ -9044,8 +9139,7 @@ mod property_test {
             remote_connection: None,
         };
         cx.update(|_, cx| {
-            ThreadMetadataStore::global(cx)
-                .update(cx, |store, cx| store.save_manually(metadata, cx))
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
         });
         cx.run_until_parked();
     }
@@ -9931,7 +10025,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             archived: false,
             remote_connection: None,
         };
-        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save_manually(metadata, cx));
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
     cx.run_until_parked();
 

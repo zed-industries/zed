@@ -274,7 +274,6 @@ pub struct ThreadMetadata {
 impl ThreadMetadata {
     pub fn new_draft(
         thread_id: ThreadId,
-        session_id: Option<acp::SessionId>,
         agent_id: AgentId,
         title: Option<SharedString>,
         worktree_paths: WorktreePaths,
@@ -283,7 +282,7 @@ impl ThreadMetadata {
         let now = Utc::now();
         Self {
             thread_id,
-            session_id,
+            session_id: None,
             agent_id,
             title,
             updated_at: now,
@@ -563,12 +562,7 @@ impl ThreadMetadataStore {
         cx.notify();
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn save_manually(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
-        self.save(metadata, cx)
-    }
-
-    fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
+    pub fn save(&mut self, metadata: ThreadMetadata, cx: &mut Context<Self>) {
         self.save_internal(metadata);
         cx.notify();
     }
@@ -2888,7 +2882,7 @@ mod tests {
         let thread_id = meta.thread_id;
 
         store.update(cx, |store, cx| {
-            store.save_manually(meta, cx);
+            store.save(meta, cx);
         });
 
         let replacements = vec![
@@ -2926,7 +2920,7 @@ mod tests {
         let thread_id = meta.thread_id;
 
         store.update(cx, |store, cx| {
-            store.save_manually(meta, cx);
+            store.save(meta, cx);
         });
 
         let replacements = vec![
@@ -2967,7 +2961,7 @@ mod tests {
         let thread_id = meta.thread_id;
 
         store.update(cx, |store, cx| {
-            store.save_manually(meta, cx);
+            store.save(meta, cx);
         });
 
         let replacements = vec![
@@ -3005,7 +2999,7 @@ mod tests {
         let thread_id = meta.thread_id;
 
         store.update(cx, |store, cx| {
-            store.save_manually(meta, cx);
+            store.save(meta, cx);
         });
 
         let replacements = vec![
