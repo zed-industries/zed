@@ -730,7 +730,7 @@ mod tests {
 
         // The main worktree should NOT produce a root plan.
         workspace.read_with(cx, |_workspace, cx| {
-            let plan = build_root_plan(Path::new("/project"), &[workspace.clone()], cx);
+            let plan = build_root_plan(Path::new("/project"), std::slice::from_ref(&workspace), cx);
             assert!(
                 plan.is_none(),
                 "build_root_plan should return None for a main worktree",
@@ -786,7 +786,11 @@ mod tests {
 
         workspace.read_with(cx, |_workspace, cx| {
             // The linked worktree SHOULD produce a root plan.
-            let plan = build_root_plan(Path::new("/linked-worktree"), &[workspace.clone()], cx);
+            let plan = build_root_plan(
+                Path::new("/linked-worktree"),
+                std::slice::from_ref(&workspace),
+                cx,
+            );
             assert!(
                 plan.is_some(),
                 "build_root_plan should return Some for a linked worktree",
@@ -796,7 +800,8 @@ mod tests {
             assert_eq!(plan.main_repo_path, PathBuf::from("/project"));
 
             // The main worktree should still return None.
-            let main_plan = build_root_plan(Path::new("/project"), &[workspace.clone()], cx);
+            let main_plan =
+                build_root_plan(Path::new("/project"), std::slice::from_ref(&workspace), cx);
             assert!(
                 main_plan.is_none(),
                 "build_root_plan should return None for the main worktree \
