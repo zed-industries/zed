@@ -1831,11 +1831,19 @@ impl Sidebar {
                 .w_full()
                 .child(header)
                 .child(
-                    div().px_2().pt_1().pb_2().child(
-                        Label::new("No threads yet")
-                            .size(LabelSize::Small)
-                            .color(Color::Placeholder),
-                    ),
+                    h_flex()
+                        .px_2()
+                        .pt_1()
+                        .pb_2()
+                        .gap(px(7.))
+                        .child(Icon::new(IconName::Circle).size(IconSize::Small).color(
+                            Color::Custom(cx.theme().colors().icon_placeholder.opacity(0.1)),
+                        ))
+                        .child(
+                            Label::new("No threads yet")
+                                .size(LabelSize::Small)
+                                .color(Color::Placeholder),
+                        ),
                 )
                 .into_any_element()
         } else {
