@@ -339,8 +339,7 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 ///
 fn worktree_info_from_thread_paths(
     worktree_paths: &WorktreePaths,
-    branch_by_path: &HashMap<PathBuf, SharedString>,
-    persisted_branch_names: &HashMap<PathBuf, SharedString>,
+    branch_names: &HashMap<PathBuf, SharedString>,
 ) -> Vec<ThreadItemWorktreeInfo> {
     let mut infos: Vec<ThreadItemWorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
@@ -362,10 +361,7 @@ fn worktree_info_from_thread_paths(
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Linked,
-                branch_name: branch_by_path
-                    .get(folder_path)
-                    .or_else(|| persisted_branch_names.get(folder_path))
-                    .cloned(),
+                branch_name: branch_names.get(folder_path).cloned(),
             });
         } else {
             let Some(name) = folder_path.file_name() else {
@@ -376,10 +372,7 @@ fn worktree_info_from_thread_paths(
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Main,
-                branch_name: branch_by_path
-                    .get(folder_path)
-                    .or_else(|| persisted_branch_names.get(folder_path))
-                    .cloned(),
+                branch_name: branch_names.get(folder_path).cloned(),
             });
         }
     }
@@ -446,6 +439,7 @@ pub struct Sidebar {
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     pending_thread_activation: Option<agent_ui::ThreadId>,
+    pending_branch_backfills: Vec<ThreadMetadata>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
@@ -538,6 +532,7 @@ impl Sidebar {
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
+            pending_branch_backfills: Vec::new(),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -1098,6 +1093,7 @@ impl Sidebar {
         let path_detail_map: HashMap<PathBuf, usize> =
             all_paths.into_iter().zip(path_details).collect();
 
+        let mut branch_backfills: Vec<ThreadMetadata> = Vec::new();
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
@@ -1172,35 +1168,48 @@ impl Sidebar {
                 };
 
                 // Build a ThreadEntry from a metadata row.
-                let make_thread_entry =
-                    |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
-                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        let persisted: HashMap<PathBuf, SharedString> = row
-                            .branch_names
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect();
-                        let worktrees = worktree_info_from_thread_paths(
-                            &row.worktree_paths,
-                            &branch_by_path,
-                            &persisted,
-                        );
-                        let is_draft = row.is_draft();
-                        ThreadEntry {
-                            metadata: row,
-                            icon,
-                            icon_from_external_svg,
-                            status: AgentThreadStatus::default(),
-                            workspace,
-                            is_live: false,
-                            is_background: false,
-                            is_title_generating: false,
-                            is_draft,
-                            highlight_positions: Vec::new(),
-                            worktrees,
-                            diff_stats: DiffStats::default(),
+                let make_thread_entry = |row: ThreadMetadata,
+                                         workspace: ThreadEntryWorkspace,
+                                         backfills: &mut Vec<ThreadMetadata>|
+                 -> ThreadEntry {
+                    // Merge live git branch data into the thread's persisted
+                    // branch_names. If anything new was added, queue the metadata
+                    // for a DB write so branches survive worktree deletion.
+                    let mut merged = row.branch_names.clone();
+                    let mut changed = false;
+                    for (path, branch) in &branch_by_path {
+                        if !merged.contains_key(path) {
+                            merged.insert(path.clone(), branch.clone());
+                            changed = true;
                         }
-                    };
+                    }
+                    if changed {
+                        let mut updated = row.clone();
+                        updated.branch_names = merged.clone();
+                        backfills.push(updated);
+                    }
+
+                    let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
+                    let branch_names: HashMap<PathBuf, SharedString> =
+                        merged.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    let worktrees =
+                        worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
+                    let is_draft = row.is_draft();
+                    ThreadEntry {
+                        metadata: row,
+                        icon,
+                        icon_from_external_svg,
+                        status: AgentThreadStatus::default(),
+                        workspace,
+                        is_live: false,
+                        is_background: false,
+                        is_title_generating: false,
+                        is_draft,
+                        highlight_positions: Vec::new(),
+                        worktrees,
+                        diff_stats: DiffStats::default(),
+                    }
+                };
 
                 // Main code path: one query per group via main_worktree_paths.
                 // The main_worktree_paths column is set on all new threads and
@@ -1215,7 +1224,7 @@ impl Sidebar {
                         continue;
                     }
                     let workspace = resolve_workspace(&row);
-                    threads.push(make_thread_entry(row, workspace));
+                    threads.push(make_thread_entry(row, workspace, &mut branch_backfills));
                 }
 
                 // Legacy threads did not have `main_worktree_paths` populated, so they
@@ -1231,7 +1240,7 @@ impl Sidebar {
                         continue;
                     }
                     let workspace = resolve_workspace(&row);
-                    threads.push(make_thread_entry(row, workspace));
+                    threads.push(make_thread_entry(row, workspace, &mut branch_backfills));
                 }
 
                 // Load any legacy threads for any single linked wortree of this project group.
@@ -1262,6 +1271,7 @@ impl Sidebar {
                                 folder_paths: worktree_path_list.clone(),
                                 project_group_key: group_key.clone(),
                             },
+                            &mut branch_backfills,
                         ));
                     }
                 }
@@ -1493,6 +1503,7 @@ impl Sidebar {
             project_header_indices,
             has_open_projects,
         };
+        self.pending_branch_backfills = branch_backfills;
     }
 
     /// Rebuilds the sidebar's visible entries from already-cached state.
@@ -1508,6 +1519,18 @@ impl Sidebar {
         let scroll_position = self.list_state.logical_scroll_top();
 
         self.rebuild_contents(cx);
+
+        // Persist branch names for threads that gained new branch data
+        // from live git repos. This backfills existing threads so branch
+        // names survive worktree deletion.
+        if !self.pending_branch_backfills.is_empty() {
+            let backfills = std::mem::take(&mut self.pending_branch_backfills);
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                for metadata in backfills {
+                    store.save(metadata, cx);
+                }
+            });
+        }
 
         self.list_state.reset(self.contents.entries.len());
         self.list_state.scroll_to(scroll_position);

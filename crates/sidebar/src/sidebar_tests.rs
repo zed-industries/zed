@@ -10399,7 +10399,7 @@ fn test_worktree_info_branch_names_for_main_worktrees() {
             .into_iter()
             .collect();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path, &HashMap::new());
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, Some(SharedString::from("feature-x")));
@@ -10420,7 +10420,7 @@ fn test_worktree_info_branch_names_for_linked_worktrees() {
     .into_iter()
     .collect();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path, &HashMap::new());
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Linked);
     assert_eq!(
@@ -10436,7 +10436,7 @@ fn test_worktree_info_missing_branch_returns_none() {
 
     let branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path, &HashMap::new());
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, None);
