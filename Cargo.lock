@@ -14,6 +14,7 @@ dependencies = [
  "chrono",
  "collections",
  "env_logger 0.11.8",
+ "feature_flags",
  "file_icons",
  "futures 0.3.32",
  "gpui",
