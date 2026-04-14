@@ -1078,7 +1078,31 @@ impl Sidebar {
             (icon, icon_from_external_svg)
         };
 
+        for (i, ws) in workspaces.iter().enumerate() {
+            let project = ws.read(cx).project().read(cx);
+            let root_paths: Vec<_> = ws.read(cx).root_paths(cx);
+            for repo in project.repositories(cx).values() {
+                let s = repo.read(cx).snapshot();
+                log::info!(
+                    "sidebar workspace[{}]: roots={:?} work_dir={:?} original={:?} branch={:?}",
+                    i,
+                    root_paths,
+                    s.work_directory_abs_path,
+                    s.original_repo_abs_path,
+                    s.branch.as_ref().map(|b| b.name().to_string()),
+                );
+            }
+        }
+
         let groups = mw.project_groups(cx);
+        for (i, group) in groups.iter().enumerate() {
+            log::info!(
+                "sidebar group[{}]: paths={:?} workspaces={}",
+                i,
+                group.key.path_list().paths(),
+                group.workspaces.len(),
+            );
+        }
 
         let mut all_paths: Vec<PathBuf> = groups
             .iter()
