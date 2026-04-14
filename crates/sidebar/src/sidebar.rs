@@ -1137,15 +1137,17 @@ impl Sidebar {
             }
         }
 
-        // Backfill branch_names for ALL threads (including archived) that
-        // are missing branch data we now have from live git repos.
+        // Backfill branch_names for ALL threads (including archived)
+        // with live git data. Always overwrites existing values so that
+        // stale/incorrect persisted data gets corrected.
         if !branch_by_path.is_empty() {
             let thread_store = ThreadMetadataStore::global(cx);
             for thread in thread_store.read(cx).entries() {
                 let mut changed = false;
                 let mut updated_names = thread.branch_names.clone();
                 for (path, branch) in &branch_by_path {
-                    if !updated_names.contains_key(path) {
+                    let existing = updated_names.get(path);
+                    if existing != Some(branch) {
                         updated_names.insert(path.clone(), branch.clone());
                         changed = true;
                     }
@@ -1246,17 +1248,15 @@ impl Sidebar {
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        // Merge live branch data for the current render. The
-                        // global backfill above will persist these to the DB.
+                        // Start with persisted branch names, then override
+                        // with live data (which is always more current).
                         let mut branch_names: HashMap<PathBuf, SharedString> = row
                             .branch_names
                             .iter()
                             .map(|(k, v)| (k.clone(), v.clone()))
                             .collect();
                         for (path, branch) in &branch_by_path {
-                            branch_names
-                                .entry(path.clone())
-                                .or_insert_with(|| branch.clone());
+                            branch_names.insert(path.clone(), branch.clone());
                         }
                         // For folder paths that still have no branch, fall
                         // back to the repo-level branch. This handles threads
