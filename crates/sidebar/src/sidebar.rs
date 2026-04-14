@@ -1814,28 +1814,13 @@ impl Sidebar {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 if event.modifiers().platform {
                     let key = key_for_toggle.clone();
-                    let most_recent_thread = {
-                        let store = ThreadMetadataStore::global(cx).read(cx);
-                        store
-                            .entries_for_main_worktree_path(key.path_list())
-                            .chain(store.entries_for_path(key.path_list()))
-                            .max_by_key(|m| m.created_at.unwrap_or(m.updated_at))
-                            .cloned()
-                    };
-                    if let Some(thread) = most_recent_thread {
-                        let folder_paths = thread.folder_paths().clone();
-                        this.open_workspace_and_activate_thread(
-                            thread,
-                            folder_paths,
-                            &key,
-                            window,
-                            cx,
-                        );
+                    if let Some(workspace) = this.workspace_for_group(&key, cx) {
+                        this.activate_workspace(&workspace, window, cx);
                     } else {
-                        this.selection = None;
-                        this.active_entry = None;
                         this.open_workspace_for_group(&key, window, cx);
                     }
+                    this.selection = None;
+                    this.active_entry = None;
                 } else {
                     this.toggle_collapse(&key_for_toggle, window, cx);
                 }
