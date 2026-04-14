@@ -2378,7 +2378,11 @@ impl Sidebar {
         if let Some(agent_panel) = existing_panel {
             load_thread(agent_panel, metadata, focus, window, cx);
             workspace.update(cx, |workspace, cx| {
-                workspace.reveal_panel::<AgentPanel>(window, cx);
+                if focus {
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                } else {
+                    workspace.reveal_panel::<AgentPanel>(window, cx);
+                }
             });
             return;
         }
@@ -2396,7 +2400,11 @@ impl Sidebar {
                 });
                 panel.update(cx, |panel, _cx| panel.begin_loading_thread());
                 load_thread(panel, &metadata, focus, window, cx);
-                workspace.reveal_panel::<AgentPanel>(window, cx);
+                if focus {
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                } else {
+                    workspace.reveal_panel::<AgentPanel>(window, cx);
+                }
             })?;
 
             anyhow::Ok(())
@@ -3673,11 +3681,8 @@ impl Sidebar {
                         workspace: workspace.clone(),
                     });
                     this.update_entries(cx);
-                    Self::load_agent_thread_in_workspace(workspace, metadata, false, window, cx);
                     this.dismiss_thread_switcher(cx);
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.focus_panel::<AgentPanel>(window, cx);
-                    });
+                    Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
                 }
                 ThreadSwitcherEvent::Dismissed => {
                     if let Some(mw) = weak_multi_workspace.upgrade() {
