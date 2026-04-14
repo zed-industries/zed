@@ -1116,19 +1116,23 @@ impl Sidebar {
             }
         }
 
-        // Build a map from original repo path → branch name. This serves
-        // as a last-resort fallback for threads whose worktree was deleted:
-        // we can still show the branch of whatever worktree is currently
-        // checked out from the same repo.
+        // Build a map from repo paths → branch name. Keyed by both
+        // original_repo_abs_path and work_directory_abs_path so we can
+        // find the branch for threads whose worktree was deleted (the
+        // thread's main_path may point to either).
         let mut branch_by_repo: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
             for repo in project.repositories(cx).values() {
                 let snapshot = repo.read(cx).snapshot();
                 if let Some(branch) = &snapshot.branch {
+                    let branch_str = SharedString::from(branch.name().to_string());
                     branch_by_repo
                         .entry(snapshot.original_repo_abs_path.to_path_buf())
-                        .or_insert_with(|| SharedString::from(branch.name().to_string()));
+                        .or_insert_with(|| branch_str.clone());
+                    branch_by_repo
+                        .entry(snapshot.work_directory_abs_path.to_path_buf())
+                        .or_insert_with(|| branch_str);
                 }
             }
         }
@@ -1205,6 +1209,39 @@ impl Sidebar {
                         })
                 };
 
+                // Find a fallback branch for this group. First try the
+                // group's own workspaces. Then try matching group paths
+                // against branch_by_repo. Finally, if there's exactly
+                // one repo loaded, use its branch (safe for single-repo
+                // setups; avoids wrong matches in multi-repo setups).
+                let group_fallback_branch: Option<SharedString> = group_workspaces
+                    .iter()
+                    .find_map(|ws| {
+                        let project = ws.read(cx).project().read(cx);
+                        project.repositories(cx).values().find_map(|repo| {
+                            repo.read(cx)
+                                .snapshot()
+                                .branch
+                                .as_ref()
+                                .map(|b| SharedString::from(b.name().to_string()))
+                        })
+                    })
+                    .or_else(|| {
+                        group_key
+                            .path_list()
+                            .paths()
+                            .iter()
+                            .find_map(|p| branch_by_repo.get(p).cloned())
+                    })
+                    .or_else(|| {
+                        let mut unique_branches = branch_by_repo.values().collect::<HashSet<_>>();
+                        if unique_branches.len() == 1 {
+                            unique_branches.drain().next().cloned()
+                        } else {
+                            None
+                        }
+                    });
+
                 // Build a ThreadEntry from a metadata row.
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
@@ -1225,14 +1262,12 @@ impl Sidebar {
                         // back to the repo-level branch. This handles threads
                         // whose worktrees were deleted: we show the branch
                         // of whatever is currently checked out from the same
-                        // repo. We try the thread's main_path first, then
-                        // folder_path, and finally any repo in the group.
+                        // repo.
                         for (main_path, folder_path) in row.worktree_paths.ordered_pairs() {
                             if !branch_names.contains_key(folder_path) {
                                 let fallback = branch_by_repo
                                     .get(main_path)
-                                    .or_else(|| branch_by_repo.get(folder_path))
-                                    .or_else(|| branch_by_repo.values().next());
+                                    .or(group_fallback_branch.as_ref());
                                 if let Some(branch) = fallback {
                                     branch_names.insert(folder_path.clone(), branch.clone());
                                 }
