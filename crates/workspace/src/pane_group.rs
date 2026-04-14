@@ -228,11 +228,14 @@ impl PaneGroup {
     pub fn render(
         &self,
         zoomed: Option<&AnyWeakView>,
+        maximized: Option<&WeakEntity<Pane>>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
     ) -> impl IntoElement {
-        self.root.render(0, zoomed, render_cx, window, cx).element
+        self.root
+            .render(0, zoomed, maximized, render_cx, window, cx)
+            .element
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
@@ -528,6 +531,7 @@ impl Member {
         &self,
         basis: usize,
         zoomed: Option<&AnyWeakView>,
+        maximized: Option<&WeakEntity<Pane>>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
@@ -539,6 +543,15 @@ impl Member {
                         element: div().into_any(),
                         contains_active_pane: false,
                     };
+                }
+
+                if let Some(maximized) = maximized {
+                    if maximized.upgrade().as_ref() != Some(pane) {
+                        return PaneRenderResult {
+                            element: div().into_any(),
+                            contains_active_pane: false,
+                        };
+                    }
                 }
 
                 let decoration = render_cx.decorate(pane, cx);
@@ -569,7 +582,14 @@ impl Member {
                     contains_active_pane: is_active,
                 }
             }
-            Member::Axis(axis) => axis.render(basis + 1, zoomed, render_cx, window, cx),
+            Member::Axis(axis) => axis.render(basis + 1, zoomed, maximized, render_cx, window, cx),
+        }
+    }
+
+    pub fn contains_pane(&self, needle: &Entity<Pane>) -> bool {
+        match self {
+            Member::Pane(pane) => pane == needle,
+            Member::Axis(axis) => axis.members.iter().any(|member| member.contains_pane(needle)),
         }
     }
 
@@ -922,10 +942,23 @@ impl PaneAxis {
         &self,
         basis: usize,
         zoomed: Option<&AnyWeakView>,
+        maximized: Option<&WeakEntity<Pane>>,
         render_cx: &dyn PaneLeaderDecorator,
         window: &mut Window,
         cx: &mut App,
     ) -> PaneRenderResult {
+        if let Some(maximized) = maximized {
+            if let Some(maximized_pane) = maximized.upgrade() {
+                for member in &self.members {
+                    if member.contains_pane(&maximized_pane) {
+                        return member.render(
+                            basis, zoomed, Some(maximized), render_cx, window, cx,
+                        );
+                    }
+                }
+            }
+        }
+
         debug_assert!(self.members.len() == self.flexes.lock().len());
         let mut active_pane_ix = None;
         let mut contains_active_pane = false;
@@ -949,7 +982,8 @@ impl PaneAxis {
                     }
                 }
 
-                let result = member.render((basis + ix) * 10, zoomed, render_cx, window, cx);
+                let result =
+                    member.render((basis + ix) * 10, zoomed, None, render_cx, window, cx);
                 if result.contains_active_pane {
                     contains_active_pane = true;
                 }
