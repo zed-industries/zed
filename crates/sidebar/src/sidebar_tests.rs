@@ -262,6 +262,7 @@ fn save_thread_metadata(
 ) {
     cx.update(|cx| {
         let worktree_paths = project.read(cx).worktree_paths(cx);
+        let remote_connection = project.read(cx).remote_connection_options(cx);
         let thread_id = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
@@ -277,7 +278,7 @@ fn save_thread_metadata(
             created_at,
             worktree_paths,
             archived: false,
-            remote_connection: None,
+            remote_connection,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
@@ -10001,8 +10002,12 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
     // in the sidebar under the same remote group. This simulates a
     // linked worktree workspace that was closed.
     let remote_thread_id = acp::SessionId::new(Arc::from("remote-thread"));
-    let main_worktree_paths =
-        project.read_with(cx, |p, cx| p.project_group_key(cx).path_list().clone());
+    let (main_worktree_paths, remote_connection) = project.read_with(cx, |p, cx| {
+        (
+            p.project_group_key(cx).path_list().clone(),
+            p.remote_connection_options(cx),
+        )
+    });
     cx.update(|_window, cx| {
         let metadata = ThreadMetadata {
             thread_id: ThreadId::new(),
@@ -10017,7 +10022,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             )
             .unwrap(),
             archived: false,
-            remote_connection: None,
+            remote_connection,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
