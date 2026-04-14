@@ -11,9 +11,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
 use project::git_store::RepositoryEvent;
-use ui::{
-    Divider, DocumentationAside, HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*,
-};
+use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt as _;
 use util::paths::PathExt;
 
