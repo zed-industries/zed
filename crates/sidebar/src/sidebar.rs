@@ -2604,7 +2604,7 @@ impl Sidebar {
         })
     }
 
-    fn activate_archived_thread(
+    fn open_thread_from_archive(
         &mut self,
         metadata: ThreadMetadata,
         window: &mut Window,
@@ -2642,9 +2642,13 @@ impl Sidebar {
         }
 
         let store = ThreadMetadataStore::global(cx);
-        let task = store
-            .read(cx)
-            .get_archived_worktrees_for_thread(thread_id, cx);
+        let task = if metadata.archived {
+            store
+                .read(cx)
+                .get_archived_worktrees_for_thread(thread_id, cx)
+        } else {
+            Task::ready(Ok(Vec::new()))
+        };
         let path_list = metadata.folder_paths().clone();
 
         let restore_task = cx.spawn_in(window, async move |this, cx| {
@@ -2654,8 +2658,10 @@ impl Sidebar {
                 if archived_worktrees.is_empty() {
                     this.update_in(cx, |this, window, cx| {
                         this.restoring_tasks.remove(&thread_id);
-                        ThreadMetadataStore::global(cx)
-                            .update(cx, |store, cx| store.unarchive(thread_id, cx));
+                        if metadata.archived {
+                            ThreadMetadataStore::global(cx)
+                                .update(cx, |store, cx| store.unarchive(thread_id, cx));
+                        }
 
                         if let Some(workspace) =
                             this.find_current_workspace_for_path_list(&path_list, cx)
@@ -4618,7 +4624,7 @@ impl Sidebar {
                     .icon_size(IconSize::Small)
                     .toggle_state(is_archive)
                     .tooltip(move |_, cx| {
-                        Tooltip::for_action("View All Threads", &ToggleArchive, cx)
+                        Tooltip::for_action("Toggle Archived Threads", &ToggleArchive, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_archive(&ToggleArchive, window, cx);
@@ -4784,8 +4790,8 @@ impl Sidebar {
                 ThreadsArchiveViewEvent::Close => {
                     this.show_thread_list(window, cx);
                 }
-                ThreadsArchiveViewEvent::Unarchive { thread } => {
-                    this.activate_archived_thread(thread.clone(), window, cx);
+                ThreadsArchiveViewEvent::Activate { thread } => {
+                    this.open_thread_from_archive(thread.clone(), window, cx);
                 }
                 ThreadsArchiveViewEvent::CancelRestore { thread_id } => {
                     this.restoring_tasks.remove(thread_id);

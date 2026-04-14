@@ -4650,7 +4650,7 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
     // Call activate_archived_thread – should resolve saved paths and
     // switch to the workspace for project-b.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(
+        sidebar.open_thread_from_archive(
             ThreadMetadata {
                 thread_id: ThreadId::new(),
                 session_id: Some(session_id.clone()),
@@ -4718,7 +4718,7 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
 
     // No thread saved to the store – cwd is the only path hint.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(
+        sidebar.open_thread_from_archive(
             ThreadMetadata {
                 thread_id: ThreadId::new(),
                 session_id: Some(acp::SessionId::new(Arc::from("unknown-session"))),
@@ -4784,7 +4784,7 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
 
     // No saved thread, no cwd – should fall back to the active workspace.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(
+        sidebar.open_thread_from_archive(
             ThreadMetadata {
                 thread_id: ThreadId::new(),
                 session_id: Some(acp::SessionId::new(Arc::from("no-context-session"))),
@@ -4840,7 +4840,7 @@ async fn test_activate_archived_thread_saved_paths_opens_new_workspace(cx: &mut 
     );
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(
+        sidebar.open_thread_from_archive(
             ThreadMetadata {
                 thread_id: ThreadId::new(),
                 session_id: Some(session_id.clone()),
@@ -4895,7 +4895,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
     let session_id = acp::SessionId::new(Arc::from("archived-cross-window"));
 
     sidebar.update_in(cx_a, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(
+        sidebar.open_thread_from_archive(
             ThreadMetadata {
                 thread_id: ThreadId::new(),
                 session_id: Some(session_id.clone()),
@@ -4975,7 +4975,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
     let session_id = acp::SessionId::new(Arc::from("archived-cross-window-with-sidebar"));
 
     sidebar_a.update_in(cx_a, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(
+        sidebar.open_thread_from_archive(
             ThreadMetadata {
                 thread_id: ThreadId::new(),
                 session_id: Some(session_id.clone()),
@@ -5058,7 +5058,7 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
     let session_id = acp::SessionId::new(Arc::from("archived-current-window"));
 
     sidebar_a.update_in(cx_a, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(
+        sidebar.open_thread_from_archive(
             ThreadMetadata {
                 thread_id: ThreadId::new(),
                 session_id: Some(session_id.clone()),
@@ -6038,7 +6038,7 @@ async fn test_unarchive_only_shows_restored_thread(cx: &mut TestAppContext) {
 
     // Unarchive it — the draft should be replaced by the restored thread.
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(metadata, window, cx);
+        sidebar.open_thread_from_archive(metadata, window, cx);
     });
     cx.run_until_parked();
 
@@ -6128,7 +6128,7 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(metadata, window, cx);
+        sidebar.open_thread_from_archive(metadata, window, cx);
     });
     cx.run_until_parked();
 
@@ -6212,7 +6212,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(metadata, window, cx);
+        sidebar.open_thread_from_archive(metadata, window, cx);
     });
     cx.run_until_parked();
     cx.run_until_parked();
@@ -6355,7 +6355,7 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(metadata, window, cx);
+        sidebar.open_thread_from_archive(metadata, window, cx);
     });
     cx.run_until_parked();
 
@@ -6440,7 +6440,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(metadata, window, cx);
+        sidebar.open_thread_from_archive(metadata, window, cx);
     });
 
     let panel_b_before_settle = workspace_b.read_with(cx, |workspace, cx| {
@@ -6587,7 +6587,7 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
     );
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(archived_metadata.clone(), window, cx);
+        sidebar.open_thread_from_archive(archived_metadata.clone(), window, cx);
     });
     cx.run_until_parked();
     cx.run_until_parked();
@@ -6701,7 +6701,7 @@ async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(cx: &mut 
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(metadata, window, cx);
+        sidebar.open_thread_from_archive(metadata, window, cx);
     });
     cx.run_until_parked();
 
@@ -7288,7 +7288,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
     });
 
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(metadata, window, cx);
+        sidebar.open_thread_from_archive(metadata, window, cx);
     });
 
     cx.run_until_parked();

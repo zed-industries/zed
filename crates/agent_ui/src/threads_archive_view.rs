@@ -112,7 +112,7 @@ fn fuzzy_match_positions(query: &str, text: &str) -> Option<Vec<usize>> {
 
 pub enum ThreadsArchiveViewEvent {
     Close,
-    Unarchive { thread: ThreadMetadata },
+    Activate { thread: ThreadMetadata },
     CancelRestore { thread_id: ThreadId },
 }
 
@@ -355,7 +355,7 @@ impl ThreadsArchiveView {
         self.mark_restoring(&thread.thread_id, cx);
         self.selection = None;
         self.reset_filter_editor_text(window, cx);
-        cx.emit(ThreadsArchiveViewEvent::Unarchive { thread });
+        cx.emit(ThreadsArchiveViewEvent::Activate { thread });
     }
 
     fn show_project_picker_for_thread(
@@ -959,7 +959,7 @@ impl ProjectPickerDelegate {
             .update(cx, |view, cx| {
                 view.selection = None;
                 view.reset_filter_editor_text(window, cx);
-                cx.emit(ThreadsArchiveViewEvent::Unarchive {
+                cx.emit(ThreadsArchiveViewEvent::Activate {
                     thread: self.thread.clone(),
                 });
             })
