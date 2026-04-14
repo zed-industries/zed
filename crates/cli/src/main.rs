@@ -1217,7 +1217,9 @@ mod mac_os {
         string::kCFStringEncodingUTF8,
         url::{CFURL, CFURLCreateWithBytes},
     };
-    use core_services::{LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults};
+    use core_services::{
+        LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults, kLSLaunchDontSwitch,
+    };
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
@@ -1316,7 +1318,7 @@ mod mac_os {
                                 appURL: app_url.as_concrete_TypeRef(),
                                 itemURLs: urls_to_open.as_concrete_TypeRef(),
                                 passThruParams: ptr::null(),
-                                launchFlags: kLSLaunchDefaults,
+                                launchFlags: kLSLaunchDefaults | kLSLaunchDontSwitch,
                                 asyncRefCon: ptr::null_mut(),
                             },
                             ptr::null_mut(),

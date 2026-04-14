@@ -482,6 +482,7 @@ pub async fn handle_cli_connection(
                             cx,
                         ) {
                             Ok(open_request) => {
+                                cx.activate(true);
                                 handle_open_request(open_request, app_state.clone(), cx);
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
                             }
@@ -517,6 +518,8 @@ pub async fn handle_cli_connection(
                         None => {}
                     }
                 }
+
+                cx.update(|cx| cx.activate(true));
 
                 let open_workspace_result = open_workspaces(
                     paths,
