@@ -988,6 +988,16 @@ impl ThreadMetadataStore {
                 }
 
                 let existing_thread = self.threads.get(thread_ref.session_id());
+
+                // Don't overwrite metadata for archived threads. The
+                // worktree may already have been removed from the project
+                // as part of the archive flow, so `from_project` would
+                // return empty paths and erase the thread's project
+                // association.
+                if existing_thread.map_or(false, |t| t.archived) {
+                    return;
+                }
+
                 let session_id = thread_ref.session_id().clone();
                 let title = thread_ref
                     .title()
