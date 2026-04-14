@@ -1235,6 +1235,70 @@ mod git_worktrees {
     }
 
     #[gpui::test]
+    async fn test_resolve_ref(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/repo"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        fs.with_git_state(Path::new(path!("/repo/.git")), true, |state| {
+            state
+                .refs
+                .insert("refs/heads/main".into(), "sha-main".into());
+            state
+                .refs
+                .insert("refs/heads/feature".into(), "sha-feature".into());
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/repo").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let result = cx
+            .update(|cx| {
+                repository.update(cx, |repo, _| {
+                    repo.resolve_ref("refs/heads/main".to_string())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result, Some("sha-main".to_string()));
+
+        let result = cx
+            .update(|cx| {
+                repository.update(cx, |repo, _| {
+                    repo.resolve_ref("refs/heads/feature".to_string())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result, Some("sha-feature".to_string()));
+
+        let result = cx
+            .update(|cx| {
+                repository.update(cx, |repo, _| {
+                    repo.resolve_ref("refs/heads/nonexistent".to_string())
+                })
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[gpui::test]
     async fn test_git_worktrees_list_and_create(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());
