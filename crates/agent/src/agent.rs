@@ -82,6 +82,7 @@ struct Session {
     /// The ACP thread that handles protocol communication
     acp_thread: Entity<acp_thread::AcpThread>,
     project_id: EntityId,
+    ref_count: usize,
     pending_save: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -386,6 +387,7 @@ impl NativeAgent {
                 thread: thread_handle,
                 acp_thread: acp_thread.clone(),
                 project_id,
+                ref_count: 1,
                 _subscriptions: subscriptions,
                 pending_save: Task::ready(Ok(())),
             },
@@ -926,7 +928,8 @@ impl NativeAgent {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if let Some(session) = self.sessions.get(&id) {
+        if let Some(session) = self.sessions.get_mut(&id) {
+            session.ref_count += 1;
             return Task::ready(Ok(session.acp_thread.clone()));
         }
 
@@ -1456,6 +1459,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             let thread = agent.sessions.get(session_id).map(|s| s.thread.clone());
             if let Some(thread) = thread {
                 agent.save_thread(thread, cx);
+            }
+
+            if let Some(session) = agent.sessions.get_mut(session_id) {
+                session.ref_count -= 1;
+                if session.ref_count > 0 {
+                    return Task::ready(Ok(()));
+                }
             }
 
             let Some(session) = agent.sessions.remove(session_id) else {
@@ -3156,15 +3166,20 @@ mod internal_tests {
 
         // Step 4: CV2 tries to prompt on the session.
         // This must succeed — CV2 is still actively using this session.
-        let result = cx
-            .update(|cx| {
-                connection.prompt(
-                    Some(acp_thread::UserMessageId::new()),
-                    acp::PromptRequest::new(session_id.clone(), vec!["follow-up".into()]),
-                    cx,
-                )
-            })
-            .await;
+        let prompt = cx.update(|cx| {
+            connection.prompt(
+                acp_thread::UserMessageId::new(),
+                acp::PromptRequest::new(session_id.clone(), vec!["follow-up".into()]),
+                cx,
+            )
+        });
+        let prompt = cx.foreground_executor().spawn(prompt);
+        cx.run_until_parked();
+
+        model.send_last_completion_stream_text_chunk("response");
+        model.end_last_completion_stream();
+
+        let result = prompt.await;
         assert!(
             result.is_ok(),
             "prompt after close_session should succeed when another view \
