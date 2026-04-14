@@ -23,10 +23,10 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
-use project::{AgentId, AgentServerStore};
+use project::{AgentId, AgentServerStore, linked_worktree_short_name};
 use settings::Settings as _;
 use theme::ActiveTheme;
-use ui::{AgentThreadStatus, ThreadItem};
+use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, WorktreeKind};
 use ui::{
     Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, WithScrollbar,
     prelude::*, utils::platform_title_bar_height,
@@ -537,6 +537,35 @@ impl ThreadsArchiveView {
 
                 let is_restoring = self.restoring.contains(&thread.thread_id);
 
+                let worktrees: Vec<ThreadItemWorktreeInfo> = thread
+                    .worktree_paths
+                    .ordered_pairs()
+                    .filter_map(|(main_path, folder_path)| {
+                        let is_linked = main_path != folder_path;
+                        let branch_name = thread.branch_names.get(folder_path).cloned();
+                        if is_linked {
+                            let name = linked_worktree_short_name(main_path, folder_path)
+                                .unwrap_or_default();
+                            Some(ThreadItemWorktreeInfo {
+                                name,
+                                full_path: SharedString::from(folder_path.display().to_string()),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
+                                branch_name,
+                            })
+                        } else {
+                            let name = folder_path.file_name()?;
+                            Some(ThreadItemWorktreeInfo {
+                                name: SharedString::from(name.to_string_lossy().to_string()),
+                                full_path: SharedString::from(folder_path.display().to_string()),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Main,
+                                branch_name,
+                            })
+                        }
+                    })
+                    .collect();
+
                 let base = ThreadItem::new(id, thread.display_title())
                     .icon(icon)
                     .when_some(icon_from_external_svg, |this, svg| {
@@ -544,7 +573,7 @@ impl ThreadsArchiveView {
                     })
                     .timestamp(timestamp)
                     .highlight_positions(highlight_positions.clone())
-                    .project_paths(thread.folder_paths().paths_owned())
+                    .worktrees(worktrees)
                     .focused(is_focused)
                     .hovered(is_hovered)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {

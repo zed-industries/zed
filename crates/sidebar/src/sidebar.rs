@@ -340,6 +340,7 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 fn worktree_info_from_thread_paths(
     worktree_paths: &WorktreePaths,
     branch_by_path: &HashMap<PathBuf, SharedString>,
+    persisted_branch_names: &HashMap<PathBuf, SharedString>,
 ) -> Vec<ThreadItemWorktreeInfo> {
     let mut infos: Vec<ThreadItemWorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
@@ -348,14 +349,6 @@ fn worktree_info_from_thread_paths(
     for (main_path, folder_path) in worktree_paths.ordered_pairs() {
         unique_main_count.insert(main_path.clone());
         let is_linked = main_path != folder_path;
-        let found_branch = branch_by_path.get(folder_path);
-        log::info!(
-            "sidebar worktree_info: main={:?} folder={:?} is_linked={} branch_found={}",
-            main_path,
-            folder_path,
-            is_linked,
-            found_branch.is_some(),
-        );
 
         if is_linked {
             let short_name = linked_worktree_short_name(main_path, folder_path).unwrap_or_default();
@@ -369,7 +362,10 @@ fn worktree_info_from_thread_paths(
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Linked,
-                branch_name: branch_by_path.get(folder_path).cloned(),
+                branch_name: branch_by_path
+                    .get(folder_path)
+                    .or_else(|| persisted_branch_names.get(folder_path))
+                    .cloned(),
             });
         } else {
             let Some(name) = folder_path.file_name() else {
@@ -380,7 +376,10 @@ fn worktree_info_from_thread_paths(
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Main,
-                branch_name: branch_by_path.get(folder_path).cloned(),
+                branch_name: branch_by_path
+                    .get(folder_path)
+                    .or_else(|| persisted_branch_names.get(folder_path))
+                    .cloned(),
             });
         }
     }
@@ -1102,16 +1101,8 @@ impl Sidebar {
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
-            let repo_count = project.repositories(cx).len();
-            log::info!("sidebar branch_by_path: workspace has {repo_count} repos");
             for repo in project.repositories(cx).values() {
                 let snapshot = repo.read(cx).snapshot();
-                log::info!(
-                    "sidebar branch_by_path: repo work_dir={:?} branch={:?} linked_count={}",
-                    snapshot.work_directory_abs_path,
-                    snapshot.branch.as_ref().map(|b| b.name().to_string()),
-                    snapshot.linked_worktrees().len(),
-                );
                 if let Some(branch) = &snapshot.branch {
                     branch_by_path.insert(
                         snapshot.work_directory_abs_path.to_path_buf(),
@@ -1128,10 +1119,6 @@ impl Sidebar {
                 }
             }
         }
-        log::info!(
-            "sidebar branch_by_path: total entries={}",
-            branch_by_path.len()
-        );
 
         for group in &groups {
             let group_key = &group.key;
@@ -1188,8 +1175,16 @@ impl Sidebar {
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        let worktrees =
-                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
+                        let persisted: HashMap<PathBuf, SharedString> = row
+                            .branch_names
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        let worktrees = worktree_info_from_thread_paths(
+                            &row.worktree_paths,
+                            &branch_by_path,
+                            &persisted,
+                        );
                         let is_draft = row.is_draft();
                         ThreadEntry {
                             metadata: row,

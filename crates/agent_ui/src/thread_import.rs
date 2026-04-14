@@ -530,6 +530,7 @@ fn collect_importable_threads(
                 worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: remote_connection.clone(),
                 archived: true,
+                branch_names: collections::HashMap::default(),
             });
         }
     }
