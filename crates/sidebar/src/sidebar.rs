@@ -1093,7 +1093,9 @@ impl Sidebar {
 
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
-            for snapshot in root_repository_snapshots(ws, cx) {
+            let project = ws.read(cx).project().read(cx);
+            for repo in project.repositories(cx).values() {
+                let snapshot = repo.read(cx).snapshot();
                 if let Some(branch) = &snapshot.branch {
                     branch_by_path.insert(
                         snapshot.work_directory_abs_path.to_path_buf(),
