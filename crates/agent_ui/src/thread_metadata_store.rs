@@ -694,9 +694,13 @@ impl ThreadMetadataStore {
     ) {
         if let Some(thread) = self.threads.get(&thread_id).cloned() {
             let mut paths: Vec<PathBuf> = thread.folder_paths().paths().to_vec();
+            let mut branch_names = thread.branch_names.clone();
             for (old_path, new_path) in path_replacements {
                 if let Some(pos) = paths.iter().position(|p| p == old_path) {
                     paths[pos] = new_path.clone();
+                }
+                if let Some(branch) = branch_names.remove(old_path) {
+                    branch_names.insert(new_path.clone(), branch);
                 }
             }
             let new_folder_paths = PathList::new(&paths);
@@ -706,6 +710,7 @@ impl ThreadMetadataStore {
                     new_folder_paths.clone(),
                 )
                 .unwrap_or_else(|_| WorktreePaths::from_folder_paths(&new_folder_paths)),
+                branch_names,
                 ..thread
             });
             cx.notify();
@@ -720,11 +725,15 @@ impl ThreadMetadataStore {
     ) {
         if let Some(thread) = self.threads.get(&thread_id).cloned() {
             let mut paths: Vec<PathBuf> = thread.folder_paths().paths().to_vec();
+            let mut branch_names = thread.branch_names.clone();
             for (old_path, new_path) in path_replacements {
                 for path in &mut paths {
                     if path == old_path {
                         *path = new_path.clone();
                     }
+                }
+                if let Some(branch) = branch_names.remove(old_path) {
+                    branch_names.insert(new_path.clone(), branch);
                 }
             }
             let new_folder_paths = PathList::new(&paths);
@@ -734,6 +743,7 @@ impl ThreadMetadataStore {
                     new_folder_paths.clone(),
                 )
                 .unwrap_or_else(|_| WorktreePaths::from_folder_paths(&new_folder_paths)),
+                branch_names,
                 ..thread
             });
             cx.notify();
@@ -1091,6 +1101,10 @@ impl ThreadMetadataStore {
                 }
             }
         }
+
+        // Prune branch entries for paths no longer in this thread's worktree paths,
+        // so the map doesn't accumulate stale entries over time.
+        branch_names.retain(|path, _| worktree_paths.folder_path_list().paths().contains(path));
 
         // Threads without a folder path (e.g. started in an empty
         // window) are archived by default so they don't get lost,
