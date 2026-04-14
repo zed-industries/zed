@@ -10,6 +10,7 @@ use super::dap_command::{
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
+use crate::buffer_store;
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
@@ -717,7 +718,9 @@ pub struct Session {
     remote_client: Option<Entity<RemoteClient>>,
     node_runtime: Option<NodeRuntime>,
     http_client: Option<Arc<dyn HttpClient>>,
-    source_contents: HashMap<u64, Shared<Task<Result<String, Arc<anyhow::Error>>>>>,
+    buffer_store: Entity<buffer_store::BufferStore>,
+    languages: Arc<language::LanguageRegistry>,
+    source_buffers: HashMap<u64, Shared<Task<Result<Entity<language::Buffer>, Arc<anyhow::Error>>>>>,
     companion_port: Option<u16>,
 }
 
@@ -830,6 +833,8 @@ impl EventEmitter<SessionStateEvent> for Session {}
 impl Session {
     pub(crate) fn new(
         breakpoint_store: Entity<BreakpointStore>,
+        buffer_store: Entity<buffer_store::BufferStore>,
+        languages: Arc<language::LanguageRegistry>,
         session_id: SessionId,
         parent_session: Option<Entity<Session>>,
         label: Option<SharedString>,
@@ -893,7 +898,9 @@ impl Session {
                 remote_client,
                 node_runtime,
                 http_client,
-                source_contents: Default::default(),
+                buffer_store,
+                languages,
+                source_buffers: Default::default(),
                 companion_port: None,
             }
         })
@@ -1773,7 +1780,7 @@ impl Session {
         self.invalidate_command_type::<ThreadsCommand>();
         self.invalidate_command_type::<DataBreakpointInfoCommand>();
         self.invalidate_command_type::<ReadMemory>();
-        self.source_contents.clear();
+        self.source_buffers.clear();
         let executor = self.as_running().map(|running| running.executor.clone());
         if let Some(executor) = executor {
             self.memory.clear(&executor);
@@ -2109,29 +2116,52 @@ impl Session {
         &self.session_state().loaded_sources
     }
 
-    pub fn fetch_source(
+    pub fn fetch_source_buffer(
         &mut self,
         source: dap::Source,
         cx: &mut Context<Self>,
-    ) -> Shared<Task<Result<String, Arc<anyhow::Error>>>> {
+    ) -> Shared<Task<Result<Entity<language::Buffer>, Arc<anyhow::Error>>>> {
         let source_reference = source.source_reference.unwrap_or(0);
 
-        if let Some(cached) = self.source_contents.get(&source_reference) {
+        if let Some(cached) = self.source_buffers.get(&source_reference) {
             return cached.clone();
         }
 
         let request = self.state.request_dap(SourceCommand {
-            source: Some(source),
+            source: Some(source.clone()),
             source_reference,
         });
+        let buffer_store = self.buffer_store.clone();
+        let languages = self.languages.clone();
+        let source_name = source.name.or(source.path);
+
         let task = cx
-            .spawn(async move |_this, _cx| {
+            .spawn(async move |_this, cx| {
                 let response = request.await.map_err(Arc::new)?;
-                Ok(response.content)
+                let content = response.content;
+
+                let language = if let Some(ref name) = source_name {
+                    languages
+                        .load_language_for_file_path(Path::new(name))
+                        .await
+                        .ok()
+                } else {
+                    None
+                };
+
+                Ok(cx.update(|cx| {
+                    buffer_store.update(cx, |store, cx| {
+                        let buffer = store.create_local_buffer(&content, language, false, cx);
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_capability(language::Capability::ReadOnly, cx);
+                        });
+                        buffer
+                    })
+                }))
             })
             .shared();
 
-        self.source_contents.insert(source_reference, task.clone());
+        self.source_buffers.insert(source_reference, task.clone());
         task
     }
 

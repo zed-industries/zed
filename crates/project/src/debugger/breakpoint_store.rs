@@ -146,7 +146,7 @@ pub struct ActiveStackFrame {
     pub session_id: SessionId,
     pub thread_id: ThreadId,
     pub stack_frame_id: StackFrameId,
-    pub path: Arc<Path>,
+    pub path: Option<Arc<Path>>,
     pub position: text::Anchor,
 }
 

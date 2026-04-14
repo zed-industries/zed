@@ -156,6 +156,8 @@ impl HeadlessProject {
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 worktree_store.clone(),
                 breakpoint_store.clone(),
+                buffer_store.clone(),
+                languages.clone(),
                 true,
                 cx,
             );
