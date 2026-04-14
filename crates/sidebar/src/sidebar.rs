@@ -2965,11 +2965,13 @@ impl Sidebar {
                     })
                     .filter(|plan| {
                         thread_id.map_or(true, |tid| {
-                            !thread_worktree_archive::path_is_referenced_by_other_unarchived_threads(
-                                tid,
-                                &plan.root_path,
-                                cx,
-                            )
+                            store
+                                .read(cx)
+                                .path_is_referenced_by_other_unarchived_threads(
+                                    tid,
+                                    &plan.root_path,
+                                    metadata.remote_connection.as_ref(),
+                                )
                         })
                     })
                     .collect::<Vec<_>>()

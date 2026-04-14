@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol as acp;
@@ -695,6 +698,27 @@ impl ThreadMetadataStore {
         self.in_flight_archives.remove(&thread_id);
     }
 
+    /// Returns `true` if any unarchived thread other than `current_session_id`
+    /// references `path` in its folder paths. Used to determine whether a
+    /// worktree can safely be removed from disk.
+    pub fn path_is_referenced_by_other_unarchived_threads(
+        &self,
+        thread_id: ThreadId,
+        path: &Path,
+        remote_connection: Option<&RemoteConnectionOptions>,
+    ) -> bool {
+        self.entries()
+            .any(|thread| {
+                thread.thread_id != thread_id && !thread.archived &&
+                same_remote_connection_identity(thread.remote_connection.as_ref(), remote_connection) &&
+                thread
+                    .folder_paths()
+                    .paths()
+                    .iter()
+                    .any(|other_path| other_path.as_path() == path)
+            })
+    }
+
     /// Updates a thread's `folder_paths` after an archived worktree has been
     /// restored to disk. The restored worktree may land at a different path
     /// than it had before archival, so each `(old_path, new_path)` pair in
@@ -770,12 +794,12 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                remote_connection.is_none()
-                    || self
-                        .threads
+                same_remote_connection_identity(
+                    self.threads
                         .get(id)
-                        .and_then(|t| t.remote_connection.as_ref())
-                        == remote_connection
+                        .and_then(|t| t.remote_connection.as_ref()),
+                    remote_connection,
+                )
             })
             .copied()
             .collect();
@@ -802,12 +826,12 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                remote_connection.is_none()
-                    || self
-                        .threads
+                same_remote_connection_identity(
+                    self.threads
                         .get(id)
-                        .and_then(|t| t.remote_connection.as_ref())
-                        == remote_connection
+                        .and_then(|t| t.remote_connection.as_ref()),
+                    remote_connection,
+                )
             })
             .copied()
             .collect();

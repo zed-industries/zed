@@ -33,11 +33,12 @@ These were completed in the previous PR and are now merged:
    - `entries_for_path(...)` and `entries_for_main_worktree_path(...)` now accept `Option<&RemoteConnectionOptions>` and post-filter via `same_remote_connection_identity`.
    - All callers in `sidebar.rs` pass `group_key.host()` or `metadata.remote_connection`; test callers pass `None` for local threads.
 
+4. Filtered sidebar threads by matching remote connection in `crates/sidebar/src/sidebar.rs`.
+   - All `entries_for_main_worktree_path` and `entries_for_path` calls in `rebuild_contents` now pass `group_host.as_ref()`.
+   - `archive_thread` passes the thread's own `remote_connection` when counting remaining threads.
+
 ### TODO
 
-4. Filter sidebar threads by matching remote connection in `crates/sidebar/src/sidebar.rs`.
-   - `rebuild_contents(...)` calls `entries_for_main_worktree_path(group_key.path_list())` and `entries_for_path(group_key.path_list())` without host info.
-   - Pass the current `ProjectGroupKey`'s host when loading main-worktree and linked-worktree thread rows.
 5. Use remote host in sidebar workspace lookup / activation flows in `crates/sidebar/src/sidebar.rs`.
    - `find_current_workspace_for_path_list(...)` and `find_open_workspace_for_path_list(...)` compare paths only.
    - `activate_archived_thread(...)` constructs `ProjectGroupKey::new(None, path_list)` for fallback, losing remote identity.
@@ -87,6 +88,6 @@ These are not required for this PR but should reuse the normalized remote identi
 - [x] Added normalized remote identity helper (`RemoteConnectionIdentity`)
 - [x] Refactored workspace persistence to use normalized identity
 - [x] Make `ThreadMetadataStore` lookups host-aware
-- [ ] Filter sidebar threads by matching remote connection in `rebuild_contents`
+- [x] Filter sidebar threads by matching remote connection in `rebuild_contents`
 - [ ] Use remote host in sidebar workspace lookup / activation flows
 - [ ] Make archive/worktree-reference matching host-aware
