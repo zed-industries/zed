@@ -55,7 +55,6 @@ impl ThreadWorktreePicker {
             .clone()
             .map(|repo| repo.update(cx, |repo, _| repo.default_branch(false)));
 
-        // Start with just the fixed entries; worktree list populates async
         let initial_matches = vec![ThreadWorktreeEntry::CreateFromCurrentBranch];
 
         let delegate = ThreadWorktreePickerDelegate {
@@ -83,14 +82,19 @@ impl ThreadWorktreePicker {
             let picker_handle = picker.downgrade();
             cx.spawn_in(window, async move |_this, cx| {
                 let all_worktrees: Vec<_> = match all_worktrees_request {
-                    Some(req) => req
-                        .await
-                        .ok()
-                        .and_then(Result::ok)
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|wt| !wt.is_bare)
-                        .collect(),
+                    Some(req) => match req.await {
+                        Ok(Ok(worktrees)) => {
+                            worktrees.into_iter().filter(|wt| !wt.is_bare).collect()
+                        }
+                        Ok(Err(err)) => {
+                            log::warn!("ThreadWorktreePicker: git worktree list failed: {err}");
+                            return anyhow::Ok(());
+                        }
+                        Err(_) => {
+                            log::warn!("ThreadWorktreePicker: worktree request was cancelled");
+                            return anyhow::Ok(());
+                        }
+                    },
                     None => Vec::new(),
                 };
 
@@ -113,23 +117,24 @@ impl ThreadWorktreePicker {
 
         // Subscribe to repository events to live-update the worktree list
         if let Some(repo) = &repository {
-            let picker_entity = picker.clone();
+            let picker_entity = picker.downgrade();
             subscriptions.push(cx.subscribe_in(
                 repo,
                 window,
-                move |_this, repo, event: &RepositoryEvent, _window, cx| {
+                move |_this, repo, event: &RepositoryEvent, window, cx| {
                     if matches!(event, RepositoryEvent::GitWorktreeListChanged) {
                         let worktrees_request = repo.update(cx, |repo, _| repo.worktrees());
                         let picker = picker_entity.clone();
-                        cx.spawn(async move |_, cx| {
+                        cx.spawn_in(window, async move |_, cx| {
                             let all_worktrees: Vec<_> = worktrees_request
                                 .await??
                                 .into_iter()
                                 .filter(|wt| !wt.is_bare)
                                 .collect();
-                            picker.update(cx, |picker, _cx| {
+                            picker.update_in(cx, |picker, window, cx| {
                                 picker.delegate.all_worktrees = all_worktrees;
-                            });
+                                picker.refresh(window, cx);
+                            })?;
                             anyhow::Ok(())
                         })
                         .detach_and_log_err(cx);
