@@ -16,9 +16,9 @@ use agent_ui::{
 use chrono::{DateTime, Utc};
 use editor::Editor;
 use gpui::{
-    Action as _, AnyElement, App, Context, DismissEvent, Entity, EntityId, FocusHandle, Focusable,
-    KeyContext, ListState, Pixels, Render, SharedString, Task, WeakEntity, Window, WindowHandle,
-    linear_color_stop, linear_gradient, list, prelude::*, px,
+    Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
+    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, WeakEntity,
+    Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
@@ -40,7 +40,7 @@ use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
     KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor,
-    Tooltip, WithScrollbar, prelude::*,
+    Tooltip, WithScrollbar, prelude::*, render_modifiers,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -1674,8 +1674,8 @@ impl Sidebar {
             .id(id)
             .group(&group_name)
             .cursor_pointer()
-            .h(Tab::content_height(cx))
             .relative()
+            .h(Tab::content_height(cx))
             .w_full()
             .pl_2()
             .pr_1p5()
@@ -1688,6 +1688,7 @@ impl Sidebar {
                     this.border_color(gpui::transparent_black())
                 }
             })
+            .hover(|s| s.bg(hover_solid))
             .child(
                 h_flex()
                     .relative()
@@ -1820,10 +1821,57 @@ impl Sidebar {
                         ))
                     }),
             )
-            .hover(|s| s.bg(hover_solid))
-            .tooltip(Tooltip::text(disclosure_tooltip))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.toggle_collapse(&key_for_toggle, window, cx);
+            .tooltip(Tooltip::element({
+                move |_, cx| {
+                    v_flex()
+                        .gap_1()
+                        .child(Label::new(disclosure_tooltip))
+                        .child(
+                            h_flex()
+                                .pt_1()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(h_flex().flex_shrink_0().children(render_modifiers(
+                                    &Modifiers::secondary_key(),
+                                    PlatformStyle::platform(),
+                                    None,
+                                    Some(TextSize::Default.rems(cx).into()),
+                                    false,
+                                )))
+                                .child(
+                                    Label::new("-click to activate most recent workspace")
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .into_any_element()
+                }
+            }))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                if event.modifiers().platform {
+                    let key = key_for_toggle.clone();
+                    let metadata = {
+                        let store = ThreadMetadataStore::global(cx).read(cx);
+                        store
+                            .entries_for_main_worktree_path(key.path_list())
+                            .chain(store.entries_for_path(key.path_list()))
+                            .max_by_key(|m| m.created_at.unwrap_or(m.updated_at))
+                            .cloned()
+                    };
+                    if let Some(metadata) = metadata {
+                        let folder_paths = metadata.folder_paths().clone();
+                        this.open_workspace_and_activate_thread(
+                            metadata,
+                            folder_paths,
+                            &key,
+                            window,
+                            cx,
+                        );
+                    } else {
+                        this.open_workspace_for_group(&key, window, cx);
+                    }
+                } else {
+                    this.toggle_collapse(&key_for_toggle, window, cx);
+                }
             }));
 
         if !is_collapsed && !has_threads {
