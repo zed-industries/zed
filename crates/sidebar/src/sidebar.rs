@@ -4618,7 +4618,7 @@ impl Sidebar {
                     .icon_size(IconSize::Small)
                     .toggle_state(is_archive)
                     .tooltip(move |_, cx| {
-                        Tooltip::for_action("Toggle Archived Threads", &ToggleArchive, cx)
+                        Tooltip::for_action("View All Threads", &ToggleArchive, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.toggle_archive(&ToggleArchive, window, cx);
