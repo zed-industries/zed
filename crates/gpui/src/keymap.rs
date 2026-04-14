@@ -349,7 +349,7 @@ impl Keymap {
 mod tests {
     use super::*;
     use crate as gpui;
-    use gpui::{NoAction, Unbind};
+    use gpui::{Modifiers, MouseButton, NoAction, ScrollDirection, Unbind};
 
     actions!(
         test_only,
@@ -881,6 +881,110 @@ mod tests {
         keymap.add_bindings(bindings);
 
         assert!(keymap.bindings_for_action(&ActionAlpha {}).next().is_none());
+    }
+
+    fn make_mouse_binding<A: crate::Action>(
+        stroke: &str,
+        action: A,
+        context: Option<&str>,
+    ) -> KeyBinding {
+        let context_predicate =
+            context.map(|ctx| KeyBindingContextPredicate::parse(ctx).unwrap().into());
+        KeyBinding::load_mouse(stroke, Box::new(action), context_predicate, None).unwrap()
+    }
+
+    fn make_scroll_binding<A: crate::Action>(
+        stroke: &str,
+        action: A,
+        context: Option<&str>,
+    ) -> KeyBinding {
+        let context_predicate =
+            context.map(|ctx| KeyBindingContextPredicate::parse(ctx).unwrap().into());
+        KeyBinding::load_scroll(stroke, Box::new(action), context_predicate, None).unwrap()
+    }
+
+    #[test]
+    fn test_bindings_for_mouse() {
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([make_mouse_binding("alt-mouse1", ActionAlpha {}, None)]);
+
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::none()
+        };
+
+        let result = keymap.bindings_for_mouse(&MouseButton::Left, &alt, 1, &[]);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
+
+        // Wrong modifier — no match.
+        let result = keymap.bindings_for_mouse(&MouseButton::Left, &Modifiers::none(), 1, &[]);
+        assert!(result.is_empty());
+
+        // Wrong button — no match.
+        let result = keymap.bindings_for_mouse(&MouseButton::Right, &alt, 1, &[]);
+        assert!(result.is_empty());
+
+        // Wrong click count — no match.
+        let result = keymap.bindings_for_mouse(&MouseButton::Left, &alt, 2, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_bindings_for_scroll() {
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([make_scroll_binding("ctrl-scroll-up", ActionAlpha {}, None)]);
+
+        let ctrl = Modifiers {
+            control: true,
+            ..Modifiers::none()
+        };
+
+        let result = keymap.bindings_for_scroll(ScrollDirection::Up, &ctrl, &[]);
+        assert_eq!(result.len(), 1);
+        assert!(result[0].action.partial_eq(&ActionAlpha {}));
+
+        // Wrong modifier — no match.
+        let result = keymap.bindings_for_scroll(ScrollDirection::Up, &Modifiers::none(), &[]);
+        assert!(result.is_empty());
+
+        // Wrong direction — no match.
+        let result = keymap.bindings_for_scroll(ScrollDirection::Down, &ctrl, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_mouse_binding_context_depth_precedence() {
+        // Mirror the keystroke test_depth_precedence: with stack [pane, editor],
+        // the binding scoped to "editor" (depth=2) beats the one scoped to "pane" (depth=1).
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([
+            make_mouse_binding("mouse1", ActionBeta {}, Some("pane")),
+            make_mouse_binding("mouse1", ActionGamma {}, Some("editor")),
+        ]);
+
+        let result = keymap.bindings_for_mouse(
+            &MouseButton::Left,
+            &Modifiers::none(),
+            1,
+            &[
+                KeyContext::parse("pane").unwrap(),
+                KeyContext::parse("editor").unwrap(),
+            ],
+        );
+        assert_eq!(result.len(), 2);
+        assert!(result[0].action.partial_eq(&ActionGamma {}));
+        assert!(result[1].action.partial_eq(&ActionBeta {}));
+    }
+
+    #[test]
+    fn test_mouse_binding_outside_context_not_matched() {
+        let mut keymap = Keymap::default();
+        keymap.add_bindings([make_mouse_binding("mouse1", ActionAlpha {}, Some("editor"))]);
+
+        let result =
+            keymap.bindings_for_mouse(&MouseButton::Left, &Modifiers::none(), 1, &[]);
+        assert!(result.is_empty());
     }
 
     #[test]

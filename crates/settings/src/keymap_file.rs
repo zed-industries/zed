@@ -1533,7 +1533,7 @@ impl Action for ActionSequence {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Action, App, DummyKeyboardMapper, KeybindingKeystroke, Keystroke, Unbind};
+    use gpui::{Action, App, DummyKeyboardMapper, KeybindingKeystroke, Keystroke, MouseButton, Unbind};
     use serde_json::Value;
     use unindent::Unindent;
 
@@ -2612,6 +2612,105 @@ mod tests {
               },
             ]
             "#,
+        );
+    }
+
+    fn load_ok(json: &str, cx: &mut App) -> Vec<gpui::KeyBinding> {
+        match KeymapFile::load(json, cx) {
+            crate::keymap_file::KeymapFileLoadResult::Success { key_bindings } => key_bindings,
+            other => panic!("expected Success, got {other:?}"),
+        }
+    }
+
+    fn load_err(json: &str, cx: &mut App) -> String {
+        match KeymapFile::load(json, cx) {
+            crate::keymap_file::KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
+                error_message.0
+            }
+            other => panic!("expected SomeFailedToLoad, got {other:?}"),
+        }
+    }
+
+    #[gpui::test]
+    fn mouse_binding_loads_from_keymap(cx: &mut App) {
+        let bindings = load_ok(
+            r#"[{"bindings": {"alt-mouse1": "test_keymap_file::StringAction"}}]"#,
+            cx,
+        );
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].is_mouse_binding());
+        assert_eq!(bindings[0].action().name(), "test_keymap_file::StringAction");
+    }
+
+    #[gpui::test]
+    fn scroll_binding_loads_from_keymap(cx: &mut App) {
+        let bindings = load_ok(
+            r#"[{"bindings": {"ctrl-scroll-up": "test_keymap_file::StringAction"}}]"#,
+            cx,
+        );
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].is_scroll_binding());
+        assert_eq!(bindings[0].action().name(), "test_keymap_file::StringAction");
+    }
+
+    #[gpui::test]
+    fn mouse_binding_double_click_loads(cx: &mut App) {
+        let bindings = load_ok(
+            r#"[{"bindings": {"double-mouse1": "test_keymap_file::StringAction"}}]"#,
+            cx,
+        );
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].is_mouse_binding());
+        assert!(bindings[0].match_mouse(&MouseButton::Left, &gpui::Modifiers::none(), 2));
+    }
+
+    #[gpui::test]
+    fn mouse_binding_unbind_produces_unbind_action(cx: &mut App) {
+        let bindings = load_ok(
+            r#"[{"unbind": {"alt-mouse1": "test_keymap_file::StringAction"}}]"#,
+            cx,
+        );
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].is_mouse_binding());
+        assert!(bindings[0]
+            .action()
+            .partial_eq(&Unbind("test_keymap_file::StringAction".into())));
+    }
+
+    #[gpui::test]
+    fn scroll_binding_unbind_produces_unbind_action(cx: &mut App) {
+        let bindings = load_ok(
+            r#"[{"unbind": {"ctrl-scroll-up": "test_keymap_file::StringAction"}}]"#,
+            cx,
+        );
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].is_scroll_binding());
+        assert!(bindings[0]
+            .action()
+            .partial_eq(&Unbind("test_keymap_file::StringAction".into())));
+    }
+
+    #[gpui::test]
+    fn mouse_binding_rejects_key_sequence(cx: &mut App) {
+        let error = load_err(
+            r#"[{"bindings": {"alt-mouse1 ctrl-mouse2": "test_keymap_file::StringAction"}}]"#,
+            cx,
+        );
+        assert!(
+            error.contains("cannot be key sequences"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[gpui::test]
+    fn scroll_binding_rejects_key_sequence(cx: &mut App) {
+        let error = load_err(
+            r#"[{"bindings": {"ctrl-scroll-up ctrl-scroll-down": "test_keymap_file::StringAction"}}]"#,
+            cx,
+        );
+        assert!(
+            error.contains("cannot be key sequences"),
+            "unexpected error: {error}"
         );
     }
 }

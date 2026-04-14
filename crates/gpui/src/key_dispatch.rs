@@ -667,8 +667,8 @@ mod tests {
 
     use crate::{
         ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler, IntoElement,
-        KeyBinding, KeyContext, Keymap, Pixels, Point, Render, Subscription, TestAppContext,
-        UTF16Selection, Unbind, Window,
+        KeyBinding, KeyBindingContextPredicate, KeyContext, Keymap, Modifiers, MouseButton, Pixels,
+        Point, Render, ScrollDirection, Subscription, TestAppContext, UTF16Selection, Unbind, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -1168,5 +1168,93 @@ mod tests {
         });
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
+    }
+
+    #[test]
+    fn test_dispatch_mouse_finds_binding() {
+        let binding = KeyBinding::load_mouse("alt-mouse2", Box::new(TestAction), None, None)
+            .expect("valid mouse stroke");
+        let mut tree = test_dispatch_tree(vec![binding]);
+
+        let node_id = tree.push_node();
+        tree.pop_node();
+        let dispatch_path = tree.dispatch_path(node_id);
+
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::none()
+        };
+
+        let matched = tree.dispatch_mouse(&MouseButton::Right, &alt, 1, &dispatch_path);
+        assert_eq!(matched.len(), 1);
+        assert!(matched[0].action.partial_eq(&TestAction));
+
+        // Wrong modifier — no match.
+        let not_matched =
+            tree.dispatch_mouse(&MouseButton::Right, &Modifiers::none(), 1, &dispatch_path);
+        assert!(not_matched.is_empty());
+
+        // Wrong button — no match.
+        let not_matched = tree.dispatch_mouse(&MouseButton::Left, &alt, 1, &dispatch_path);
+        assert!(not_matched.is_empty());
+    }
+
+    #[test]
+    fn test_dispatch_scroll_finds_binding() {
+        let binding =
+            KeyBinding::load_scroll("ctrl-scroll-down", Box::new(TestAction), None, None)
+                .expect("valid scroll stroke");
+        let mut tree = test_dispatch_tree(vec![binding]);
+
+        let node_id = tree.push_node();
+        tree.pop_node();
+        let dispatch_path = tree.dispatch_path(node_id);
+
+        let ctrl = Modifiers {
+            control: true,
+            ..Modifiers::none()
+        };
+
+        let matched = tree.dispatch_scroll(ScrollDirection::Down, &ctrl, &dispatch_path);
+        assert_eq!(matched.len(), 1);
+        assert!(matched[0].action.partial_eq(&TestAction));
+
+        // Wrong modifier — no match.
+        let not_matched =
+            tree.dispatch_scroll(ScrollDirection::Down, &Modifiers::none(), &dispatch_path);
+        assert!(not_matched.is_empty());
+
+        // Wrong direction — no match.
+        let not_matched = tree.dispatch_scroll(ScrollDirection::Up, &ctrl, &dispatch_path);
+        assert!(not_matched.is_empty());
+    }
+
+    #[test]
+    fn test_dispatch_mouse_respects_context() {
+        let context_predicate: std::rc::Rc<KeyBindingContextPredicate> =
+            KeyBindingContextPredicate::parse("Editor").unwrap().into();
+        let binding = KeyBinding::load_mouse(
+            "mouse1",
+            Box::new(TestAction),
+            Some(context_predicate),
+            None,
+        )
+        .expect("valid mouse stroke");
+        let mut tree = test_dispatch_tree(vec![binding]);
+
+        let node_id = tree.push_node();
+        tree.set_key_context(KeyContext::parse("Editor").unwrap());
+        tree.pop_node();
+        let dispatch_path = tree.dispatch_path(node_id);
+
+        let matched =
+            tree.dispatch_mouse(&MouseButton::Left, &Modifiers::none(), 1, &dispatch_path);
+        assert_eq!(matched.len(), 1);
+
+        // Does not fire on an empty dispatch path (no Editor context).
+        let empty_path: SmallVec<[super::DispatchNodeId; 32]> = SmallVec::new();
+        let not_matched =
+            tree.dispatch_mouse(&MouseButton::Left, &Modifiers::none(), 1, &empty_path);
+        assert!(not_matched.is_empty());
     }
 }
