@@ -9259,35 +9259,30 @@ pub async fn find_existing_workspace(
     let mut open_visible = OpenVisible::All;
     let mut best_match = None;
 
-    cx.update(|cx| {
-        for window in workspace_windows_for_location(location, cx) {
-            if let Ok(multi_workspace) = window.read(cx) {
-                for workspace in multi_workspace.workspaces() {
-                    let project = workspace.read(cx).project.read(cx);
-                    let m = project.visibility_for_paths(
-                        abs_paths,
-                        open_options.open_new_workspace == None,
-                        cx,
-                    );
-                    if m > best_match {
-                        existing = Some((window, workspace.clone()));
-                        best_match = m;
-                    } else if best_match.is_none() && open_options.open_new_workspace == Some(false)
-                    {
-                        existing = Some((window, workspace.clone()))
+    if open_options.open_new_workspace != Some(true) {
+        cx.update(|cx| {
+            for window in workspace_windows_for_location(location, cx) {
+                if let Ok(multi_workspace) = window.read(cx) {
+                    for workspace in multi_workspace.workspaces() {
+                        let project = workspace.read(cx).project.read(cx);
+                        let m = project.visibility_for_paths(
+                            abs_paths,
+                            open_options.open_new_workspace == None,
+                            cx,
+                        );
+                        if m > best_match {
+                            existing = Some((window, workspace.clone()));
+                            best_match = m;
+                        } else if best_match.is_none()
+                            && open_options.open_new_workspace == Some(false)
+                        {
+                            existing = Some((window, workspace.clone()))
+                        }
                     }
                 }
             }
-        }
-    });
+        });
 
-    // With -n, only reuse a window if the path is genuinely contained
-    // within an existing worktree (don't fall back to any arbitrary window).
-    if open_options.open_new_workspace == Some(true) && best_match.is_none() {
-        existing = None;
-    }
-
-    if open_options.open_new_workspace != Some(true) {
         let all_paths_are_files = existing
             .as_ref()
             .and_then(|(_, target_workspace)| {
@@ -9341,6 +9336,7 @@ pub struct OpenOptions {
     pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
     pub force_existing_window: bool,
+    pub classic: bool,
     pub wait: bool,
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
     pub open_mode: OpenMode,
@@ -9541,11 +9537,12 @@ pub fn open_paths(
             && existing.is_none()
             && open_options.requesting_window.is_none()
         {
-            let use_existing_window = open_options.force_existing_window
-                || cx.update(|cx| {
-                    WorkspaceSettings::get_global(cx).cli_default_open_behavior
-                        == settings::CliDefaultOpenBehavior::ExistingWindow
-                });
+            let use_existing_window = !open_options.classic
+                && (open_options.force_existing_window
+                    || cx.update(|cx| {
+                        WorkspaceSettings::get_global(cx).cli_default_open_behavior
+                            == settings::CliDefaultOpenBehavior::ExistingWindow
+                    }));
 
             if use_existing_window {
                 let target_window = cx.update(|cx| {

@@ -12,7 +12,11 @@ pub struct IpcHandshake {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CliOpenBehavior {
+    /// Open directories as a new workspace in the current Zed window's sidebar.
     ExistingWindow,
+    /// Classic behavior: open directories in a new window, but reuse an
+    /// existing window when opening files that are already part of an open
+    /// project.
     NewWindow,
 }
 
@@ -32,6 +36,8 @@ pub enum CliRequest {
         env: Option<HashMap<String, String>>,
         user_data_dir: Option<String>,
         dev_container: bool,
+        #[serde(default)]
+        classic: bool,
     },
     SetOpenBehavior {
         behavior: CliOpenBehavior,

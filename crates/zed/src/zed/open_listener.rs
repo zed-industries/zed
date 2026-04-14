@@ -462,12 +462,13 @@ pub async fn handle_cli_connection(
                 diff_all,
                 wait,
                 wsl,
-                mut open_new_workspace,
+                open_new_workspace,
                 mut force_existing_window,
                 reuse,
                 env,
                 user_data_dir: _,
                 dev_container,
+                mut classic,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -499,7 +500,7 @@ pub async fn handle_cli_connection(
                     return;
                 }
 
-                if open_new_workspace.is_none() && !force_existing_window && !reuse {
+                if open_new_workspace.is_none() && !force_existing_window && !reuse && !classic {
                     match resolve_open_behavior(
                         &paths,
                         &app_state,
@@ -513,7 +514,7 @@ pub async fn handle_cli_connection(
                             force_existing_window = true;
                         }
                         Some(settings::CliDefaultOpenBehavior::NewWindow) => {
-                            open_new_workspace = Some(true);
+                            classic = true;
                         }
                         None => {}
                     }
@@ -527,6 +528,7 @@ pub async fn handle_cli_connection(
                     diff_all,
                     open_new_workspace,
                     force_existing_window,
+                    classic,
                     reuse,
                     responses.as_ref(),
                     wait,
@@ -654,6 +656,7 @@ async fn open_workspaces(
     diff_all: bool,
     open_new_workspace: Option<bool>,
     force_existing_window: bool,
+    classic: bool,
     reuse: bool,
     responses: &dyn CliResponseSink,
     wait: bool,
@@ -717,6 +720,7 @@ async fn open_workspaces(
         let open_options = workspace::OpenOptions {
             open_new_workspace,
             force_existing_window,
+            classic,
             requesting_window: replace_window,
             wait,
             env: env.clone(),
@@ -1239,7 +1243,7 @@ mod tests {
             })
             .unwrap();
 
-        // Opening a file inside the existing worktree with -n reuses the window.
+        // Opening a file inside the existing worktree with -n creates a new window.
         open_workspace_file(
             path!("/root/dir1/file1.txt"),
             Some(true),
@@ -1248,7 +1252,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(cx.windows().len(), 1);
+        assert_eq!(cx.windows().len(), 2);
     }
 
     #[gpui::test]
@@ -1873,6 +1877,7 @@ mod tests {
             env: None,
             user_data_dir: None,
             dev_container: false,
+            classic: false,
         }
     }
 

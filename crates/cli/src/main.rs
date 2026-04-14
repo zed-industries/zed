@@ -67,17 +67,20 @@ struct Args {
     #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
-    #[arg(short, long, overrides_with_all = ["new", "reuse", "existing"])]
+    #[arg(short, long, overrides_with_all = ["new", "reuse", "existing", "classic"])]
     add: bool,
     /// Create a new workspace
-    #[arg(short, long, overrides_with_all = ["add", "reuse", "existing"])]
+    #[arg(short, long, overrides_with_all = ["add", "reuse", "existing", "classic"])]
     new: bool,
     /// Reuse an existing window, replacing its workspace
-    #[arg(short, long, overrides_with_all = ["add", "new", "existing"], hide = true)]
+    #[arg(short, long, overrides_with_all = ["add", "new", "existing", "classic"], hide = true)]
     reuse: bool,
     /// Open in existing Zed window
-    #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse"])]
+    #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse", "classic"])]
     existing: bool,
+    /// Use the classic open behavior: new window for directories, reuse for files
+    #[arg(long, hide = true, overrides_with_all = ["add", "new", "reuse", "existing"])]
+    classic: bool,
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     /// This overrides the default platform-specific data directory location:
     #[cfg_attr(target_os = "macos", doc = "`~/Library/Application Support/Zed`.")]
@@ -682,6 +685,7 @@ fn main() -> Result<()> {
                     env,
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
+                    classic: args.classic,
                 };
 
                 tx.send(open_request)?;
@@ -803,8 +807,11 @@ fn prompt_open_behavior() -> Option<cli::CliOpenBehavior> {
 
     let blue = console::Style::new().blue();
     let items = [
-        format!("Add to existing Zed window ({})", blue.apply_to("zed -e")),
-        format!("Open a new window ({})", blue.apply_to("zed -n")),
+        format!(
+            "Add to existing Zed window ({})",
+            blue.apply_to("zed --existing")
+        ),
+        format!("Open a new window ({})", blue.apply_to("zed --classic")),
     ];
 
     let prompt = format!(

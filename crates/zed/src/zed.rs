@@ -2640,7 +2640,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        // Opening a file inside the existing worktree with -n reuses the window.
+        // Opening a file inside the existing worktree with -n creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir/c"))],
@@ -2654,7 +2654,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
 
         // Opening a path NOT in any existing worktree with -n creates a new window.
         cx.update(|cx| {
@@ -2670,7 +2670,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
     }
 
     #[gpui::test]
@@ -2723,7 +2723,7 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        // Opening a directory already in a worktree with -n reuses the window.
+        // Opening a directory already in a worktree with -n creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir2"))],
@@ -2737,7 +2737,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
 
         // Opening a directory NOT in any worktree with -n creates a new window.
         cx.update(|cx| {
@@ -2753,7 +2753,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
     }
 
     #[gpui::test]
