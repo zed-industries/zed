@@ -18293,6 +18293,116 @@ impl Editor {
         self.go_to_definition_of_kind(GotoDefinitionKind::Type, true, window, cx)
     }
 
+    fn mouse_position_map(&self, window: &Window) -> Option<(Rc<PositionMap>, PointForPosition)> {
+        let position_map = self.last_position_map.clone()?;
+        let mouse_position = window.mouse_position();
+        if !position_map.text_hitbox.contains(&mouse_position) {
+            return None;
+        }
+        let point = position_map.point_for_position(mouse_position);
+        Some((position_map, point))
+    }
+
+    fn goto_at_mouse(
+        &mut self,
+        kind: GotoDefinitionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((position_map, point_for_position)) = self.mouse_position_map(window) else {
+            return;
+        };
+        let display_snapshot = &position_map.snapshot.display_snapshot;
+        let point = point_for_position.previous_valid.to_point(display_snapshot);
+        let anchor = display_snapshot.buffer_snapshot().anchor_before(point);
+        self.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_anchor_ranges([anchor..anchor]);
+        });
+        self.select(SelectPhase::End, window, cx);
+        self.go_to_definition_of_kind(kind, false, window, cx)
+            .detach_and_log_err(cx);
+    }
+
+    pub fn add_cursor_at_mouse(
+        &mut self,
+        _: &AddCursorAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, point_for_position)) = self.mouse_position_map(window) else {
+            return;
+        };
+        self.select(
+            SelectPhase::Begin {
+                position: point_for_position.previous_valid,
+                add: true,
+                click_count: 1,
+            },
+            window,
+            cx,
+        );
+        self.select(SelectPhase::End, window, cx);
+    }
+
+    pub fn extend_selection_to_mouse(
+        &mut self,
+        _: &ExtendSelectionToMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, point_for_position)) = self.mouse_position_map(window) else {
+            return;
+        };
+        self.select(
+            SelectPhase::Extend {
+                position: point_for_position.previous_valid,
+                click_count: 1,
+            },
+            window,
+            cx,
+        );
+        self.select(SelectPhase::End, window, cx);
+    }
+
+    pub fn go_to_definition_at_mouse(
+        &mut self,
+        _: &GoToDefinitionAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.goto_at_mouse(GotoDefinitionKind::Symbol, window, cx);
+    }
+
+    pub fn go_to_type_definition_at_mouse(
+        &mut self,
+        _: &GoToTypeDefinitionAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.goto_at_mouse(GotoDefinitionKind::Type, window, cx);
+    }
+
+    pub fn start_columnar_selection_at_mouse(
+        &mut self,
+        _: &StartColumnarSelectionAtMouse,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((_, point_for_position)) = self.mouse_position_map(window) else {
+            return;
+        };
+        self.select(
+            SelectPhase::BeginColumnar {
+                position: point_for_position.previous_valid,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+                goal_column: point_for_position.exact_unclipped.column(),
+            },
+            window,
+            cx,
+        );
+    }
+
     fn go_to_definition_of_kind(
         &mut self,
         kind: GotoDefinitionKind,
