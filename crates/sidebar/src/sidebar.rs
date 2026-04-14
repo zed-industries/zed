@@ -1624,10 +1624,9 @@ impl Sidebar {
 
         let id_prefix = if is_sticky { "sticky-" } else { "" };
         let id = SharedString::from(format!("{id_prefix}project-header-{ix}"));
-        let disclosure_id = SharedString::from(format!("disclosure-{ix}"));
         let group_name = SharedString::from(format!("{id_prefix}header-group-{ix}"));
 
-        let is_collapsed = !has_threads || self.is_group_collapsed(key, cx);
+        let is_collapsed = self.is_group_collapsed(key, cx);
         let (disclosure_icon, disclosure_tooltip) = if is_collapsed {
             (IconName::ChevronRight, "Expand Project")
         } else {
@@ -1659,11 +1658,10 @@ impl Sidebar {
             .element_active
             .blend(color.element_background.opacity(0.2));
         let hover_solid = base_bg.blend(hover_base);
-        let real_hover_color = if is_active { base_bg } else { hover_solid };
 
         let group_name_for_gradient = group_name.clone();
         let gradient_overlay = move || {
-            GradientFade::new(base_bg, real_hover_color, real_hover_color)
+            GradientFade::new(base_bg, hover_solid, hover_solid)
                 .width(px(64.0))
                 .right(px(-2.0))
                 .gradient_stop(0.75)
@@ -1672,13 +1670,14 @@ impl Sidebar {
 
         let is_ellipsis_menu_open = self.project_header_menu_ix == Some(ix);
 
-        h_flex()
+        let header = h_flex()
             .id(id)
             .group(&group_name)
+            .cursor_pointer()
             .h(Tab::content_height(cx))
             .relative()
             .w_full()
-            .pl(px(5.))
+            .pl_2()
             .pr_1p5()
             .justify_between()
             .border_1()
@@ -1694,25 +1693,7 @@ impl Sidebar {
                     .relative()
                     .min_w_0()
                     .w_full()
-                    .gap(px(5.))
-                    .child(
-                        IconButton::new(disclosure_id, disclosure_icon)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(if has_threads {
-                                Color::Custom(cx.theme().colors().icon_muted.opacity(0.5))
-                            } else {
-                                Color::Custom(cx.theme().colors().icon_disabled)
-                            })
-                            .when(has_threads, |this| {
-                                this.tooltip(Tooltip::text(disclosure_tooltip)).on_click(
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.selection = None;
-                                        this.toggle_collapse(&key_for_toggle, window, cx);
-                                    }),
-                                )
-                            }),
-                    )
+                    .gap_1()
                     .child(label)
                     .when_some(
                         self.render_remote_project_icon(ix, host.as_ref()),
@@ -1746,7 +1727,14 @@ impl Sidebar {
                                     .tooltip(Tooltip::text(tooltip_text)),
                             )
                         })
-                    }),
+                    })
+                    .child(
+                        div().visible_on_hover(&group_name).child(
+                            Icon::new(disclosure_icon)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        ),
+                    ),
             )
             .child(gradient_overlay())
             .child(
@@ -1832,34 +1820,27 @@ impl Sidebar {
                         ))
                     }),
             )
-            .map(|this| {
-                if !has_threads && is_active {
-                    this
-                } else {
-                    let key = key.clone();
-                    this.cursor_pointer()
-                        .when(!is_active, |this| this.hover(|s| s.bg(hover_solid)))
-                        .tooltip(Tooltip::text("Open Workspace"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if let Some(workspace) = this.multi_workspace.upgrade().and_then(|mw| {
-                                mw.read(cx).workspace_for_paths(
-                                    key.path_list(),
-                                    key.host().as_ref(),
-                                    cx,
-                                )
-                            }) {
-                                // Just activate the workspace. The
-                                // AgentPanel remembers what was last
-                                // shown, so the user returns to whatever
-                                // thread/draft they were looking at.
-                                this.activate_workspace(&workspace, window, cx);
-                            } else {
-                                this.open_workspace_for_group(&key, window, cx);
-                            }
-                        }))
-                }
-            })
-            .into_any_element()
+            .hover(|s| s.bg(hover_solid))
+            .tooltip(Tooltip::text(disclosure_tooltip))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.toggle_collapse(&key_for_toggle, window, cx);
+            }));
+
+        if !is_collapsed && !has_threads {
+            v_flex()
+                .w_full()
+                .child(header)
+                .child(
+                    div().px_2().pt_1().pb_2().child(
+                        Label::new("No threads yet")
+                            .size(LabelSize::Small)
+                            .color(Color::Placeholder),
+                    ),
+                )
+                .into_any_element()
+        } else {
+            header.into_any_element()
+        }
     }
 
     fn render_project_header_ellipsis_menu(
@@ -2066,8 +2047,8 @@ impl Sidebar {
             *has_running_threads,
             *waiting_thread_count,
             *is_active,
-            *has_threads,
             is_selected,
+            *has_threads,
             cx,
         );
 
@@ -2283,13 +2264,9 @@ impl Sidebar {
         };
 
         match entry {
-            ListEntry::ProjectHeader {
-                key, has_threads, ..
-            } => {
-                if *has_threads {
-                    let key = key.clone();
-                    self.toggle_collapse(&key, window, cx);
-                }
+            ListEntry::ProjectHeader { key, .. } => {
+                let key = key.clone();
+                self.toggle_collapse(&key, window, cx);
             }
             ListEntry::Thread(thread) => {
                 let metadata = thread.metadata.clone();
@@ -2801,19 +2778,15 @@ impl Sidebar {
         let Some(ix) = self.selection else { return };
 
         match self.contents.entries.get(ix) {
-            Some(ListEntry::ProjectHeader {
-                key, has_threads, ..
-            }) => {
-                if *has_threads {
-                    let key = key.clone();
-                    if self.is_group_collapsed(&key, cx) {
-                        self.set_group_expanded(&key, true, cx);
-                        self.update_entries(cx);
-                    } else if ix + 1 < self.contents.entries.len() {
-                        self.selection = Some(ix + 1);
-                        self.list_state.scroll_to_reveal_item(ix + 1);
-                        cx.notify();
-                    }
+            Some(ListEntry::ProjectHeader { key, .. }) => {
+                let key = key.clone();
+                if self.is_group_collapsed(&key, cx) {
+                    self.set_group_expanded(&key, true, cx);
+                    self.update_entries(cx);
+                } else if ix + 1 < self.contents.entries.len() {
+                    self.selection = Some(ix + 1);
+                    self.list_state.scroll_to_reveal_item(ix + 1);
+                    cx.notify();
                 }
             }
             _ => {}
@@ -2829,15 +2802,11 @@ impl Sidebar {
         let Some(ix) = self.selection else { return };
 
         match self.contents.entries.get(ix) {
-            Some(ListEntry::ProjectHeader {
-                key, has_threads, ..
-            }) => {
-                if *has_threads {
-                    let key = key.clone();
-                    if !self.is_group_collapsed(&key, cx) {
-                        self.set_group_expanded(&key, false, cx);
-                        self.update_entries(cx);
-                    }
+            Some(ListEntry::ProjectHeader { key, .. }) => {
+                let key = key.clone();
+                if !self.is_group_collapsed(&key, cx) {
+                    self.set_group_expanded(&key, false, cx);
+                    self.update_entries(cx);
                 }
             }
             Some(ListEntry::Thread(_) | ListEntry::ViewMore { .. }) => {
@@ -2877,20 +2846,16 @@ impl Sidebar {
         };
 
         if let Some(header_ix) = header_ix {
-            if let Some(ListEntry::ProjectHeader {
-                key, has_threads, ..
-            }) = self.contents.entries.get(header_ix)
+            if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(header_ix)
             {
-                if *has_threads {
-                    let key = key.clone();
-                    if self.is_group_collapsed(&key, cx) {
-                        self.set_group_expanded(&key, true, cx);
-                    } else {
-                        self.selection = Some(header_ix);
-                        self.set_group_expanded(&key, false, cx);
-                    }
-                    self.update_entries(cx);
+                let key = key.clone();
+                if self.is_group_collapsed(&key, cx) {
+                    self.set_group_expanded(&key, true, cx);
+                } else {
+                    self.selection = Some(header_ix);
+                    self.set_group_expanded(&key, false, cx);
                 }
+                self.update_entries(cx);
             }
         }
     }
