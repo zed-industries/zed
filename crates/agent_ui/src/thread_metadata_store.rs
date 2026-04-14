@@ -618,6 +618,10 @@ impl ThreadMetadataStore {
         cx: &mut Context<Self>,
     ) {
         if let Some(thread) = self.threads.get(session_id) {
+            debug_assert!(
+                !thread.archived,
+                "update_working_directories called on archived thread"
+            );
             self.save_internal(ThreadMetadata {
                 worktree_paths: ThreadWorktreePaths::from_path_lists(
                     thread.main_worktree_paths().clone(),
@@ -3164,14 +3168,17 @@ mod tests {
         cx.run_until_parked();
 
         // Verify paths were saved correctly.
-        let folder_paths_before = cx.update(|cx| {
+        let (folder_paths_before, main_paths_before) = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx).read(cx);
             let entry = store.entry(&session_id).unwrap();
             assert!(
                 !entry.folder_paths().is_empty(),
                 "thread should have folder paths before archiving"
             );
-            entry.folder_paths().clone()
+            (
+                entry.folder_paths().clone(),
+                entry.main_worktree_paths().clone(),
+            )
         });
 
         // Archive the thread.
@@ -3203,7 +3210,9 @@ mod tests {
         // completes after the thread was archived.
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread.set_title("Generated title".into(), cx).detach();
+                thread
+                    .set_title("Generated title".into(), cx)
+                    .detach_and_log_err(cx);
             });
         });
         cx.run_until_parked();
@@ -3219,6 +3228,12 @@ mod tests {
                 "archived thread must retain its folder paths after worktree \
                  removal + subsequent thread event, otherwise restoring it \
                  will prompt the user to re-associate a project"
+            );
+            assert_eq!(
+                entry.main_worktree_paths(),
+                &main_paths_before,
+                "archived thread must retain its main worktree paths after \
+                 worktree removal + subsequent thread event"
             );
         });
     }
