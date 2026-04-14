@@ -348,6 +348,14 @@ fn worktree_info_from_thread_paths(
     for (main_path, folder_path) in worktree_paths.ordered_pairs() {
         unique_main_count.insert(main_path.clone());
         let is_linked = main_path != folder_path;
+        let found_branch = branch_by_path.get(folder_path);
+        log::info!(
+            "sidebar worktree_info: main={:?} folder={:?} is_linked={} branch_found={}",
+            main_path,
+            folder_path,
+            is_linked,
+            found_branch.is_some(),
+        );
 
         if is_linked {
             let short_name = linked_worktree_short_name(main_path, folder_path).unwrap_or_default();
@@ -1094,8 +1102,16 @@ impl Sidebar {
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
+            let repo_count = project.repositories(cx).len();
+            log::info!("sidebar branch_by_path: workspace has {repo_count} repos");
             for repo in project.repositories(cx).values() {
                 let snapshot = repo.read(cx).snapshot();
+                log::info!(
+                    "sidebar branch_by_path: repo work_dir={:?} branch={:?} linked_count={}",
+                    snapshot.work_directory_abs_path,
+                    snapshot.branch.as_ref().map(|b| b.name().to_string()),
+                    snapshot.linked_worktrees().len(),
+                );
                 if let Some(branch) = &snapshot.branch {
                     branch_by_path.insert(
                         snapshot.work_directory_abs_path.to_path_buf(),
@@ -1112,6 +1128,10 @@ impl Sidebar {
                 }
             }
         }
+        log::info!(
+            "sidebar branch_by_path: total entries={}",
+            branch_by_path.len()
+        );
 
         for group in &groups {
             let group_key = &group.key;
