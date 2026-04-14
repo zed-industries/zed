@@ -73,7 +73,7 @@ struct Args {
     #[arg(short, long, overrides_with_all = ["add", "reuse", "existing"])]
     new: bool,
     /// Reuse an existing window, replacing its workspace
-    #[arg(short, long, overrides_with_all = ["add", "new", "existing"])]
+    #[arg(short, long, overrides_with_all = ["add", "new", "existing"], hide = true)]
     reuse: bool,
     /// Open in existing Zed window
     #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse"])]
