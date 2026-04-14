@@ -11645,6 +11645,101 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_autosave_on_focus_change_deferred_for_command_palette(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        item.update_in(cx, |item, window, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
+                    settings.vim_mode = Some(true);
+                    settings.helix_mode = Some(false);
+                })
+            });
+            item.is_dirty = true;
+            cx.focus_self(window);
+        });
+        cx.executor().run_until_parked();
+
+        // Opening a command palette modal moves focus out of the item,
+        // but autosave should be deferred until that modal is dismissed.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestCommandPaletteModal::new);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 0,
+                "Autosave should be deferred while modal is open"
+            )
+        });
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(
+                workspace.deferred_autosave_items.len(),
+                1,
+                "Focus transfer to command palette should queue one deferred autosave item"
+            );
+        });
+
+        // If focus returns to the same item, deferred autosave should be skipped.
+        item.update_in(cx, |_, window, cx| {
+            cx.focus_self(window);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.autosave_deferred_items(window, cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 0,
+                "Deferred autosave should be skipped when focus returns to the item"
+            )
+        });
+
+        // Prepare another deferred autosave for the same item.
+        item.update_in(cx, |item, window, cx| {
+            item.is_dirty = true;
+            cx.focus_self(window);
+        });
+        workspace.update_in(cx, |workspace, _window, _cx| {
+            workspace
+                .deferred_autosave_items
+                .push(item.downgrade_item());
+        });
+        cx.executor().run_until_parked();
+
+        // If focus moves elsewhere, deferred autosave should run.
+        workspace.update_in(cx, |_workspace, window, _cx| {
+            window.blur();
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.autosave_deferred_items(window, cx);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 1,
+                "Deferred autosave should run when focus is not returned to the item"
+            )
+        });
+    }
+
+    #[gpui::test]
     async fn test_pane_navigation(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
@@ -13130,6 +13225,38 @@ mod tests {
     }
 
     impl ModalView for TestModal {}
+
+    struct TestCommandPaletteModal(FocusHandle);
+
+    impl TestCommandPaletteModal {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+            Self(cx.focus_handle())
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for TestCommandPaletteModal {}
+
+    impl Focusable for TestCommandPaletteModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.0.clone()
+        }
+    }
+
+    impl ModalView for TestCommandPaletteModal {
+        fn is_command_palette(&self) -> bool {
+            true
+        }
+    }
+
+    impl Render for TestCommandPaletteModal {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<TestCommandPaletteModal>,
+        ) -> impl IntoElement {
+            div().track_focus(&self.0)
+        }
+    }
 
     impl Render for TestModal {
         fn render(

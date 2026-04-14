@@ -962,7 +962,9 @@ impl<T: Item> ItemHandle for Entity<T> {
                             // the deferred save is skipped. If focus moves elsewhere (e.g., the user opened a new
                             // panel via the command palette), the item is saved at that point.
                             if workspace.is_active_modal_command_palette(cx) {
-                                workspace.deferred_autosave_items.push(item.downgrade_item());
+                                workspace
+                                    .deferred_autosave_items
+                                    .push(item.downgrade_item());
                                 return;
                             }
                         }
