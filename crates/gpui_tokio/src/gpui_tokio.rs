@@ -17,37 +17,33 @@ pub fn init(cx: &mut App) {
         .build()
         .expect("Failed to initialize Tokio");
 
-    cx.set_global(GlobalTokio::new(RuntimeHolder::Owned(runtime)));
+    let handle = runtime.handle().clone();
+    cx.set_global(GlobalTokio {
+        owned_runtime: Some(runtime),
+        handle,
+    });
 }
 
 /// Initializes the Tokio wrapper using a Tokio runtime handle.
 pub fn init_from_handle(cx: &mut App, handle: tokio::runtime::Handle) {
-    cx.set_global(GlobalTokio::new(RuntimeHolder::Shared(handle)));
-}
-
-enum RuntimeHolder {
-    Owned(tokio::runtime::Runtime),
-    Shared(tokio::runtime::Handle),
-}
-
-impl RuntimeHolder {
-    pub fn handle(&self) -> &tokio::runtime::Handle {
-        match self {
-            RuntimeHolder::Owned(runtime) => runtime.handle(),
-            RuntimeHolder::Shared(handle) => handle,
-        }
-    }
+    cx.set_global(GlobalTokio {
+        owned_runtime: None,
+        handle,
+    });
 }
 
 struct GlobalTokio {
-    runtime: RuntimeHolder,
+    owned_runtime: Option<tokio::runtime::Runtime>,
+    handle: tokio::runtime::Handle,
 }
 
 impl Global for GlobalTokio {}
 
-impl GlobalTokio {
-    fn new(runtime: RuntimeHolder) -> Self {
-        Self { runtime }
+impl Drop for GlobalTokio {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.owned_runtime.take() {
+            runtime.shutdown_background();
+        }
     }
 }
 
@@ -63,7 +59,7 @@ impl Tokio {
         R: Send + 'static,
     {
         cx.read_global(|tokio: &GlobalTokio, cx| {
-            let join_handle = tokio.runtime.handle().spawn(f);
+            let join_handle = tokio.handle.spawn(f);
             let abort_handle = join_handle.abort_handle();
             let cancel = defer(move || {
                 abort_handle.abort();
@@ -85,7 +81,7 @@ impl Tokio {
         R: Send + 'static,
     {
         cx.read_global(|tokio: &GlobalTokio, cx| {
-            let join_handle = tokio.runtime.handle().spawn(f);
+            let join_handle = tokio.handle.spawn(f);
             let abort_handle = join_handle.abort_handle();
             let cancel = defer(move || {
                 abort_handle.abort();
@@ -99,6 +95,6 @@ impl Tokio {
     }
 
     pub fn handle(cx: &App) -> tokio::runtime::Handle {
-        GlobalTokio::global(cx).runtime.handle().clone()
+        GlobalTokio::global(cx).handle.clone()
     }
 }

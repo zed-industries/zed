@@ -41,8 +41,8 @@ use workspace::ProjectGroupKey;
 
 use dev_container::{DevContainerContext, find_devcontainer_configs};
 use ui::{
-    ContextMenu, Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, PopoverMenu,
-    PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ContextMenu, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, ListSubHeader,
+    PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, paths::PathExt};
 use workspace::{
@@ -1130,6 +1130,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     return;
                 };
 
+                let key = key.clone();
                 let path_list = key.path_list().clone();
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
@@ -1137,6 +1138,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             .update(cx, |multi_workspace, window, cx| {
                                 multi_workspace.find_or_create_local_workspace(
                                     path_list,
+                                    Some(key.clone()),
                                     &[],
                                     window,
                                     cx,
@@ -1317,6 +1319,9 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let icon = icon_for_remote_connection(self.project_connection_options.as_ref());
 
+                let tooltip_path: SharedString = path.to_string_lossy().to_string().into();
+                let tooltip_branch = branch.clone();
+
                 Some(
                     ListItem::new(ix)
                         .toggle_state(selected)
@@ -1326,26 +1331,28 @@ impl PickerDelegate for RecentProjectsDelegate {
                             h_flex()
                                 .id("open_folder_item")
                                 .gap_3()
-                                .flex_grow()
+                                .w_full()
+                                .overflow_hidden()
                                 .when(self.has_any_non_local_projects, |this| {
                                     this.child(Icon::new(icon).color(Color::Muted))
                                 })
                                 .child(
                                     v_flex()
+                                        .flex_1()
                                         .child(
                                             h_flex()
+                                                .min_w_0()
                                                 .gap_1()
-                                                .child({
-                                                    let highlighted = HighlightedMatch {
-                                                        text: name.to_string(),
-                                                        highlight_positions: positions,
-                                                        color: Color::Default,
-                                                    };
-                                                    highlighted.render(window, cx)
-                                                })
+                                                .child(HighlightedLabel::new(
+                                                    name.to_string(),
+                                                    positions,
+                                                ))
                                                 .when_some(branch, |this, branch| {
                                                     this.child(
-                                                        Label::new(branch).color(Color::Muted),
+                                                        Label::new(branch)
+                                                            .color(Color::Muted)
+                                                            .truncate()
+                                                            .flex_1(),
                                                     )
                                                 })
                                                 .when(is_active, |this| {
@@ -1365,7 +1372,18 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         }),
                                 )
                                 .when(!show_path, |this| {
-                                    this.tooltip(Tooltip::text(path.to_string_lossy().to_string()))
+                                    this.tooltip(move |_, cx| {
+                                        if let Some(branch) = tooltip_branch.clone() {
+                                            Tooltip::with_meta(
+                                                branch,
+                                                None,
+                                                tooltip_path.clone(),
+                                                cx,
+                                            )
+                                        } else {
+                                            Tooltip::simple(tooltip_path.clone(), cx)
+                                        }
+                                    })
                                 }),
                         )
                         .end_slot(secondary_actions)

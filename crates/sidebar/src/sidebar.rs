@@ -3092,15 +3092,17 @@ impl Sidebar {
                     ListEntry::Thread(t)
                         if !t.is_draft && t.metadata.session_id.as_ref() != Some(session_id) =>
                     {
-                        let workspace_paths = match &t.workspace {
-                            ThreadEntryWorkspace::Open(ws) => {
-                                PathList::new(&ws.read(cx).root_paths(cx))
-                            }
-                            ThreadEntryWorkspace::Closed { folder_paths, .. } => {
-                                folder_paths.clone()
-                            }
+                        let (workspace_paths, project_group_key) = match &t.workspace {
+                            ThreadEntryWorkspace::Open(ws) => (
+                                PathList::new(&ws.read(cx).root_paths(cx)),
+                                ws.read(cx).project_group_key(cx),
+                            ),
+                            ThreadEntryWorkspace::Closed {
+                                folder_paths,
+                                project_group_key,
+                            } => (folder_paths.clone(), project_group_key.clone()),
                         };
-                        Some((t.metadata.clone(), workspace_paths))
+                        Some((t.metadata.clone(), workspace_paths, project_group_key))
                     }
                     _ => None,
                 })
@@ -3216,13 +3218,16 @@ impl Sidebar {
             let multi_workspace = self.multi_workspace.upgrade().unwrap();
             let session_id = session_id.clone();
 
-            let fallback_paths = neighbor
+            let (fallback_paths, project_group_key) = neighbor
                 .as_ref()
-                .map(|(_, paths)| paths.clone())
+                .map(|(_, paths, project_group_key)| (paths.clone(), project_group_key.clone()))
                 .unwrap_or_else(|| {
                     workspaces_to_remove
                         .first()
-                        .map(|ws| ws.read(cx).project_group_key(cx).path_list().clone())
+                        .map(|ws| {
+                            let key = ws.read(cx).project_group_key(cx);
+                            (key.path_list().clone(), key)
+                        })
                         .unwrap_or_default()
                 });
 
@@ -3231,14 +3236,20 @@ impl Sidebar {
                 mw.remove(
                     workspaces_to_remove,
                     move |this, window, cx| {
-                        this.find_or_create_local_workspace(fallback_paths, &excluded, window, cx)
+                        this.find_or_create_local_workspace(
+                            fallback_paths,
+                            Some(project_group_key),
+                            &excluded,
+                            window,
+                            cx,
+                        )
                     },
                     window,
                     cx,
                 )
             });
 
-            let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
+            let neighbor_metadata = neighbor.map(|(metadata, _, _)| metadata);
             let thread_folder_paths = thread_folder_paths.clone();
             cx.spawn_in(window, async move |this, cx| {
                 if !remove_task.await? {
@@ -3269,7 +3280,7 @@ impl Sidebar {
             .detach_and_log_err(cx);
         } else if !close_item_tasks.is_empty() {
             let session_id = session_id.clone();
-            let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
+            let neighbor_metadata = neighbor.map(|(metadata, _, _)| metadata);
             let thread_folder_paths = thread_folder_paths.clone();
             cx.spawn_in(window, async move |this, cx| {
                 for task in close_item_tasks {
@@ -3295,7 +3306,7 @@ impl Sidebar {
             })
             .detach_and_log_err(cx);
         } else {
-            let neighbor_metadata = neighbor.map(|(metadata, _)| metadata);
+            let neighbor_metadata = neighbor.map(|(metadata, _, _)| metadata);
             let in_flight = thread_id
                 .and_then(|tid| self.start_archive_worktree_task(tid, roots_to_archive, cx));
             self.archive_and_activate(
