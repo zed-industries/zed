@@ -726,10 +726,19 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) {
         Self::subscribe_to_workspace(workspace, window, cx);
-        self.sync_sidebar_to_workspace(workspace, cx);
         let weak_self = cx.weak_entity();
         workspace.update(cx, |workspace, cx| {
             workspace.set_multi_workspace(weak_self, cx);
+        });
+
+        let entity = cx.entity();
+        cx.defer({
+            let workspace = workspace.clone();
+            move |cx| {
+                entity.update(cx, |this, cx| {
+                    this.sync_sidebar_to_workspace(&workspace, cx);
+                })
+            }
         });
     }
 
@@ -1127,6 +1136,7 @@ impl MultiWorkspace {
             &mut Context<Self>,
         ) -> Task<Result<Option<Entity<remote::RemoteClient>>>>
         + 'static,
+        excluding: &[Entity<Workspace>],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1139,7 +1149,7 @@ impl MultiWorkspace {
             return self.find_or_create_local_workspace(
                 paths,
                 provisional_project_group_key,
-                &[],
+                excluding,
                 window,
                 cx,
             );

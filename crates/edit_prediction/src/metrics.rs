@@ -1,10 +1,8 @@
-mod kept_rate;
-mod tokenize;
-mod tree_sitter;
+pub use edit_prediction_metrics::KeptRateResult;
 
-pub use kept_rate::KeptRateResult;
-#[cfg(test)]
-pub use kept_rate::TokenAnnotation;
-pub use kept_rate::compute_kept_rate;
-pub(crate) use tokenize::tokenize;
-pub use tree_sitter::count_tree_sitter_errors;
+pub use edit_prediction_metrics::compute_kept_rate;
+use language::SyntaxLayer;
+
+pub fn count_tree_sitter_errors<'a>(layers: impl Iterator<Item = SyntaxLayer<'a>>) -> usize {
+    edit_prediction_metrics::count_tree_sitter_errors(layers.map(|layer| layer.node()))
+}

@@ -38,6 +38,9 @@ pub use multi_workspace::{
     ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
+pub use remote::{
+    RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
+};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};

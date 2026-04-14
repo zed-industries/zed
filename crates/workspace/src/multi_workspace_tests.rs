@@ -497,6 +497,7 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
                 None,
                 Some(project_group_key.clone()),
                 |_options, _window, _cx| Task::ready(Ok(None)),
+                &[],
                 window,
                 cx,
             )

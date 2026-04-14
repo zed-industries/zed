@@ -5144,6 +5144,7 @@ dependencies = [
  "ctor",
  "db",
  "edit_prediction_context",
+ "edit_prediction_metrics",
  "edit_prediction_types",
  "feature_flags",
  "fs",
@@ -5206,6 +5207,7 @@ dependencies = [
  "debug_adapter_extension",
  "dirs",
  "edit_prediction",
+ "edit_prediction_metrics",
  "extension",
  "flate2",
  "fs",
@@ -5277,6 +5279,19 @@ dependencies = [
  "text",
  "tree-sitter",
  "util",
+ "zeta_prompt",
+]
+
+[[package]]
+name = "edit_prediction_metrics"
+version = "0.1.0"
+dependencies = [
+ "indoc",
+ "language",
+ "pretty_assertions",
+ "serde",
+ "similar",
+ "tree-sitter",
  "zeta_prompt",
 ]
 

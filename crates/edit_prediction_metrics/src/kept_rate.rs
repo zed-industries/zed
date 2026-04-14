@@ -1,9 +1,10 @@
-use crate::metrics::tokenize;
+use crate::tokenize::tokenize;
+use serde::Serialize;
 
 const MAX_DIRTY_LENGTH_DELTA_CHARS: usize = 512;
 
 #[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum TokenAnnotation {
     Context,
     Kept,
@@ -11,7 +12,7 @@ pub enum TokenAnnotation {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct KeptRateResult {
     /// Characters newly introduced by the candidate
     pub candidate_new_chars: usize,
