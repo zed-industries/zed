@@ -2022,7 +2022,7 @@ pub fn open_new_ssh_project_from_project(
             paths,
             app_state,
             workspace::OpenOptions {
-                open_new_workspace: Some(true),
+                workspace_matching: workspace::WorkspaceMatching::None,
                 ..Default::default()
             },
             cx,
@@ -2583,13 +2583,13 @@ mod tests {
             })
             .unwrap();
 
-        // Opening with -n (open_new_workspace: Some(true)) still creates a new window.
+        // Opening with -n (reuse_worktrees: false) still creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2630,7 +2630,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(false),
+                    workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory,
                     ..Default::default()
                 },
                 cx,
@@ -2646,7 +2646,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/dir/c"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2662,7 +2662,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/b"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2729,7 +2729,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/dir2"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2745,7 +2745,7 @@ mod tests {
                 &[PathBuf::from(path!("/root"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,

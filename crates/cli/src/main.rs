@@ -541,15 +541,19 @@ fn main() -> Result<()> {
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
 
-    let open_new_workspace = if args.new {
-        Some(true)
+    let open_behavior = if args.new {
+        cli::OpenBehavior::AlwaysNew
     } else if args.add {
-        Some(false)
+        cli::OpenBehavior::Add
+    } else if args.existing {
+        cli::OpenBehavior::ExistingWindow
+    } else if args.classic {
+        cli::OpenBehavior::Classic
+    } else if args.reuse {
+        cli::OpenBehavior::Reuse
     } else {
-        None
+        cli::OpenBehavior::Default
     };
-
-    let force_existing_window = args.existing;
 
     let env = {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -679,13 +683,10 @@ fn main() -> Result<()> {
                     diff_all: diff_all_mode,
                     wsl,
                     wait: args.wait,
-                    open_new_workspace,
-                    force_existing_window,
-                    reuse: args.reuse,
+                    open_behavior,
                     env,
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
-                    classic: args.classic,
                 };
 
                 tx.send(open_request)?;
@@ -701,7 +702,7 @@ fn main() -> Result<()> {
                         }
                         CliResponse::PromptOpenBehavior => {
                             let behavior = prompt_open_behavior()
-                                .unwrap_or(cli::CliOpenBehavior::ExistingWindow);
+                                .unwrap_or(cli::CliBehaviorSetting::ExistingWindow);
                             tx.send(CliRequest::SetOpenBehavior { behavior })?;
                         }
                     }
@@ -800,7 +801,7 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
 /// Shows an interactive prompt asking the user to choose the default open
 /// behavior for `zed <path>`. Returns `None` if the prompt cannot be shown
 /// (e.g. stdin is not a terminal) or the user cancels.
-fn prompt_open_behavior() -> Option<cli::CliOpenBehavior> {
+fn prompt_open_behavior() -> Option<cli::CliBehaviorSetting> {
     if !std::io::stdin().is_terminal() {
         return None;
     }
@@ -828,9 +829,9 @@ fn prompt_open_behavior() -> Option<cli::CliOpenBehavior> {
         .ok()?;
 
     Some(if selection == 0 {
-        cli::CliOpenBehavior::ExistingWindow
+        cli::CliBehaviorSetting::ExistingWindow
     } else {
-        cli::CliOpenBehavior::NewWindow
+        cli::CliBehaviorSetting::NewWindow
     })
 }
 
