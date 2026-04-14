@@ -175,6 +175,7 @@ pub(crate) struct DockerComposeConfig {
 
 pub(crate) struct Docker {
     docker_cli: String,
+    has_buildx: bool,
 }
 
 impl DockerInspect {
@@ -185,8 +186,23 @@ impl DockerInspect {
 
 impl Docker {
     pub(crate) fn new(docker_cli: &str) -> Self {
+        let has_buildx = if docker_cli == "podman" {
+            false
+        } else {
+            std::process::Command::new(docker_cli)
+                .args(["buildx", "version"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        };
+        if !has_buildx && docker_cli != "podman" {
+            log::info!("docker buildx not found; dev container builds will use the scratch-image fallback");
+        }
         Self {
             docker_cli: docker_cli.to_string(),
+            has_buildx,
         }
     }
 
@@ -372,7 +388,7 @@ impl DockerClient for Docker {
     }
 
     fn supports_compose_buildkit(&self) -> bool {
-        !self.is_podman()
+        self.has_buildx
     }
 }
 
