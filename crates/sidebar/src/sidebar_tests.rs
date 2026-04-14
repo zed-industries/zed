@@ -6368,8 +6368,6 @@ async fn test_unarchive_into_existing_workspace_replaces_draft(cx: &mut TestAppC
     );
 }
 
-
-
 #[gpui::test]
 async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_draft(
     cx: &mut TestAppContext,
@@ -6748,7 +6746,9 @@ async fn test_unarchive_does_not_create_duplicate_real_thread_metadata(cx: &mut 
 }
 
 #[gpui::test]
-async fn test_switch_to_workspace_with_archived_thread_shows_no_active_entry(cx: &mut TestAppContext) {
+async fn test_switch_to_workspace_with_archived_thread_shows_no_active_entry(
+    cx: &mut TestAppContext,
+) {
     // When a thread is archived while the user is in a different workspace,
     // the group is left empty (no draft is created). Switching back to that
     // workspace should show no active entry.

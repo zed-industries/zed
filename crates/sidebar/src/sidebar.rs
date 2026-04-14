@@ -1705,11 +1705,12 @@ impl Sidebar {
                                 Color::Custom(cx.theme().colors().icon_disabled)
                             })
                             .when(has_threads, |this| {
-                                this.tooltip(Tooltip::text(disclosure_tooltip))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                this.tooltip(Tooltip::text(disclosure_tooltip)).on_click(
+                                    cx.listener(move |this, _, window, cx| {
                                         this.selection = None;
                                         this.toggle_collapse(&key_for_toggle, window, cx);
-                                    }))
+                                    }),
+                                )
                             }),
                     )
                     .child(label)
