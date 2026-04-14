@@ -1222,10 +1222,13 @@ impl MultiWorkspace {
                     .map(|path| fs.metadata(path.as_path()))
                     .collect();
                 let metadata_results = futures::future::join_all(metadata_tasks).await;
+                // Only fall back when every path is definitely absent; real
+                // filesystem errors should not be treated as "missing".
                 let all_paths_missing = !paths.is_empty()
                     && metadata_results
                         .into_iter()
-                        .all(|result| result.ok().flatten().is_none());
+                        // Ok(None) means the path is definitely absent
+                        .all(|result| matches!(result, Ok(None)));
 
                 if all_paths_missing {
                     project_group.path_list().clone()
