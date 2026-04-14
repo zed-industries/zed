@@ -2394,15 +2394,11 @@ mod tests {
                 let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
                 editor.set_should_serialize(true, cx);
                 let entity = cx.entity();
-                cx.subscribe_in(
-                    &entity,
-                    window,
-                    move |_, _, event: &EditorEvent, _, _| {
-                        if matches!(event, EditorEvent::FileHandleChanged) {
-                            *received_file_handle_changed.borrow_mut() = true;
-                        }
-                    },
-                )
+                cx.subscribe_in(&entity, window, move |_, _, event: &EditorEvent, _, _| {
+                    if matches!(event, EditorEvent::FileHandleChanged) {
+                        *received_file_handle_changed.borrow_mut() = true;
+                    }
+                })
                 .detach();
                 editor
             }
@@ -2419,11 +2415,7 @@ mod tests {
 
         project
             .update(cx, |project, cx| {
-                project.rename_entry(
-                    entry_id,
-                    (worktree_id, rel_path("renamed.rs")).into(),
-                    cx,
-                )
+                project.rename_entry(entry_id, (worktree_id, rel_path("renamed.rs")).into(), cx)
             })
             .await
             .unwrap();
