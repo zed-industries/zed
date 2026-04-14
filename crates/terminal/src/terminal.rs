@@ -3053,11 +3053,19 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_set_size_coalesces_pixel_only_changes() {
-        let builder =
-            TerminalBuilder::new_display_only(CursorShape::Block, AlternateScroll::On, None, 0)
-                .unwrap();
+    #[gpui::test]
+    async fn test_set_size_coalesces_pixel_only_changes(cx: &mut TestAppContext) {
+        let builder = cx.update(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::Block,
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+        });
         let mut terminal = builder.terminal;
 
         let base_bounds = TerminalBounds {
