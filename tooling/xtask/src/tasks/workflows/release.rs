@@ -1,14 +1,12 @@
-use gh_workflow::{Event, Expression, Job, Push, Run, Step, Use, Workflow, ctx::Context};
+use gh_workflow::{Event, Expression, Push, Run, Step, Use, Workflow, ctx::Context};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
-    run_bundling::{bundle_linux, bundle_mac, bundle_windows},
+    run_bundling::{bundle_linux, bundle_mac, bundle_windows, upload_artifact},
     run_tests,
     runners::{self, Arch, Platform},
-    steps::{
-        self, CommonJobConditions, FluentBuilder, NamedJob, dependant_job, named, release_job,
-    },
-    vars::{self, StepOutput, assets},
+    steps::{self, FluentBuilder, NamedJob, dependant_job, named, release_job},
+    vars::{self, JobOutput, StepOutput, assets},
 };
 
 const CURRENT_ACTION_RUN_URL: &str =
@@ -24,7 +22,7 @@ pub(crate) fn release() -> Workflow {
     let check_scripts = run_tests::check_scripts();
 
     let create_draft_release = create_draft_release();
-    let compliance = compliance_check();
+    let (non_blocking_compliance_run, job_output) = compliance_check();
 
     let bundle = ReleaseBundleJobs {
         linux_aarch64: bundle_linux(
@@ -60,7 +58,10 @@ pub(crate) fn release() -> Workflow {
     };
 
     let upload_release_assets = upload_release_assets(&[&create_draft_release], &bundle);
-    let validate_release_assets = validate_release_assets(&[&upload_release_assets]);
+    let validate_release_assets = validate_release_assets(
+        &[&upload_release_assets, &non_blocking_compliance_run],
+        job_output,
+    );
 
     let auto_release_preview = auto_release_preview(&[&validate_release_assets]);
 
@@ -95,7 +96,10 @@ pub(crate) fn release() -> Workflow {
         .add_job(windows_clippy.name, windows_clippy.job)
         .add_job(check_scripts.name, check_scripts.job)
         .add_job(create_draft_release.name, create_draft_release.job)
-        .add_job(compliance.name, compliance.job)
+        .add_job(
+            non_blocking_compliance_run.name,
+            non_blocking_compliance_run.job,
+        )
         .map(|mut workflow| {
             for job in bundle.into_jobs() {
                 workflow = workflow.add_job(job.name, job.job);
@@ -153,60 +157,158 @@ pub(crate) fn create_sentry_release() -> Step<Use> {
     .add_with(("environment", "production"))
 }
 
-fn compliance_check() -> NamedJob {
-    fn run_compliance_check() -> Step<Run> {
-        named::bash(
-            r#"cargo xtask compliance "$GITHUB_REF_NAME" --report-path "$COMPLIANCE_FILE_OUTPUT""#,
+pub(crate) const COMPLIANCE_REPORT_PATH: &str = "compliance-report-${GITHUB_REF_NAME}.md";
+pub(crate) const COMPLIANCE_REPORT_ARTIFACT_PATH: &str =
+    "compliance-report-${{ github.ref_name }}.md";
+pub(crate) const COMPLIANCE_STEP_ID: &str = "run-compliance-check";
+const NEEDS_REVIEW_PULLS_URL: &str = "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22";
+
+pub(crate) enum ComplianceContext {
+    Release { non_blocking_outcome: JobOutput },
+    ReleaseNonBlocking,
+    Scheduled { tag_source: StepOutput },
+}
+
+impl ComplianceContext {
+    fn tag_source(&self) -> Option<&StepOutput> {
+        match self {
+            ComplianceContext::Scheduled { tag_source } => Some(tag_source),
+            _ => None,
+        }
+    }
+}
+
+pub(crate) fn add_compliance_steps(
+    job: gh_workflow::Job,
+    context: ComplianceContext,
+) -> (gh_workflow::Job, StepOutput) {
+    fn run_compliance_check(context: &ComplianceContext) -> (Step<Run>, StepOutput) {
+        let job = named::bash(
+            formatdoc! {r#"
+                cargo xtask compliance {target} --report-path "{COMPLIANCE_REPORT_PATH}"
+                "#,
+                target = if context.tag_source().is_some() { r#""$LATEST_TAG" --branch main"# } else { r#""$GITHUB_REF_NAME""# },
+            }
         )
-        .id("run-compliance-check")
+        .id(COMPLIANCE_STEP_ID)
         .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
         .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
+        .when_some(context.tag_source(), |step, tag_source| {
+            step.add_env(("LATEST_TAG", tag_source.to_string()))
+        })
+        .when(
+            matches!(
+                context,
+                ComplianceContext::Scheduled { .. } | ComplianceContext::ReleaseNonBlocking
+            ),
+            |step| step.continue_on_error(true),
+        );
+
+        let result = StepOutput::new_unchecked(&job, "outcome");
+        (job, result)
     }
 
-    fn send_compliance_slack_notification() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
-                STATUS="✅ Compliance check passed for $GITHUB_REF_NAME"
-            else
-                STATUS="❌ Compliance check failed for $GITHUB_REF_NAME"
-            fi
-
-            REPORT_CONTENT=""
-            if [ -f "$COMPLIANCE_FILE_OUTPUT" ]; then
-                REPORT_CONTENT=$(cat "$REPORT_FILE")
-            fi
-
-            MESSAGE=$(printf "%s\n\n%s" "$STATUS" "$REPORT_CONTENT")
-
-            curl -X POST -H 'Content-type: application/json' \
-                --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
-                "$SLACK_WEBHOOK"
-        "#})
+    let upload_step = upload_artifact(COMPLIANCE_REPORT_ARTIFACT_PATH)
         .if_condition(Expression::new("always()"))
+        .when(
+            matches!(context, ComplianceContext::Release { .. }),
+            |step| step.add_with(("overwrite", true)),
+        );
+
+    let (success_prefix, failure_prefix) = match context {
+        ComplianceContext::Release { .. } => {
+            ("✅ Compliance check passed", "❌ Compliance check failed")
+        }
+        ComplianceContext::ReleaseNonBlocking => (
+            "✅ Compliance check passed",
+            "❌ Preliminary compliance check failed (but this can still be fixed while the builds are running!)",
+        ),
+        ComplianceContext::Scheduled { .. } => (
+            "✅ Scheduled compliance check passed",
+            "⚠️ Scheduled compliance check failed",
+        ),
+    };
+
+    let script = formatdoc! {r#"
+        if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
+            STATUS="{success_prefix} for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
+        else
+            STATUS="{failure_prefix} for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "{NEEDS_REVIEW_PULLS_URL}")
+        fi
+
+        curl -X POST -H 'Content-type: application/json' \
+            --data "$(jq -n --arg text "$MESSAGE" '{{"text": $text}}')" \
+            "$SLACK_WEBHOOK"
+        "#,
+    };
+
+    let notification_step = Step::new("send_compliance_slack_notification")
+        .run(&script)
+        .if_condition(match &context {
+            ComplianceContext::Release {
+                non_blocking_outcome,
+            } => Expression::new(format!(
+                "failure() || {prior_outcome} != 'success'",
+                prior_outcome = non_blocking_outcome.expr()
+            )),
+            ComplianceContext::Scheduled { .. } | ComplianceContext::ReleaseNonBlocking => {
+                Expression::new("always()")
+            }
+        })
         .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
         .add_env((
             "COMPLIANCE_OUTCOME",
-            "${{ steps.run-compliance-check.outcome }}",
+            format!("${{{{ steps.{COMPLIANCE_STEP_ID}.outcome }}}}"),
         ))
-    }
+        .add_env((
+            "COMPLIANCE_TAG",
+            match &context {
+                ComplianceContext::Release { .. } | ComplianceContext::ReleaseNonBlocking => {
+                    Context::github().ref_name().to_string()
+                }
+                ComplianceContext::Scheduled { tag_source } => tag_source.to_string(),
+            },
+        ))
+        .add_env((
+            "ARTIFACT_URL",
+            format!("{CURRENT_ACTION_RUN_URL}#artifacts"),
+        ));
 
-    named::job(
-        Job::default()
-            .add_env(("COMPLIANCE_FILE_PATH", "compliance.md"))
-            .with_repository_owner_guard()
-            .runs_on(runners::LINUX_DEFAULT)
-            .add_step(
-                steps::checkout_repo()
-                    .with_full_history()
-                    .with_ref(Context::github().ref_()),
-            )
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(run_compliance_check())
-            .add_step(send_compliance_slack_notification()),
+    let (compliance_step, check_result) = run_compliance_check(&context);
+
+    (
+        job.add_step(compliance_step)
+            .add_step(upload_step)
+            .add_step(notification_step)
+            .when(
+                matches!(context, ComplianceContext::ReleaseNonBlocking),
+                |step| step.outputs([("outcome".to_string(), check_result.to_string())]),
+            ),
+        check_result,
     )
 }
 
-fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
+fn compliance_check() -> (NamedJob, JobOutput) {
+    let job = release_job(&[])
+        .runs_on(runners::LINUX_SMALL)
+        .add_step(
+            steps::checkout_repo()
+                .with_full_history()
+                .with_ref(Context::github().ref_()),
+        )
+        .add_step(steps::cache_rust_dependencies_namespace());
+
+    let (compliance_job, check_result) =
+        add_compliance_steps(job, ComplianceContext::ReleaseNonBlocking);
+    let compliance_job = named::job(compliance_job);
+    let check_result = check_result.as_job_output(&compliance_job);
+
+    (compliance_job, check_result)
+}
+
+fn validate_release_assets(deps: &[&NamedJob], context_check_result: JobOutput) -> NamedJob {
     let expected_assets: Vec<String> = assets::all().iter().map(|a| format!("\"{a}\"")).collect();
     let expected_assets_json = format!("[{}]", expected_assets.join(", "));
 
@@ -228,54 +330,24 @@ fn validate_release_assets(deps: &[&NamedJob]) -> NamedJob {
         "#,
     };
 
-    fn run_post_upload_compliance_check() -> Step<Run> {
-        named::bash(
-            r#"cargo xtask compliance "$GITHUB_REF_NAME" --report-path target/compliance-report"#,
+    let job = dependant_job(deps)
+        .runs_on(runners::LINUX_SMALL)
+        .add_step(named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)))
+        .add_step(
+            steps::checkout_repo()
+                .with_full_history()
+                .with_ref(Context::github().ref_()),
         )
-        .id("run-post-upload-compliance-check")
-        .add_env(("GITHUB_APP_ID", vars::ZED_ZIPPY_APP_ID))
-        .add_env(("GITHUB_APP_KEY", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
-    }
-
-    fn send_post_upload_compliance_notification() -> Step<Run> {
-        named::bash(indoc::indoc! {r#"
-            if [ -z "$COMPLIANCE_OUTCOME" ] || [ "$COMPLIANCE_OUTCOME" == "skipped" ]; then
-                echo "Compliance check was skipped, not sending notification"
-                exit 0
-            fi
-
-            TAG="$GITHUB_REF_NAME"
-
-            if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
-                MESSAGE="✅ Post-upload compliance re-check passed for $TAG"
-            else
-                MESSAGE="❌ Post-upload compliance re-check failed for $TAG"
-            fi
-
-            curl -X POST -H 'Content-type: application/json' \
-                --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
-                "$SLACK_WEBHOOK"
-        "#})
-        .if_condition(Expression::new("always()"))
-        .add_env(("SLACK_WEBHOOK", vars::SLACK_WEBHOOK_WORKFLOW_FAILURES))
-        .add_env((
-            "COMPLIANCE_OUTCOME",
-            "${{ steps.run-post-upload-compliance-check.outcome }}",
-        ))
-    }
+        .add_step(steps::cache_rust_dependencies_namespace());
 
     named::job(
-        dependant_job(deps)
-            .runs_on(runners::LINUX_SMALL)
-            .add_step(named::bash(&validation_script).add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN)))
-            .add_step(
-                steps::checkout_repo()
-                    .with_full_history()
-                    .with_ref(Context::github().ref_()),
-            )
-            .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(run_post_upload_compliance_check())
-            .add_step(send_post_upload_compliance_notification()),
+        add_compliance_steps(
+            job,
+            ComplianceContext::Release {
+                non_blocking_outcome: context_check_result,
+            },
+        )
+        .0,
     )
 }
 

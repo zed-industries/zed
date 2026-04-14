@@ -6,6 +6,7 @@ use std::sync::{Arc, LazyLock};
 use agent_client_protocol::ModelId;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
+use futures::channel::oneshot;
 use gpui::{App, Pixels, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
@@ -15,7 +16,7 @@ use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection, NewThreadLocation,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file,
+    update_settings_file, update_settings_file_with_completion,
 };
 
 pub use crate::agent_profile::*;
@@ -31,7 +32,6 @@ pub struct PanelLayout {
     pub(crate) outline_panel_dock: Option<DockSide>,
     pub(crate) collaboration_panel_dock: Option<DockPosition>,
     pub(crate) git_panel_dock: Option<DockPosition>,
-    pub(crate) notification_panel_button: Option<bool>,
 }
 
 impl PanelLayout {
@@ -41,7 +41,6 @@ impl PanelLayout {
         outline_panel_dock: Some(DockSide::Right),
         collaboration_panel_dock: Some(DockPosition::Right),
         git_panel_dock: Some(DockPosition::Right),
-        notification_panel_button: Some(false),
     };
 
     const EDITOR: Self = Self {
@@ -50,7 +49,6 @@ impl PanelLayout {
         outline_panel_dock: Some(DockSide::Left),
         collaboration_panel_dock: Some(DockPosition::Left),
         git_panel_dock: Some(DockPosition::Left),
-        notification_panel_button: Some(true),
     };
 
     pub fn is_agent_layout(&self) -> bool {
@@ -68,7 +66,6 @@ impl PanelLayout {
             outline_panel_dock: content.outline_panel.as_ref().and_then(|p| p.dock),
             collaboration_panel_dock: content.collaboration_panel.as_ref().and_then(|p| p.dock),
             git_panel_dock: content.git_panel.as_ref().and_then(|p| p.dock),
-            notification_panel_button: content.notification_panel.as_ref().and_then(|p| p.button),
         }
     }
 
@@ -78,7 +75,6 @@ impl PanelLayout {
         settings.outline_panel.get_or_insert_default().dock = self.outline_panel_dock;
         settings.collaboration_panel.get_or_insert_default().dock = self.collaboration_panel_dock;
         settings.git_panel.get_or_insert_default().dock = self.git_panel_dock;
-        settings.notification_panel.get_or_insert_default().button = self.notification_panel_button;
     }
 
     fn write_diff_to(&self, current_merged: &PanelLayout, settings: &mut SettingsContent) {
@@ -98,10 +94,6 @@ impl PanelLayout {
         if self.git_panel_dock != current_merged.git_panel_dock {
             settings.git_panel.get_or_insert_default().dock = self.git_panel_dock;
         }
-        if self.notification_panel_button != current_merged.notification_panel_button {
-            settings.notification_panel.get_or_insert_default().button =
-                self.notification_panel_button;
-        }
     }
 
     fn backfill_to(&self, user_layout: &PanelLayout, settings: &mut SettingsContent) {
@@ -120,10 +112,6 @@ impl PanelLayout {
         }
         if user_layout.git_panel_dock.is_none() {
             settings.git_panel.get_or_insert_default().dock = self.git_panel_dock;
-        }
-        if user_layout.notification_panel_button.is_none() {
-            settings.notification_panel.get_or_insert_default().button =
-                self.notification_panel_button;
         }
     }
 }
@@ -154,6 +142,7 @@ pub struct AgentSettings {
     pub sidebar_side: SidebarDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
+    pub max_content_width: Pixels,
     pub default_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
@@ -254,26 +243,30 @@ impl AgentSettings {
         });
     }
 
-    pub fn set_layout(layout: WindowLayout, fs: Arc<dyn Fs>, cx: &App) {
+    pub fn set_layout(
+        layout: WindowLayout,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
         let merged = PanelLayout::read_from(cx.global::<SettingsStore>().merged_settings());
 
         match layout {
             WindowLayout::Agent(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::AGENT.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Editor(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::EDITOR.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Agent(Some(saved))
             | WindowLayout::Editor(Some(saved))
             | WindowLayout::Custom(saved) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     saved.write_to(settings);
-                });
+                })
             }
         }
     }
@@ -600,6 +593,7 @@ impl Settings for AgentSettings {
             sidebar_side: agent.sidebar_side.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
+            max_content_width: px(agent.max_content_width.unwrap()),
             flexible: agent.flexible.unwrap(),
             default_model: Some(agent.default_model.unwrap()),
             inline_assistant_model: agent.inline_assistant_model,
@@ -738,14 +732,6 @@ mod tests {
     use serde_json::json;
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
-
-    fn set_agent_v2_defaults(cx: &mut gpui::App) {
-        SettingsStore::update_global(cx, |store, cx| {
-            store.update_default_settings(cx, |defaults| {
-                PanelLayout::AGENT.write_to(defaults);
-            });
-        });
-    }
 
     #[test]
     fn test_compiled_regex_case_insensitive() {
@@ -1227,9 +1213,6 @@ mod tests {
         project::DisableAiSettings::register(cx);
         AgentSettings::register(cx);
 
-        // Test defaults are editor layout; switch to agent V2.
-        set_agent_v2_defaults(cx);
-
         // Should be Agent with an empty user layout (user hasn't customized).
         let layout = AgentSettings::get_layout(cx);
         let WindowLayout::Agent(Some(user_layout)) = layout else {
@@ -1255,7 +1238,6 @@ mod tests {
         assert_eq!(user_layout.outline_panel_dock, None);
         assert_eq!(user_layout.collaboration_panel_dock, None);
         assert_eq!(user_layout.git_panel_dock, None);
-        assert_eq!(user_layout.notification_panel_button, None);
 
         // User sets a combination that doesn't match either preset:
         // agent on the left but project panel also on the left.
@@ -1363,9 +1345,6 @@ mod tests {
             project::DisableAiSettings::register(cx);
             AgentSettings::register(cx);
 
-            // Apply the agent V2 defaults.
-            set_agent_v2_defaults(cx);
-
             // User has agent=left (matches preset) and project_panel=left (does not)
             SettingsStore::update_global(cx, |store, cx| {
                 store
@@ -1382,8 +1361,10 @@ mod tests {
             let layout = AgentSettings::get_layout(cx);
             assert!(matches!(layout, WindowLayout::Custom(_)));
 
-            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx);
-        });
+            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx)
+        })
+        .await
+        .ok();
 
         cx.run_until_parked();
 
@@ -1454,7 +1435,7 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Read back the file and apply it, then switch to agent V2 defaults.
+        // Read back the file and apply it.
         let written = fs.load(paths::settings_file().as_path()).await.unwrap();
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -1478,10 +1459,6 @@ mod tests {
                 Some(DockPosition::Left)
             );
             assert_eq!(user_layout.git_panel_dock, Some(DockPosition::Left));
-            assert_eq!(user_layout.notification_panel_button, Some(true));
-
-            // Now switch defaults to agent V2.
-            set_agent_v2_defaults(cx);
 
             // Even though defaults are now agent, the backfilled user settings
             // keep everything in the editor layout. The user's experience

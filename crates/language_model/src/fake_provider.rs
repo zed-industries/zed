@@ -5,11 +5,10 @@ use crate::{
     LanguageModelRequest, LanguageModelToolChoice,
 };
 use anyhow::anyhow;
-use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, stream::StreamExt};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
-use smol::stream::StreamExt;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering::SeqCst},

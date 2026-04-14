@@ -33,7 +33,7 @@ jobs:
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -43,8 +43,6 @@ jobs:
         SCCACHE_BUCKET: sccache-zed
     - name: steps::cargo_nextest
       run: cargo nextest run --workspace --no-fail-fast --no-tests=warn
-    - name: steps::cargo_build_visual_tests
-      run: cargo build -p zed --bin zed_visual_test_runner --features visual-tests
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config
@@ -83,7 +81,7 @@ jobs:
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 250
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: steps::setup_sccache
       run: ./script/setup-sccache
       env:
@@ -126,7 +124,7 @@ jobs:
       with:
         node-version: '20'
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than.ps1 250
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
       shell: pwsh
     - name: steps::setup_sccache
       run: ./script/setup-sccache.ps1
@@ -295,9 +293,7 @@ jobs:
     timeout-minutes: 60
   compliance_check:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
-    runs-on: namespace-profile-16x32-ubuntu-2204
-    env:
-      COMPLIANCE_FILE_PATH: compliance.md
+    runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -311,26 +307,30 @@ jobs:
         cache: rust
         path: ~/.rustup
     - id: run-compliance-check
-      name: release::compliance_check::run_compliance_check
-      run: cargo xtask compliance "$GITHUB_REF_NAME" --report-path "$COMPLIANCE_FILE_OUTPUT"
+      name: release::add_compliance_steps::run_compliance_check
+      run: |
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: release::compliance_check::send_compliance_slack_notification
+      continue-on-error: true
+    - name: '@actions/upload-artifact compliance-report-${{ github.ref_name }}.md'
+      if: always()
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: compliance-report-${{ github.ref_name }}.md
+        path: compliance-report-${{ github.ref_name }}.md
+        if-no-files-found: error
+    - name: send_compliance_slack_notification
       if: always()
       run: |
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
-            STATUS="✅ Compliance check passed for $GITHUB_REF_NAME"
+            STATUS="✅ Compliance check passed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
         else
-            STATUS="❌ Compliance check failed for $GITHUB_REF_NAME"
+            STATUS="❌ Preliminary compliance check failed (but this can still be fixed while the builds are running!) for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
         fi
-
-        REPORT_CONTENT=""
-        if [ -f "$COMPLIANCE_FILE_OUTPUT" ]; then
-            REPORT_CONTENT=$(cat "$REPORT_FILE")
-        fi
-
-        MESSAGE=$(printf "%s\n\n%s" "$STATUS" "$REPORT_CONTENT")
 
         curl -X POST -H 'Content-type: application/json' \
             --data "$(jq -n --arg text "$MESSAGE" '{"text": $text}')" \
@@ -338,6 +338,11 @@ jobs:
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
         COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
+        COMPLIANCE_TAG: ${{ github.ref_name }}
+        ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
+    outputs:
+      outcome: ${{ steps.run-compliance-check.outputs.outcome }}
+    timeout-minutes: 60
   bundle_linux_aarch64:
     needs:
     - run_tests_linux
@@ -447,7 +452,7 @@ jobs:
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac aarch64-apple-darwin
     - name: '@actions/upload-artifact Zed-aarch64.dmg'
@@ -492,7 +497,7 @@ jobs:
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
     - name: steps::clear_target_dir_if_large
-      run: ./script/clear-target-dir-if-larger-than 300
+      run: ./script/clear-target-dir-if-larger-than 350 200
     - name: run_bundling::bundle_mac::bundle_mac
       run: ./script/bundle-mac x86_64-apple-darwin
     - name: '@actions/upload-artifact Zed-x86_64.dmg'
@@ -638,6 +643,7 @@ jobs:
   validate_release_assets:
     needs:
     - upload_release_assets
+    - compliance_check
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: release::validate_release_assets
@@ -669,26 +675,30 @@ jobs:
       with:
         cache: rust
         path: ~/.rustup
-    - id: run-post-upload-compliance-check
-      name: release::validate_release_assets::run_post_upload_compliance_check
-      run: cargo xtask compliance "$GITHUB_REF_NAME" --report-path target/compliance-report
+    - id: run-compliance-check
+      name: release::add_compliance_steps::run_compliance_check
+      run: |
+        cargo xtask compliance "$GITHUB_REF_NAME" --report-path "compliance-report-${GITHUB_REF_NAME}.md"
       env:
         GITHUB_APP_ID: ${{ secrets.ZED_ZIPPY_APP_ID }}
         GITHUB_APP_KEY: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
-    - name: release::validate_release_assets::send_post_upload_compliance_notification
+    - name: '@actions/upload-artifact compliance-report-${{ github.ref_name }}.md'
       if: always()
+      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      with:
+        name: compliance-report-${{ github.ref_name }}.md
+        path: compliance-report-${{ github.ref_name }}.md
+        if-no-files-found: error
+        overwrite: true
+    - name: send_compliance_slack_notification
+      if: failure() || needs.compliance_check.outputs.outcome != 'success'
       run: |
-        if [ -z "$COMPLIANCE_OUTCOME" ] || [ "$COMPLIANCE_OUTCOME" == "skipped" ]; then
-            echo "Compliance check was skipped, not sending notification"
-            exit 0
-        fi
-
-        TAG="$GITHUB_REF_NAME"
-
         if [ "$COMPLIANCE_OUTCOME" == "success" ]; then
-            MESSAGE="✅ Post-upload compliance re-check passed for $TAG"
+            STATUS="✅ Compliance check passed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s" "$STATUS" "$ARTIFACT_URL")
         else
-            MESSAGE="❌ Post-upload compliance re-check failed for $TAG"
+            STATUS="❌ Compliance check failed for $COMPLIANCE_TAG"
+            MESSAGE=$(printf "%s\n\nReport: %s\nPRs needing review: %s" "$STATUS" "$ARTIFACT_URL" "https://github.com/zed-industries/zed/pulls?q=is%3Apr+is%3Aclosed+label%3A%22PR+state%3Aneeds+review%22")
         fi
 
         curl -X POST -H 'Content-type: application/json' \
@@ -696,7 +706,9 @@ jobs:
             "$SLACK_WEBHOOK"
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_WORKFLOW_FAILURES }}
-        COMPLIANCE_OUTCOME: ${{ steps.run-post-upload-compliance-check.outcome }}
+        COMPLIANCE_OUTCOME: ${{ steps.run-compliance-check.outcome }}
+        COMPLIANCE_TAG: ${{ github.ref_name }}
+        ARTIFACT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#artifacts
   auto_release_preview:
     needs:
     - validate_release_assets

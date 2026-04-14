@@ -28,7 +28,7 @@ use ui::{
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::util::parse_tool_arguments;
+use language_model::util::parse_tool_arguments;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";

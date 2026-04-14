@@ -155,9 +155,12 @@ pub struct SettingsStore {
 
     merged_settings: Rc<SettingsContent>,
 
+    last_user_settings_content: Option<String>,
+    last_global_settings_content: Option<String>,
     local_settings: BTreeMap<(WorktreeId, Arc<RelPath>), SettingsContent>,
     pub editorconfig_store: Entity<EditorconfigStore>,
 
+    _settings_files_watcher: Option<Task<()>>,
     _setting_file_updates: Task<()>,
     setting_file_updates_tx:
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
@@ -307,8 +310,11 @@ impl SettingsStore {
             language_semantic_token_rules: HashMap::default(),
 
             merged_settings: default_settings,
+            last_user_settings_content: None,
+            last_global_settings_content: None,
             local_settings: BTreeMap::default(),
             editorconfig_store: cx.new(|_| EditorconfigStore::default()),
+            _settings_files_watcher: None,
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(async move |cx| {
                 while let Some(setting_file_update) = setting_file_updates_rx.next().await {
@@ -336,6 +342,59 @@ impl SettingsStore {
         C: BorrowAppContext,
     {
         cx.update_global(f)
+    }
+
+    pub fn watch_settings_files(
+        &mut self,
+        fs: Arc<dyn Fs>,
+        cx: &mut App,
+        settings_changed: impl 'static + Fn(SettingsFile, SettingsParseResult, &mut App),
+    ) {
+        let (mut user_settings_file_rx, user_settings_watcher) = crate::watch_config_file(
+            cx.background_executor(),
+            fs.clone(),
+            paths::settings_file().clone(),
+        );
+        let (mut global_settings_file_rx, global_settings_watcher) = crate::watch_config_file(
+            cx.background_executor(),
+            fs,
+            paths::global_settings_file().clone(),
+        );
+
+        let global_content = cx
+            .foreground_executor()
+            .block_on(global_settings_file_rx.next())
+            .unwrap();
+        let user_content = cx
+            .foreground_executor()
+            .block_on(user_settings_file_rx.next())
+            .unwrap();
+
+        let result = self.set_user_settings(&user_content, cx);
+        settings_changed(SettingsFile::User, result, cx);
+        let result = self.set_global_settings(&global_content, cx);
+        settings_changed(SettingsFile::Global, result, cx);
+
+        self._settings_files_watcher = Some(cx.spawn(async move |cx| {
+            let _user_settings_watcher = user_settings_watcher;
+            let _global_settings_watcher = global_settings_watcher;
+            let mut settings_streams = futures::stream::select(
+                global_settings_file_rx.map(|content| (SettingsFile::Global, content)),
+                user_settings_file_rx.map(|content| (SettingsFile::User, content)),
+            );
+
+            while let Some((settings_file, content)) = settings_streams.next().await {
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    let result = match settings_file {
+                        SettingsFile::User => store.set_user_settings(&content, cx),
+                        SettingsFile::Global => store.set_global_settings(&content, cx),
+                        _ => return,
+                    };
+                    settings_changed(settings_file, result, cx);
+                    cx.refresh_windows();
+                });
+            }
+        }));
     }
 
     /// Add a new type of setting to the store.
@@ -498,7 +557,8 @@ impl SettingsStore {
                 async move {
                     let res = async move {
                         let old_text = Self::load_settings(&fs).await?;
-                        let new_text = update(old_text, cx)?;
+                        let new_text = update(old_text, cx.clone())?;
+
                         let settings_path = paths::settings_file().as_path();
                         if fs.is_file(settings_path).await {
                             let resolved_path =
@@ -509,25 +569,28 @@ impl SettingsStore {
                                     )
                                 })?;
 
-                            fs.atomic_write(resolved_path.clone(), new_text)
+                            fs.atomic_write(resolved_path.clone(), new_text.clone())
                                 .await
                                 .with_context(|| {
                                     format!("Failed to write settings to file {:?}", resolved_path)
                                 })?;
                         } else {
-                            fs.atomic_write(settings_path.to_path_buf(), new_text)
+                            fs.atomic_write(settings_path.to_path_buf(), new_text.clone())
                                 .await
                                 .with_context(|| {
                                     format!("Failed to write settings to file {:?}", settings_path)
                                 })?;
                         }
-                        anyhow::Ok(())
+
+                        cx.update_global(|store: &mut SettingsStore, cx| {
+                            store.set_user_settings(&new_text, cx).result().map(|_| ())
+                        })
                     }
                     .await;
 
                     let new_res = match &res {
                         Ok(_) => anyhow::Ok(()),
-                        Err(e) => Err(anyhow::anyhow!("Failed to write settings to file {:?}", e)),
+                        Err(e) => Err(anyhow::anyhow!("{:?}", e)),
                     };
 
                     _ = tx.send(new_res);
@@ -545,11 +608,19 @@ impl SettingsStore {
         fs: Arc<dyn Fs>,
         update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
     ) {
-        _ = self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
+        _ = self.update_settings_file_with_completion(fs, update);
+    }
+
+    pub fn update_settings_file_with_completion(
+        &self,
+        fs: Arc<dyn Fs>,
+        update: impl 'static + Send + FnOnce(&mut SettingsContent, &App),
+    ) -> oneshot::Receiver<Result<()>> {
+        self.update_settings_file_inner(fs, move |old_text: String, cx: AsyncApp| {
             cx.read_global(|store: &SettingsStore, cx| {
                 store.new_text_for_update(old_text, |content| update(content, cx))
             })
-        });
+        })
     }
 
     pub fn import_vscode_settings(
@@ -836,6 +907,14 @@ impl SettingsStore {
         user_settings_content: &str,
         cx: &mut App,
     ) -> SettingsParseResult {
+        if self.last_user_settings_content.as_deref() == Some(user_settings_content) {
+            return SettingsParseResult {
+                parse_status: ParseStatus::Unchanged,
+                migration_status: MigrationStatus::NotNeeded,
+            };
+        }
+        self.last_user_settings_content = Some(user_settings_content.to_string());
+
         let (settings, parse_result) = self.parse_and_migrate_zed_settings::<UserSettingsContent>(
             user_settings_content,
             SettingsFile::User,
@@ -855,6 +934,14 @@ impl SettingsStore {
         global_settings_content: &str,
         cx: &mut App,
     ) -> SettingsParseResult {
+        if self.last_global_settings_content.as_deref() == Some(global_settings_content) {
+            return SettingsParseResult {
+                parse_status: ParseStatus::Unchanged,
+                migration_status: MigrationStatus::NotNeeded,
+            };
+        }
+        self.last_global_settings_content = Some(global_settings_content.to_string());
+
         let (settings, parse_result) = self.parse_and_migrate_zed_settings::<SettingsContent>(
             global_settings_content,
             SettingsFile::Global,
@@ -973,6 +1060,7 @@ impl SettingsStore {
                     );
                 match parse_result.parse_status {
                     ParseStatus::Success => Ok(()),
+                    ParseStatus::Unchanged => Ok(()),
                     ParseStatus::Failed { error } => Err(InvalidSettingsError::LocalSettings {
                         path: directory_path.join(local_settings_file_relative_path()),
                         message: error,
@@ -1368,7 +1456,7 @@ impl SettingsParseResult {
         };
 
         let parse_result = match self.parse_status {
-            ParseStatus::Success => Ok(()),
+            ParseStatus::Success | ParseStatus::Unchanged => Ok(()),
             ParseStatus::Failed { error } => {
                 Err(anyhow::format_err!(error)).context("Failed to parse settings")
             }
@@ -1397,7 +1485,7 @@ impl SettingsParseResult {
     pub fn parse_error(&self) -> Option<String> {
         match &self.parse_status {
             ParseStatus::Failed { error } => Some(error.clone()),
-            ParseStatus::Success => None,
+            ParseStatus::Success | ParseStatus::Unchanged => None,
         }
     }
 }
@@ -1517,7 +1605,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
+    use std::{cell::RefCell, num::NonZeroU32};
 
     use crate::{
         ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
@@ -1525,6 +1613,7 @@ mod tests {
     };
 
     use super::*;
+    use fs::FakeFs;
     use unindent::Unindent;
     use util::rel_path::rel_path;
 
@@ -1587,6 +1676,90 @@ mod tests {
                 buffer_font_fallbacks: content.buffer_font_fallbacks.unwrap(),
             }
         }
+    }
+
+    #[gpui::test]
+    async fn test_update_settings_file_updates_store_before_watcher(cx: &mut gpui::TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            paths::settings_file(),
+            r#"{ "tabs": { "close_position": "right" } }"#.as_bytes().to_vec(),
+        )
+        .await;
+        fs.pause_events();
+        cx.run_until_parked();
+
+        let success = SettingsParseResult {
+            parse_status: ParseStatus::Success,
+            migration_status: MigrationStatus::NotNeeded,
+        };
+        let parse_results = Rc::new(RefCell::new(Vec::new()));
+
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &default_settings());
+            store.register_setting::<ItemSettings>();
+            store.watch_settings_files(fs.clone(), cx, {
+                let parse_results = parse_results.clone();
+                move |_, result, _| {
+                    parse_results.borrow_mut().push(result);
+                }
+            });
+            cx.set_global(store);
+        });
+
+        // Calling watch_settings_files loads user and global settings.
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[success.clone(), success.clone()]
+        );
+        cx.update(|cx| {
+            assert_eq!(
+                cx.global::<SettingsStore>()
+                    .get::<ItemSettings>(None)
+                    .close_position,
+                ClosePosition::Right
+            );
+        });
+
+        // Updating the settings file returns a channel that resolves once the settings are loaded.
+        let rx = cx.update(|cx| {
+            cx.global::<SettingsStore>()
+                .update_settings_file_with_completion(fs.clone(), move |settings, _| {
+                    settings.tabs.get_or_insert_default().close_position =
+                        Some(ClosePosition::Left);
+                })
+        });
+        assert!(rx.await.unwrap().is_ok());
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[success.clone(), success.clone()]
+        );
+        cx.update(|cx| {
+            assert_eq!(
+                cx.global::<SettingsStore>()
+                    .get::<ItemSettings>(None)
+                    .close_position,
+                ClosePosition::Left
+            );
+        });
+
+        // When the FS event occurs, the settings are recognized as unchanged.
+        fs.flush_events(100);
+        cx.run_until_parked();
+        assert_eq!(
+            parse_results.borrow().as_slice(),
+            &[
+                success.clone(),
+                success.clone(),
+                SettingsParseResult {
+                    parse_status: ParseStatus::Unchanged,
+                    migration_status: MigrationStatus::NotNeeded
+                }
+            ]
+        );
     }
 
     #[gpui::test]
@@ -2027,6 +2200,30 @@ mod tests {
             cx,
         );
 
+        // explorer sort settings
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "explorer.sortOrder": "mixed",
+              "explorer.sortOrderLexicographicOptions": "lower"
+            }"#
+            .unindent(),
+            r#"{
+              "project_panel": {
+                "sort_mode": "mixed",
+                "sort_order": "lower"
+              },
+              "base_keymap": "VSCode"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
         // font-family
         check_vscode_import(
             &mut store,
@@ -2042,6 +2239,28 @@ mod tests {
                 "Courier New"
               ],
               "buffer_font_family": "Cascadia Code"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // hover sticky settings
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{
+              "editor.hover.sticky": false,
+              "editor.hover.hidingDelay": 500
+            }"#
+            .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "hover_popover_hiding_delay": 500,
+              "hover_popover_sticky": false
             }
             "#
             .unindent(),

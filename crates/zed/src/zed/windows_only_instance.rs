@@ -159,6 +159,7 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
             wait: false,
             wsl: args.wsl.clone(),
             open_new_workspace: None,
+            force_existing_window: false,
             reuse: false,
             env: None,
             user_data_dir: args.user_data_dir.clone(),
@@ -185,6 +186,11 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
                         CliResponse::Exit { status } => {
                             exit_status.lock().replace(status);
                             return Ok(());
+                        }
+                        CliResponse::PromptOpenBehavior => {
+                            tx.send(CliRequest::SetOpenBehavior {
+                                behavior: cli::CliOpenBehavior::ExistingWindow,
+                            })?;
                         }
                     }
                 }
