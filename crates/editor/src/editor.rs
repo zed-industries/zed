@@ -13316,7 +13316,8 @@ impl Editor {
                             if prev_line.trim_start().starts_with('}') ||
                             prev_line.trim_start().starts_with("end") ||
                             prev_line.trim_start().starts_with("]") ||
-                            prev_line.trim_start().starts_with(")") {
+                            prev_line.trim_start().starts_with(")") ||
+                            prev_line.trim_start().starts_with("</") {
                                 if settings.hard_tabs {
                                     indent_amount += 1;
                                 } else {
