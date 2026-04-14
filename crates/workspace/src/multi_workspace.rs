@@ -728,7 +728,7 @@ impl MultiWorkspace {
         Self::subscribe_to_workspace(workspace, window, cx);
         let weak_self = cx.weak_entity();
         workspace.update(cx, |workspace, cx| {
-            workspace.set_multi_workspace(weak_self.clone(), cx);
+            workspace.set_multi_workspace(weak_self, cx);
         });
 
         let entity = cx.entity();
