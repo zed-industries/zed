@@ -147,7 +147,7 @@ impl ThreadsArchiveView {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search archive…", window, cx);
+            editor.set_placeholder_text("Search threads…", window, cx);
             editor
         });
 
@@ -241,7 +241,7 @@ impl ThreadsArchiveView {
     fn update_items(&mut self, cx: &mut Context<Self>) {
         let sessions = ThreadMetadataStore::global(cx)
             .read(cx)
-            .archived_entries()
+            .entries()
             .sorted_by_cached_key(|t| t.created_at.unwrap_or(t.updated_at))
             .rev()
             .cloned()
@@ -781,7 +781,7 @@ impl Render for ThreadsArchiveView {
             let message = if has_query {
                 "No threads match your search."
             } else {
-                "No archived or hidden threads yet."
+                "No threads yet."
             };
 
             v_flex()
