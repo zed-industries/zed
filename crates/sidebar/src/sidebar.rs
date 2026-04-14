@@ -1275,28 +1275,8 @@ impl Sidebar {
                 }
 
                 threads.sort_by(|a, b| {
-                    let a_time = a
-                        .metadata
-                        .session_id
-                        .as_ref()
-                        .and_then(|_sid| {
-                            self.thread_last_message_sent_or_queued
-                                .get(&a.metadata.thread_id)
-                        })
-                        .copied()
-                        .or(a.metadata.created_at)
-                        .or(Some(a.metadata.updated_at));
-                    let b_time = b
-                        .metadata
-                        .session_id
-                        .as_ref()
-                        .and_then(|_sid| {
-                            self.thread_last_message_sent_or_queued
-                                .get(&b.metadata.thread_id)
-                        })
-                        .copied()
-                        .or(b.metadata.created_at)
-                        .or(Some(b.metadata.updated_at));
+                    let a_time = self.display_time(&a.metadata);
+                    let b_time = self.display_time(&b.metadata);
                     b_time.cmp(&a_time)
                 });
             } else {
@@ -3475,6 +3455,13 @@ impl Sidebar {
             .insert(*thread_id, Utc::now());
     }
 
+    fn display_time(&self, metadata: &ThreadMetadata) -> DateTime<Utc> {
+        self.thread_last_message_sent_or_queued
+            .get(&metadata.thread_id)
+            .copied()
+            .unwrap_or(metadata.updated_at)
+    }
+
     fn mru_threads_for_switcher(&self, cx: &App) -> Vec<ThreadSwitcherEntry> {
         let mut current_header_label: Option<SharedString> = None;
         let mut current_header_key: Option<ProjectGroupKey> = None;
@@ -3505,14 +3492,9 @@ impl Sidebar {
                         }
                     }?;
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
-                    let timestamp: SharedString = format_history_entry_timestamp(
-                        self.thread_last_message_sent_or_queued
-                            .get(&thread.metadata.thread_id)
-                            .copied()
-                            .or(thread.metadata.created_at)
-                            .unwrap_or(thread.metadata.updated_at),
-                    )
-                    .into();
+                    let timestamp: SharedString =
+                        format_history_entry_timestamp(self.display_time(&thread.metadata))
+                            .into();
                     Some(ThreadSwitcherEntry {
                         session_id,
                         title: thread.metadata.display_title(),
@@ -3563,9 +3545,7 @@ impl Sidebar {
                         (Some(_), None) => std::cmp::Ordering::Less,
                         (None, Some(_)) => std::cmp::Ordering::Greater,
                         (None, None) => {
-                            let a_time = a.metadata.created_at.or(Some(a.metadata.updated_at));
-                            let b_time = b.metadata.created_at.or(Some(b.metadata.updated_at));
-                            b_time.cmp(&a_time)
+                            b.metadata.updated_at.cmp(&a.metadata.updated_at)
                         }
                     }
                 }
@@ -3789,13 +3769,7 @@ impl Sidebar {
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
 
-        let timestamp = format_history_entry_timestamp(
-            self.thread_last_message_sent_or_queued
-                .get(&thread.metadata.thread_id)
-                .copied()
-                .or(thread.metadata.created_at)
-                .unwrap_or(thread.metadata.updated_at),
-        );
+        let timestamp = format_history_entry_timestamp(self.display_time(&thread.metadata));
 
         let is_remote = thread.workspace.is_remote(cx);
 
