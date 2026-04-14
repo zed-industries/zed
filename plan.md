@@ -29,13 +29,12 @@ These were completed in the previous PR and are now merged:
    - Tests covering SSH/WSL/Docker field selection and None-vs-Some matching.
    - Re-exported from `crates/remote/src/remote.rs` and `crates/workspace/src/workspace.rs`.
 2. Refactored workspace persistence `get_or_create_remote_connection_query` to normalize via `RemoteConnectionIdentity` instead of raw `RemoteConnectionOptions` field access.
+3. Made `ThreadMetadataStore` lookups host-aware in `crates/agent_ui/src/thread_metadata_store.rs`.
+   - `entries_for_path(...)` and `entries_for_main_worktree_path(...)` now accept `Option<&RemoteConnectionOptions>` and post-filter via `same_remote_connection_identity`.
+   - All callers in `sidebar.rs` pass `group_key.host()` or `metadata.remote_connection`; test callers pass `None` for local threads.
 
 ### TODO
 
-3. Make `ThreadMetadataStore` lookups host-aware in `crates/agent_ui/src/thread_metadata_store.rs`.
-   - `entries_for_path(...)` and `entries_for_main_worktree_path(...)` currently match by `PathList` only.
-   - Need to filter by `(PathList, normalized remote identity)` to prevent cross-host collisions.
-   - Options: add host parameter to existing methods, or add host-aware variants, or restructure the in-memory index key.
 4. Filter sidebar threads by matching remote connection in `crates/sidebar/src/sidebar.rs`.
    - `rebuild_contents(...)` calls `entries_for_main_worktree_path(group_key.path_list())` and `entries_for_path(group_key.path_list())` without host info.
    - Pass the current `ProjectGroupKey`'s host when loading main-worktree and linked-worktree thread rows.
@@ -87,7 +86,7 @@ These are not required for this PR but should reuse the normalized remote identi
 - [x] Added one-time backfill for old native thread metadata rows (on main)
 - [x] Added normalized remote identity helper (`RemoteConnectionIdentity`)
 - [x] Refactored workspace persistence to use normalized identity
-- [ ] Make `ThreadMetadataStore` lookups host-aware
+- [x] Make `ThreadMetadataStore` lookups host-aware
 - [ ] Filter sidebar threads by matching remote connection in `rebuild_contents`
 - [ ] Use remote host in sidebar workspace lookup / activation flows
 - [ ] Make archive/worktree-reference matching host-aware

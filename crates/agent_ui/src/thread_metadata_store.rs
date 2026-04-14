@@ -20,7 +20,7 @@ use futures::{FutureExt, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
 pub use project::WorktreePaths;
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString};
 use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
@@ -482,32 +482,50 @@ impl ThreadMetadataStore {
         self.entries().filter(|t| t.archived)
     }
 
-    /// Returns all threads for the given path list, excluding archived threads.
-    pub fn entries_for_path(
-        &self,
+    /// Returns all threads for the given path list and remote connection,
+    /// excluding archived threads.
+    ///
+    /// When `remote_connection` is `Some`, only threads whose persisted
+    /// `remote_connection` matches by normalized identity are returned.
+    /// When `None`, only local (non-remote) threads are returned.
+    pub fn entries_for_path<'a>(
+        &'a self,
         path_list: &PathList,
-    ) -> impl Iterator<Item = &ThreadMetadata> + '_ {
+        remote_connection: Option<&'a RemoteConnectionOptions>,
+    ) -> impl Iterator<Item = &'a ThreadMetadata> + 'a {
         self.threads_by_paths
             .get(path_list)
             .into_iter()
             .flatten()
             .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
+            .filter(move |s| {
+                same_remote_connection_identity(s.remote_connection.as_ref(), remote_connection)
+            })
     }
 
-    /// Returns threads whose `main_worktree_paths` matches the given path list,
-    /// excluding archived threads. This finds threads that were opened in a
-    /// linked worktree but are associated with the given main worktree.
-    pub fn entries_for_main_worktree_path(
-        &self,
+    /// Returns threads whose `main_worktree_paths` matches the given path list
+    /// and remote connection, excluding archived threads. This finds threads
+    /// that were opened in a linked worktree but are associated with the given
+    /// main worktree.
+    ///
+    /// When `remote_connection` is `Some`, only threads whose persisted
+    /// `remote_connection` matches by normalized identity are returned.
+    /// When `None`, only local (non-remote) threads are returned.
+    pub fn entries_for_main_worktree_path<'a>(
+        &'a self,
         path_list: &PathList,
-    ) -> impl Iterator<Item = &ThreadMetadata> + '_ {
+        remote_connection: Option<&'a RemoteConnectionOptions>,
+    ) -> impl Iterator<Item = &'a ThreadMetadata> + 'a {
         self.threads_by_main_paths
             .get(path_list)
             .into_iter()
             .flatten()
             .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
+            .filter(move |s| {
+                same_remote_connection_identity(s.remote_connection.as_ref(), remote_connection)
+            })
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
@@ -1639,13 +1657,13 @@ mod tests {
             );
 
             let first_path_entries: Vec<_> = store
-                .entries_for_path(&first_paths)
+                .entries_for_path(&first_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(first_path_entries, vec!["session-1"]);
 
             let second_path_entries: Vec<_> = store
-                .entries_for_path(&second_paths)
+                .entries_for_path(&second_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(second_path_entries, vec!["session-2"]);
@@ -1692,13 +1710,13 @@ mod tests {
             let store = store.read(cx);
 
             let first_path_entries: Vec<_> = store
-                .entries_for_path(&first_paths)
+                .entries_for_path(&first_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(first_path_entries, vec!["session-1"]);
 
             let second_path_entries: Vec<_> = store
-                .entries_for_path(&second_paths)
+                .entries_for_path(&second_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(second_path_entries, vec!["session-2"]);
@@ -1742,13 +1760,13 @@ mod tests {
             );
 
             let first_path_entries: Vec<_> = store
-                .entries_for_path(&first_paths)
+                .entries_for_path(&first_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert!(first_path_entries.is_empty());
 
             let second_path_entries: Vec<_> = store
-                .entries_for_path(&second_paths)
+                .entries_for_path(&second_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(second_path_entries.len(), 2);
@@ -1772,7 +1790,7 @@ mod tests {
             assert_eq!(store.entry_ids().count(), 1);
 
             let second_path_entries: Vec<_> = store
-                .entries_for_path(&second_paths)
+                .entries_for_path(&second_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(second_path_entries, vec!["session-1"]);
@@ -2434,7 +2452,7 @@ mod tests {
             let store = store.read(cx);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(path_entries, vec!["session-1"]);
@@ -2457,7 +2475,7 @@ mod tests {
             let store = store.read(cx);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert!(path_entries.is_empty());
@@ -2485,7 +2503,7 @@ mod tests {
             let store = store.read(cx);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(path_entries, vec!["session-1"]);
@@ -2534,7 +2552,7 @@ mod tests {
             let store = store.read(cx);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(path_entries, vec!["session-1"]);
@@ -2546,6 +2564,116 @@ mod tests {
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(archived, vec!["session-2"]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_entries_filter_by_remote_connection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let main_paths = PathList::new(&[Path::new("/project-a")]);
+        let linked_paths = PathList::new(&[Path::new("/wt-feature")]);
+        let now = Utc::now();
+
+        let remote_a = RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 1 });
+        let remote_b = RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 2 });
+
+        // Three threads at the same folder_paths but different hosts.
+        let local_thread = make_metadata("local-session", "Local Thread", now, main_paths.clone());
+
+        let mut remote_a_thread = make_metadata(
+            "remote-a-session",
+            "Remote A Thread",
+            now - chrono::Duration::seconds(1),
+            main_paths.clone(),
+        );
+        remote_a_thread.remote_connection = Some(remote_a.clone());
+
+        let mut remote_b_thread = make_metadata(
+            "remote-b-session",
+            "Remote B Thread",
+            now - chrono::Duration::seconds(2),
+            main_paths.clone(),
+        );
+        remote_b_thread.remote_connection = Some(remote_b.clone());
+
+        let linked_worktree_paths =
+            WorktreePaths::from_path_lists(main_paths.clone(), linked_paths.clone()).unwrap();
+
+        let local_linked_thread = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            archived: false,
+            session_id: Some(acp::SessionId::new("local-linked")),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Local Linked".into()),
+            updated_at: now,
+            created_at: Some(now),
+            worktree_paths: linked_worktree_paths.clone(),
+            remote_connection: None,
+        };
+
+        let remote_linked_thread = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            archived: false,
+            session_id: Some(acp::SessionId::new("remote-linked")),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Remote Linked".into()),
+            updated_at: now - chrono::Duration::seconds(1),
+            created_at: Some(now - chrono::Duration::seconds(1)),
+            worktree_paths: linked_worktree_paths.clone(),
+            remote_connection: Some(remote_a.clone()),
+        };
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(local_thread, cx);
+                store.save(remote_a_thread, cx);
+                store.save(remote_b_thread, cx);
+                store.save(local_linked_thread, cx);
+                store.save(remote_linked_thread, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let local_entries: Vec<_> = store
+                .entries_for_path(&main_paths, None)
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            assert_eq!(local_entries, vec!["local-session"]);
+
+            let remote_a_entries: Vec<_> = store
+                .entries_for_path(&main_paths, Some(&remote_a))
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            assert_eq!(remote_a_entries, vec!["remote-a-session"]);
+
+            let remote_b_entries: Vec<_> = store
+                .entries_for_path(&main_paths, Some(&remote_b))
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            assert_eq!(remote_b_entries, vec!["remote-b-session"]);
+
+            let mut local_main_entries: Vec<_> = store
+                .entries_for_main_worktree_path(&main_paths, None)
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            local_main_entries.sort();
+            assert_eq!(local_main_entries, vec!["local-linked", "local-session"]);
+
+            let mut remote_main_entries: Vec<_> = store
+                .entries_for_main_worktree_path(&main_paths, Some(&remote_a))
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            remote_main_entries.sort();
+            assert_eq!(
+                remote_main_entries,
+                vec!["remote-a-session", "remote-linked"]
+            );
         });
     }
 
@@ -2650,7 +2778,7 @@ mod tests {
             assert!(thread.archived);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert!(path_entries.is_empty());

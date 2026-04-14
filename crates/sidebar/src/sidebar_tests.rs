@@ -8495,7 +8495,9 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
     cx.update(|_window, cx| {
         let store = ThreadMetadataStore::global(cx).read(cx);
         assert_eq!(
-            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            store
+                .entries_for_main_worktree_path(&old_key_paths, None)
+                .count(),
             2,
             "should have 2 historical threads under old key before worktree add"
         );
@@ -8518,12 +8520,16 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
     cx.update(|_window, cx| {
         let store = ThreadMetadataStore::global(cx).read(cx);
         assert_eq!(
-            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            store
+                .entries_for_main_worktree_path(&old_key_paths, None)
+                .count(),
             0,
             "should have 0 historical threads under old key after worktree add"
         );
         assert_eq!(
-            store.entries_for_main_worktree_path(&new_key_paths).count(),
+            store
+                .entries_for_main_worktree_path(&new_key_paths, None)
+                .count(),
             2,
             "should have 2 historical threads under new key after worktree add"
         );
@@ -8558,12 +8564,16 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
     cx.update(|_window, cx| {
         let store = ThreadMetadataStore::global(cx).read(cx);
         assert_eq!(
-            store.entries_for_main_worktree_path(&new_key_paths).count(),
+            store
+                .entries_for_main_worktree_path(&new_key_paths, None)
+                .count(),
             0,
             "should have 0 historical threads under new key after worktree remove"
         );
         assert_eq!(
-            store.entries_for_main_worktree_path(&old_key_paths).count(),
+            store
+                .entries_for_main_worktree_path(&old_key_paths, None)
+                .count(),
             2,
             "should have 2 historical threads under old key after worktree remove"
         );
@@ -8661,12 +8671,12 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
     cx.update(|_window, cx| {
         let store = ThreadMetadataStore::global(cx).read(cx);
         assert_eq!(
-            store.entries_for_path(&folder_paths_main).count(),
+            store.entries_for_path(&folder_paths_main, None).count(),
             1,
             "one thread under [/project]"
         );
         assert_eq!(
-            store.entries_for_path(&folder_paths_wt).count(),
+            store.entries_for_path(&folder_paths_wt, None).count(),
             1,
             "one thread under [/wt-feature]"
         );
@@ -8688,17 +8698,17 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
     cx.update(|_window, cx| {
         let store = ThreadMetadataStore::global(cx).read(cx);
         assert_eq!(
-            store.entries_for_path(&folder_paths_main).count(),
+            store.entries_for_path(&folder_paths_main, None).count(),
             0,
             "main thread should no longer be under old folder paths [/project]"
         );
         assert_eq!(
-            store.entries_for_path(&folder_paths_main_b).count(),
+            store.entries_for_path(&folder_paths_main_b, None).count(),
             1,
             "main thread should now be under [/project, /project-b]"
         );
         assert_eq!(
-            store.entries_for_path(&folder_paths_wt).count(),
+            store.entries_for_path(&folder_paths_wt, None).count(),
             1,
             "worktree thread should remain unchanged under [/wt-feature]"
         );
@@ -9397,13 +9407,13 @@ mod property_test {
             // panel's draft_thread_ids, not by session_id matching.
             for metadata in thread_store
                 .read(cx)
-                .entries_for_main_worktree_path(&path_list)
+                .entries_for_main_worktree_path(&path_list, None)
             {
                 if let Some(sid) = metadata.session_id.clone() {
                     metadata_thread_ids.insert(sid);
                 }
             }
-            for metadata in thread_store.read(cx).entries_for_path(&path_list) {
+            for metadata in thread_store.read(cx).entries_for_path(&path_list, None) {
                 if let Some(sid) = metadata.session_id.clone() {
                     metadata_thread_ids.insert(sid);
                 }
@@ -9423,7 +9433,7 @@ mod property_test {
             for workspace in group_workspaces {
                 let ws_path_list = workspace_path_list(workspace, cx);
                 if ws_path_list != path_list {
-                    for metadata in thread_store.read(cx).entries_for_path(&ws_path_list) {
+                    for metadata in thread_store.read(cx).entries_for_path(&ws_path_list, None) {
                         if let Some(sid) = metadata.session_id.clone() {
                             metadata_thread_ids.insert(sid);
                         }
@@ -9444,7 +9454,9 @@ mod property_test {
                         }
                         let worktree_path_list =
                             PathList::new(std::slice::from_ref(&linked_worktree.path));
-                        for metadata in thread_store.read(cx).entries_for_path(&worktree_path_list)
+                        for metadata in thread_store
+                            .read(cx)
+                            .entries_for_path(&worktree_path_list, None)
                         {
                             if let Some(sid) = metadata.session_id.clone() {
                                 metadata_thread_ids.insert(sid);
