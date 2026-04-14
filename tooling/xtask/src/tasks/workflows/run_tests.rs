@@ -57,6 +57,7 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests.guard(run_platform_tests(Platform::Mac)),
         should_run_tests.guard(doctests()),
         should_run_tests.guard(check_workspace_binaries()),
+        should_run_tests.guard(build_visual_tests_binary()),
         should_run_tests.guard(check_wasm()),
         should_run_tests.guard(check_dependencies()), // could be more specific here?
         should_check_docs.guard(check_docs()),
@@ -202,7 +203,7 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
-            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "storybook" "assets" | sort -u)
+            FILE_CHANGED_PKGS=$(printf '%s\n%s\n%s' "$FILE_CHANGED_PKGS" "settings" "assets" | sort -u)
           fi
 
           # Combine all changed packages
@@ -407,21 +408,15 @@ fn check_style() -> NamedJob {
 fn check_dependencies() -> NamedJob {
     fn install_cargo_machete() -> Step<Use> {
         named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
+            "taiki-e",
+            "install-action",
+            "02cc5f8ca9f2301050c0c099055816a41ee05507",
         )
-        .add_with(("command", "install"))
-        .add_with(("args", "cargo-machete@0.7.0"))
+        .add_with(("tool", "cargo-machete@0.7.0"))
     }
 
-    fn run_cargo_machete() -> Step<Use> {
-        named::uses(
-            "clechasseur",
-            "rs-cargo",
-            "8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386", // v2
-        )
-        .add_with(("command", "machete"))
+    fn run_cargo_machete() -> Step<Run> {
+        named::bash("cargo machete")
     }
 
     fn check_cargo_lock() -> Step<Run> {
@@ -596,12 +591,25 @@ fn run_platform_tests_impl(platform: Platform, filter_packages: bool) -> NamedJo
             .when(!filter_packages, |job| {
                 job.add_step(steps::cargo_nextest(platform))
             })
-            .when(platform == Platform::Mac, |job| {
-                job.add_step(steps::cargo_build_visual_tests())
-            })
             .add_step(steps::show_sccache_stats(platform))
             .add_step(steps::cleanup_cargo_config(platform)),
     }
+}
+
+fn build_visual_tests_binary() -> NamedJob {
+    pub fn cargo_build_visual_tests() -> Step<Run> {
+        named::bash("cargo build -p zed --bin zed_visual_test_runner --features visual-tests")
+    }
+
+    named::job(
+        Job::default()
+            .runs_on(runners::MAC_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Mac))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(cargo_build_visual_tests())
+            .add_step(steps::cleanup_cargo_config(Platform::Mac)),
+    )
 }
 
 pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {

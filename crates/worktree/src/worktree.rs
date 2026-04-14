@@ -8,7 +8,8 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
 use fs::{
-    Fs, MTime, PathEvent, PathEventKind, RemoveOptions, Watcher, copy_recursive, read_dir_items,
+    Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashedEntry, Watcher, copy_recursive,
+    read_dir_items,
 };
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -68,9 +69,9 @@ use std::{
 use sum_tree::{Bias, Dimensions, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    ResultExt, debug_panic, maybe,
+    ResultExt, maybe,
     paths::{PathMatcher, PathStyle, SanitizedPath, home_dir},
-    rel_path::RelPath,
+    rel_path::{RelPath, RelPathBuf},
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -164,6 +165,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     visible: bool,
     disconnected: bool,
+    received_initial_update: bool,
 }
 
 #[derive(Clone)]
@@ -369,7 +371,9 @@ struct UpdateObservationState {
 pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
-    UpdatedRootRepoCommonDir,
+    UpdatedRootRepoCommonDir {
+        old: Option<Arc<SanitizedPath>>,
+    },
     DeletedEntry(ProjectEntryId),
     /// The worktree root itself has been deleted (for single-file worktrees)
     Deleted,
@@ -510,13 +514,17 @@ impl Worktree {
         cx: &mut App,
     ) -> Entity<Self> {
         cx.new(|cx: &mut Context<Self>| {
-            let snapshot = Snapshot::new(
+            let mut snapshot = Snapshot::new(
                 WorktreeId::from_proto(worktree.id),
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
                 Path::new(&worktree.abs_path).into(),
                 path_style,
             );
+
+            snapshot.root_repo_common_dir = worktree
+                .root_repo_common_dir
+                .map(|p| SanitizedPath::new_arc(Path::new(&p)));
 
             let background_snapshot = Arc::new(Mutex::new((
                 snapshot.clone(),
@@ -545,6 +553,7 @@ impl Worktree {
                 snapshot_subscriptions: Default::default(),
                 visible: worktree.visible,
                 disconnected: false,
+                received_initial_update: false,
             };
 
             // Apply updates to a separate snapshot in a background task, then
@@ -569,9 +578,16 @@ impl Worktree {
             cx.spawn(async move |this, cx| {
                 while (snapshot_updated_rx.recv().await).is_some() {
                     this.update(cx, |this, cx| {
-                        let mut entries_changed = false;
                         let this = this.as_remote_mut().unwrap();
+
+                        // The watch channel delivers an initial signal before
+                        // any real updates arrive. Skip these spurious wakeups.
+                        if this.background_snapshot.lock().1.is_empty() {
+                            return;
+                        }
+
                         let old_root_repo_common_dir = this.snapshot.root_repo_common_dir.clone();
+                        let mut entries_changed = false;
                         {
                             let mut lock = this.background_snapshot.lock();
                             this.snapshot = lock.0.clone();
@@ -587,8 +603,14 @@ impl Worktree {
                         if entries_changed {
                             cx.emit(Event::UpdatedEntries(Arc::default()));
                         }
-                        if this.snapshot.root_repo_common_dir != old_root_repo_common_dir {
-                            cx.emit(Event::UpdatedRootRepoCommonDir);
+                        let is_first_update = !this.received_initial_update;
+                        this.received_initial_update = true;
+                        if this.snapshot.root_repo_common_dir != old_root_repo_common_dir
+                            || (is_first_update && this.snapshot.root_repo_common_dir.is_none())
+                        {
+                            cx.emit(Event::UpdatedRootRepoCommonDir {
+                                old: old_root_repo_common_dir,
+                            });
                         }
                         cx.notify();
                         while let Some((scan_id, _)) = this.snapshot_subscriptions.front() {
@@ -676,6 +698,9 @@ impl Worktree {
             root_name: self.root_name().to_proto(),
             visible: self.is_visible(),
             abs_path: self.abs_path().to_string_lossy().into_owned(),
+            root_repo_common_dir: self
+                .root_repo_common_dir()
+                .map(|p| p.to_string_lossy().into_owned()),
         }
     }
 
@@ -841,7 +866,7 @@ impl Worktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &mut Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let task = match self {
             Worktree::Local(this) => this.delete_entry(entry_id, trash, cx),
             Worktree::Remote(this) => this.delete_entry(entry_id, trash, cx),
@@ -861,6 +886,20 @@ impl Worktree {
             cx.emit(Event::DeletedEntry(id));
         }
         Some(task)
+    }
+
+    pub async fn restore_entry(
+        trash_entry: TrashedEntry,
+        worktree: Entity<Self>,
+        cx: &mut AsyncApp,
+    ) -> Result<RelPathBuf> {
+        let is_local = worktree.read_with(cx, |this, _| this.is_local());
+        if is_local {
+            LocalWorktree::restore_entry(trash_entry, worktree, cx).await
+        } else {
+            // TODO(dino): Add support for restoring entries in remote worktrees.
+            Err(anyhow!("Unsupported"))
+        }
     }
 
     fn get_children_ids_recursive(&self, path: &RelPath, ids: &mut Vec<ProjectEntryId>) {
@@ -1199,8 +1238,9 @@ impl LocalWorktree {
             .local_repo_for_work_directory_path(RelPath::empty())
             .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
 
-        let root_repo_common_dir_changed =
-            self.snapshot.root_repo_common_dir != new_snapshot.root_repo_common_dir;
+        let old_root_repo_common_dir = (self.snapshot.root_repo_common_dir
+            != new_snapshot.root_repo_common_dir)
+            .then(|| self.snapshot.root_repo_common_dir.clone());
         self.snapshot = new_snapshot;
 
         if let Some(share) = self.update_observer.as_mut() {
@@ -1216,8 +1256,8 @@ impl LocalWorktree {
         if !repo_changes.is_empty() {
             cx.emit(Event::UpdatedGitRepositories(repo_changes));
         }
-        if root_repo_common_dir_changed {
-            cx.emit(Event::UpdatedRootRepoCommonDir);
+        if let Some(old) = old_root_repo_common_dir {
+            cx.emit(Event::UpdatedRootRepoCommonDir { old });
         }
 
         while let Some((scan_id, _)) = self.snapshot_subscriptions.front() {
@@ -1678,42 +1718,46 @@ impl LocalWorktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let entry = self.entry_for_id(entry_id)?.clone();
         let abs_path = self.absolutize(&entry.path);
         let fs = self.fs.clone();
 
         let delete = cx.background_spawn(async move {
-            if entry.is_file() {
-                if trash {
-                    fs.trash_file(&abs_path, Default::default()).await?;
-                } else {
+            let trashed_entry = match (entry.is_file(), trash) {
+                (true, true) => Some(fs.trash(&abs_path, Default::default()).await?),
+                (false, true) => Some(
+                    fs.trash(
+                        &abs_path,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: false,
+                        },
+                    )
+                    .await?,
+                ),
+                (true, false) => {
                     fs.remove_file(&abs_path, Default::default()).await?;
+                    None
                 }
-            } else if trash {
-                fs.trash_dir(
-                    &abs_path,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: false,
-                    },
-                )
-                .await?;
-            } else {
-                fs.remove_dir(
-                    &abs_path,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: false,
-                    },
-                )
-                .await?;
-            }
-            anyhow::Ok(entry.path)
+                (false, false) => {
+                    fs.remove_dir(
+                        &abs_path,
+                        RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: false,
+                        },
+                    )
+                    .await?;
+                    None
+                }
+            };
+
+            anyhow::Ok((trashed_entry, entry.path))
         });
 
         Some(cx.spawn(async move |this, cx| {
-            let path = delete.await?;
+            let (trashed_entry, path) = delete.await?;
             this.update(cx, |this, _| {
                 this.as_local_mut()
                     .unwrap()
@@ -1721,8 +1765,37 @@ impl LocalWorktree {
             })?
             .recv()
             .await;
-            Ok(())
+
+            Ok(trashed_entry)
         }))
+    }
+
+    pub async fn restore_entry(
+        trash_entry: TrashedEntry,
+        this: Entity<Worktree>,
+        cx: &mut AsyncApp,
+    ) -> Result<RelPathBuf> {
+        let Some((fs, worktree_abs_path, path_style)) = this.read_with(cx, |this, _cx| {
+            let local_worktree = match this {
+                Worktree::Local(local_worktree) => local_worktree,
+                Worktree::Remote(_) => return None,
+            };
+
+            let fs = local_worktree.fs.clone();
+            let path_style = local_worktree.path_style();
+            Some((fs, Arc::clone(local_worktree.abs_path()), path_style))
+        }) else {
+            return Err(anyhow!("Localworktree should not change into a remote one"));
+        };
+
+        let path_buf = fs.restore(trash_entry).await?;
+        let path = path_buf
+            .strip_prefix(worktree_abs_path)
+            .context("Could not strip prefix")?;
+        let path = RelPath::new(&path, path_style)?;
+        let path = path.into_owned();
+
+        Ok(path)
     }
 
     pub fn copy_external_entries(
@@ -2092,7 +2165,7 @@ impl RemoteWorktree {
         entry_id: ProjectEntryId,
         trash: bool,
         cx: &Context<Worktree>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Option<Task<Result<Option<TrashedEntry>>>> {
         let response = self.client.request(proto::DeleteProjectEntry {
             project_id: self.project_id,
             entry_id: entry_id.to_proto(),
@@ -2112,6 +2185,12 @@ impl RemoteWorktree {
                 let snapshot = &mut this.background_snapshot.lock().0;
                 snapshot.delete_entry(entry_id);
                 this.snapshot = snapshot.clone();
+
+                // TODO: How can we actually track the deleted entry when
+                // working in remote? We likely only need to keep this
+                // information on the remote side in order to support restoring
+                // the trashed file.
+                None
             })
         }))
     }
@@ -2430,9 +2509,12 @@ impl Snapshot {
         self.entries_by_path.edit(entries_by_path_edits, ());
         self.entries_by_id.edit(entries_by_id_edits, ());
 
-        self.root_repo_common_dir = update
+        if let Some(dir) = update
             .root_repo_common_dir
-            .map(|p| SanitizedPath::new_arc(Path::new(&p)));
+            .map(|p| SanitizedPath::new_arc(Path::new(&p)))
+        {
+            self.root_repo_common_dir = Some(dir);
+        }
 
         self.scan_id = update.scan_id as usize;
         if update.is_last_update {
@@ -2575,15 +2657,14 @@ impl Snapshot {
     }
 
     pub fn entry_for_path(&self, path: &RelPath) -> Option<&Entry> {
-        self.traverse_from_path(true, true, true, path)
-            .entry()
-            .and_then(|entry| {
-                if entry.path.as_ref() == path {
-                    Some(entry)
-                } else {
-                    None
-                }
-            })
+        let entry = self.traverse_from_path(true, true, true, path).entry();
+        entry.and_then(|entry| {
+            if entry.path.as_ref() == path {
+                Some(entry)
+            } else {
+                None
+            }
+        })
     }
 
     /// Resolves a path to an executable using the following heuristics:
@@ -5245,10 +5326,17 @@ impl BackgroundScanner {
             match existing_repository_entry {
                 None => {
                     let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path()) else {
-                        debug_panic!(
-                            "update_git_repositories called with .git directory outside the worktree root"
+                        // This can happen legitimately when `.git` is a
+                        // gitfile (e.g. in a linked worktree or submodule)
+                        // pointing to a directory outside the worktree root.
+                        // Skip it — the repository was already registered
+                        // during the initial scan via `discover_git_paths`.
+                        debug_assert!(
+                            self.fs.is_file(&dot_git_dir).await,
+                            "update_git_repositories: .git path outside worktree root \
+                             is not a gitfile: {dot_git_dir:?}",
                         );
-                        return Vec::new();
+                        continue;
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
                     state
@@ -6109,7 +6197,7 @@ fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
     Ok(Path::new(path.trim()))
 }
 
-async fn discover_root_repo_common_dir(root_abs_path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
+pub async fn discover_root_repo_common_dir(root_abs_path: &Path, fs: &dyn Fs) -> Option<Arc<Path>> {
     let root_dot_git = root_abs_path.join(DOT_GIT);
     if !fs.metadata(&root_dot_git).await.is_ok_and(|m| m.is_some()) {
         return None;

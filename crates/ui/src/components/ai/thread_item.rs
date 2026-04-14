@@ -16,11 +16,19 @@ pub enum AgentThreadStatus {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorktreeKind {
+    #[default]
+    Main,
+    Linked,
+}
+
 #[derive(Clone)]
 pub struct ThreadItemWorktreeInfo {
     pub name: SharedString,
     pub full_path: SharedString,
     pub highlight_positions: Vec<usize>,
+    pub kind: WorktreeKind,
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -46,6 +54,7 @@ pub struct ThreadItem {
     project_paths: Option<Arc<[PathBuf]>>,
     project_name: Option<SharedString>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
+    is_remote: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
@@ -78,6 +87,7 @@ impl ThreadItem {
             project_paths: None,
             project_name: None,
             worktrees: Vec::new(),
+            is_remote: false,
             on_click: None,
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
@@ -168,6 +178,11 @@ impl ThreadItem {
 
     pub fn worktrees(mut self, worktrees: Vec<ThreadItemWorktreeInfo>) -> Self {
         self.worktrees = worktrees;
+        self
+    }
+
+    pub fn is_remote(mut self, is_remote: bool) -> Self {
+        self.is_remote = is_remote;
         self
     }
 
@@ -359,7 +374,10 @@ impl RenderOnce for ThreadItem {
 
         let has_project_name = self.project_name.is_some();
         let has_project_paths = project_paths.is_some();
-        let has_worktree = !self.worktrees.is_empty();
+        let has_worktree = self
+            .worktrees
+            .iter()
+            .any(|wt| wt.kind == WorktreeKind::Linked);
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
@@ -432,10 +450,11 @@ impl RenderOnce for ThreadItem {
                         .join("\n")
                         .into();
 
-                    let worktree_tooltip_title = if self.worktrees.len() > 1 {
-                        "Thread Running in Local Git Worktrees"
-                    } else {
-                        "Thread Running in a Local Git Worktree"
+                    let worktree_tooltip_title = match (self.is_remote, self.worktrees.len() > 1) {
+                        (true, true) => "Thread Running in Remote Git Worktrees",
+                        (true, false) => "Thread Running in a Remote Git Worktree",
+                        (false, true) => "Thread Running in Local Git Worktrees",
+                        (false, false) => "Thread Running in a Local Git Worktree",
                     };
 
                     // Deduplicate chips by name — e.g. two paths both named
@@ -446,6 +465,10 @@ impl RenderOnce for ThreadItem {
 
                     for wt in self.worktrees {
                         if seen_names.contains(&wt.name) {
+                            continue;
+                        }
+
+                        if wt.kind == WorktreeKind::Main {
                             continue;
                         }
 
@@ -624,6 +647,7 @@ impl Component for ThreadItem {
                                 name: "link-agent-panel".into(),
                                 full_path: "link-agent-panel".into(),
                                 highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
                             }]),
                     )
                     .into_any_element(),
@@ -650,6 +674,7 @@ impl Component for ThreadItem {
                                 name: "my-project".into(),
                                 full_path: "my-project".into(),
                                 highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
                             }])
                             .added(42)
                             .removed(17)
@@ -729,6 +754,7 @@ impl Component for ThreadItem {
                                 name: "my-project-name".into(),
                                 full_path: "my-project-name".into(),
                                 highlight_positions: vec![3, 4, 5, 6, 7, 8, 9, 10, 11],
+                                kind: WorktreeKind::Linked,
                             }]),
                     )
                     .into_any_element(),

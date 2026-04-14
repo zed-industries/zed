@@ -74,6 +74,8 @@ pub use util::serde::default_true;
 pub enum ParseStatus {
     /// Settings were parsed successfully
     Success,
+    /// Settings file was not changed, so no parsing was performed
+    Unchanged,
     /// Settings failed to parse
     Failed { error: String },
 }
@@ -173,9 +175,6 @@ pub struct SettingsContent {
 
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
-
-    /// Configuration for the Notification Panel
-    pub notification_panel: Option<NotificationPanelSettingsContent>,
 
     pub proxy: Option<String>,
 
@@ -633,28 +632,6 @@ pub struct ScrollbarSettings {
 
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct NotificationPanelSettingsContent {
-    /// Whether to show the panel button in the status bar.
-    ///
-    /// Default: true
-    pub button: Option<bool>,
-    /// Where to dock the panel.
-    ///
-    /// Default: right
-    pub dock: Option<DockPosition>,
-    /// Default width of the panel in pixels.
-    ///
-    /// Default: 300
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
-    /// Whether to show a badge on the notification panel icon with the count of unread notifications.
-    ///
-    /// Default: false
-    pub show_count_badge: Option<bool>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -763,6 +740,7 @@ pub struct VimSettingsContent {
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
     pub use_smartcase_find: Option<bool>,
+    pub use_regex_search: Option<bool>,
     /// When enabled, the `:substitute` command replaces all matches in a line
     /// by default. The 'g' flag then toggles this behavior.,
     pub gdefault: Option<bool>,

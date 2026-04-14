@@ -16,6 +16,7 @@ use ui::{
     Divider, KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector, VectorName,
     WithScrollbar as _, prelude::*, rems_from_px,
 };
+
 pub use workspace::welcome::ShowWelcome;
 use workspace::welcome::WelcomePage;
 use workspace::{
@@ -259,7 +260,7 @@ impl Onboarding {
     }
 
     fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        crate::basics_page::render_basics_page(cx).into_any_element()
+        crate::basics_page::render_basics_page(&self.user_store, cx).into_any_element()
     }
 }
 
@@ -329,15 +330,12 @@ impl Render for Onboarding {
                                         Button::new("finish_setup", "Finish Setup")
                                             .style(ButtonStyle::Filled)
                                             .size(ButtonSize::Medium)
-                                            .width(Rems(12.0))
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &Finish,
-                                                    &self.focus_handle,
-                                                    cx,
-                                                )
-                                                .size(rems_from_px(12.)),
-                                            )
+                                            .width(rems_from_px(200.))
+                                            .key_binding(KeyBinding::for_action_in(
+                                                &Finish,
+                                                &self.focus_handle,
+                                                cx,
+                                            ))
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
                                             })
