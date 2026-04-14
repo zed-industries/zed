@@ -1903,6 +1903,15 @@ impl Sidebar {
         let project_group_key = project_group_key.clone();
 
         PopoverMenu::new(format!("{id_prefix}project-header-menu-{ix}"))
+            .trigger(
+                IconButton::new(
+                    SharedString::from(format!("{id_prefix}-ellipsis-menu-{ix}")),
+                    IconName::Ellipsis,
+                )
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text("Toggle Project Menu")),
+            )
             .on_open(Rc::new({
                 let this = this.clone();
                 move |_window, cx| {
@@ -2034,14 +2043,6 @@ impl Sidebar {
 
                 Some(menu)
             })
-            .trigger(
-                IconButton::new(
-                    SharedString::from(format!("{id_prefix}-ellipsis-menu-{ix}")),
-                    IconName::Ellipsis,
-                )
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .icon_size(IconSize::Small),
-            )
             .anchor(gpui::Corner::TopRight)
             .offset(gpui::Point {
                 x: px(0.),
