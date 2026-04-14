@@ -16062,6 +16062,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry",
  "theme",
  "theme_settings",
  "ui",
