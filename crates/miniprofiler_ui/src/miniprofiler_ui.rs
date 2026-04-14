@@ -456,7 +456,7 @@ impl Render for ProfilerWindow {
         window: &mut gpui::Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl gpui::IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
         if !self.paused {
             self.poll_timings(cx);
             window.request_animation_frame();
@@ -464,7 +464,7 @@ impl Render for ProfilerWindow {
 
         let scroll_offset = self.scroll_handle.offset();
         let max_offset = self.scroll_handle.max_offset();
-        self.autoscroll = -scroll_offset.y >= (max_offset.height - px(24.));
+        self.autoscroll = -scroll_offset.y >= (max_offset.y - px(24.));
         if self.autoscroll {
             self.scroll_handle.scroll_to_bottom();
         }
@@ -544,7 +544,7 @@ impl Render for ProfilerWindow {
 
                                         let path = cx.prompt_for_new_path(
                                             &active_path,
-                                            Some("performance_profile.miniprof"),
+                                            Some("performance_profile.miniprof.json"),
                                         );
 
                                         cx.background_spawn(async move {

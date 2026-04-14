@@ -620,4 +620,56 @@ impl SearchQuery {
             Self::Text { .. } => None,
         }
     }
+
+    pub fn search_str(&self, text: &str) -> Vec<Range<usize>> {
+        if self.as_str().is_empty() {
+            return Vec::new();
+        }
+
+        let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+
+        let mut matches = Vec::new();
+        match self {
+            Self::Text {
+                search, whole_word, ..
+            } => {
+                for mat in search.find_iter(text.as_bytes()) {
+                    if *whole_word {
+                        let prev_char = text[..mat.start()].chars().last();
+                        let next_char = text[mat.end()..].chars().next();
+                        if prev_char.is_some_and(&is_word_char)
+                            || next_char.is_some_and(&is_word_char)
+                        {
+                            continue;
+                        }
+                    }
+                    matches.push(mat.start()..mat.end());
+                }
+            }
+            Self::Regex {
+                regex,
+                multiline,
+                one_match_per_line,
+                ..
+            } => {
+                if *multiline {
+                    for mat in regex.find_iter(text).flatten() {
+                        matches.push(mat.start()..mat.end());
+                    }
+                } else {
+                    let mut line_offset = 0;
+                    for line in text.split('\n') {
+                        for mat in regex.find_iter(line).flatten() {
+                            matches.push((line_offset + mat.start())..(line_offset + mat.end()));
+                            if *one_match_per_line {
+                                break;
+                            }
+                        }
+                        line_offset += line.len() + 1;
+                    }
+                }
+            }
+        }
+        matches
+    }
 }

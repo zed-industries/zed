@@ -45,10 +45,13 @@ Xcode Instruments (which comes bundled with your [Xcode](https://apps.apple.com/
 
 1. With Zed running, open Instruments
 1. Select `Time Profiler` as the profiling template
+   ![Instruments template picker with Time Profiler selected](https://images.zed.dev/docs/troubleshooting/instruments-template-picker.webp)
 1. In the `Time Profiler` configuration, set the target to the running Zed process
 1. Start recording
-1. If the performance issue occurs when performing a specific action in Zed, perform that action now
+   ![Time Profiler configuration showing the target dropdown and record button](https://images.zed.dev/docs/troubleshooting/instruments-target-and-record.webp)
+1. Perform the action in Zed that causes performance issues
 1. Stop recording
+   ![A completed Time Profiler recording in Instruments](https://images.zed.dev/docs/troubleshooting/instruments-recording.webp)
 1. Save the trace file
 1. Compress the trace file into a zip archive
 1. File a [GitHub issue](https://github.com/zed-industries/zed/issues/new/choose) with the trace zip attached
@@ -87,8 +90,6 @@ If you're experiencing language-server related issues, such as stale diagnostics
 ## Agent Error Messages
 
 ### "Max tokens reached"
-
-> **Preview:** This error handling is available in Zed Preview. It will be included in the next Stable release.
 
 You see this error when the agent's response exceeds the model's maximum token limit. This happens when:
 

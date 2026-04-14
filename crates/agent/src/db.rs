@@ -8,6 +8,7 @@ use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
 use gpui::{BackgroundExecutor, Global, Task};
 use indoc::indoc;
+use language_model::Speed;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -17,19 +18,36 @@ use sqlez::{
 };
 use std::sync::Arc;
 use ui::{App, SharedString};
+use util::path_list::PathList;
 use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
 pub type DbSummary = crate::legacy_thread::DetailedSummaryState;
 pub type DbLanguageModel = crate::legacy_thread::SerializedLanguageModel;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct DbThreadMetadata {
     pub id: acp::SessionId,
     pub parent_session_id: Option<acp::SessionId>,
-    #[serde(alias = "summary")]
     pub title: SharedString,
     pub updated_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
+    /// The workspace folder paths this thread was created against, sorted
+    /// lexicographically. Used for grouping threads by project in the sidebar.
+    pub folder_paths: PathList,
+}
+
+impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
+    fn from(meta: &DbThreadMetadata) -> Self {
+        Self {
+            session_id: meta.id.clone(),
+            work_dirs: Some(meta.folder_paths.clone()),
+            title: Some(meta.title.clone()),
+            updated_at: Some(meta.updated_at),
+            created_at: meta.created_at,
+            meta: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -53,6 +71,22 @@ pub struct DbThread {
     pub imported: bool,
     #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
+    #[serde(default)]
+    pub speed: Option<Speed>,
+    #[serde(default)]
+    pub thinking_enabled: bool,
+    #[serde(default)]
+    pub thinking_effort: Option<String>,
+    #[serde(default)]
+    pub draft_prompt: Option<Vec<acp::ContentBlock>>,
+    #[serde(default)]
+    pub ui_scroll_position: Option<SerializedScrollPosition>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SerializedScrollPosition {
+    pub item_ix: usize,
+    pub offset_in_item: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +125,11 @@ impl SharedThread {
             profile: None,
             imported: true,
             subagent_context: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
         }
     }
 
@@ -265,6 +304,11 @@ impl DbThread {
             profile: thread.profile,
             imported: false,
             subagent_context: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
         })
     }
 }
@@ -369,6 +413,25 @@ impl ThreadsDatabase {
             s().ok();
         }
 
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN folder_paths TEXT;
+            ALTER TABLE threads ADD COLUMN folder_paths_order TEXT;
+        "})
+        {
+            s().ok();
+        }
+
+        if let Ok(mut s) = connection.exec(indoc! {"
+            ALTER TABLE threads ADD COLUMN created_at TEXT;
+        "})
+        {
+            if s().is_ok() {
+                connection.exec(indoc! {"
+                    UPDATE threads SET created_at = updated_at WHERE created_at IS NULL
+                "})?()?;
+            }
+        }
+
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
@@ -381,6 +444,7 @@ impl ThreadsDatabase {
         connection: &Arc<Mutex<Connection>>,
         id: acp::SessionId,
         thread: DbThread,
+        folder_paths: &PathList,
     ) -> Result<()> {
         const COMPRESSION_LEVEL: i32 = 3;
 
@@ -397,6 +461,16 @@ impl ThreadsDatabase {
             .subagent_context
             .as_ref()
             .map(|ctx| ctx.parent_thread_id.0.clone());
+        let serialized_folder_paths = folder_paths.serialize();
+        let (folder_paths_str, folder_paths_order_str): (Option<String>, Option<String>) =
+            if folder_paths.is_empty() {
+                (None, None)
+            } else {
+                (
+                    Some(serialized_folder_paths.paths),
+                    Some(serialized_folder_paths.order),
+                )
+            };
         let json_data = serde_json::to_string(&SerializedThread {
             thread,
             version: DbThread::VERSION,
@@ -408,11 +482,35 @@ impl ThreadsDatabase {
         let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, String, String, DataType, Vec<u8>)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, parent_id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?, ?)
+        // Use the thread's updated_at as created_at for new threads.
+        // This ensures the creation time reflects when the thread was conceptually
+        // created, not when it was saved to the database.
+        let created_at = updated_at.clone();
+
+        let mut insert = connection.exec_bound::<(Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, DataType, Vec<u8>, String)>(indoc! {"
+            INSERT INTO threads (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, data_type, data, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            ON CONFLICT(id) DO UPDATE SET
+                parent_id = excluded.parent_id,
+                folder_paths = excluded.folder_paths,
+                folder_paths_order = excluded.folder_paths_order,
+                summary = excluded.summary,
+                updated_at = excluded.updated_at,
+                data_type = excluded.data_type,
+                data = excluded.data
         "})?;
 
-        insert((id.0, parent_id, title, updated_at, data_type, data))?;
+        insert((
+            id.0,
+            parent_id,
+            folder_paths_str,
+            folder_paths_order_str,
+            title,
+            updated_at,
+            data_type,
+            data,
+            created_at,
+        ))?;
 
         Ok(())
     }
@@ -424,19 +522,35 @@ impl ThreadsDatabase {
             let connection = connection.lock();
 
             let mut select = connection
-                .select_bound::<(), (Arc<str>, Option<Arc<str>>, String, String)>(indoc! {"
-                SELECT id, parent_id, summary, updated_at FROM threads ORDER BY updated_at DESC
+                .select_bound::<(), (Arc<str>, Option<Arc<str>>, Option<String>, Option<String>, String, String, Option<String>)>(indoc! {"
+                SELECT id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at FROM threads ORDER BY updated_at DESC, created_at DESC
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, parent_id, summary, updated_at) in rows {
+            for (id, parent_id, folder_paths, folder_paths_order, summary, updated_at, created_at) in rows {
+                let folder_paths = folder_paths
+                    .map(|paths| {
+                        PathList::deserialize(&util::path_list::SerializedPathList {
+                            paths,
+                            order: folder_paths_order.unwrap_or_default(),
+                        })
+                    })
+                    .unwrap_or_default();
+                let created_at = created_at
+                    .as_deref()
+                    .map(DateTime::parse_from_rfc3339)
+                    .transpose()?
+                    .map(|dt| dt.with_timezone(&Utc));
+
                 threads.push(DbThreadMetadata {
                     id: acp::SessionId::new(id),
                     parent_session_id: parent_id.map(acp::SessionId::new),
                     title: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
+                    created_at,
+                    folder_paths,
                 });
             }
 
@@ -470,11 +584,16 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(&self, id: acp::SessionId, thread: DbThread) -> Task<Result<()>> {
+    pub fn save_thread(
+        &self,
+        id: acp::SessionId,
+        thread: DbThread,
+        folder_paths: PathList,
+    ) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread) })
+            .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
     }
 
     pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {
@@ -570,11 +689,16 @@ mod tests {
             profile: None,
             imported: false,
             subagent_context: None,
+            speed: None,
+            thinking_enabled: false,
+            thinking_effort: None,
+            draft_prompt: None,
+            ui_scroll_position: None,
         }
     }
 
     #[gpui::test]
-    async fn test_list_threads_orders_by_updated_at(cx: &mut TestAppContext) {
+    async fn test_list_threads_orders_by_created_at(cx: &mut TestAppContext) {
         let database = ThreadsDatabase::new(cx.executor()).unwrap();
 
         let older_id = session_id("thread-a");
@@ -590,11 +714,11 @@ mod tests {
         );
 
         database
-            .save_thread(older_id.clone(), older_thread)
+            .save_thread(older_id.clone(), older_thread, PathList::default())
             .await
             .unwrap();
         database
-            .save_thread(newer_id.clone(), newer_thread)
+            .save_thread(newer_id.clone(), newer_thread, PathList::default())
             .await
             .unwrap();
 
@@ -619,11 +743,11 @@ mod tests {
         );
 
         database
-            .save_thread(thread_id.clone(), original_thread)
+            .save_thread(thread_id.clone(), original_thread, PathList::default())
             .await
             .unwrap();
         database
-            .save_thread(thread_id.clone(), updated_thread)
+            .save_thread(thread_id.clone(), updated_thread, PathList::default())
             .await
             .unwrap();
 
@@ -634,6 +758,10 @@ mod tests {
         assert_eq!(
             entries[0].updated_at,
             Utc.with_ymd_and_hms(2024, 1, 2, 0, 0, 0).unwrap()
+        );
+        assert!(
+            entries[0].created_at.is_some(),
+            "created_at should be populated"
         );
     }
 
@@ -650,6 +778,22 @@ mod tests {
         assert!(
             db_thread.subagent_context.is_none(),
             "Legacy threads without subagent_context should default to None"
+        );
+    }
+
+    #[test]
+    fn test_draft_prompt_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.draft_prompt.is_none(),
+            "Legacy threads without draft_prompt field should default to None"
         );
     }
 
@@ -670,7 +814,7 @@ mod tests {
         });
 
         database
-            .save_thread(child_id.clone(), child_thread)
+            .save_thread(child_id.clone(), child_thread, PathList::default())
             .await
             .unwrap();
 
@@ -698,7 +842,7 @@ mod tests {
         );
 
         database
-            .save_thread(thread_id.clone(), thread)
+            .save_thread(thread_id.clone(), thread, PathList::default())
             .await
             .unwrap();
 
@@ -712,5 +856,97 @@ mod tests {
             loaded.subagent_context.is_none(),
             "Regular threads should have no subagent_context"
         );
+    }
+
+    #[gpui::test]
+    async fn test_folder_paths_roundtrip(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("folder-thread");
+        let thread = make_thread(
+            "Folder Thread",
+            Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap(),
+        );
+
+        let folder_paths = PathList::new(&[
+            std::path::PathBuf::from("/home/user/project-a"),
+            std::path::PathBuf::from("/home/user/project-b"),
+        ]);
+
+        database
+            .save_thread(thread_id.clone(), thread, folder_paths.clone())
+            .await
+            .unwrap();
+
+        let threads = database.list_threads().await.unwrap();
+        assert_eq!(threads.len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_folder_paths_empty_when_not_set(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("no-folder-thread");
+        let thread = make_thread(
+            "No Folder Thread",
+            Utc.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap(),
+        );
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let threads = database.list_threads().await.unwrap();
+        assert_eq!(threads.len(), 1);
+    }
+
+    #[test]
+    fn test_scroll_position_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.ui_scroll_position.is_none(),
+            "Legacy threads without scroll_position field should default to None"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scroll_position_roundtrips_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let thread_id = session_id("thread-with-scroll");
+
+        let mut thread = make_thread(
+            "Thread With Scroll",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.ui_scroll_position = Some(SerializedScrollPosition {
+            item_ix: 42,
+            offset_in_item: 13.5,
+        });
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+
+        let scroll = loaded
+            .ui_scroll_position
+            .expect("scroll_position should be restored");
+        assert_eq!(scroll.item_ix, 42);
+        assert!((scroll.offset_in_item - 13.5).abs() < f32::EPSILON);
     }
 }

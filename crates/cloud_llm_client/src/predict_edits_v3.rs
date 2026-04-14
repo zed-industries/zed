@@ -33,6 +33,8 @@ pub struct PredictEditsV3Response {
     /// this range to extract the old text from its local excerpt for
     /// diffing, rather than relying on its own format-derived range.
     pub editable_range: Range<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

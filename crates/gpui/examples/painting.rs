@@ -457,7 +457,7 @@ fn run_example() {
             |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
         )
         .unwrap();
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _window_id| {
             cx.quit();
         })
         .detach();

@@ -45,7 +45,7 @@ pub(crate) struct SshRemoteConnection {
     _temp_dir: TempDir,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SshConnectionHost {
     IpAddr(IpAddr),
     Hostname(String),
@@ -102,7 +102,7 @@ fn bracket_ipv6(host: &str) -> String {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SshConnectionOptions {
     pub host: SshConnectionHost,
     pub username: Option<String>,
@@ -463,7 +463,7 @@ impl RemoteConnection for SshRemoteConnection {
             let mut proxy_args = vec![];
             for env_var in VARS {
                 if let Some(value) = std::env::var(env_var).ok() {
-                    proxy_args.push(format!("{}='{}'", env_var, value));
+                    proxy_args.push(format!("{env_var}={value}"));
                 }
             }
             proxy_args.push(remote_binary_path.display(self.path_style()).into_owned());
@@ -1639,20 +1639,35 @@ fn build_command_posix(
     if let Some(working_dir) = working_dir {
         let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
 
-        // shlex will wrap the command in single quotes (''), disabling ~ expansion,
-        // replace with something that works
-        const TILDE_PREFIX: &'static str = "~/";
+        // For paths starting with ~/, we need $HOME to expand, but the remainder
+        // must be properly quoted to prevent command injection.
+        // Pattern: cd "$HOME"/'quoted/remainder' - $HOME expands, rest is single-quoted
+        const TILDE_PREFIX: &str = "~/";
         if working_dir.starts_with(TILDE_PREFIX) {
-            let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-            write!(
-                exec,
-                "cd \"$HOME/{working_dir}\" {} ",
-                ssh_shell_kind.sequential_and_commands_separator()
-            )?;
+            let remainder = working_dir.trim_start_matches(TILDE_PREFIX);
+            if remainder.is_empty() {
+                write!(
+                    exec,
+                    "cd \"$HOME\" {} ",
+                    ssh_shell_kind.sequential_and_commands_separator()
+                )?;
+            } else {
+                let quoted_remainder = ssh_shell_kind
+                    .try_quote(remainder)
+                    .context("shell quoting")?;
+                write!(
+                    exec,
+                    "cd \"$HOME\"/{quoted_remainder} {} ",
+                    ssh_shell_kind.sequential_and_commands_separator()
+                )?;
+            }
         } else {
+            let quoted_dir = ssh_shell_kind
+                .try_quote(&working_dir)
+                .context("shell quoting")?;
             write!(
                 exec,
-                "cd \"{working_dir}\" {} ",
+                "cd {quoted_dir} {} ",
                 ssh_shell_kind.sequential_and_commands_separator()
             )?;
         }
@@ -1666,12 +1681,11 @@ fn build_command_posix(
     write!(exec, "exec env ")?;
 
     for (k, v) in input_env.iter() {
-        write!(
-            exec,
-            "{}={} ",
-            k,
-            ssh_shell_kind.try_quote(v).context("shell quoting")?
-        )?;
+        let assignment = format!("{k}={v}");
+        let assignment = ssh_shell_kind
+            .try_quote(&assignment)
+            .context("shell quoting")?;
+        write!(exec, "{assignment} ")?;
     }
 
     if let Some(input_program) = input_program {
@@ -1882,7 +1896,7 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd \"$HOME/work\" && exec env INPUT_VA=val remote_program arg1 arg2"
+                "cd \"$HOME\"/work && exec env 'INPUT_VA=val' remote_program arg1 arg2"
             ]
         );
         assert_eq!(command.env, env);
@@ -1918,10 +1932,42 @@ mod tests {
                 "-q",
                 "-t",
                 "user@host",
-                "cd && exec env INPUT_VA=val /bin/fish -l"
+                "cd && exec env 'INPUT_VA=val' /bin/fish -l"
             ]
         );
         assert_eq!(command.env, env);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_build_command_quotes_env_assignment() -> Result<()> {
+        let mut input_env = HashMap::default();
+        input_env.insert("ZED$(echo foo)".to_string(), "value".to_string());
+
+        let command = build_command_posix(
+            Some("remote_program".to_string()),
+            &[],
+            &input_env,
+            None,
+            None,
+            HashMap::default(),
+            PathStyle::Posix,
+            "/bin/bash",
+            ShellKind::Posix,
+            vec![],
+            "user@host",
+            Interactive::No,
+        )?;
+
+        let remote_command = command
+            .args
+            .last()
+            .context("missing remote command argument")?;
+        assert!(
+            remote_command.contains("exec env 'ZED$(echo foo)=value' remote_program"),
+            "expected env assignment to be quoted, got: {remote_command}"
+        );
 
         Ok(())
     }

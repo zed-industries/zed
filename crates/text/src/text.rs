@@ -223,10 +223,11 @@ impl History {
             redo_stack: Vec::new(),
             transaction_depth: 0,
             // Don't group transactions in tests unless we opt in, because it's a footgun.
-            #[cfg(any(test, feature = "test-support"))]
-            group_interval: Duration::ZERO,
-            #[cfg(not(any(test, feature = "test-support")))]
-            group_interval: Duration::from_millis(300),
+            group_interval: if cfg!(any(test, feature = "test-support")) {
+                Duration::ZERO
+            } else {
+                Duration::from_millis(300)
+            },
         }
     }
 
@@ -1234,15 +1235,18 @@ impl Buffer {
                 let fragment_end = old_fragments.end().0.full_offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
-                if fragment.was_visible(version, &self.undo_map) {
+                if version.observed(fragment.timestamp) {
                     intersection.len = (intersection_end.0 - fragment_start.0) as u32;
                     intersection.insertion_offset +=
                         (fragment_start - old_fragments.start().0.full_offset()) as u32;
                     intersection.id =
                         Locator::between(&new_fragments.summary().max_id, &intersection.id);
-                    intersection.deletions.push(timestamp);
-                    intersection.visible = false;
-                    insertion_slices.push(InsertionSlice::from_fragment(timestamp, &intersection));
+                    if fragment.was_visible(version, &self.undo_map) {
+                        intersection.deletions.push(timestamp);
+                        intersection.visible = false;
+                        insertion_slices
+                            .push(InsertionSlice::from_fragment(timestamp, &intersection));
+                    }
                 }
                 if intersection.len > 0 {
                     if fragment.visible && !intersection.visible {
@@ -1822,6 +1826,10 @@ impl Buffer {
             tx.try_send(()).ok();
         }
     }
+
+    pub fn set_group_interval(&mut self, group_interval: Duration) {
+        self.history.group_interval = group_interval;
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1924,10 +1932,6 @@ impl Buffer {
         );
 
         assert!(!self.text().contains("\r\n"));
-    }
-
-    pub fn set_group_interval(&mut self, group_interval: Duration) {
-        self.history.group_interval = group_interval;
     }
 
     pub fn random_byte_range(&self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
@@ -2254,6 +2258,37 @@ impl BufferSnapshot {
         (row_end_offset - row_start_offset) as u32
     }
 
+    /// A function to convert character offsets from e.g. user's `go.mod:22:33` input into byte-offset Point columns.
+    pub fn point_from_external_input(&self, row: u32, characters: u32) -> Point {
+        const MAX_BYTES_IN_UTF_8: u32 = 4;
+
+        let row = row.min(self.max_point().row);
+        let start = Point::new(row, 0);
+        let end = self.clip_point(
+            Point::new(
+                row,
+                characters
+                    .saturating_mul(MAX_BYTES_IN_UTF_8)
+                    .saturating_add(1),
+            ),
+            Bias::Right,
+        );
+        let range = start..end;
+        let mut point = range.start;
+        let mut remaining_columns = characters;
+
+        for chunk in self.text_for_range(range) {
+            for character in chunk.chars() {
+                if remaining_columns == 0 {
+                    return point;
+                }
+                remaining_columns -= 1;
+                point.column += character.len_utf8() as u32;
+            }
+        }
+        point
+    }
+
     pub fn line_indents_in_row_range(
         &self,
         row_range: Range<u32>,
@@ -2342,7 +2377,7 @@ impl BufferSnapshot {
     pub fn summaries_for_anchors<'a, D, A>(&'a self, anchors: A) -> impl 'a + Iterator<Item = D>
     where
         D: 'a + TextDimension,
-        A: 'a + IntoIterator<Item = &'a Anchor>,
+        A: 'a + IntoIterator<Item = Anchor>,
     {
         let anchors = anchors.into_iter();
         self.summaries_for_anchors_with_payload::<D, _, ()>(anchors.map(|a| (a, ())))
@@ -2355,7 +2390,7 @@ impl BufferSnapshot {
     ) -> impl 'a + Iterator<Item = (D, T)>
     where
         D: 'a + TextDimension,
-        A: 'a + IntoIterator<Item = (&'a Anchor, T)>,
+        A: 'a + IntoIterator<Item = (Anchor, T)>,
     {
         let anchors = anchors.into_iter();
         let mut fragment_cursor = self
@@ -2371,7 +2406,7 @@ impl BufferSnapshot {
                 return (D::from_text_summary(&self.visible_text.summary()), payload);
             }
 
-            let Some(insertion) = self.try_find_fragment(anchor) else {
+            let Some(insertion) = self.try_find_fragment(&anchor) else {
                 panic!(
                     "invalid insertion for buffer {}@{:?} with anchor {:?}",
                     self.remote_id(),
@@ -2379,13 +2414,22 @@ impl BufferSnapshot {
                     anchor
                 );
             };
+            // TODO verbose debug because we are seeing is_max return false unexpectedly,
+            // remove this once that is understood and fixed
             assert_eq!(
                 insertion.timestamp,
                 anchor.timestamp(),
-                "invalid insertion for buffer {}@{:?} and anchor {:?}",
+                "invalid insertion for buffer {}@{:?}. anchor: {:?}, {:?}, {:?}, {:?}, {:?}. timestamp: {:?}, offset: {:?}, bias: {:?}",
                 self.remote_id(),
                 self.version,
-                anchor
+                anchor.timestamp_replica_id,
+                anchor.timestamp_value,
+                anchor.offset,
+                anchor.bias,
+                anchor.buffer_id,
+                anchor.timestamp() == clock::Lamport::MAX,
+                anchor.offset == u32::MAX,
+                anchor.bias == Bias::Right,
             );
 
             fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);
@@ -2413,7 +2457,7 @@ impl BufferSnapshot {
         } else if anchor.is_max() {
             self.visible_text.len()
         } else {
-            debug_assert_eq!(anchor.buffer_id, Some(self.remote_id));
+            debug_assert_eq!(anchor.buffer_id, self.remote_id);
             debug_assert!(
                 self.version.observed(anchor.timestamp()),
                 "Anchor timestamp {:?} not observed by buffer {:?}",
@@ -2445,7 +2489,7 @@ impl BufferSnapshot {
 
     #[cold]
     fn panic_bad_anchor(&self, anchor: &Anchor) -> ! {
-        if anchor.buffer_id.is_some_and(|id| id != self.remote_id) {
+        if anchor.buffer_id != self.remote_id {
             panic!(
                 "invalid anchor - buffer id does not match: anchor {anchor:?}; buffer id: {}, version: {:?}",
                 self.remote_id, self.version
@@ -2509,12 +2553,12 @@ impl BufferSnapshot {
     }
 
     /// Returns an anchor range for the given input position range that is anchored to the text in the range.
-    pub fn anchor_range_around<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+    pub fn anchor_range_inside<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
         self.anchor_after(position.start)..self.anchor_before(position.end)
     }
 
     /// Returns an anchor range for the given input position range that is anchored to the text before and after.
-    pub fn anchor_range_between<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
+    pub fn anchor_range_outside<T: ToOffset>(&self, position: Range<T>) -> Range<Anchor> {
         self.anchor_before(position.start)..self.anchor_after(position.end)
     }
 
@@ -2564,7 +2608,7 @@ impl BufferSnapshot {
                 fragment.timestamp,
                 fragment.insertion_offset + overshoot as u32,
                 bias,
-                Some(self.remote_id),
+                self.remote_id,
             )
         }
     }
@@ -2572,8 +2616,7 @@ impl BufferSnapshot {
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         anchor.is_min()
             || anchor.is_max()
-            || (Some(self.remote_id) == anchor.buffer_id
-                && self.version.observed(anchor.timestamp()))
+            || (self.remote_id == anchor.buffer_id && self.version.observed(anchor.timestamp()))
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -2599,7 +2642,10 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        self.edits_since_in_range(since, Anchor::MIN..Anchor::MAX)
+        self.edits_since_in_range(
+            since,
+            Anchor::min_for_buffer(self.remote_id)..Anchor::max_for_buffer(self.remote_id),
+        )
     }
 
     pub fn anchored_edits_since<'a, D>(
@@ -2609,7 +2655,10 @@ impl BufferSnapshot {
     where
         D: TextDimension + Ord,
     {
-        self.anchored_edits_since_in_range(since, Anchor::MIN..Anchor::MAX)
+        self.anchored_edits_since_in_range(
+            since,
+            Anchor::min_for_buffer(self.remote_id)..Anchor::max_for_buffer(self.remote_id),
+        )
     }
 
     pub fn edits_since_in_range<'a, D>(
@@ -2872,13 +2921,13 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
                 fragment.timestamp,
                 fragment.insertion_offset,
                 Bias::Right,
-                Some(self.buffer_id),
+                self.buffer_id,
             );
             let end_anchor = Anchor::new(
                 fragment.timestamp,
                 fragment.insertion_offset + fragment.len,
                 Bias::Left,
-                Some(self.buffer_id),
+                self.buffer_id,
             );
 
             if !fragment.was_visible(self.since, self.undos) && fragment.visible {

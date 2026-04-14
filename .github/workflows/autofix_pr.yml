@@ -18,26 +18,25 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: autofix_pr::run_autofix::checkout_pr
-      run: gh pr checkout ${{ inputs.pr_number }}
+      run: gh pr checkout "$PR_NUMBER"
       env:
+        PR_NUMBER: ${{ inputs.pr_number }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     - name: steps::setup_cargo_config
       run: |
         mkdir -p ./../.cargo
         cp ./.cargo/ci-config.toml ./../.cargo/config.toml
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_linux
       run: ./script/linux
-    - name: steps::install_mold
-      run: ./script/install-mold
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_pnpm
@@ -46,10 +45,9 @@ jobs:
         version: '9'
     - name: autofix_pr::run_autofix::install_cargo_machete
       if: ${{ inputs.run_clippy }}
-      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
       with:
-        command: install
-        args: cargo-machete@0.7.0
+        tool: cargo-machete@0.7.0
     - name: autofix_pr::run_autofix::run_cargo_fix
       if: ${{ inputs.run_clippy }}
       run: cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged
@@ -92,21 +90,24 @@ jobs:
     if: needs.run_autofix.outputs.has_changes == 'true'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
-    - id: get-app-token
+    - id: generate-token
       name: steps::authenticate_as_zippy
-      uses: actions/create-github-app-token@bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
       with:
         app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
         private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+        permission-contents: write
+        permission-workflows: write
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-        token: ${{ steps.get-app-token.outputs.token }}
+        token: ${{ steps.generate-token.outputs.token }}
     - name: autofix_pr::commit_changes::checkout_pr
-      run: gh pr checkout ${{ inputs.pr_number }}
+      run: gh pr checkout "$PR_NUMBER"
       env:
-        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+        PR_NUMBER: ${{ inputs.pr_number }}
+        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
     - name: autofix_pr::download_patch_artifact
       uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
       with:
@@ -122,7 +123,7 @@ jobs:
         GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
         GIT_AUTHOR_NAME: Zed Zippy
         GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
-        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+        GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.pr_number }}
   cancel-in-progress: true

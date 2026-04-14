@@ -1,6 +1,6 @@
 ---
 title: AI Agent Settings - Zed
-description: Customize Zed's AI agent: default models, temperature, tool approval, auto-run commands, notifications, and panel options.
+description: "Customize Zed's AI agent: default models, temperature, tool approval, auto-run commands, notifications, and panel options."
 ---
 
 # Agent Settings
@@ -139,19 +139,6 @@ Specify a custom temperature for a provider and/or model:
 ## Agent Panel Settings {#agent-panel-settings}
 
 Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open settings` action or by the dropdown menu on the top-right corner of the panel.
-
-### Default View
-
-Use the `default_view` setting to change the default view of the Agent Panel.
-You can choose between `thread` (the default) and `text_thread`:
-
-```json [settings]
-{
-  "agent": {
-    "default_view": "text_thread"
-  }
-}
-```
 
 ### Font Size
 
@@ -305,13 +292,16 @@ The default value is `false`.
 
 ### Sound Notification
 
-Control whether to hear a notification sound when the agent is done generating changes or needs your input.
-The default value is `false`.
+Control whether to hear a notification sound when the agent is done generating changes or needs your input. The default value is `never`.
+
+- `"never"` (default) — Never play the sound.
+- `"when_hidden"` — Only play the sound when the agent panel is not visible.
+- `"always"` — Always play the sound on completion.
 
 ```json [settings]
 {
   "agent": {
-    "play_sound_when_agent_done": true
+    "play_sound_when_agent_done": "never"
   }
 }
 ```

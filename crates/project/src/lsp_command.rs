@@ -18,7 +18,7 @@ use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
-    language_settings::{InlayHintKind, LanguageSettings, language_settings},
+    language_settings::{InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
@@ -533,7 +533,7 @@ impl LspCommand for PerformRename {
             .rename_provider
             .is_some_and(|capability| match capability {
                 OneOf::Left(enabled) => enabled,
-                OneOf::Right(_options) => true,
+                OneOf::Right(_) => true,
             })
     }
 
@@ -2636,11 +2636,10 @@ impl LspCommand for GetCodeActions {
             relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
         }
 
-        let supported =
-            Self::supported_code_action_kinds(language_server.adapter_server_capabilities());
-
         let only = if let Some(requested) = &self.kinds {
-            if let Some(supported_kinds) = supported {
+            if let Some(supported_kinds) =
+                Self::supported_code_action_kinds(language_server.adapter_server_capabilities())
+            {
                 let filtered = requested
                     .iter()
                     .filter(|requested_kind| {
@@ -2655,7 +2654,7 @@ impl LspCommand for GetCodeActions {
                 Some(requested.clone())
             }
         } else {
-            supported
+            None
         };
 
         Ok(lsp::CodeActionParams {
@@ -2937,9 +2936,7 @@ impl LspCommand for OnTypeFormatting {
             .await?;
 
         let options = buffer.update(&mut cx, |buffer, cx| {
-            lsp_formatting_options(
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx).as_ref(),
-            )
+            lsp_formatting_options(LanguageSettings::for_buffer(buffer, cx).as_ref())
         });
 
         Ok(Self {
@@ -3218,8 +3215,9 @@ impl InlayHints {
                                     Some(((uri, range), server_id)) => Some((
                                         LanguageServerId(server_id as usize),
                                         lsp::Location {
-                                            uri: lsp::Uri::from_str(&uri)
-                                                .context("invalid uri in hint part {part:?}")?,
+                                            uri: lsp::Uri::from_str(&uri).with_context(|| {
+                                                format!("invalid uri in hint part {uri:?}")
+                                            })?,
                                             range: lsp::Range::new(
                                                 point_to_lsp(PointUtf16::new(
                                                     range.start.row,
@@ -4857,9 +4855,14 @@ impl LspCommand for GetFoldingRanges {
         self,
         message: proto::GetFoldingRangesResponse,
         _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
         message
             .ranges
             .into_iter()

@@ -644,14 +644,12 @@ fn identifiers_for_position(
     let outer_range =
         ranges.first().map_or(0, |r| r.start)..ranges.last().map_or(buffer.len(), |r| r.end);
 
-    let mut captures = buffer
-        .syntax
-        .captures(outer_range.clone(), &buffer.text, |grammar| {
-            grammar
-                .highlights_config
-                .as_ref()
-                .map(|config| &config.query)
-        });
+    let mut captures = buffer.captures(outer_range.clone(), |grammar| {
+        grammar
+            .highlights_config
+            .as_ref()
+            .map(|config| &config.query)
+    });
 
     for range in ranges {
         captures.set_byte_range(range.start..outer_range.end);

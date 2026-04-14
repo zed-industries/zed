@@ -7,7 +7,7 @@ use gpui::{
     RetainAllImageCache, SharedString, TitlebarOptions, Window, WindowBounds, WindowOptions,
     actions, div, hash, image_cache, img, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
+#[cfg(not(target_family = "wasm"))]
 use reqwest_client::ReqwestClient;
 use std::{collections::HashMap, sync::Arc};
 
@@ -248,17 +248,32 @@ impl ImageCache for SimpleLruCache {
 actions!(image, [Quit]);
 
 fn run_example() {
-    application().run(move |cx: &mut App| {
-        let http_client = ReqwestClient::user_agent("gpui example").unwrap();
-        cx.set_http_client(Arc::new(http_client));
+    #[cfg(not(target_family = "wasm"))]
+    let app = gpui_platform::application();
+    #[cfg(target_family = "wasm")]
+    let app = gpui_platform::single_threaded_web();
+
+    app.run(move |cx: &mut App| {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let http_client = ReqwestClient::user_agent("gpui example").unwrap();
+            cx.set_http_client(Arc::new(http_client));
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            // Safety: the web examples run single-threaded; the client is
+            // created and used exclusively on the main thread.
+            let http_client = unsafe {
+                gpui_web::FetchHttpClient::with_user_agent("gpui example")
+                    .expect("failed to create FetchHttpClient")
+            };
+            cx.set_http_client(Arc::new(http_client));
+        }
 
         cx.activate(true);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.set_menus(vec![Menu {
-            name: "Image Gallery".into(),
-            items: vec![MenuItem::action("Quit", Quit)],
-        }]);
+        cx.set_menus([Menu::new("Image Gallery").items([MenuItem::action("Quit", Quit)])]);
 
         let window_options = WindowOptions {
             titlebar: Some(TitlebarOptions {

@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![deny(missing_docs)]
+#![warn(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks
 #![allow(clippy::collapsible_else_if)] // False positives in platform specific code
 #![allow(unused_mut)] // False positives in platform specific code
@@ -39,7 +39,6 @@ pub mod profiler;
 #[expect(missing_docs)]
 pub mod queue;
 mod scene;
-mod shared_string;
 mod shared_uri;
 mod style;
 mod styled;
@@ -53,6 +52,9 @@ mod text_system;
 mod util;
 mod view;
 mod window;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use proptest;
 
 #[cfg(doc)]
 pub mod _ownership_and_data_flow;
@@ -86,9 +88,11 @@ pub use elements::*;
 pub use executor::*;
 pub use geometry::*;
 pub use global::*;
-pub use gpui_macros::{AppContext, IntoElement, Render, VisualContext, register_action, test};
+pub use gpui_macros::{
+    AppContext, IntoElement, Render, VisualContext, property_test, register_action, test,
+};
+pub use gpui_shared_string::*;
 pub use gpui_util::arc_cow::ArcCow;
-#[cfg(not(target_family = "wasm"))]
 pub use http_client;
 pub use input::*;
 pub use inspector::*;
@@ -102,7 +106,6 @@ pub use profiler::*;
 pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
 pub use refineable::*;
 pub use scene::*;
-pub use shared_string::*;
 pub use shared_uri::*;
 use std::{any::Any, future::Future};
 pub use style::*;

@@ -10,7 +10,7 @@ use gpui::{
     SharedString, SharedUri, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div,
     img, prelude::*, px, rgb, size,
 };
-use gpui_platform::application;
+#[cfg(not(target_family = "wasm"))]
 use reqwest_client::ReqwestClient;
 
 struct Assets {
@@ -151,47 +151,64 @@ actions!(image, [Quit]);
 fn run_example() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
-    application()
-        .with_assets(Assets {
-            base: manifest_dir.join("examples"),
-        })
-        .run(move |cx: &mut App| {
+    #[cfg(not(target_family = "wasm"))]
+    let app = gpui_platform::application();
+    #[cfg(target_family = "wasm")]
+    let app = gpui_platform::application();
+    app.with_assets(Assets {
+        base: manifest_dir.join("examples"),
+    })
+    .run(move |cx: &mut App| {
+        #[cfg(not(target_family = "wasm"))]
+        {
             let http_client = ReqwestClient::user_agent("gpui example").unwrap();
             cx.set_http_client(Arc::new(http_client));
-
-            cx.activate(true);
-            cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-            cx.set_menus(vec![Menu {
-                name: "Image".into(),
-                items: vec![MenuItem::action("Quit", Quit)],
-            }]);
-
-            let window_options = WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from("Image Example")),
-                    appears_transparent: false,
-                    ..Default::default()
-                }),
-
-                window_bounds: Some(WindowBounds::Windowed(Bounds {
-                    size: size(px(1100.), px(600.)),
-                    origin: Point::new(px(200.), px(200.)),
-                })),
-
-                ..Default::default()
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            // Safety: the web examples run single-threaded; the client is
+            // created and used exclusively on the main thread.
+            let http_client = unsafe {
+                gpui_web::FetchHttpClient::with_user_agent("gpui example")
+                    .expect("failed to create FetchHttpClient")
             };
+            cx.set_http_client(Arc::new(http_client));
+        }
 
-            cx.open_window(window_options, |_, cx| {
-                cx.new(|_| ImageShowcase {
-                    // Relative path to your root project path
-                    local_resource: manifest_dir.join("examples/image/app-icon.png").into(),
-                    remote_resource: "https://picsum.photos/800/400".into(),
-                    asset_resource: "image/color.svg".into(),
-                })
+        cx.activate(true);
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        cx.set_menus(vec![Menu {
+            name: "Image".into(),
+            items: vec![MenuItem::action("Quit", Quit)],
+            disabled: false,
+        }]);
+
+        let window_options = WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some(SharedString::from("Image Example")),
+                appears_transparent: false,
+                ..Default::default()
+            }),
+
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                size: size(px(1100.), px(600.)),
+                origin: Point::new(px(200.), px(200.)),
+            })),
+
+            ..Default::default()
+        };
+
+        cx.open_window(window_options, |_, cx| {
+            cx.new(|_| ImageShowcase {
+                // Relative path to your root project path
+                local_resource: manifest_dir.join("examples/image/app-icon.png").into(),
+                remote_resource: "https://picsum.photos/800/400".into(),
+                asset_resource: "image/color.svg".into(),
             })
-            .unwrap();
-        });
+        })
+        .unwrap();
+    });
 }
 
 #[cfg(not(target_family = "wasm"))]

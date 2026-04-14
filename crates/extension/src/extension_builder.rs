@@ -7,6 +7,7 @@ use anyhow::{Context as _, Result, bail};
 use futures::{StreamExt, io};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
+use language::LanguageConfig;
 use serde::Deserialize;
 use std::{
     env, fs, mem,
@@ -295,16 +296,12 @@ impl ExtensionBuilder {
             let remotes_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
-                .args(["remote", "-v"])
+                .args(["remote", "get-url", "origin"])
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .output()
                 .await?;
             let has_remote = remotes_output.status.success()
-                && String::from_utf8_lossy(&remotes_output.stdout)
-                    .lines()
-                    .any(|line| {
-                        let mut parts = line.split(|c: char| c.is_whitespace());
-                        parts.next() == Some("origin") && parts.any(|part| part == url)
-                    });
+                && String::from_utf8_lossy(&remotes_output.stdout).trim() == url;
             if !has_remote {
                 bail!(
                     "grammar directory '{}' already exists, but is not a git clone of '{}'",
@@ -583,7 +580,7 @@ async fn populate_defaults(
 
         while let Some(language_dir) = language_dir_entries.next().await {
             let language_dir = language_dir?;
-            let config_path = language_dir.join("config.toml");
+            let config_path = language_dir.join(LanguageConfig::FILE_NAME);
             if fs.is_file(config_path.as_path()).await {
                 let relative_language_dir =
                     language_dir.strip_prefix(extension_path)?.to_path_buf();

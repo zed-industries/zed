@@ -5,7 +5,7 @@ use crate::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Platform, Point, Render, Result, Size, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions, app::GpuiMode,
+    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -19,8 +19,6 @@ use std::{
 #[derive(Clone)]
 pub struct TestAppContext {
     #[doc(hidden)]
-    pub app: Rc<AppCell>,
-    #[doc(hidden)]
     pub background_executor: BackgroundExecutor,
     #[doc(hidden)]
     pub foreground_executor: ForegroundExecutor,
@@ -30,6 +28,8 @@ pub struct TestAppContext {
     text_system: Arc<TextSystem>,
     fn_name: Option<&'static str>,
     on_quit: Rc<RefCell<Vec<Box<dyn FnOnce() + 'static>>>>,
+    #[doc(hidden)]
+    pub app: Rc<AppCell>,
 }
 
 impl AppContext for TestAppContext {
@@ -120,16 +120,10 @@ impl TestAppContext {
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
         let asset_source = Arc::new(());
-        #[cfg(not(target_family = "wasm"))]
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
 
-        let app = App::new_app(
-            platform.clone(),
-            asset_source,
-            #[cfg(not(target_family = "wasm"))]
-            http_client,
-        );
+        let app = App::new_app(platform.clone(), asset_source, http_client);
         app.borrow_mut().mode = GpuiMode::test();
 
         Self {
@@ -231,6 +225,33 @@ impl TestAppContext {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| build_window(window, cx)),
+        )
+        .unwrap()
+    }
+
+    /// Opens a new window with a specific size.
+    ///
+    /// Unlike `add_window` which uses maximized bounds, this allows controlling
+    /// the window dimensions, which is important for layout-sensitive tests.
+    pub fn open_window<F, V>(
+        &mut self,
+        window_size: Size<Pixels>,
+        build_window: F,
+    ) -> WindowHandle<V>
+    where
+        F: FnOnce(&mut Window, &mut Context<V>) -> V,
+        V: 'static + Render,
+    {
+        let mut cx = self.app.borrow_mut();
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds {
+                    origin: Point::default(),
+                    size: window_size,
+                })),
                 ..Default::default()
             },
             |window, cx| cx.new(|cx| build_window(window, cx)),
@@ -408,8 +429,8 @@ impl TestAppContext {
     }
 
     /// Wait until there are no more pending tasks.
-    pub fn run_until_parked(&mut self) {
-        self.background_executor.run_until_parked()
+    pub fn run_until_parked(&self) {
+        self.dispatcher.run_until_parked();
     }
 
     /// Simulate dispatching an action to the currently focused node in the window.
@@ -825,6 +846,8 @@ impl VisualTestContext {
         E: Element,
     {
         self.update(|window, cx| {
+            let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+
             window.invalidator.set_phase(DrawPhase::Prepaint);
             let mut element = Drawable::new(f(window, cx));
             element.layout_as_root(space.into(), window, cx);
@@ -835,6 +858,9 @@ impl VisualTestContext {
 
             window.invalidator.set_phase(DrawPhase::None);
             window.refresh();
+
+            drop(element);
+            cx.element_arena.borrow_mut().clear();
 
             (request_layout_state, prepaint_state)
         })

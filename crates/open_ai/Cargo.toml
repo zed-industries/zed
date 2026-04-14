@@ -17,13 +17,18 @@ schemars = ["dep:schemars"]
 
 [dependencies]
 anyhow.workspace = true
+collections.workspace = true
 futures.workspace = true
 http_client.workspace = true
+language_model_core.workspace = true
 rand.workspace = true
 schemars = { workspace = true, optional = true }
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-settings.workspace = true
 strum.workspace = true
 thiserror.workspace = true
+tiktoken-rs.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true

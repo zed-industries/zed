@@ -149,6 +149,16 @@ impl Diff {
         }
     }
 
+    pub fn file_path(&self, cx: &App) -> Option<String> {
+        match self {
+            Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer
+                .read(cx)
+                .file()
+                .map(|file| file.full_path(cx).to_string_lossy().into_owned()),
+            Self::Finalized(FinalizedDiff { path, .. }) => Some(path.clone()),
+        }
+    }
+
     pub fn multibuffer(&self) -> &Entity<MultiBuffer> {
         match self {
             Self::Pending(PendingDiff { multibuffer, .. }) => multibuffer,
@@ -181,7 +191,7 @@ impl Diff {
     }
 
     pub fn has_revealed_range(&self, cx: &App) -> bool {
-        self.multibuffer().read(cx).paths().next().is_some()
+        !self.multibuffer().read(cx).is_empty()
     }
 
     pub fn needs_update(&self, old_text: &str, new_text: &str, cx: &App) -> bool {

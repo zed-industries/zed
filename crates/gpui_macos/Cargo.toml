@@ -34,9 +34,10 @@ core-text = "21"
 core-video.workspace = true
 ctor.workspace = true
 derive_more.workspace = true
+dispatch2 = "0.3.1"
 etagere = "0.2"
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "110523127440aefb11ce0cf280ae7c5071337ec5", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
 foreign-types = "0.5"
 futures.workspace = true
 image.workspace = true
@@ -47,6 +48,7 @@ mach2.workspace = true
 media.workspace = true
 metal.workspace = true
 objc.workspace = true
+objc2-app-kit.workspace = true
 parking_lot.workspace = true
 pathfinder_geometry = "0.5"
 raw-window-handle = "0.6"
@@ -57,6 +59,5 @@ util.workspace = true
 uuid.workspace = true
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
-bindgen = "0.71"
 cbindgen = { version = "0.28.0", default-features = false }
 gpui.workspace = true

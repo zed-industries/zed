@@ -4,6 +4,9 @@ ignore-hidden = false
 extend-exclude = [
     ".git/",
 
+    # Typewriter model names used for agent branch names aren't typos.
+    "crates/agent_ui/src/branch_names.rs",
+
     # Contributor names aren't typos.
     ".mailmap",
 
@@ -42,10 +45,10 @@ extend-exclude = [
     "crates/gpui_windows/src/window.rs",
     # Some typos in the base mdBook CSS.
     "docs/theme/css/",
+    # Automatically generated JS.
+    "docs/theme/c15t@*.js",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
-    # Eval examples for prompts and criteria
-    "crates/eval/src/examples/",
     # File type extensions are not typos
     "crates/zed/resources/windows/zed.iss",
     # typos-cli doesn't understand our `vˇariable` markup
@@ -87,6 +90,10 @@ extend-ignore-re = [
     # AMD GPU Services
     "ags",
     # AMD GPU Services
-    "AGS"
+    "AGS",
+    # "noet" is a vim variable (ideally to ignore locally)
+    "noet",
+    # Yarn Plug'n'Play
+    "PnP"
 ]
 check-filename = true
