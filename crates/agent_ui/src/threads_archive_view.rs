@@ -537,7 +537,12 @@ impl ThreadsArchiveView {
 
                 let is_restoring = self.restoring.contains(&thread.thread_id);
 
-                let base = ThreadItem::new(id, thread.display_title())
+                let mut title = thread.display_title();
+                if thread.archived {
+                    title = format!("{} (archived)", title).into();
+                }
+
+                let base = ThreadItem::new(id, title)
                     .icon(icon)
                     .when_some(icon_from_external_svg, |this, svg| {
                         this.custom_icon_from_external_svg(svg)
