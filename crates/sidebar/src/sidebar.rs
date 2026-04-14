@@ -2013,7 +2013,7 @@ impl Sidebar {
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .icon_size(IconSize::Small),
             )
-            .anchor(gpui::BoxAnchor::TopRight)
+            .anchor(gpui::Anchor::TopRight)
             .offset(gpui::Point {
                 x: px(0.),
                 y: px(1.),
@@ -4020,7 +4020,7 @@ impl Sidebar {
                 x: px(-2.0),
                 y: px(-2.0),
             })
-            .anchor(gpui::BoxAnchor::BottomRight)
+            .anchor(gpui::Anchor::BottomRight)
     }
 
     fn render_view_more(
@@ -4568,14 +4568,14 @@ impl Sidebar {
 
         sidebar_side_context_menu("sidebar-toggle-menu", _cx)
             .anchor(if on_right {
-                gpui::BoxAnchor::BottomRight
+                gpui::Anchor::BottomRight
             } else {
-                gpui::BoxAnchor::BottomLeft
+                gpui::Anchor::BottomLeft
             })
             .attach(if on_right {
-                gpui::BoxAnchor::TopRight
+                gpui::Anchor::TopRight
             } else {
-                gpui::BoxAnchor::TopLeft
+                gpui::Anchor::TopLeft
             })
             .trigger(move |_is_active, _window, _cx| {
                 let icon = if on_right {

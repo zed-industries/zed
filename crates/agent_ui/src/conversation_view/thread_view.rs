@@ -11,7 +11,7 @@ use editor::actions::OpenExcerpts;
 use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
 
-use gpui::{BoxAnchor, List};
+use gpui::{Anchor, List};
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
 use settings::update_settings_file;
@@ -3963,7 +3963,7 @@ impl ThreadView {
                 x: px(0.0),
                 y: px(-2.0),
             })
-            .anchor(BoxAnchor::BottomLeft)
+            .anchor(Anchor::BottomLeft)
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -4067,7 +4067,7 @@ impl ThreadView {
                     }
                 },
             )
-            .anchor(BoxAnchor::BottomLeft)
+            .anchor(Anchor::BottomLeft)
             .with_handle(self.add_context_menu_handle.clone())
             .offset(gpui::Point {
                 x: px(0.0),
@@ -6929,8 +6929,8 @@ impl ThreadView {
 
         PopoverMenu::new(("permission-granularity", entry_ix))
             .with_handle(permission_dropdown_handle.clone())
-            .anchor(BoxAnchor::TopRight)
-            .attach(BoxAnchor::BottomRight)
+            .anchor(Anchor::TopRight)
+            .attach(Anchor::BottomRight)
             .trigger(
                 Button::new(("granularity-trigger", entry_ix), current_label)
                     .end_icon(

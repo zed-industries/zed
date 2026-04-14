@@ -11,7 +11,7 @@ use git::{
 };
 use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
 use gpui::{
-    AnyElement, App, Bounds, BoxAnchor, ClickEvent, ClipboardItem, DefiniteLength, DragMoveEvent,
+    AnyElement, App, Bounds, Anchor, ClickEvent, ClipboardItem, DefiniteLength, DragMoveEvent,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, PathBuilder, Pixels,
     Point, ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
@@ -2855,7 +2855,7 @@ impl Render for GitGraph {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(BoxAnchor::TopLeft)
+                        .anchor(Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)

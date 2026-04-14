@@ -60,7 +60,7 @@ use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, BoxAnchor, ClipboardItem,
+    Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, Anchor, ClipboardItem,
     DismissEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable,
     KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
     pulsating_between,
@@ -4054,7 +4054,7 @@ impl AgentPanel {
                     }
                 },
             )
-            .anchor(BoxAnchor::TopRight)
+            .anchor(Anchor::TopRight)
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
                 move |window, cx| {
@@ -4111,7 +4111,7 @@ impl AgentPanel {
     fn render_recent_entries_menu(
         &self,
         icon: IconName,
-        corner: BoxAnchor,
+        corner: Anchor,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
@@ -4225,7 +4225,7 @@ impl AgentPanel {
                 }))
             })
             .with_handle(self.start_thread_in_menu_handle.clone())
-            .anchor(BoxAnchor::TopLeft)
+            .anchor(Anchor::TopLeft)
             .offset(gpui::Point {
                 x: px(1.0),
                 y: px(1.0),
@@ -4613,7 +4613,7 @@ impl AgentPanel {
                     move |window, cx| builder(window, cx)
                 })
                 .with_handle(self.new_thread_menu_handle.clone())
-                .anchor(BoxAnchor::TopLeft)
+                .anchor(Anchor::TopLeft)
                 .offset(gpui::Point {
                     x: px(1.0),
                     y: px(1.0),
@@ -4651,7 +4651,7 @@ impl AgentPanel {
                         .when(show_history_menu && !agent_v2_enabled, |this| {
                             this.child(self.render_recent_entries_menu(
                                 IconName::MenuAltTemp,
-                                BoxAnchor::TopRight,
+                                Anchor::TopRight,
                                 cx,
                             ))
                         })
@@ -4675,7 +4675,7 @@ impl AgentPanel {
                         }
                     },
                 )
-                .anchor(BoxAnchor::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(self.new_thread_menu_handle.clone())
                 .menu(move |window, cx| new_thread_menu_builder(window, cx));
 
@@ -4703,7 +4703,7 @@ impl AgentPanel {
                         .when(show_history_menu && !agent_v2_enabled, |this| {
                             this.child(self.render_recent_entries_menu(
                                 IconName::MenuAltTemp,
-                                BoxAnchor::TopRight,
+                                Anchor::TopRight,
                                 cx,
                             ))
                         })

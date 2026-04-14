@@ -4712,7 +4712,7 @@ impl OutlinePanel {
             deferred(
                 anchored()
                     .position(*position)
-                    .anchor(gpui::BoxAnchor::TopLeft)
+                    .anchor(gpui::Anchor::TopLeft)
                     .child(menu.clone()),
             )
             .with_priority(1)

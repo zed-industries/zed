@@ -18,7 +18,7 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, BoxAnchor, ClickEvent, ClipboardItem, Context,
+    Action, AnyElement, App, AsyncWindowContext, Anchor, ClickEvent, ClipboardItem, Context,
     Div, DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
     Focusable, KeyContext, MouseButton, NavigationDirection, Pixels, Point, PromptLevel, Render,
     ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window, actions, anchored,
@@ -3679,7 +3679,7 @@ impl Pane {
 
     pub fn render_menu_overlay(menu: &Entity<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
-            deferred(anchored().anchor(BoxAnchor::TopRight).child(menu.clone())).with_priority(1),
+            deferred(anchored().anchor(Anchor::TopRight).child(menu.clone())).with_priority(1),
         )
     }
 
@@ -4178,7 +4178,7 @@ fn default_render_tab_bar_buttons(
                     IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
                     Tooltip::text("New..."),
                 )
-                .anchor(BoxAnchor::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(pane.new_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _, _| {
@@ -4200,7 +4200,7 @@ fn default_render_tab_bar_buttons(
                         .disabled(!can_clone && !can_split_move),
                     Tooltip::text("Split Pane"),
                 )
-                .anchor(BoxAnchor::TopRight)
+                .anchor(Anchor::TopRight)
                 .with_handle(pane.split_item_context_menu_handle.clone())
                 .menu(move |window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {

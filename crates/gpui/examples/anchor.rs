@@ -1,22 +1,22 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    AnchoredPositionMode, App, Axis, Bounds, BoxAnchor, Context, Half as _, InteractiveElement,
+    AnchoredPositionMode, App, Axis, Bounds, Anchor, Context, Half as _, InteractiveElement,
     ParentElement, Pixels, Point, Render, SharedString, Size, Window, WindowBounds, WindowOptions,
     anchored, deferred, div, point, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 
-struct BoxAnchorDemo {
+struct AnchorDemo {
     hovered_button: Option<usize>,
 }
 
 struct ButtonDemo {
     label: SharedString,
-    corner: Option<BoxAnchor>,
+    corner: Option<Anchor>,
 }
 
-fn resolved_position(corner: BoxAnchor, button_size: Size<Pixels>) -> Point<Pixels> {
+fn resolved_position(corner: Anchor, button_size: Size<Pixels>) -> Point<Pixels> {
     let offset = Point {
         x: px(0.),
         y: -button_size.height,
@@ -24,35 +24,35 @@ fn resolved_position(corner: BoxAnchor, button_size: Size<Pixels>) -> Point<Pixe
 
     offset
         + match corner.other_side_along(Axis::Vertical) {
-            BoxAnchor::TopLeft => point(px(0.0), px(0.0)),
-            BoxAnchor::TopCenter => point(button_size.width.half(), px(0.0)),
-            BoxAnchor::TopRight => point(button_size.width, px(0.0)),
-            BoxAnchor::LeftCenter => point(button_size.width, button_size.height.half()),
-            BoxAnchor::RightCenter => point(px(0.), button_size.height.half()),
-            BoxAnchor::BottomLeft => point(px(0.0), button_size.height),
-            BoxAnchor::BottomCenter => point(button_size.width / 2.0, button_size.height),
-            BoxAnchor::BottomRight => point(button_size.width, button_size.height),
+            Anchor::TopLeft => point(px(0.0), px(0.0)),
+            Anchor::TopCenter => point(button_size.width.half(), px(0.0)),
+            Anchor::TopRight => point(button_size.width, px(0.0)),
+            Anchor::LeftCenter => point(button_size.width, button_size.height.half()),
+            Anchor::RightCenter => point(px(0.), button_size.height.half()),
+            Anchor::BottomLeft => point(px(0.0), button_size.height),
+            Anchor::BottomCenter => point(button_size.width / 2.0, button_size.height),
+            Anchor::BottomRight => point(button_size.width, button_size.height),
         }
 }
 
-impl BoxAnchorDemo {
+impl AnchorDemo {
     fn buttons() -> Vec<ButtonDemo> {
         vec![
             ButtonDemo {
                 label: "TopLeft".into(),
-                corner: Some(BoxAnchor::TopLeft),
+                corner: Some(Anchor::TopLeft),
             },
             ButtonDemo {
                 label: "TopCenter".into(),
-                corner: Some(BoxAnchor::TopCenter),
+                corner: Some(Anchor::TopCenter),
             },
             ButtonDemo {
                 label: "TopRight".into(),
-                corner: Some(BoxAnchor::TopRight),
+                corner: Some(Anchor::TopRight),
             },
             ButtonDemo {
                 label: "LeftCenter".into(),
-                corner: Some(BoxAnchor::LeftCenter),
+                corner: Some(Anchor::LeftCenter),
             },
             ButtonDemo {
                 label: "Center".into(),
@@ -60,25 +60,25 @@ impl BoxAnchorDemo {
             },
             ButtonDemo {
                 label: "RightCenter".into(),
-                corner: Some(BoxAnchor::RightCenter),
+                corner: Some(Anchor::RightCenter),
             },
             ButtonDemo {
                 label: "BottomLeft".into(),
-                corner: Some(BoxAnchor::BottomLeft),
+                corner: Some(Anchor::BottomLeft),
             },
             ButtonDemo {
                 label: "BottomCenter".into(),
-                corner: Some(BoxAnchor::BottomCenter),
+                corner: Some(Anchor::BottomCenter),
             },
             ButtonDemo {
                 label: "BottomRight".into(),
-                corner: Some(BoxAnchor::BottomRight),
+                corner: Some(Anchor::BottomRight),
             },
         ]
     }
 }
 
-impl Render for BoxAnchorDemo {
+impl Render for AnchorDemo {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buttons = Self::buttons();
         let button_size = size(px(120.0), px(65.0));
@@ -92,7 +92,7 @@ impl Render for BoxAnchorDemo {
             .bg(gpui::white())
             .gap_4()
             .p_10()
-            .child("Popover with BoxAnchor")
+            .child("Popover with Anchor")
             .child(
                 div()
                     .size_128()
@@ -178,7 +178,7 @@ fn run_example() {
                 ..Default::default()
             },
             |_, cx| {
-                cx.new(|_| BoxAnchorDemo {
+                cx.new(|_| AnchorDemo {
                     hovered_button: None,
                 })
             },

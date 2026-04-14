@@ -2395,7 +2395,7 @@ impl SettingsWindow {
                                     .style(DropdownStyle::Subtle)
                                     .trigger_tooltip(Tooltip::text("View Other Projects"))
                                     .trigger_icon(IconName::ChevronDown)
-                                    .attach(gpui::BoxAnchor::BottomLeft)
+                                    .attach(gpui::Anchor::BottomLeft)
                                     .offset(gpui::Point {
                                         x: px(0.0),
                                         y: px(2.0),
@@ -4186,7 +4186,7 @@ fn render_font_picker(
                 )
             }))
         })
-        .anchor(gpui::BoxAnchor::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4239,7 +4239,7 @@ fn render_theme_picker(
                 )
             }))
         })
-        .anchor(gpui::BoxAnchor::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),
@@ -4292,7 +4292,7 @@ fn render_icon_theme_picker(
                 )
             }))
         })
-        .anchor(gpui::BoxAnchor::TopLeft)
+        .anchor(gpui::Anchor::TopLeft)
         .offset(gpui::Point {
             x: px(0.0),
             y: px(2.0),

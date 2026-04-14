@@ -7092,7 +7092,7 @@ impl Render for ProjectPanel {
                     deferred(
                         anchored()
                             .position(*position)
-                            .anchor(gpui::BoxAnchor::TopLeft)
+                            .anchor(gpui::Anchor::TopLeft)
                             .child(menu.clone()),
                     )
                     .with_priority(3)
