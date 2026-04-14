@@ -122,12 +122,12 @@ mod tests {
 
     #[test]
     fn empty_render_image_does_not_panic() {
-        // A zero-frame RenderImage must remain safe to inspect — size(), delay(), and
-        // Debug should all return sensible defaults rather than panicking.
         let image = RenderImage::new(SmallVec::new());
         assert_eq!(image.frame_count(), 0);
         assert_eq!(image.size(0), Size::default());
-        let _ = image.delay(0);
+        assert_eq!(image.as_bytes(0), None);
+        assert_eq!(image.render_size(0), Size::default());
+        assert_eq!(image.delay(0), Delay::from_numer_denom_ms(100, 1));
         let _ = format!("{image:?}");
     }
 }

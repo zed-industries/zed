@@ -669,6 +669,12 @@ impl Asset for ImageAssetLoader {
                             }
                         }
 
+                        if frames.is_empty() {
+                            return Err(ImageCacheError::Other(Arc::new(anyhow::anyhow!(
+                                "GIF could not be decoded: all frames failed ({source:?})"
+                            ))));
+                        }
+
                         frames
                     }
                     ImageFormat::WebP => {
@@ -795,9 +801,6 @@ mod tests {
     use super::*;
     use crate::{TestAppContext, point, px, size};
 
-    // Rendering an img element backed by a zero-frame image must not panic.
-    // This guards the paint path against decoders that return empty frame sets
-    // (e.g. due to image-rs/image-gif#228).
     #[gpui::test]
     fn zero_frame_image_does_not_panic_on_paint(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
