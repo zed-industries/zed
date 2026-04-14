@@ -202,6 +202,7 @@ struct WorktreeInfo {
     full_path: SharedString,
     highlight_positions: Vec<usize>,
     kind: ui::WorktreeKind,
+    branch_name: Option<SharedString>,
 }
 
 #[derive(Clone)]
@@ -369,7 +370,10 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 /// wouldn't identify which main project it belongs to, the main project
 /// name is prefixed for disambiguation (e.g. `project:feature`).
 ///
-fn worktree_info_from_thread_paths(worktree_paths: &ThreadWorktreePaths) -> Vec<WorktreeInfo> {
+fn worktree_info_from_thread_paths(
+    worktree_paths: &ThreadWorktreePaths,
+    branch_by_path: &HashMap<PathBuf, SharedString>,
+) -> Vec<WorktreeInfo> {
     let mut infos: Vec<WorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
     let mut unique_main_count = HashSet::new();
@@ -390,6 +394,7 @@ fn worktree_info_from_thread_paths(worktree_paths: &ThreadWorktreePaths) -> Vec<
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Linked,
+                branch_name: branch_by_path.get(folder_path).cloned(),
             });
         } else {
             let Some(name) = folder_path.file_name() else {
@@ -400,6 +405,7 @@ fn worktree_info_from_thread_paths(worktree_paths: &ThreadWorktreePaths) -> Vec<
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Main,
+                branch_name: branch_by_path.get(folder_path).cloned(),
             });
         }
     }
@@ -942,6 +948,20 @@ impl Sidebar {
         let path_detail_map: HashMap<PathBuf, usize> =
             all_paths.into_iter().zip(path_details).collect();
 
+        let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
+        for ws in &workspaces {
+            for snapshot in root_repository_snapshots(ws, cx) {
+                for linked_wt in snapshot.linked_worktrees() {
+                    if let Some(branch) = linked_wt.branch_name() {
+                        branch_by_path.insert(
+                            linked_wt.path.clone(),
+                            SharedString::from(branch.to_string()),
+                        );
+                    }
+                }
+            }
+        }
+
         for (group_key, group_workspaces) in &groups {
             if group_key.path_list().paths().is_empty() {
                 continue;
@@ -996,7 +1016,8 @@ impl Sidebar {
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        let worktrees = worktree_info_from_thread_paths(&row.worktree_paths);
+                        let worktrees =
+                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
                         ThreadEntry {
                             metadata: row,
                             icon,
@@ -1248,7 +1269,10 @@ impl Sidebar {
                                 ws.read(cx).project().read(cx),
                                 cx,
                             );
-                            let worktrees = worktree_info_from_thread_paths(&ws_worktree_paths);
+                            let worktrees = worktree_info_from_thread_paths(
+                                &ws_worktree_paths,
+                                &branch_by_path,
+                            );
                             entries.push(ListEntry::DraftThread {
                                 draft_id: Some(*draft_id),
                                 key: group_key.clone(),
@@ -3202,6 +3226,7 @@ impl Sidebar {
                                 full_path: wt.full_path.clone(),
                                 highlight_positions: Vec::new(),
                                 kind: wt.kind,
+                                branch_name: wt.branch_name.clone(),
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,
@@ -3479,6 +3504,7 @@ impl Sidebar {
                         full_path: wt.full_path.clone(),
                         highlight_positions: wt.highlight_positions.clone(),
                         kind: wt.kind,
+                        branch_name: wt.branch_name.clone(),
                     })
                     .collect(),
             )
@@ -4116,6 +4142,7 @@ impl Sidebar {
                 full_path: worktree.full_path.clone(),
                 highlight_positions: worktree.highlight_positions.clone(),
                 kind: worktree.kind,
+                branch_name: worktree.branch_name.clone(),
             })
             .collect();
 

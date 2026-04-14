@@ -29,6 +29,7 @@ pub struct ThreadItemWorktreeInfo {
     pub full_path: SharedString,
     pub highlight_positions: Vec<usize>,
     pub kind: WorktreeKind,
+    pub branch_name: Option<SharedString>,
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -377,7 +378,7 @@ impl RenderOnce for ThreadItem {
         let has_worktree = self
             .worktrees
             .iter()
-            .any(|wt| wt.kind == WorktreeKind::Linked);
+            .any(|wt| wt.kind == WorktreeKind::Linked || wt.branch_name.is_some());
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
@@ -463,17 +464,34 @@ impl RenderOnce for ThreadItem {
                     let mut seen_names: Vec<SharedString> = Vec::new();
                     let mut worktree_labels: Vec<AnyElement> = Vec::new();
 
+                    let slash_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.4));
+
                     for wt in self.worktrees {
                         if seen_names.contains(&wt.name) {
                             continue;
                         }
 
-                        if wt.kind == WorktreeKind::Main {
+                        let has_branch = wt.branch_name.is_some();
+
+                        if wt.kind == WorktreeKind::Main && !has_branch {
                             continue;
                         }
 
                         let chip_index = seen_names.len();
                         seen_names.push(wt.name.clone());
+
+                        if wt.kind == WorktreeKind::Main {
+                            // Main worktree with a branch name but no worktree chip:
+                            // show just the branch name, no icon, no slash.
+                            let branch = wt.branch_name.unwrap();
+                            worktree_labels.push(
+                                Label::new(branch)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                            );
+                            continue;
+                        }
 
                         let label = if wt.highlight_positions.is_empty() {
                             Label::new(wt.name)
@@ -499,6 +517,16 @@ impl RenderOnce for ThreadItem {
                                         .color(Color::Muted),
                                 )
                                 .child(label)
+                                .when_some(wt.branch_name, |this, branch| {
+                                    this.child(
+                                        Label::new("/").size(LabelSize::Small).color(slash_color),
+                                    )
+                                    .child(
+                                        Label::new(branch)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                })
                                 .tooltip(move |_, cx| {
                                     Tooltip::with_meta(
                                         tooltip_title,
@@ -648,6 +676,7 @@ impl Component for ThreadItem {
                                 full_path: "link-agent-panel".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
+                                branch_name: None,
                             }]),
                     )
                     .into_any_element(),
@@ -675,6 +704,7 @@ impl Component for ThreadItem {
                                 full_path: "my-project".into(),
                                 highlight_positions: Vec::new(),
                                 kind: WorktreeKind::Linked,
+                                branch_name: None,
                             }])
                             .added(42)
                             .removed(17)
@@ -755,6 +785,7 @@ impl Component for ThreadItem {
                                 full_path: "my-project-name".into(),
                                 highlight_positions: vec![3, 4, 5, 6, 7, 8, 9, 10, 11],
                                 kind: WorktreeKind::Linked,
+                                branch_name: None,
                             }]),
                     )
                     .into_any_element(),
