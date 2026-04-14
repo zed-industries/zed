@@ -1086,8 +1086,8 @@ fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArc
     })
 }
 
-fn sanitized_version_component(version: &str) -> String {
-    let sanitized = version
+fn sanitize_path_component(input: &str) -> String {
+    let sanitized = input
         .chars()
         .map(|character| match character {
             'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '_' | '-' => character,
@@ -1108,7 +1108,7 @@ fn versioned_archive_cache_dir(
     archive_url: &str,
 ) -> PathBuf {
     let version = version.unwrap_or_default();
-    let sanitized_version = sanitized_version_component(version);
+    let sanitized_version = sanitize_path_component(version);
 
     let mut version_hasher = Sha256::new();
     version_hasher.update(version.as_bytes());
@@ -1370,7 +1370,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
             let dir = paths::external_agents_dir()
                 .join("registry")
-                .join(registry_id.as_ref());
+                .join(sanitize_path_component(&registry_id));
             fs.create_dir(&dir).await?;
 
             let os = if cfg!(target_os = "macos") {
@@ -1551,7 +1551,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             let prefix_dir = paths::external_agents_dir()
                 .join("registry")
                 .join("npx")
-                .join(registry_id.as_ref());
+                .join(sanitize_path_component(&registry_id));
             fs.create_dir(&prefix_dir).await?;
 
             let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
