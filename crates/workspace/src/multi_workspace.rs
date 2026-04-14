@@ -731,9 +731,9 @@ impl MultiWorkspace {
             workspace.set_multi_workspace(weak_self.clone(), cx);
         });
 
+        let entity = cx.entity();
         cx.defer({
             let workspace = workspace.clone();
-            let entity = cx.entity();
             move |cx| {
                 entity.update(cx, |this, cx| {
                     this.sync_sidebar_to_workspace(&workspace, cx);
