@@ -439,6 +439,7 @@ pub struct Sidebar {
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     pending_thread_activation: Option<agent_ui::ThreadId>,
+    needs_branch_backfill: bool,
     pending_branch_backfills: Vec<ThreadMetadata>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
@@ -532,6 +533,7 @@ impl Sidebar {
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
+            needs_branch_backfill: true,
             pending_branch_backfills: Vec::new(),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
@@ -643,6 +645,7 @@ impl Sidebar {
                         _,
                     )
                 ) {
+                    this.needs_branch_backfill = true;
                     this.update_entries(cx);
                 }
             },
@@ -1117,9 +1120,9 @@ impl Sidebar {
         }
 
         // Backfill branch_names for ALL threads (including archived)
-        // with live git data. Overwrites stale values and removes entries
-        // that can't be verified from live repos.
-        if !branch_by_path.is_empty() {
+        // with live git data. Overwrites stale values with current branch data.
+        // Only runs when a git event has signaled that branches may have changed.
+        if self.needs_branch_backfill && !branch_by_path.is_empty() {
             let thread_store = ThreadMetadataStore::global(cx);
             for thread in thread_store.read(cx).entries() {
                 let mut changed = false;
@@ -1132,15 +1135,7 @@ impl Sidebar {
                         changed = true;
                     }
                 }
-                // Remove entries for paths not verifiable from live data
-                // (they may be stale from a previous buggy backfill).
-                updated_names.retain(|path, _| {
-                    let dominated = branch_by_path.contains_key(path);
-                    if !dominated {
-                        changed = true;
-                    }
-                    dominated
-                });
+
                 if changed {
                     let mut updated = thread.clone();
                     updated.branch_names = updated_names;
@@ -1148,6 +1143,7 @@ impl Sidebar {
                 }
             }
         }
+        self.needs_branch_backfill = false;
 
         for group in &groups {
             let group_key = &group.key;
@@ -1200,34 +1196,48 @@ impl Sidebar {
                         })
                 };
 
-                // Find a fallback branch for this group from its own
+                // Build a per-path fallback branch map from this group's
                 // workspaces. We only use branches from workspaces that
                 // are directly associated with this group — guessing
                 // from other workspaces produces incorrect results.
-                let group_fallback_branch: Option<SharedString> =
-                    group_workspaces.iter().find_map(|ws| {
+                let group_fallback_branches: HashMap<PathBuf, SharedString> = group_workspaces
+                    .iter()
+                    .flat_map(|ws| {
                         let project = ws.read(cx).project().read(cx);
-                        project.repositories(cx).values().find_map(|repo| {
-                            repo.read(cx)
-                                .snapshot()
-                                .branch
-                                .as_ref()
-                                .map(|b| SharedString::from(b.name().to_string()))
-                        })
-                    });
+                        let mut entries = Vec::new();
+                        for repo in project.repositories(cx).values() {
+                            let snapshot = repo.read(cx).snapshot();
+                            if let Some(branch) = &snapshot.branch {
+                                entries.push((
+                                    snapshot.work_directory_abs_path.to_path_buf(),
+                                    SharedString::from(branch.name().to_string()),
+                                ));
+                            }
+                            for linked_wt in snapshot.linked_worktrees() {
+                                if let Some(branch) = linked_wt.branch_name() {
+                                    entries.push((
+                                        linked_wt.path.clone(),
+                                        SharedString::from(branch.to_string()),
+                                    ));
+                                }
+                            }
+                        }
+                        entries
+                    })
+                    .collect();
 
                 // Build a ThreadEntry from a metadata row.
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         // Build branch names for just this thread's folder paths.
-                        // Use live git data, falling back to the group's workspace
-                        // branch for paths without live data.
+                        // Use live git data, falling back to the group's per-path
+                        // branch map for paths without live data.
                         let mut branch_names: HashMap<PathBuf, SharedString> = HashMap::new();
                         for (_, folder_path) in row.worktree_paths.ordered_pairs() {
                             if let Some(branch) = branch_by_path.get(folder_path) {
                                 branch_names.insert(folder_path.clone(), branch.clone());
-                            } else if let Some(branch) = group_fallback_branch.as_ref() {
+                            } else if let Some(branch) = group_fallback_branches.get(folder_path) {
                                 branch_names.insert(folder_path.clone(), branch.clone());
                             }
                         }

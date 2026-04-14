@@ -1077,6 +1077,8 @@ impl ThreadMetadataStore {
                     snapshot.work_directory_abs_path.to_path_buf(),
                     SharedString::from(branch.name().to_string()),
                 );
+            } else {
+                branch_names.remove(&*snapshot.work_directory_abs_path);
             }
             for linked_wt in snapshot.linked_worktrees() {
                 if let Some(branch) = linked_wt.branch_name() {
@@ -1084,6 +1086,8 @@ impl ThreadMetadataStore {
                         linked_wt.path.clone(),
                         SharedString::from(branch.to_string()),
                     );
+                } else {
+                    branch_names.remove(&linked_wt.path);
                 }
             }
         }
@@ -1257,7 +1261,7 @@ impl ThreadMetadataDb {
             let string_map: std::collections::HashMap<String, String> = row
                 .branch_names
                 .iter()
-                .map(|(k, v)| (k.display().to_string(), v.to_string()))
+                .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string()))
                 .collect();
             Some(serde_json::to_string(&string_map).context("serialize branch_names")?)
         };
@@ -1428,6 +1432,7 @@ impl Column for ThreadMetadata {
             Column::column(statement, next)?;
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
+        let (branch_names_json, next): (Option<String>, i32) = Column::column(statement, next)?;
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
@@ -1458,8 +1463,6 @@ impl Column for ThreadMetadata {
             })
             .unwrap_or_default();
 
-        let (branch_names_json, next): (Option<String>, i32) = Column::column(statement, next)?;
-
         let remote_connection = remote_connection_json
             .as_deref()
             .map(serde_json::from_str::<RemoteConnectionOptions>)
@@ -1468,15 +1471,15 @@ impl Column for ThreadMetadata {
 
         let branch_names: HashMap<PathBuf, SharedString> = branch_names_json
             .as_deref()
-            .and_then(|json| {
-                serde_json::from_str::<std::collections::HashMap<String, String>>(json)
-                    .ok()
-                    .map(|map| {
-                        map.into_iter()
-                            .map(|(k, v)| (PathBuf::from(k), SharedString::from(v)))
-                            .collect()
-                    })
+            .map(|json| -> anyhow::Result<_> {
+                let map: std::collections::HashMap<String, String> =
+                    serde_json::from_str(json).context("deserialize branch_names")?;
+                Ok(map
+                    .into_iter()
+                    .map(|(k, v)| (PathBuf::from(k), SharedString::from(v)))
+                    .collect())
             })
+            .transpose()?
             .unwrap_or_default();
 
         let worktree_paths = WorktreePaths::from_path_lists(main_worktree_paths, folder_paths)
