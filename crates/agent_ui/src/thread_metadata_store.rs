@@ -993,15 +993,6 @@ impl ThreadMetadataStore {
 
                 let existing_thread = self.threads.get(thread_ref.session_id());
 
-                // Don't overwrite metadata for archived threads. The
-                // worktree may already have been removed from the project
-                // as part of the archive flow, so `from_project` would
-                // return empty paths and erase the thread's project
-                // association.
-                if existing_thread.map_or(false, |t| t.archived) {
-                    return;
-                }
-
                 let session_id = thread_ref.session_id().clone();
                 let title = thread_ref
                     .title()
@@ -1015,11 +1006,24 @@ impl ThreadMetadataStore {
 
                 let agent_id = thread_ref.connection().agent_id();
 
-                let project = thread_ref.project().read(cx);
-                let worktree_paths = ThreadWorktreePaths::from_project(project, cx);
-
-                let project_group_key = project.project_group_key(cx);
-                let remote_connection = project_group_key.host();
+                // Preserve project-dependent fields for archived threads.
+                // The worktree may already have been removed from the
+                // project as part of the archive flow, so re-evaluating
+                // these from the current project state would yield
+                // empty/incorrect results.
+                let (worktree_paths, remote_connection) =
+                    if let Some(existing) = existing_thread.filter(|t| t.archived) {
+                        (
+                            existing.worktree_paths.clone(),
+                            existing.remote_connection.clone(),
+                        )
+                    } else {
+                        let project = thread_ref.project().read(cx);
+                        (
+                            ThreadWorktreePaths::from_project(project, cx),
+                            project.project_group_key(cx).host(),
+                        )
+                    };
 
                 // Threads without a folder path (e.g. started in an empty
                 // window) are archived by default so they don't get lost,
@@ -3222,6 +3226,11 @@ mod tests {
             let store = ThreadMetadataStore::global(cx).read(cx);
             let entry = store.entry(&session_id).unwrap();
             assert!(entry.archived, "thread should still be archived");
+            assert_eq!(
+                entry.title.as_ref(),
+                "Generated title",
+                "title should still be updated for archived threads"
+            );
             assert_eq!(
                 entry.folder_paths(),
                 &folder_paths_before,
