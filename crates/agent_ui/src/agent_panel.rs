@@ -3166,6 +3166,11 @@ impl AgentPanel {
 
         let selected_agent = self.selected_agent();
 
+        let git_repo_work_dirs: Vec<PathBuf> = git_repos
+            .iter()
+            .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
+            .collect();
+
         let task = cx.spawn_in(window, async move |this, cx| {
             let (all_paths, path_remapping, has_non_git) = match args {
                 WorktreeCreationArgs::New {
@@ -3275,10 +3280,14 @@ impl AgentPanel {
                     (all_paths, path_remapping, has_non_git)
                 }
                 WorktreeCreationArgs::Linked { worktree_path, .. } => {
+                    let path_remapping: Vec<(PathBuf, PathBuf)> = git_repo_work_dirs
+                        .iter()
+                        .map(|work_dir| (work_dir.clone(), worktree_path.clone()))
+                        .collect();
                     let mut all_paths = vec![worktree_path];
                     let has_non_git = !non_git_paths.is_empty();
                     all_paths.extend(non_git_paths.iter().cloned());
-                    (all_paths, Vec::new(), has_non_git)
+                    (all_paths, path_remapping, has_non_git)
                 }
             };
 
