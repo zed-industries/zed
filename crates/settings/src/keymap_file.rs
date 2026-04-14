@@ -4,7 +4,9 @@ use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
     KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
-    NoAction, SharedString, Unbind, generate_list_of_all_registered_actions, register_action,
+    MOUSE_STROKE_PARSE_EXPECTED_MESSAGE, NoAction, SCROLL_STROKE_PARSE_EXPECTED_MESSAGE,
+    SharedString, Unbind, generate_list_of_all_registered_actions, looks_like_mouse_stroke,
+    looks_like_scroll_stroke, register_action,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -386,6 +388,65 @@ impl KeymapFile {
         Self::load_keybinding_action_value(keystrokes, &action.0, context, use_key_equivalents, cx)
     }
 
+    /// Build a `KeyBinding` by auto-detecting whether `input` is a keystroke
+    /// sequence, a mouse button stroke, or a scroll stroke, and producing an
+    /// appropriately-scoped parse error for each kind.
+    fn load_any_binding(
+        input: &str,
+        action: Box<dyn Action>,
+        context: Option<Rc<KeyBindingContextPredicate>>,
+        use_key_equivalents: bool,
+        action_input: Option<SharedString>,
+        cx: &App,
+    ) -> std::result::Result<KeyBinding, String> {
+        let quoted = || MarkdownInlineCode(&format!("\"{}\"", input)).to_string();
+        if looks_like_mouse_stroke(input) {
+            if input.split_whitespace().count() > 1 {
+                return Err(format!(
+                    "mouse bindings cannot be key sequences: {}",
+                    quoted()
+                ));
+            }
+            KeyBinding::load_mouse(input, action, context, action_input).map_err(|_| {
+                format!(
+                    "invalid mouse stroke {}. {}",
+                    quoted(),
+                    MOUSE_STROKE_PARSE_EXPECTED_MESSAGE
+                )
+            })
+        } else if looks_like_scroll_stroke(input) {
+            if input.split_whitespace().count() > 1 {
+                return Err(format!(
+                    "scroll bindings cannot be key sequences: {}",
+                    quoted()
+                ));
+            }
+            KeyBinding::load_scroll(input, action, context, action_input).map_err(|_| {
+                format!(
+                    "invalid scroll stroke {}. {}",
+                    quoted(),
+                    SCROLL_STROKE_PARSE_EXPECTED_MESSAGE
+                )
+            })
+        } else {
+            KeyBinding::load(
+                input,
+                action,
+                context,
+                use_key_equivalents,
+                action_input,
+                cx.keyboard_mapper().as_ref(),
+            )
+            .map_err(|InvalidKeystrokeError { keystroke }| {
+                format!(
+                    "invalid keystroke {}. {}",
+                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
+                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                )
+            })
+        }
+    }
+
     fn load_keybinding_action_value(
         keystrokes: &str,
         action: &Value,
@@ -394,24 +455,14 @@ impl KeymapFile {
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (action, action_input_string) = Self::build_keymap_action_value(action, cx)?;
-
-        let key_binding = match KeyBinding::load(
+        let key_binding = Self::load_any_binding(
             keystrokes,
             action,
             context,
             use_key_equivalents,
             action_input_string.map(SharedString::from),
-            cx.keyboard_mapper().as_ref(),
-        ) {
-            Ok(key_binding) => key_binding,
-            Err(InvalidKeystrokeError { keystroke }) => {
-                return Err(format!(
-                    "invalid keystroke {}. {}",
-                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
-                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
-                ));
-            }
-        };
+            cx,
+        )?;
 
         if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
             match validator.validate(&key_binding) {
@@ -449,21 +500,14 @@ impl KeymapFile {
             ));
         }
 
-        KeyBinding::load(
+        Self::load_any_binding(
             keystrokes,
             Box::new(Unbind(key_binding.action().name().into())),
             key_binding.predicate(),
             use_key_equivalents,
             key_binding.action_input(),
-            cx.keyboard_mapper().as_ref(),
+            cx,
         )
-        .map_err(|InvalidKeystrokeError { keystroke }| {
-            format!(
-                "invalid keystroke {}. {}",
-                MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
-                KEYSTROKE_PARSE_EXPECTED_MESSAGE
-            )
-        })
     }
 
     pub fn parse_action(
