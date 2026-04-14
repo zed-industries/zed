@@ -3457,4 +3457,79 @@ mod tests {
             }
         }
     }
+
+    fn make_display_only_terminal() -> Terminal {
+        let dispatcher = gpui::TestDispatcher::new(rand::random());
+        let executor = gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher));
+        TerminalBuilder::new_display_only(
+            CursorShape::default(),
+            AlternateScroll::On,
+            None,
+            0,
+            &executor,
+            PathStyle::local(),
+        )
+        .unwrap()
+        .terminal
+    }
+
+    #[test]
+    fn test_cwd_at_line_empty_history_returns_none() {
+        let terminal = make_display_only_terminal();
+        assert_eq!(terminal.cwd_at_line(Line(0), 0), None);
+    }
+
+    #[test]
+    fn test_cwd_at_line_returns_cwd_for_line_at_or_after_recorded_position() {
+        let mut terminal = make_display_only_terminal();
+        let dir_a = PathBuf::from("/home/user/project_a");
+        terminal.cwd_history.push((5, dir_a.clone()));
+
+        // click_pos = history_size(5) + line(3) = 8 ≥ 5
+        assert_eq!(terminal.cwd_at_line(Line(3), 5), Some(dir_a.clone()));
+        // click_pos = history_size(5) + line(0) = 5 == 5 (exact match)
+        assert_eq!(terminal.cwd_at_line(Line(0), 5), Some(dir_a));
+    }
+
+    #[test]
+    fn test_cwd_at_line_returns_none_when_line_is_before_any_recorded_cwd() {
+        let mut terminal = make_display_only_terminal();
+        terminal
+            .cwd_history
+            .push((10, PathBuf::from("/home/user/project_a")));
+
+        // click_pos = 0 + 3 = 3 < 10 → no match, falls back to working_directory (None)
+        assert_eq!(terminal.cwd_at_line(Line(3), 0), None);
+    }
+
+    #[test]
+    fn test_cwd_at_line_selects_most_recent_cwd_before_click() {
+        let mut terminal = make_display_only_terminal();
+        let dir_a = PathBuf::from("/home/user/project_a");
+        let dir_b = PathBuf::from("/home/user/project_b");
+        let dir_c = PathBuf::from("/home/user/project_c");
+        terminal.cwd_history.push((0, dir_a.clone()));
+        terminal.cwd_history.push((10, dir_b.clone()));
+        terminal.cwd_history.push((20, dir_c.clone()));
+
+        // click_pos=5: between 0 and 10 → dir_a
+        assert_eq!(terminal.cwd_at_line(Line(5), 0), Some(dir_a));
+        // click_pos=15: between 10 and 20 → dir_b
+        assert_eq!(terminal.cwd_at_line(Line(15), 0), Some(dir_b));
+        // click_pos=25: after 20 → dir_c
+        assert_eq!(terminal.cwd_at_line(Line(25), 0), Some(dir_c));
+    }
+
+    #[test]
+    fn test_record_cwd_change_stores_entry_at_current_cursor_position() {
+        let mut terminal = make_display_only_terminal();
+        let dir = PathBuf::from("/tmp/test");
+        // Fresh display-only terminal: history_size=0, cursor at line 0 → pos=0
+        terminal.record_cwd_change(dir.clone());
+
+        assert_eq!(terminal.cwd_history.len(), 1);
+        let (pos, recorded_dir) = &terminal.cwd_history[0];
+        assert_eq!(*pos, 0);
+        assert_eq!(*recorded_dir, dir);
+    }
 }
