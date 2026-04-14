@@ -5652,6 +5652,183 @@ async fn test_restore_worktree_switches_branch_when_not_moved(cx: &mut TestAppCo
 }
 
 #[gpui::test]
+async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut TestAppContext) {
+    // Regression test: when restoring an archived linked worktree thread,
+    // the ProjectGroupKey used to open the workspace must be derived from
+    // the main repository path, not the linked worktree path. Using the
+    // wrong path causes the thread to lose its project association and
+    // prompt the user to choose a project.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-c": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-c",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/wt-feature-c",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-c",
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-c"),
+            ref_name: Some("refs/heads/feature-c".into()),
+            sha: "original-sha".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-c".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let _worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    // Save a thread metadata entry for the linked worktree.
+    let wt_session_id = acp::SessionId::new(Arc::from("wt-thread-c"));
+    save_thread_metadata(
+        wt_session_id.clone(),
+        Some("Worktree Thread C".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &worktree_project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    // Get the thread_id that was assigned.
+    let thread_id = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&wt_session_id)
+            .unwrap()
+            .thread_id
+    });
+
+    // Verify that the worktree project correctly has different
+    // main_worktree_paths vs folder_paths.
+    let (main_paths, folder_paths) = worktree_project.read_with(cx, |project, cx| {
+        let wt_paths = project.worktree_paths(cx);
+        (
+            wt_paths.main_worktree_path_list().clone(),
+            wt_paths.folder_path_list().clone(),
+        )
+    });
+    assert_ne!(
+        main_paths.paths(),
+        folder_paths.paths(),
+        "linked worktree should have different main vs folder paths"
+    );
+    assert_eq!(
+        main_paths.paths(),
+        &[PathBuf::from("/project")],
+        "main_worktree_paths should point to the main repo"
+    );
+    assert_eq!(
+        folder_paths.paths(),
+        &[PathBuf::from("/wt-feature-c")],
+        "folder_paths should point to the linked worktree"
+    );
+
+    // Create a valid archive checkpoint so restore_archive_checkpoint
+    // will succeed.
+    let wt_repo = worktree_project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    let (staged_hash, unstaged_hash) = cx
+        .update(|_window, cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Mark the thread as archived and create the ArchivedGitWorktree
+    // record in the DB.
+    let store = cx.update(|_window, cx| ThreadMetadataStore::global(cx));
+    cx.update(|_window, cx| {
+        store.update(cx, |store, cx| store.archive(thread_id, None, cx));
+    });
+    cx.run_until_parked();
+
+    let create_task = cx.update(|_window, cx| {
+        store.read(cx).create_archived_worktree(
+            "/wt-feature-c".to_string(),
+            "/project".to_string(),
+            Some("feature-c".to_string()),
+            staged_hash,
+            unstaged_hash,
+            "original-sha".to_string(),
+            cx,
+        )
+    });
+    let archived_wt_id = create_task.await.unwrap();
+
+    let link_task = cx.update(|_window, cx| {
+        store
+            .read(cx)
+            .link_thread_to_archived_worktree(thread_id, archived_wt_id, cx)
+    });
+    link_task.await.unwrap();
+    cx.run_until_parked();
+
+    // Now activate the archived thread, which triggers restore.
+    let metadata = cx.update(|_window, cx| store.read(cx).entry(thread_id).unwrap().clone());
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+
+    // Drive async restore tasks to completion.
+    for _ in 0..10 {
+        cx.run_until_parked();
+    }
+
+    // The active workspace should be for the project group that includes
+    // the main repo (/project), NOT a new workspace for /wt-feature-c.
+    let active_key =
+        multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).project_group_key(cx));
+    assert_eq!(
+        active_key.path_list().paths(),
+        &[PathBuf::from("/project")],
+        "restored worktree thread should open in the main repo's project group, \
+         not a new workspace for the linked worktree path"
+    );
+}
+
+#[gpui::test]
 async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_path(
     cx: &mut TestAppContext,
 ) {
