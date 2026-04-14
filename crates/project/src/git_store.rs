@@ -998,7 +998,9 @@ impl GitStore {
                 diff_state.language_registry = language_registry;
 
                 match kind {
-                    DiffKind::Unstaged => diff_state.unstaged_diff = Some(diff.downgrade()),
+                    DiffKind::Unstaged => {
+                        diff_state.unstaged_diff.get_or_insert(diff.downgrade());
+                    }
                     DiffKind::Uncommitted => {
                         let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                             diff
