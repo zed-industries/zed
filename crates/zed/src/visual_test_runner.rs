@@ -446,6 +446,23 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
+    // Run Test: ThreadItem branch names visual test
+    println!("\n--- Test: thread_item_branch_names ---");
+    match run_thread_item_branch_name_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ thread_item_branch_names: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ thread_item_branch_names: Baseline updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ thread_item_branch_names: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
     // Run Test 3: Multi-workspace sidebar visual tests
     println!("\n--- Test 3: multi_workspace_sidebar ---");
     match run_multi_workspace_sidebar_visual_tests(app_state.clone(), &mut cx, update_baseline) {
@@ -2868,6 +2885,204 @@ impl gpui::Render for ErrorWrappingTestView {
                     .actions_slot(Button::new("retry", "Retry").label_size(LabelSize::Small)),
             )
     }
+}
+
+#[cfg(target_os = "macos")]
+struct ThreadItemBranchNameTestView;
+
+#[cfg(target_os = "macos")]
+impl gpui::Render for ThreadItemBranchNameTestView {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use ui::{
+            IconName, Label, LabelSize, ThreadItem, ThreadItemWorktreeInfo, WorktreeKind,
+            prelude::*,
+        };
+
+        let section_label = |text: &str| {
+            Label::new(text.to_string())
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+        };
+
+        let container = || {
+            v_flex()
+                .w_80()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().panel_background)
+        };
+
+        v_flex()
+            .size_full()
+            .bg(cx.theme().colors().background)
+            .p_4()
+            .gap_3()
+            .child(
+                Label::new("ThreadItem Branch Names")
+                    .size(LabelSize::Large)
+                    .color(Color::Default),
+            )
+            .child(section_label(
+                "Linked worktree with branch (worktree / branch)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-linked-branch", "Fix scrolling behavior")
+                        .icon(IconName::AiClaude)
+                        .timestamp("5m")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "jade-glen".into(),
+                            full_path: "/worktrees/jade-glen/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some("fix-scrolling".into()),
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Linked worktree without branch (detached HEAD)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-linked-no-branch", "Review worktree cleanup")
+                        .icon(IconName::AiClaude)
+                        .timestamp("1h")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "focal-arrow".into(),
+                            full_path: "/worktrees/focal-arrow/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: None,
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Main worktree with branch (branch only, no icon)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-main-branch", "Request for Long Classic Poem")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("2d")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "zed".into(),
+                            full_path: "/projects/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Main,
+                            branch_name: Some("main".into()),
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Main worktree without branch (nothing shown)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-main-no-branch", "Simple greeting thread")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("3d")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "zed".into(),
+                            full_path: "/projects/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Main,
+                            branch_name: None,
+                        }]),
+                ),
+            )
+            .child(section_label("Linked worktree where name matches branch"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-same-name", "Implement feature")
+                        .icon(IconName::AiClaude)
+                        .timestamp("6d")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "stoic-reed".into(),
+                            full_path: "/worktrees/stoic-reed/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some("stoic-reed".into()),
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Manually opened linked worktree (main_path resolves to original repo)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-manual-linked", "Robust Git Worktree Rollback")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("40m")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "focal-arrow".into(),
+                            full_path: "/worktrees/focal-arrow/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some("persist-worktree-3-wiring".into()),
+                        }]),
+                ),
+            )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_thread_item_branch_name_visual_tests(
+    _app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    let window_size = size(px(400.0), px(850.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let window = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |_window, cx| cx.new(|_| ThreadItemBranchNameTestView),
+            )
+        })
+        .context("Failed to open thread item branch name test window")?;
+
+    cx.run_until_parked();
+
+    cx.update_window(window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    let test_result = run_visual_test(
+        "thread_item_branch_names",
+        window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    cx.update_window(window.into(), |_, window, _cx| {
+        window.remove_window();
+    })
+    .log_err();
+
+    cx.run_until_parked();
+
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    Ok(test_result)
 }
 
 #[cfg(target_os = "macos")]
