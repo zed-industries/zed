@@ -5048,7 +5048,7 @@ mod tests {
             mw.remove(
                 vec![workspace_a.clone()],
                 move |this, window, cx| {
-                    this.find_or_create_local_workspace(path_list, &excluded, window, cx)
+                    this.find_or_create_local_workspace(path_list, None, &excluded, window, cx)
                 },
                 window,
                 cx,
