@@ -2766,6 +2766,7 @@ impl Sidebar {
                     .git
                     .worktree_directory
                     .clone();
+                let mut worktree_dir_cache: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
                 metadata
                     .folder_paths()
                     .ordered_paths()
@@ -2780,10 +2781,18 @@ impl Sidebar {
                         )
                     })
                     .filter(|plan| {
-                        worktrees_directory_for_repo(&plan.main_repo_path, &worktree_dir_setting)
-                            .map(|worktrees_dir| plan.root_path.starts_with(&worktrees_dir))
-                            .log_err()
-                            .unwrap_or(false)
+                        let worktrees_dir = worktree_dir_cache
+                            .entry(plan.main_repo_path.clone())
+                            .or_insert_with(|| {
+                                worktrees_directory_for_repo(
+                                    &plan.main_repo_path,
+                                    &worktree_dir_setting,
+                                )
+                                .log_err()
+                            });
+                        worktrees_dir
+                            .as_ref()
+                            .is_some_and(|dir| plan.root_path.starts_with(dir))
                     })
                     .collect::<Vec<_>>()
             })
