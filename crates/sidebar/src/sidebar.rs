@@ -1806,9 +1806,6 @@ impl Sidebar {
                             move |this, _, window, cx| {
                                 this.set_group_expanded(&key, true, cx);
                                 this.selection = None;
-                                // If the active workspace belongs to this
-                                // group, use it (preserves linked worktree
-                                // context). Otherwise resolve from the key.
                                 let workspace = this.multi_workspace.upgrade().and_then(|mw| {
                                     let mw = mw.read(cx);
                                     let active = mw.workspace().clone();
@@ -1832,33 +1829,13 @@ impl Sidebar {
                         ))
                     }),
             )
-            .map(|this| {
-                if !has_threads && is_active {
-                    this
-                } else {
-                    let key = key.clone();
-                    this.cursor_pointer()
-                        .when(!is_active, |this| this.hover(|s| s.bg(hover_solid)))
-                        .tooltip(Tooltip::text("Open Workspace"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if let Some(workspace) = this.multi_workspace.upgrade().and_then(|mw| {
-                                mw.read(cx).workspace_for_paths(
-                                    key.path_list(),
-                                    key.host().as_ref(),
-                                    cx,
-                                )
-                            }) {
-                                // Just activate the workspace. The
-                                // AgentPanel remembers what was last
-                                // shown, so the user returns to whatever
-                                // thread/draft they were looking at.
-                                this.activate_workspace(&workspace, window, cx);
-                            } else {
-                                this.open_workspace_for_group(&key, window, cx);
-                            }
-                        }))
-                }
-            })
+            .cursor_pointer()
+            .when(!is_active, |this| this.hover(|s| s.bg(hover_solid)))
+            .tooltip(Tooltip::text(disclosure_tooltip))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.selection = None;
+                this.toggle_collapse(&key_for_collapse, window, cx);
+            }))
             .into_any_element()
     }
 
