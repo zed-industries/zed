@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::*;
 use client::proto;
-use fs::FakeFs;
+use fs::{FakeFs, Fs};
 use gpui::TestAppContext;
 use project::DisableAiSettings;
 use serde_json::json;
@@ -510,14 +510,14 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
         "missing linked-worktree paths should reuse the main worktree workspace from the project group key"
     );
 
-    multi_workspace.read_with(cx, |mw, _cx| {
+    multi_workspace.read_with(cx, |mw, cx| {
         assert_eq!(
             mw.workspace().entity_id(),
             main_workspace_id,
             "the active workspace should remain the main worktree workspace"
         );
         assert_eq!(
-            PathList::new(&mw.workspace().read(_cx).root_paths(_cx)),
+            PathList::new(&mw.workspace().read(cx).root_paths(cx)),
             project_group_key.path_list().clone(),
             "the activated workspace should use the project group key path list rather than the missing linked-worktree path"
         );

@@ -1246,9 +1246,8 @@ impl MultiWorkspace {
                                 &excluding,
                                 cx,
                             )
-                            .map(|workspace| {
+                            .inspect(|workspace| {
                                 multi_workspace.activate(workspace.clone(), window, cx);
-                                workspace
                             })
                     })
                     .ok()
