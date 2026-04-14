@@ -291,6 +291,34 @@ impl Worktree {
         self.branch_name()
             .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
+
+    pub fn directory_name(&self, main_worktree_path: Option<&Path>) -> String {
+        if self.is_main {
+            return "main".to_string();
+        }
+
+        let dir_name = self
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(self.display_name());
+
+        if let Some(main_path) = main_worktree_path {
+            let main_dir = main_path.file_name().and_then(|n| n.to_str());
+            if main_dir == Some(dir_name) {
+                if let Some(parent_name) = self
+                    .path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                {
+                    return parent_name.to_string();
+                }
+            }
+        }
+
+        dir_name.to_string()
+    }
 }
 
 pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {

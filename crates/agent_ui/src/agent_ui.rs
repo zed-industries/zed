@@ -340,23 +340,24 @@ pub enum NewWorktreeBranchTarget {
     },
 }
 
-/// Sets where new threads will run.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
+/// Immediately creates a new git worktree and switches the workspace to it.
+/// Dispatched by the unified worktree picker when the user selects a "Create new worktree" entry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum StartThreadIn {
-    #[default]
-    LocalProject,
-    NewWorktree {
-        /// When this is None, Zed will randomly generate a worktree name
-        /// otherwise, the provided name will be used.
-        #[serde(default)]
-        worktree_name: Option<String>,
-        #[serde(default)]
-        branch_target: NewWorktreeBranchTarget,
-    },
-    /// A linked worktree that already exists on disk.
-    LinkedWorktree { path: PathBuf, display_name: String },
+#[serde(deny_unknown_fields)]
+pub struct CreateWorktreeImmediately {
+    /// When this is None, Zed will randomly generate a worktree name.
+    pub worktree_name: Option<String>,
+    pub branch_target: NewWorktreeBranchTarget,
+}
+
+/// Immediately switches the workspace to an existing linked worktree.
+/// Dispatched by the unified worktree picker when the user selects an existing worktree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchToLinkedWorktree {
+    pub path: PathBuf,
 }
 
 /// Content to initialize new external agent with.
