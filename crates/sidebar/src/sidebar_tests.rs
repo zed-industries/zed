@@ -5458,6 +5458,7 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;

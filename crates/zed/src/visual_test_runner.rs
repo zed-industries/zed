@@ -3341,4 +3341,3 @@ fn run_sidebar_duplicate_project_names_visual_tests(
         Ok(TestResult::Passed)
     }
 }
-

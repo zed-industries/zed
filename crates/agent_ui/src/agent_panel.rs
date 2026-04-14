@@ -84,7 +84,7 @@ use ui::{
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, PathList, SerializedPathList,
+    CollaboratorId, DockStructure, DraggedSelection, DraggedTab, PathList, SerializedPathList,
     ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
@@ -487,13 +487,13 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, action: &CreateWorktreeImmediately, window, cx| {
-                        let active_file_path =
-                            AgentPanel::active_file_path_from_workspace(workspace, cx);
+                        let previous_state =
+                            AgentPanel::capture_workspace_state(workspace, window, cx);
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                             panel.update(cx, |panel, cx| {
                                 panel.create_worktree_immediately(
                                     action,
-                                    active_file_path,
+                                    previous_state,
                                     window,
                                     cx,
                                 );
@@ -503,11 +503,11 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, action: &SwitchToLinkedWorktree, window, cx| {
-                        let active_file_path =
-                            AgentPanel::active_file_path_from_workspace(workspace, cx);
+                        let previous_state =
+                            AgentPanel::capture_workspace_state(workspace, window, cx);
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                             panel.update(cx, |panel, cx| {
-                                panel.switch_to_worktree(action, active_file_path, window, cx);
+                                panel.switch_to_worktree(action, previous_state, window, cx);
                             });
                         }
                     },
@@ -676,6 +676,42 @@ enum WorktreeCreationArgs {
     Linked {
         worktree_path: PathBuf,
     },
+}
+
+struct PreviousWorkspaceState {
+    dock_structure: DockStructure,
+    open_file_paths: Vec<PathBuf>,
+    active_file_path: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl PreviousWorkspaceState {
+    /// An empty state with all docks hidden and no open files.
+    fn empty() -> Self {
+        use workspace::DockData;
+
+        Self {
+            dock_structure: DockStructure {
+                left: DockData {
+                    visible: false,
+                    active_panel: None,
+                    zoom: false,
+                },
+                right: DockData {
+                    visible: false,
+                    active_panel: None,
+                    zoom: false,
+                },
+                bottom: DockData {
+                    visible: false,
+                    active_panel: None,
+                    zoom: false,
+                },
+            },
+            open_file_paths: Vec::new(),
+            active_file_path: None,
+        }
+    }
 }
 
 impl BaseView {
@@ -2913,19 +2949,29 @@ impl AgentPanel {
         }
     }
 
-    fn active_file_path_from_workspace(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
-        let active_item = workspace.active_item(cx)?;
-        let project_path = active_item.project_path(cx)?;
-        workspace
-            .project()
-            .read(cx)
-            .absolute_path(&project_path, cx)
+    fn capture_workspace_state(
+        workspace: &Workspace,
+        window: &Window,
+        cx: &App,
+    ) -> PreviousWorkspaceState {
+        let dock_structure = workspace.capture_dock_state(window, cx);
+        let open_file_paths = workspace.open_item_abs_paths(cx);
+        let active_file_path = workspace
+            .active_item(cx)
+            .and_then(|item| item.project_path(cx))
+            .and_then(|pp| workspace.project().read(cx).absolute_path(&pp, cx));
+
+        PreviousWorkspaceState {
+            dock_structure,
+            open_file_paths,
+            active_file_path,
+        }
     }
 
     fn create_worktree_immediately(
         &mut self,
         action: &CreateWorktreeImmediately,
-        active_file_path: Option<PathBuf>,
+        previous_workspace_state: PreviousWorkspaceState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2956,7 +3002,7 @@ impl AgentPanel {
                 worktree_name: action.worktree_name.clone(),
                 branch_target: action.branch_target.clone(),
             },
-            active_file_path,
+            previous_workspace_state,
             window,
             cx,
         );
@@ -2965,7 +3011,7 @@ impl AgentPanel {
     fn switch_to_worktree(
         &mut self,
         action: &SwitchToLinkedWorktree,
-        active_file_path: Option<PathBuf>,
+        previous_workspace_state: PreviousWorkspaceState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2995,7 +3041,7 @@ impl AgentPanel {
             WorktreeCreationArgs::Linked {
                 worktree_path: action.path.clone(),
             },
-            active_file_path,
+            previous_workspace_state,
             window,
             cx,
         );
@@ -3021,7 +3067,7 @@ impl AgentPanel {
         &mut self,
         content: Vec<acp::ContentBlock>,
         args: WorktreeCreationArgs,
-        active_file_path: Option<PathBuf>,
+        previous_workspace_state: PreviousWorkspaceState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -3242,7 +3288,7 @@ impl AgentPanel {
                 this,
                 all_paths,
                 window_handle,
-                active_file_path,
+                previous_workspace_state,
                 path_remapping,
                 non_git_paths,
                 has_non_git,
@@ -3275,7 +3321,7 @@ impl AgentPanel {
         this: WeakEntity<Self>,
         all_paths: Vec<PathBuf>,
         window_handle: Option<gpui::WindowHandle<workspace::MultiWorkspace>>,
-        active_file_path: Option<PathBuf>,
+        previous_workspace_state: PreviousWorkspaceState,
         path_remapping: Vec<(PathBuf, PathBuf)>,
         non_git_paths: Vec<PathBuf>,
         has_non_git: bool,
@@ -3293,6 +3339,10 @@ impl AgentPanel {
                 let active_workspace = multi_workspace.workspace().clone();
                 let modal_workspace = active_workspace.clone();
 
+                // Use OpenMode::Add so the workspace is created without
+                // being activated. This lets us apply the previous workspace's
+                // dock layout before the new workspace becomes visible,
+                // avoiding a flash of default panel states.
                 let task = multi_workspace.find_or_create_workspace(
                     path_list,
                     remote_connection_options,
@@ -3306,6 +3356,7 @@ impl AgentPanel {
                         )
                     },
                     &[],
+                    workspace::OpenMode::Add,
                     window,
                     cx,
                 );
@@ -3321,6 +3372,16 @@ impl AgentPanel {
         if let Some(task) = panels_task {
             task.await.log_err();
         }
+
+        // Apply dock layout immediately after panels are initialized, before
+        // any further awaits that could yield a render frame. This prevents
+        // a visual flash where panels briefly appear in their default state.
+        let dock_structure = previous_workspace_state.dock_structure;
+        window_handle.update(cx, |_multi_workspace, window, cx| {
+            new_workspace.update(cx, |workspace, cx| {
+                workspace.set_dock_structure(dock_structure, window, cx);
+            });
+        })?;
 
         new_workspace
             .update(cx, |workspace, cx| {
@@ -3364,9 +3425,10 @@ impl AgentPanel {
                     );
                 }
 
-                // If we had an active buffer, remap its path and reopen it.
-                let had_active_file = active_file_path.is_some();
-                let remapped_active_path = active_file_path.and_then(|original_path| {
+                // Remap every previously-open file path into the new worktree.
+                // Paths that can't be remapped (e.g. files that don't exist on
+                // the target branch) are silently skipped — best-effort.
+                let remap_path = |original_path: PathBuf| -> Option<PathBuf> {
                     let best_match = path_remapping
                         .iter()
                         .filter_map(|(old_root, new_root)| {
@@ -3386,17 +3448,35 @@ impl AgentPanel {
                         }
                     }
                     None
-                });
+                };
 
-                if had_active_file && remapped_active_path.is_none() {
-                    log::warn!(
-                        "Active file could not be remapped to the new worktree; it will not be reopened"
-                    );
+                let remapped_active_path = previous_workspace_state
+                    .active_file_path
+                    .and_then(|p| remap_path(p));
+
+                // Collect all remapped paths, deduplicating and preserving order.
+                // The active file is placed last so it ends up as the focused tab.
+                let mut paths_to_open: Vec<PathBuf> = Vec::new();
+                let mut seen = HashSet::default();
+                for path in previous_workspace_state.open_file_paths {
+                    if let Some(remapped) = remap_path(path) {
+                        if remapped_active_path.as_ref() != Some(&remapped)
+                            && seen.insert(remapped.clone())
+                        {
+                            paths_to_open.push(remapped);
+                        }
+                    }
                 }
 
-                if let Some(path) = remapped_active_path {
+                if let Some(active) = &remapped_active_path {
+                    if seen.insert(active.clone()) {
+                        paths_to_open.push(active.clone());
+                    }
+                }
+
+                if !paths_to_open.is_empty() {
                     let open_task = workspace.open_paths(
-                        vec![path],
+                        paths_to_open,
                         workspace::OpenOptions::default(),
                         None,
                         window,
@@ -3404,7 +3484,9 @@ impl AgentPanel {
                     );
                     cx.spawn(async move |_, _| -> anyhow::Result<()> {
                         for item in open_task.await.into_iter().flatten() {
-                            item?;
+                            // Best-effort: files that don't exist on the target
+                            // branch will fail to open and that's fine.
+                            item.log_err();
                         }
                         Ok(())
                     })
@@ -3412,11 +3494,6 @@ impl AgentPanel {
                 }
 
                 workspace.focus_panel::<AgentPanel>(window, cx);
-
-                // If no active buffer was open, zoom the agent panel
-                // (equivalent to cmd-esc fullscreen behavior).
-                // This must happen after focus_panel, which activates
-                // and opens the panel in the dock.
 
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
@@ -5946,8 +6023,6 @@ mod tests {
         });
     }
 
-
-
     #[gpui::test]
     async fn test_set_active_blocked_during_worktree_creation(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6179,7 +6254,7 @@ mod tests {
                         name: "main".to_string(),
                     },
                 },
-                None,
+                PreviousWorkspaceState::empty(),
                 window,
                 cx,
             );
@@ -6343,7 +6418,7 @@ mod tests {
                     worktree_name: None,
                     branch_target: NewWorktreeBranchTarget::default(),
                 },
-                None,
+                PreviousWorkspaceState::empty(),
                 window,
                 cx,
             );
@@ -7228,7 +7303,7 @@ mod tests {
                 WorktreeCreationArgs::Linked {
                     worktree_path: linked_path,
                 },
-                None,
+                PreviousWorkspaceState::empty(),
                 window,
                 cx,
             );
