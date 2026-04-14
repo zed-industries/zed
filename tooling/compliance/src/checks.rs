@@ -6,7 +6,7 @@ use crate::{
     git::{CommitDetails, CommitList},
     github::{
         CommitAuthor, GitHubClient, GitHubUser, GithubLogin, PullRequestComment, PullRequestData,
-        PullRequestReview, ReviewState,
+        PullRequestReview, Repository, ReviewState,
     },
     report::Report,
 };
@@ -110,12 +110,18 @@ impl<'a> Reporter<'a> {
     }
 
     /// Method that checks every commit for compliance
-    async fn check_commit(&self, commit: &CommitDetails) -> Result<ReviewSuccess, ReviewFailure> {
+    pub async fn check_commit(
+        &self,
+        commit: &CommitDetails,
+    ) -> Result<ReviewSuccess, ReviewFailure> {
         let Some(pr_number) = commit.pr_number() else {
             return Err(ReviewFailure::NoPullRequestFound);
         };
 
-        let pull_request = self.github_client.get_pull_request(pr_number).await?;
+        let pull_request = self
+            .github_client
+            .get_pull_request(&Repository::ZED, pr_number)
+            .await?;
 
         if let Some(approval) = self
             .check_approving_pull_request_review(&pull_request)
@@ -149,7 +155,7 @@ impl<'a> Reporter<'a> {
         if commit.co_authors().is_some()
             && let Some(commit_authors) = self
                 .github_client
-                .get_commit_authors(&[commit.sha()])
+                .get_commit_authors(&Repository::ZED, &[commit.sha()])
                 .await?
                 .get(commit.sha())
                 .and_then(|authors| authors.co_authors())
@@ -159,7 +165,7 @@ impl<'a> Reporter<'a> {
                 if let Some(github_login) = co_author.user()
                     && self
                         .github_client
-                        .actor_has_repository_write_permission(github_login)
+                        .check_repo_write_permission(&Repository::ZED, github_login)
                         .await?
                 {
                     org_co_authors.push(co_author.clone());
@@ -183,7 +189,7 @@ impl<'a> Reporter<'a> {
         if let Some(user) = pull_request.user
             && self
                 .github_client
-                .actor_has_repository_write_permission(&GithubLogin::new(user.login))
+                .check_repo_write_permission(&Repository::ZED, &GithubLogin::new(user.login))
                 .await?
                 .not()
         {
@@ -206,7 +212,7 @@ impl<'a> Reporter<'a> {
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         let pr_reviews = self
             .github_client
-            .get_pull_request_reviews(pull_request.number)
+            .get_pull_request_reviews(&Repository::ZED, pull_request.number)
             .await?;
 
         if !pr_reviews.is_empty() {
@@ -226,9 +232,10 @@ impl<'a> Reporter<'a> {
                             .is_some_and(Self::contains_approving_pattern))
                     && self
                         .github_client
-                        .actor_has_repository_write_permission(&GithubLogin::new(
-                            github_login.login.clone(),
-                        ))
+                        .check_repo_write_permission(
+                            &Repository::ZED,
+                            &GithubLogin::new(github_login.login.clone()),
+                        )
                         .await?
                 {
                     org_approving_reviews.push(review);
@@ -250,7 +257,7 @@ impl<'a> Reporter<'a> {
     ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
         let other_comments = self
             .github_client
-            .get_pull_request_comments(pull_request.number)
+            .get_pull_request_comments(&Repository::ZED, pull_request.number)
             .await?;
 
         if !other_comments.is_empty() {
@@ -267,9 +274,10 @@ impl<'a> Reporter<'a> {
                         .is_some_and(Self::contains_approving_pattern)
                     && self
                         .github_client
-                        .actor_has_repository_write_permission(&GithubLogin::new(
-                            comment.user.login.clone(),
-                        ))
+                        .check_repo_write_permission(
+                            &Repository::ZED,
+                            &GithubLogin::new(comment.user.login.clone()),
+                        )
                         .await?
                 {
                     org_approving_comments.push(comment);
@@ -324,7 +332,7 @@ mod tests {
     use crate::git::{CommitDetails, CommitList, CommitSha};
     use crate::github::{
         AuthorsForCommits, GitHubApiClient, GitHubClient, GitHubUser, GithubLogin,
-        PullRequestComment, PullRequestData, PullRequestReview, ReviewState,
+        PullRequestComment, PullRequestData, PullRequestReview, Repository, ReviewState,
     };
 
     use super::{Reporter, ReviewFailure, ReviewSuccess};
@@ -339,12 +347,17 @@ mod tests {
 
     #[async_trait::async_trait(?Send)]
     impl GitHubApiClient for MockGitHubApi {
-        async fn get_pull_request(&self, _pr_number: u64) -> anyhow::Result<PullRequestData> {
+        async fn get_pull_request(
+            &self,
+            _repo: &Repository<'_>,
+            _pr_number: u64,
+        ) -> anyhow::Result<PullRequestData> {
             Ok(self.pull_request.clone())
         }
 
         async fn get_pull_request_reviews(
             &self,
+            _repo: &Repository<'_>,
             _pr_number: u64,
         ) -> anyhow::Result<Vec<PullRequestReview>> {
             Ok(self.reviews.clone())
@@ -352,6 +365,7 @@ mod tests {
 
         async fn get_pull_request_comments(
             &self,
+            _repo: &Repository<'_>,
             _pr_number: u64,
         ) -> anyhow::Result<Vec<PullRequestComment>> {
             Ok(self.comments.clone())
@@ -359,24 +373,26 @@ mod tests {
 
         async fn get_commit_authors(
             &self,
+            _repo: &Repository<'_>,
             _commit_shas: &[&CommitSha],
         ) -> anyhow::Result<AuthorsForCommits> {
             serde_json::from_value(self.commit_authors_json.clone()).map_err(Into::into)
         }
 
-        async fn check_org_membership(&self, login: &GithubLogin) -> anyhow::Result<bool> {
+        async fn check_repo_write_permission(
+            &self,
+            _repo: &Repository<'_>,
+            login: &GithubLogin,
+        ) -> anyhow::Result<bool> {
             Ok(self
                 .org_members
                 .iter()
                 .any(|member| member == login.as_str()))
         }
 
-        async fn check_repo_write_permission(&self, _login: &GithubLogin) -> anyhow::Result<bool> {
-            Ok(false)
-        }
-
-        async fn ensure_pull_request_has_label(
+        async fn add_label_to_issue(
             &self,
+            _repo: &Repository<'_>,
             _label: &str,
             _pr_number: u64,
         ) -> anyhow::Result<()> {
@@ -439,6 +455,7 @@ mod tests {
                         login: "alice".to_owned(),
                     }),
                     merged_by: None,
+                    labels: None,
                 },
                 reviews: vec![],
                 comments: vec![],
@@ -609,11 +626,11 @@ mod tests {
                         "email": "alice@test.com",
                         "user": { "login": "alice" }
                     },
-                    "authors": [{
+                    "authors": { "nodes": [{
                         "name": "Charlie",
                         "email": "charlie@test.com",
                         "user": { "login": "charlie" }
-                    }]
+                    }] }
                 }
             }))
             .with_commit(make_commit(
@@ -639,11 +656,11 @@ mod tests {
                         "email": "alice@test.com",
                         "user": { "login": "alice" }
                     },
-                    "authors": [{
+                    "authors": { "nodes": [{
                         "name": "Bob",
                         "email": "bob@test.com",
                         "user": { "login": "bob" }
-                    }]
+                    }] }
                 }
             }))
             .with_commit(make_commit(

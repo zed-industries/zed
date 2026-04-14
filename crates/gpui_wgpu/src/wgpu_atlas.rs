@@ -8,6 +8,8 @@ use gpui::{
 use parking_lot::Mutex;
 use std::{borrow::Cow, ops, sync::Arc};
 
+use crate::WgpuContext;
+
 fn device_size_to_etagere(size: Size<DevicePixels>) -> etagere::Size {
     size2(size.width.0, size.height.0)
 }
@@ -31,6 +33,7 @@ struct WgpuAtlasState {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
     max_texture_size: u32,
+    color_texture_format: wgpu::TextureFormat,
     storage: WgpuAtlasStorage,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
     pending_uploads: Vec<PendingUpload>,
@@ -41,16 +44,29 @@ pub struct WgpuTextureInfo {
 }
 
 impl WgpuAtlas {
-    pub fn new(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
+    pub fn new(
+        device: Arc<wgpu::Device>,
+        queue: Arc<wgpu::Queue>,
+        color_texture_format: wgpu::TextureFormat,
+    ) -> Self {
         let max_texture_size = device.limits().max_texture_dimension_2d;
         WgpuAtlas(Mutex::new(WgpuAtlasState {
             device,
             queue,
             max_texture_size,
+            color_texture_format,
             storage: WgpuAtlasStorage::default(),
             tiles_by_key: Default::default(),
             pending_uploads: Vec::new(),
         }))
+    }
+
+    pub fn from_context(context: &WgpuContext) -> Self {
+        Self::new(
+            context.device.clone(),
+            context.queue.clone(),
+            context.color_texture_format(),
+        )
     }
 
     pub fn before_frame(&self) {
@@ -68,10 +84,11 @@ impl WgpuAtlas {
 
     /// Handles device lost by clearing all textures and cached tiles.
     /// The atlas will lazily recreate textures as needed on subsequent frames.
-    pub fn handle_device_lost(&self, device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) {
+    pub fn handle_device_lost(&self, context: &WgpuContext) {
         let mut lock = self.0.lock();
-        lock.device = device;
-        lock.queue = queue;
+        lock.device = context.device.clone();
+        lock.queue = context.queue.clone();
+        lock.color_texture_format = context.color_texture_format();
         lock.storage = WgpuAtlasStorage::default();
         lock.tiles_by_key.clear();
         lock.pending_uploads.clear();
@@ -167,8 +184,7 @@ impl WgpuAtlasState {
         let size = min_size.min(&max_atlas_size).max(&DEFAULT_ATLAS_SIZE);
         let format = match kind {
             AtlasTextureKind::Monochrome => wgpu::TextureFormat::R8Unorm,
-            AtlasTextureKind::Subpixel => wgpu::TextureFormat::Bgra8Unorm,
-            AtlasTextureKind::Polychrome => wgpu::TextureFormat::Bgra8Unorm,
+            AtlasTextureKind::Subpixel | AtlasTextureKind::Polychrome => self.color_texture_format,
         };
 
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -221,11 +237,14 @@ impl WgpuAtlasState {
     }
 
     fn upload_texture(&mut self, id: AtlasTextureId, bounds: Bounds<DevicePixels>, bytes: &[u8]) {
-        self.pending_uploads.push(PendingUpload {
-            id,
-            bounds,
-            data: bytes.to_vec(),
-        });
+        let data = self
+            .storage
+            .get(id)
+            .map(|texture| swizzle_upload_data(bytes, texture.format))
+            .unwrap_or_else(|| bytes.to_vec());
+
+        self.pending_uploads
+            .push(PendingUpload { id, bounds, data });
     }
 
     fn flush_uploads(&mut self) {
@@ -341,7 +360,7 @@ impl WgpuAtlasTexture {
     fn bytes_per_pixel(&self) -> u8 {
         match self.format {
             wgpu::TextureFormat::R8Unorm => 1,
-            wgpu::TextureFormat::Bgra8Unorm => 4,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Rgba8Unorm => 4,
             _ => 4,
         }
     }
@@ -352,6 +371,19 @@ impl WgpuAtlasTexture {
 
     fn is_unreferenced(&self) -> bool {
         self.live_atlas_keys == 0
+    }
+}
+
+fn swizzle_upload_data(bytes: &[u8], format: wgpu::TextureFormat) -> Vec<u8> {
+    match format {
+        wgpu::TextureFormat::Rgba8Unorm => {
+            let mut data = bytes.to_vec();
+            for pixel in data.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+            data
+        }
+        _ => bytes.to_vec(),
     }
 }
 
@@ -400,7 +432,7 @@ mod tests {
     fn before_frame_skips_uploads_for_removed_texture() -> anyhow::Result<()> {
         let (device, queue) = test_device_and_queue()?;
 
-        let atlas = WgpuAtlas::new(device, queue);
+        let atlas = WgpuAtlas::new(device, queue, wgpu::TextureFormat::Bgra8Unorm);
         let key = AtlasKey::Image(RenderImageParams {
             image_id: ImageId(1),
             frame_index: 0,
@@ -417,7 +449,24 @@ mod tests {
             .expect("tile should be created");
         atlas.remove(&key);
         atlas.before_frame();
-
         Ok(())
+    }
+
+    #[test]
+    fn swizzle_upload_data_preserves_bgra_uploads() {
+        let input = vec![0x10, 0x20, 0x30, 0x40];
+        assert_eq!(
+            swizzle_upload_data(&input, wgpu::TextureFormat::Bgra8Unorm),
+            input
+        );
+    }
+
+    #[test]
+    fn swizzle_upload_data_converts_bgra_to_rgba() {
+        let input = vec![0x10, 0x20, 0x30, 0x40, 0xAA, 0xBB, 0xCC, 0xDD];
+        assert_eq!(
+            swizzle_upload_data(&input, wgpu::TextureFormat::Rgba8Unorm),
+            vec![0x30, 0x20, 0x10, 0x40, 0xCC, 0xBB, 0xAA, 0xDD]
+        );
     }
 }

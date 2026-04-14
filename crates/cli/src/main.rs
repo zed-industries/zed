@@ -25,7 +25,6 @@ use tempfile::{NamedTempFile, TempDir};
 use util::paths::PathWithPosition;
 use walkdir::WalkDir;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
 
 const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
@@ -68,14 +67,17 @@ struct Args {
     #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
-    #[arg(short, long, overrides_with_all = ["new", "reuse"])]
+    #[arg(short, long, overrides_with_all = ["new", "reuse", "existing"])]
     add: bool,
     /// Create a new workspace
-    #[arg(short, long, overrides_with_all = ["add", "reuse"])]
+    #[arg(short, long, overrides_with_all = ["add", "reuse", "existing"])]
     new: bool,
     /// Reuse an existing window, replacing its workspace
-    #[arg(short, long, overrides_with_all = ["add", "new"])]
+    #[arg(short, long, overrides_with_all = ["add", "new", "existing"], hide = true)]
     reuse: bool,
+    /// Open in existing Zed window
+    #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse"])]
+    existing: bool,
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     /// This overrides the default platform-specific data directory location:
     #[cfg_attr(target_os = "macos", doc = "`~/Library/Application Support/Zed`.")]
@@ -544,6 +546,8 @@ fn main() -> Result<()> {
         None
     };
 
+    let force_existing_window = args.existing;
+
     let env = {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         {
@@ -665,7 +669,7 @@ fn main() -> Result<()> {
                 #[cfg(not(target_os = "windows"))]
                 let wsl = None;
 
-                tx.send(CliRequest::Open {
+                let open_request = CliRequest::Open {
                     paths,
                     urls,
                     diff_paths,
@@ -673,11 +677,14 @@ fn main() -> Result<()> {
                     wsl,
                     wait: args.wait,
                     open_new_workspace,
+                    force_existing_window,
                     reuse: args.reuse,
                     env,
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
-                })?;
+                };
+
+                tx.send(open_request)?;
 
                 while let Ok(response) = rx.recv() {
                     match response {
@@ -687,6 +694,11 @@ fn main() -> Result<()> {
                         CliResponse::Exit { status } => {
                             exit_status.lock().replace(status);
                             return Ok(());
+                        }
+                        CliResponse::PromptOpenBehavior => {
+                            let behavior = prompt_open_behavior()
+                                .unwrap_or(cli::CliOpenBehavior::ExistingWindow);
+                            tx.send(CliRequest::SetOpenBehavior { behavior })?;
                         }
                     }
                 }
@@ -779,6 +791,40 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
         // not implemented for bsd, windows. Could be, but isn't yet
         None
     }
+}
+
+/// Shows an interactive prompt asking the user to choose the default open
+/// behavior for `zed <path>`. Returns `None` if the prompt cannot be shown
+/// (e.g. stdin is not a terminal) or the user cancels.
+fn prompt_open_behavior() -> Option<cli::CliOpenBehavior> {
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+
+    let blue = console::Style::new().blue();
+    let items = [
+        format!("Add to existing Zed window ({})", blue.apply_to("zed -e")),
+        format!("Open a new window ({})", blue.apply_to("zed -n")),
+    ];
+
+    let prompt = format!(
+        "Configure default behavior for {}\n{}",
+        blue.apply_to("zed <path>"),
+        console::style("You can change this later in Zed settings"),
+    );
+
+    let selection = dialoguer::Select::new()
+        .with_prompt(&prompt)
+        .items(&items)
+        .default(0)
+        .interact()
+        .ok()?;
+
+    Some(if selection == 0 {
+        cli::CliOpenBehavior::ExistingWindow
+    } else {
+        cli::CliOpenBehavior::NewWindow
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -1171,7 +1217,9 @@ mod mac_os {
         string::kCFStringEncodingUTF8,
         url::{CFURL, CFURLCreateWithBytes},
     };
-    use core_services::{LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults};
+    use core_services::{
+        LSLaunchURLSpec, LSOpenFromURLSpec, kLSLaunchDefaults, kLSLaunchDontSwitch,
+    };
     use serde::Deserialize;
     use std::{
         ffi::OsStr,
@@ -1270,7 +1318,7 @@ mod mac_os {
                                 appURL: app_url.as_concrete_TypeRef(),
                                 itemURLs: urls_to_open.as_concrete_TypeRef(),
                                 passThruParams: ptr::null(),
-                                launchFlags: kLSLaunchDefaults,
+                                launchFlags: kLSLaunchDefaults | kLSLaunchDontSwitch,
                                 asyncRefCon: ptr::null_mut(),
                             },
                             ptr::null_mut(),
