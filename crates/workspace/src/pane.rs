@@ -83,6 +83,8 @@ pub enum SaveIntent {
     /// write all files (even if unchanged)
     /// prompt before overwriting on-disk changes
     Save,
+    /// same as Save, but always formats regardless of the format_on_save setting
+    FormatAndSave,
     /// same as Save, but without auto formatting
     SaveWithoutFormat,
     /// write any files that have local changes
@@ -2267,7 +2269,10 @@ impl Pane {
         })?;
 
         // when saving a single buffer, we ignore whether or not it's dirty.
-        if save_intent == SaveIntent::Save || save_intent == SaveIntent::SaveWithoutFormat {
+        if save_intent == SaveIntent::Save
+            || save_intent == SaveIntent::FormatAndSave
+            || save_intent == SaveIntent::SaveWithoutFormat
+        {
             is_dirty = true;
         }
 
@@ -2282,6 +2287,7 @@ impl Pane {
         }
 
         let should_format = save_intent != SaveIntent::SaveWithoutFormat;
+        let force_format = save_intent == SaveIntent::FormatAndSave;
 
         if has_conflict && can_save {
             if has_deleted_file && is_singleton {
@@ -2301,6 +2307,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2335,6 +2342,7 @@ impl Pane {
                             item.save(
                                 SaveOptions {
                                     format: should_format,
+                                    force_format,
                                     autosave: false,
                                 },
                                 project,
@@ -2416,6 +2424,7 @@ impl Pane {
                     item.save(
                         SaveOptions {
                             format: should_format,
+                            force_format,
                             autosave: false,
                         },
                         project,
@@ -2500,6 +2509,7 @@ impl Pane {
             item.save(
                 SaveOptions {
                     format,
+                    force_format: false,
                     autosave: true,
                 },
                 project,

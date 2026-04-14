@@ -889,12 +889,18 @@ impl Item for Editor {
                 .collect()
         };
 
+        let format_trigger = if options.force_format {
+            FormatTrigger::Manual
+        } else {
+            FormatTrigger::Save
+        };
+
         cx.spawn_in(window, async move |this, cx| {
             if options.format {
                 this.update_in(cx, |editor, window, cx| {
                     editor.perform_format(
                         project.clone(),
-                        FormatTrigger::Save,
+                        format_trigger,
                         FormatTarget::Buffers(buffers_to_save.clone()),
                         window,
                         cx,
