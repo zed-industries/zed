@@ -5273,17 +5273,176 @@ mod tests {
         active_session_id, active_thread_id, open_thread_with_connection,
         open_thread_with_custom_connection, send_message,
     };
-    use acp_thread::{StubAgentConnection, ThreadStatus};
+    use acp_thread::{AgentConnection, StubAgentConnection, ThreadStatus, UserMessageId};
+    use action_log::ActionLog;
     use agent_servers::CODEX_ID;
+    use anyhow::Result;
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{App, TestAppContext, VisualTestContext};
+    use parking_lot::Mutex;
     use project::Project;
+    use std::any::Any;
 
     use serde_json::json;
     use std::path::Path;
+    use std::sync::Arc;
     use std::time::Instant;
     use workspace::MultiWorkspace;
+
+    #[derive(Clone, Default)]
+    struct DuplicateOwnerConnection {
+        next_session_number: Arc<Mutex<usize>>,
+        sessions: Arc<Mutex<HashSet<acp::SessionId>>>,
+        closed_sessions: Arc<Mutex<Vec<acp::SessionId>>>,
+        missing_prompt_sessions: Arc<Mutex<Vec<acp::SessionId>>>,
+    }
+
+    impl DuplicateOwnerConnection {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn create_session(
+            self: Rc<Self>,
+            session_id: acp::SessionId,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            title: Option<SharedString>,
+            cx: &mut App,
+        ) -> Entity<AcpThread> {
+            self.sessions.lock().insert(session_id.clone());
+
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                AcpThread::new(
+                    None,
+                    title,
+                    Some(work_dirs),
+                    self,
+                    project,
+                    action_log,
+                    session_id,
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            })
+        }
+    }
+
+    impl AgentConnection for DuplicateOwnerConnection {
+        fn agent_id(&self) -> AgentId {
+            agent::ZED_AGENT_ID.clone()
+        }
+
+        fn telemetry_id(&self) -> SharedString {
+            "duplicate-owner-test".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            cx: &mut App,
+        ) -> Task<Result<Entity<AcpThread>>> {
+            let session_id = {
+                let mut next_session_number = self.next_session_number.lock();
+                let session_id =
+                    acp::SessionId::new(format!("duplicate-owner-session-{}", *next_session_number));
+                *next_session_number += 1;
+                session_id
+            };
+            let thread = self.create_session(session_id, project, work_dirs, None, cx);
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_load_session(&self) -> bool {
+            true
+        }
+
+        fn load_session(
+            self: Rc<Self>,
+            session_id: acp::SessionId,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            title: Option<SharedString>,
+            cx: &mut App,
+        ) -> Task<Result<Entity<AcpThread>>> {
+            let thread = self.create_session(session_id, project, work_dirs, title, cx);
+            thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                            "Restored user message".into(),
+                        )),
+                        cx,
+                    )
+                    .expect("restored user message should be applied");
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                            "Restored assistant message".into(),
+                        )),
+                        cx,
+                    )
+                    .expect("restored assistant message should be applied");
+            });
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_close_session(&self) -> bool {
+            true
+        }
+
+        fn close_session(
+            self: Rc<Self>,
+            session_id: &acp::SessionId,
+            _cx: &mut App,
+        ) -> Task<Result<()>> {
+            self.sessions.lock().remove(session_id);
+            self.closed_sessions.lock().push(session_id.clone());
+            Task::ready(Ok(()))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: UserMessageId,
+            params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<Result<acp::PromptResponse>> {
+            if !self.sessions.lock().contains(&params.session_id) {
+                self.missing_prompt_sessions
+                    .lock()
+                    .push(params.session_id.clone());
+                return Task::ready(Err(anyhow!("Session not found")));
+            }
+
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
 
     #[gpui::test]
     async fn test_active_thread_serialize_and_load_round_trip(cx: &mut TestAppContext) {
@@ -5815,6 +5974,36 @@ mod tests {
         (panel, cx)
     }
 
+    async fn setup_workspace_panel(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, Entity<AgentPanel>, VisualTestContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        (workspace, panel, cx)
+    }
+
     #[gpui::test]
     async fn test_running_thread_retained_when_navigating_away(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
@@ -5965,6 +6154,392 @@ mod tests {
             assert!(
                 panel.retained_threads.contains_key(&thread_id_b),
                 "Thread B (idle, non-loadable) should remain retained in retained_threads"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thread_link_reopening_visible_session_does_not_dead_session_it(
+        cx: &mut TestAppContext,
+    ) {
+        let (workspace, panel, mut cx) = setup_workspace_panel(cx).await;
+        cx.run_until_parked();
+
+        let connection = DuplicateOwnerConnection::new();
+        panel.update(&mut cx, |panel, cx| {
+            panel.connection_store.update(cx, |store, cx| {
+                store.restart_connection(
+                    Agent::NativeAgent,
+                    Rc::new(StubAgentServer::new(connection.clone())),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel
+                    .connection_store
+                    .read(cx)
+                    .connection_status(&Agent::NativeAgent, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Connected,
+                "native key should now point at the injected test connection"
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.external_thread(
+                Some(Agent::NativeAgent),
+                None,
+                None,
+                None,
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        send_message(&panel, &mut cx);
+
+        let session_id = active_session_id(&panel, &cx);
+        let thread_id = active_thread_id(&panel, &cx);
+        let original_view = panel.read_with(&cx, |panel, _cx| {
+            panel
+                .active_conversation_view()
+                .expect("native thread should be active")
+                .clone()
+        });
+        let original_view_id = original_view.entity_id();
+        let original_view_weak = original_view.downgrade();
+        let workspace_weak = workspace.downgrade();
+        let thread_link: SharedString = MentionUri::Thread {
+            id: session_id.clone(),
+            name: "Existing thread".to_string(),
+        }
+        .to_uri()
+        .to_string()
+        .into();
+
+        cx.update(|window, cx| {
+            crate::conversation_view::open_link(
+                thread_link.clone(),
+                &workspace_weak,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let duplicate_view_id = panel.read_with(&cx, |panel, cx| {
+            let active_view = panel
+                .active_conversation_view()
+                .expect("thread link open should leave a visible active conversation");
+            let active_session_id = panel
+                .active_agent_thread(cx)
+                .map(|thread| thread.read(cx).session_id().clone());
+            assert_eq!(
+                active_session_id,
+                Some(session_id.clone()),
+                "thread-link open should target the requested session id"
+            );
+
+            panel.retained_threads.get(&thread_id).map(|retained_view| {
+                assert_eq!(
+                    panel.retained_threads.len(),
+                    1,
+                    "if thread-link open duplicates a visible session, it should retain exactly one original owner"
+                );
+                assert_eq!(
+                    retained_view.entity_id(),
+                    original_view_id,
+                    "retained owner should be the original conversation view"
+                );
+                assert_ne!(
+                    active_view.entity_id(),
+                    original_view_id,
+                    "thread-link open should create a second visible owner through open_thread"
+                );
+                active_view.entity_id()
+            })
+        });
+
+        drop(original_view);
+
+        if let Some(duplicate_view_id) = duplicate_view_id {
+            panel.update(&mut cx, |panel, cx| {
+                panel.remove_thread(thread_id, cx);
+            });
+            cx.run_until_parked();
+
+            assert!(
+                original_view_weak.upgrade().is_none(),
+                "removing the retained original owner should drop that conversation view"
+            );
+
+            panel.read_with(&cx, |panel, cx| {
+                let active_view = panel
+                    .active_conversation_view()
+                    .expect("visible duplicate should remain open after dropping the retained owner");
+                assert_eq!(
+                    active_view.entity_id(),
+                    duplicate_view_id,
+                    "the duplicate owner should remain the active visible conversation"
+                );
+                let active_session_id = panel
+                    .active_agent_thread(cx)
+                    .map(|thread| thread.read(cx).session_id().clone());
+                assert_eq!(
+                    active_session_id,
+                    Some(session_id.clone()),
+                    "the visible duplicate should still believe it owns the session"
+                );
+            });
+        } else {
+            panel.read_with(&cx, |panel, _cx| {
+                let active_view = panel
+                    .active_conversation_view()
+                    .expect("visible conversation should stay active when reopened from a thread link");
+                assert_eq!(
+                    active_view.entity_id(),
+                    original_view_id,
+                    "thread-link reopen should reuse the already-visible conversation when no duplicate is created"
+                );
+                assert!(
+                    panel.retained_threads.is_empty(),
+                    "thread-link reopen should not retain a background duplicate"
+                );
+            });
+        }
+
+        send_message(&panel, &mut cx);
+        send_message(&panel, &mut cx);
+
+        let missing_prompt_sessions = connection.missing_prompt_sessions.lock().clone();
+        assert!(
+            missing_prompt_sessions.is_empty(),
+            "reopening an already-visible session from a thread link should not strand the UI on a dead backend session, got missing prompt sessions: {:?}",
+            missing_prompt_sessions
+        );
+
+        panel.read_with(&cx, |panel, cx| {
+            let active_view = panel
+                .active_conversation_view()
+                .expect("visible conversation should remain open after thread-link sends");
+            let connected = active_view
+                .read(cx)
+                .as_connected()
+                .expect("visible conversation should still be connected in the UI");
+            assert!(
+                !connected.has_thread_error(cx),
+                "visible conversation should not enter a thread-error state after reopening from a thread link"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_thread_reopening_visible_session_does_not_dead_session_it(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.run_until_parked();
+
+        let connection = DuplicateOwnerConnection::new();
+        panel.update(&mut cx, |panel, cx| {
+            panel.connection_store.update(cx, |store, cx| {
+                store.restart_connection(
+                    Agent::NativeAgent,
+                    Rc::new(StubAgentServer::new(connection.clone())),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel
+                    .connection_store
+                    .read(cx)
+                    .connection_status(&Agent::NativeAgent, cx),
+                crate::agent_connection_store::AgentConnectionStatus::Connected,
+                "native key should now point at the injected test connection"
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.external_thread(
+                Some(Agent::NativeAgent),
+                None,
+                None,
+                None,
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.active_conversation_view().is_some(),
+                "opening the first native thread should create an active conversation"
+            );
+            assert!(
+                panel.active_thread_view(cx).is_some(),
+                "opening the first native thread should yield an active thread view"
+            );
+        });
+
+        send_message(&panel, &mut cx);
+
+        let session_id = active_session_id(&panel, &cx);
+        let thread_id = active_thread_id(&panel, &cx);
+        let original_view = panel.read_with(&cx, |panel, _cx| {
+            panel
+                .active_conversation_view()
+                .expect("native thread should be active")
+                .clone()
+        });
+        let original_view_id = original_view.entity_id();
+        let original_view_weak = original_view.downgrade();
+
+        panel.read_with(&cx, |panel, cx| {
+            let active_session_id = panel
+                .active_agent_thread(cx)
+                .map(|thread| thread.read(cx).session_id().clone());
+            assert_eq!(
+                active_session_id,
+                Some(session_id.clone()),
+                "first native thread should have the expected session"
+            );
+            assert!(
+                !panel.active_thread_is_draft(cx),
+                "first thread should no longer be a draft after sending"
+            );
+            assert!(
+                ThreadMetadataStore::global(cx)
+                    .read(cx)
+                    .entry_by_session(&session_id)
+                    .is_some(),
+                "first send should persist metadata for reopening by session id"
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_thread(session_id.clone(), None, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        let duplicate_view_id = panel.read_with(&cx, |panel, cx| {
+            let active_view = panel
+                .active_conversation_view()
+                .expect("reopened thread should be active");
+            assert_eq!(
+                active_view.read(cx).agent_key(),
+                &Agent::NativeAgent,
+                "reopened thread should still be native"
+            );
+            let active_session_id = panel
+                .active_agent_thread(cx)
+                .map(|thread| thread.read(cx).session_id().clone());
+            assert_eq!(
+                active_session_id,
+                Some(session_id.clone()),
+                "reopened thread should keep pointing at the same session id"
+            );
+
+            panel.retained_threads.get(&thread_id).map(|retained_view| {
+                assert_eq!(
+                    panel.retained_threads.len(),
+                    1,
+                    "if open_thread duplicates a visible session, it should retain exactly one original owner"
+                );
+                assert_eq!(
+                    retained_view.entity_id(),
+                    original_view_id,
+                    "retained owner should be the original conversation view"
+                );
+                assert_ne!(
+                    active_view.entity_id(),
+                    original_view_id,
+                    "duplicate-owner repro should produce a distinct active conversation view"
+                );
+                active_view.entity_id()
+            })
+        });
+
+        drop(original_view);
+
+        if let Some(duplicate_view_id) = duplicate_view_id {
+            panel.update(&mut cx, |panel, cx| {
+                panel.remove_thread(thread_id, cx);
+            });
+            cx.run_until_parked();
+
+            assert!(
+                original_view_weak.upgrade().is_none(),
+                "removing the retained original owner should drop that conversation view"
+            );
+
+            panel.read_with(&cx, |panel, cx| {
+                let active_view = panel
+                    .active_conversation_view()
+                    .expect("visible duplicate should remain open after dropping the retained owner");
+                assert_eq!(
+                    active_view.entity_id(),
+                    duplicate_view_id,
+                    "the duplicate owner should remain the active visible conversation"
+                );
+                let active_session_id = panel
+                    .active_agent_thread(cx)
+                    .map(|thread| thread.read(cx).session_id().clone());
+                assert_eq!(
+                    active_session_id,
+                    Some(session_id.clone()),
+                    "the visible duplicate should still believe it owns the session"
+                );
+            });
+        } else {
+            panel.read_with(&cx, |panel, _cx| {
+                let active_view = panel
+                    .active_conversation_view()
+                    .expect("visible conversation should stay active when reopened");
+                assert_eq!(
+                    active_view.entity_id(),
+                    original_view_id,
+                    "open_thread should reuse the already-visible conversation when no duplicate is created"
+                );
+                assert!(
+                    panel.retained_threads.is_empty(),
+                    "reopening an already-visible session should not retain a background duplicate"
+                );
+            });
+        }
+
+        send_message(&panel, &mut cx);
+        send_message(&panel, &mut cx);
+
+        let missing_prompt_sessions = connection.missing_prompt_sessions.lock().clone();
+        assert!(
+            missing_prompt_sessions.is_empty(),
+            "reopening an already-visible session should not strand the UI on a dead backend session, got missing prompt sessions: {:?}",
+            missing_prompt_sessions
+        );
+
+        panel.read_with(&cx, |panel, cx| {
+            let active_view = panel
+                .active_conversation_view()
+                .expect("visible conversation should remain open after sending");
+            let connected = active_view
+                .read(cx)
+                .as_connected()
+                .expect("visible conversation should still be connected in the UI");
+            assert!(
+                !connected.has_thread_error(cx),
+                "visible conversation should not enter a thread-error state after reopening the same session"
             );
         });
     }
