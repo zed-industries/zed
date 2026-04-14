@@ -4807,7 +4807,6 @@ dependencies = [
  "paths",
  "picker",
  "project",
- "regex",
  "serde",
  "serde_json",
  "serde_json_lenient",
@@ -4860,6 +4859,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25f104b501bf2364e78d0d3974cbc774f738f5865306ed128e1e0d7499c0ad96"
 dependencies = [
  "console",
+ "fuzzy-matcher",
  "shell-words",
 ]
 
@@ -5179,7 +5179,6 @@ dependencies = [
  "copilot",
  "copilot_ui",
  "credentials_provider",
- "criterion",
  "ctor",
  "db",
  "edit_prediction_context",
@@ -5193,11 +5192,9 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
- "languages",
  "log",
  "lsp",
  "menu",
- "node_runtime",
  "open_ai",
  "parking_lot",
  "postage",
@@ -5241,6 +5238,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "collections",
+ "criterion",
  "db",
  "debug_adapter_extension",
  "dirs 4.0.0",
@@ -6493,6 +6491,7 @@ dependencies = [
  "ashpd",
  "async-tar",
  "async-trait",
+ "cocoa 0.26.0",
  "collections",
  "dunce",
  "fs",
@@ -6504,6 +6503,7 @@ dependencies = [
  "libc",
  "log",
  "notify 8.2.0",
+ "objc",
  "parking_lot",
  "paths",
  "proto",
@@ -6513,9 +6513,7 @@ dependencies = [
  "smol",
  "tempfile",
  "text",
- "thiserror 2.0.17",
  "time",
- "trash",
  "util",
  "windows 0.61.3",
 ]
@@ -6743,6 +6741,15 @@ dependencies = [
  "gpui",
  "log",
  "util",
+]
+
+[[package]]
+name = "fuzzy-matcher"
+version = "0.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54614a3312934d066701a80f20f15fa3b56d67ac7722b39eea5b4c9dd1d66c94"
+dependencies = [
+ "thread_local",
 ]
 
 [[package]]
@@ -7255,7 +7262,6 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
- "alacritty_terminal",
  "anyhow",
  "askpass",
  "buffer_diff",
@@ -13381,8 +13387,6 @@ dependencies = [
  "editor",
  "feature_flags",
  "file_icons",
- "fs",
- "futures 0.3.32",
  "git",
  "git_ui",
  "gpui",
@@ -16737,6 +16741,44 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "story"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "itertools 0.14.0",
+ "smallvec",
+]
+
+[[package]]
+name = "storybook"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ctrlc",
+ "dialoguer",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "gpui_platform",
+ "indoc",
+ "language",
+ "log",
+ "menu",
+ "picker",
+ "reqwest_client",
+ "rust-embed",
+ "settings",
+ "simplelog",
+ "story",
+ "strum 0.27.2",
+ "theme",
+ "theme_settings",
+ "title_bar",
+ "ui",
+]
+
+[[package]]
 name = "streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17657,6 +17699,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "derive_more",
  "gpui",
  "palette",
  "parking_lot",
@@ -17979,6 +18022,7 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
+ "story",
  "telemetry",
  "theme",
  "ui",
@@ -18463,24 +18507,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "trash"
-version = "5.2.5"
-source = "git+https://github.com/zed-industries/trash-rs?rev=3bf27effd4eb8699f2e484d3326b852fe3e53af7#3bf27effd4eb8699f2e484d3326b852fe3e53af7"
-dependencies = [
- "chrono",
- "libc",
- "log",
- "objc2",
- "objc2-foundation",
- "once_cell",
- "percent-encoding",
- "scopeguard",
- "urlencoding",
- "windows 0.56.0",
- "windows-core 0.56.0",
-]
-
-[[package]]
 name = "tree-sitter"
 version = "0.26.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18895,6 +18921,7 @@ dependencies = [
  "schemars",
  "serde",
  "smallvec",
+ "story",
  "strum 0.27.2",
  "theme",
  "ui_macros",
@@ -20592,16 +20619,6 @@ dependencies = [
 
 [[package]]
 name = "windows"
-version = "0.56.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1de69df01bdf1ead2f4ac895dc77c9351aefff65b2f3db429a343f9cbf05e132"
-dependencies = [
- "windows-core 0.56.0",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows"
 version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12342cb4d8e3b046f3d80effd474a7a02447231330ef77d71daa6fbc40681143"
@@ -20690,18 +20707,6 @@ dependencies = [
 
 [[package]]
 name = "windows-core"
-version = "0.56.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4698e52ed2d08f8658ab0c39512a7c00ee5fe2688c65f8c0a4f06750d729f2a6"
-dependencies = [
- "windows-implement 0.56.0",
- "windows-interface 0.56.0",
- "windows-result 0.1.2",
- "windows-targets 0.52.6",
-]
-
-[[package]]
-name = "windows-core"
 version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2ed2439a290666cd67ecce2b0ffaad89c2a56b976b736e6ece670297897832d"
@@ -20775,17 +20780,6 @@ dependencies = [
 
 [[package]]
 name = "windows-implement"
-version = "0.56.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6fc35f58ecd95a9b71c4f2329b911016e6bec66b3f2e6a4aad86bd2e99e2f9b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "windows-implement"
 version = "0.57.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9107ddc059d5b6fbfbffdfa7a7fe3e22a226def0b2608f72e9d552763d3e1ad7"
@@ -20811,17 +20805,6 @@ name = "windows-implement"
 version = "0.60.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "053e2e040ab57b9dc951b72c264860db7eb3b0200ba345b4e4c3b14f67855ddf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "windows-interface"
-version = "0.56.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08990546bf4edef8f431fa6326e032865f27138718c587dc21bc0265bbcb57cc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -22171,7 +22154,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.233.0"
+version = "0.232.2"
 dependencies = [
  "acp_thread",
  "acp_tools",

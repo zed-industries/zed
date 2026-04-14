@@ -16,7 +16,7 @@ path = "src/storybook.rs"
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive", "string"] }
 ctrlc = "3.4"
-dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
+dialoguer = { workspace = true, features = ["fuzzy-select"] }
 editor.workspace = true
 fuzzy.workspace = true
 gpui = { workspace = true, default-features = true }
