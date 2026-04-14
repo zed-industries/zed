@@ -1140,7 +1140,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     path_list,
                                     Some(key.clone()),
                                     &[],
-                                    OpenMode::Activate,
+                                    None,
                                     window,
                                     cx,
                                 )

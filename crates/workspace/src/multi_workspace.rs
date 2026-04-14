@@ -1009,7 +1009,7 @@ impl MultiWorkspace {
                         neighbor_key.path_list().clone(),
                         Some(neighbor_key.clone()),
                         &excluded_workspaces,
-                        OpenMode::Activate,
+                        None,
                         window,
                         cx,
                     );
@@ -1138,7 +1138,7 @@ impl MultiWorkspace {
         ) -> Task<Result<Option<Entity<remote::RemoteClient>>>>
         + 'static,
         excluding: &[Entity<Workspace>],
-        open_mode: OpenMode,
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1152,7 +1152,7 @@ impl MultiWorkspace {
                 paths,
                 provisional_project_group_key,
                 excluding,
-                open_mode,
+                init,
                 window,
                 cx,
             );
@@ -1215,7 +1215,7 @@ impl MultiWorkspace {
         path_list: PathList,
         project_group: Option<ProjectGroupKey>,
         excluding: &[Entity<Workspace>],
-        open_mode: OpenMode,
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1275,6 +1275,16 @@ impl MultiWorkspace {
                 return Ok(workspace);
             }
 
+            // When an `init` callback is provided, the caller intends to
+            // configure the workspace (e.g. restore dock layout) before it
+            // becomes visible. Use `Add` so the workspace is created without
+            // being activated, and let the caller call `activate` when ready.
+            let open_mode = if init.is_some() {
+                OpenMode::Add
+            } else {
+                OpenMode::Activate
+            };
+
             let result = cx
                 .update(|cx| {
                     Workspace::new_local(
@@ -1282,7 +1292,7 @@ impl MultiWorkspace {
                         app_state,
                         requesting_window,
                         None,
-                        None,
+                        init,
                         open_mode,
                         cx,
                     )
@@ -1824,14 +1834,7 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(
-                PathList::new(&paths),
-                None,
-                &[],
-                OpenMode::Activate,
-                window,
-                cx,
-            )
+            self.find_or_create_local_workspace(PathList::new(&paths), None, &[], None, window, cx)
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {

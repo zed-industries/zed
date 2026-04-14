@@ -3349,10 +3349,15 @@ impl AgentPanel {
                 let active_workspace = multi_workspace.workspace().clone();
                 let modal_workspace = active_workspace.clone();
 
-                // Use OpenMode::Add so the workspace is created without
-                // being activated. This lets us apply the previous workspace's
-                // dock layout before the new workspace becomes visible,
-                // avoiding a flash of default panel states.
+                let dock_structure = previous_workspace_state.dock_structure;
+                let init = Box::new(
+                    move |workspace: &mut Workspace,
+                          window: &mut Window,
+                          cx: &mut Context<Workspace>| {
+                        workspace.set_dock_structure(dock_structure, window, cx);
+                    },
+                );
+
                 let task = multi_workspace.find_or_create_workspace(
                     path_list,
                     remote_connection_options,
@@ -3366,7 +3371,7 @@ impl AgentPanel {
                         )
                     },
                     &[],
-                    workspace::OpenMode::Add,
+                    Some(init),
                     window,
                     cx,
                 );
@@ -3382,16 +3387,6 @@ impl AgentPanel {
         if let Some(task) = panels_task {
             task.await.log_err();
         }
-
-        // Apply dock layout immediately after panels are initialized, before
-        // any further awaits that could yield a render frame. This prevents
-        // a visual flash where panels briefly appear in their default state.
-        let dock_structure = previous_workspace_state.dock_structure;
-        window_handle.update(cx, |_multi_workspace, window, cx| {
-            new_workspace.update(cx, |workspace, cx| {
-                workspace.set_dock_structure(dock_structure, window, cx);
-            });
-        })?;
 
         new_workspace
             .update(cx, |workspace, cx| {
@@ -3502,6 +3497,14 @@ impl AgentPanel {
                     })
                     .detach_and_log_err(cx);
                 }
+            });
+        })?;
+
+        window_handle.update(cx, |multi_workspace, window, cx| {
+            multi_workspace.activate(new_workspace.clone(), window, cx);
+
+            new_workspace.update(cx, |workspace, cx| {
+                workspace.run_create_worktree_tasks(window, cx);
 
                 workspace.focus_panel::<AgentPanel>(window, cx);
 
@@ -3519,14 +3522,6 @@ impl AgentPanel {
                         );
                     });
                 }
-            });
-        })?;
-
-        window_handle.update(cx, |multi_workspace, window, cx| {
-            multi_workspace.activate(new_workspace.clone(), window, cx);
-
-            new_workspace.update(cx, |workspace, cx| {
-                workspace.run_create_worktree_tasks(window, cx);
             })
         })?;
 
