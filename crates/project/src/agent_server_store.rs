@@ -571,6 +571,7 @@ impl AgentServerStore {
                                         fs: fs.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
+                                        registry_id: Arc::from(name.as_str()),
                                         version: agent.metadata.version.clone(),
                                         package: agent.package.clone(),
                                         args: agent.args.clone(),
@@ -1502,6 +1503,7 @@ struct LocalRegistryNpxAgent {
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
+    registry_id: Arc<str>,
     version: SharedString,
     package: SharedString,
     args: Vec<String>,
@@ -1532,6 +1534,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
+        let registry_id = self.registry_id.clone();
         let package = self.package.clone();
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
@@ -1548,7 +1551,7 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             let prefix_dir = paths::external_agents_dir()
                 .join("registry")
                 .join("npx")
-                .join(Path::new(package.as_str()));
+                .join(registry_id.as_ref());
             fs.create_dir(&prefix_dir).await?;
 
             let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
