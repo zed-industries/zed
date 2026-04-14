@@ -2622,7 +2622,7 @@ mod tests {
         remote_b_thread.remote_connection = Some(remote_b.clone());
 
         let linked_worktree_paths =
-            WorktreePaths::from_path_lists(main_paths.clone(), linked_paths.clone()).unwrap();
+            WorktreePaths::from_path_lists(main_paths.clone(), linked_paths).unwrap();
 
         let local_linked_thread = ThreadMetadata {
             thread_id: ThreadId::new(),
@@ -2644,7 +2644,7 @@ mod tests {
             title: Some("Remote Linked".into()),
             updated_at: now - chrono::Duration::seconds(1),
             created_at: Some(now - chrono::Duration::seconds(1)),
-            worktree_paths: linked_worktree_paths.clone(),
+            worktree_paths: linked_worktree_paths,
             remote_connection: Some(remote_a.clone()),
         };
 

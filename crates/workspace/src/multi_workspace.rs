@@ -1127,6 +1127,7 @@ impl MultiWorkspace {
             &mut Context<Self>,
         ) -> Task<Result<Option<Entity<remote::RemoteClient>>>>
         + 'static,
+        excluding: &[Entity<Workspace>],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1139,7 +1140,7 @@ impl MultiWorkspace {
             return self.find_or_create_local_workspace(
                 paths,
                 provisional_project_group_key,
-                &[],
+                excluding,
                 window,
                 cx,
             );
