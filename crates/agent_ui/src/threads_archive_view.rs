@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::agent_connection_store::AgentConnectionStore;
@@ -12,6 +13,7 @@ use agent::ThreadStore;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
+use collections::HashMap;
 use editor::Editor;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -135,6 +137,8 @@ pub struct ThreadsArchiveView {
     agent_connection_store: WeakEntity<AgentConnectionStore>,
     agent_server_store: WeakEntity<AgentServerStore>,
     restoring: HashSet<ThreadId>,
+    archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
+    _load_branch_names_task: Task<()>,
 }
 
 impl ThreadsArchiveView {
@@ -177,6 +181,7 @@ impl ThreadsArchiveView {
             &ThreadMetadataStore::global(cx),
             |this: &mut Self, _, cx| {
                 this.update_items(cx);
+                this.load_archived_branch_names(cx);
             },
         );
 
@@ -204,9 +209,12 @@ impl ThreadsArchiveView {
             agent_connection_store,
             agent_server_store,
             restoring: HashSet::default(),
+            archived_branch_names: HashMap::default(),
+            _load_branch_names_task: Task::ready(()),
         };
 
         this.update_items(cx);
+        this.load_archived_branch_names(cx);
         this
     }
 
@@ -331,6 +339,21 @@ impl ThreadsArchiveView {
         }
 
         cx.notify();
+    }
+
+    fn load_archived_branch_names(&mut self, cx: &mut Context<Self>) {
+        let task = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .get_all_archived_branch_names(cx);
+        self._load_branch_names_task = cx.spawn(async move |this, cx| {
+            if let Ok(branch_names) = task.await {
+                this.update(cx, |this, cx| {
+                    this.archived_branch_names = branch_names;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        });
     }
 
     fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -539,8 +562,19 @@ impl ThreadsArchiveView {
 
                 let is_restoring = self.restoring.contains(&thread.thread_id);
 
-                let worktrees =
-                    worktree_info_from_thread_paths(&thread.worktree_paths, &thread.branch_names);
+                let branch_names_for_thread: HashMap<PathBuf, SharedString> = self
+                    .archived_branch_names
+                    .get(&thread.thread_id)
+                    .map(|map| {
+                        map.iter()
+                            .map(|(k, v)| (k.clone(), SharedString::from(v.clone())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let worktrees = worktree_info_from_thread_paths(
+                    &thread.worktree_paths,
+                    &branch_names_for_thread,
+                );
 
                 let base = ThreadItem::new(id, thread.display_title())
                     .icon(icon)

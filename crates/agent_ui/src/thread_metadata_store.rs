@@ -103,7 +103,6 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         worktree_paths: WorktreePaths::from_folder_paths(&entry.folder_paths),
                         remote_connection: None,
                         archived: true,
-                        branch_names: HashMap::default(),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -273,9 +272,6 @@ pub struct ThreadMetadata {
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub archived: bool,
-    /// Maps folder paths to their git branch names at the time the thread
-    /// was last updated. Persisted so branch names survive worktree deletion.
-    pub branch_names: HashMap<PathBuf, SharedString>,
 }
 
 impl ThreadMetadata {
@@ -297,7 +293,6 @@ impl ThreadMetadata {
             worktree_paths: worktree_paths.clone(),
             remote_connection,
             archived: worktree_paths.is_empty(),
-            branch_names: HashMap::default(),
         }
     }
 
@@ -746,11 +741,8 @@ impl ThreadMetadataStore {
             if thread.archived {
                 continue;
             }
-            let mut branch_names = thread.branch_names.clone();
-            branch_names.retain(|path, _| worktree_paths.folder_path_list().paths().contains(path));
             self.save_internal(ThreadMetadata {
                 worktree_paths: worktree_paths.clone(),
-                branch_names,
                 ..thread.clone()
             });
             changed = true;
@@ -819,13 +811,9 @@ impl ThreadMetadataStore {
     ) {
         if let Some(thread) = self.threads.get(&thread_id).cloned() {
             let mut paths: Vec<PathBuf> = thread.folder_paths().paths().to_vec();
-            let mut branch_names = thread.branch_names.clone();
             for (old_path, new_path) in path_replacements {
                 if let Some(pos) = paths.iter().position(|p| p == old_path) {
                     paths[pos] = new_path.clone();
-                }
-                if let Some(branch) = branch_names.remove(old_path) {
-                    branch_names.insert(new_path.clone(), branch);
                 }
             }
             let new_folder_paths = PathList::new(&paths);
@@ -835,7 +823,6 @@ impl ThreadMetadataStore {
                     new_folder_paths.clone(),
                 )
                 .unwrap_or_else(|_| WorktreePaths::from_folder_paths(&new_folder_paths)),
-                branch_names,
                 ..thread
             });
             cx.notify();
@@ -850,15 +837,11 @@ impl ThreadMetadataStore {
     ) {
         if let Some(thread) = self.threads.get(&thread_id).cloned() {
             let mut paths: Vec<PathBuf> = thread.folder_paths().paths().to_vec();
-            let mut branch_names = thread.branch_names.clone();
             for (old_path, new_path) in path_replacements {
                 for path in &mut paths {
                     if path == old_path {
                         *path = new_path.clone();
                     }
-                }
-                if let Some(branch) = branch_names.remove(old_path) {
-                    branch_names.insert(new_path.clone(), branch);
                 }
             }
             let new_folder_paths = PathList::new(&paths);
@@ -868,7 +851,6 @@ impl ThreadMetadataStore {
                     new_folder_paths.clone(),
                 )
                 .unwrap_or_else(|_| WorktreePaths::from_folder_paths(&new_folder_paths)),
-                branch_names,
                 ..thread
             });
             cx.notify();
@@ -1054,6 +1036,14 @@ impl ThreadMetadataStore {
         })
     }
 
+    pub fn get_all_archived_branch_names(
+        &self,
+        cx: &App,
+    ) -> Task<anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, String>>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move { db.get_all_archived_branch_names().await })
+    }
+
     fn update_archived(&mut self, thread_id: ThreadId, archived: bool, cx: &mut Context<Self>) {
         if let Some(thread) = self.threads.get(&thread_id) {
             self.save_internal(ThreadMetadata {
@@ -1202,50 +1192,19 @@ impl ThreadMetadataStore {
         // project as part of the archive flow, so re-evaluating
         // these from the current project state would yield
         // empty/incorrect results.
-        let (worktree_paths, remote_connection, branch_names) = if let Some(existing) =
-            existing_thread.filter(|t| t.archived)
-        {
-            (
-                existing.worktree_paths.clone(),
-                existing.remote_connection.clone(),
-                existing.branch_names.clone(),
-            )
-        } else {
-            let project = thread_ref.project().read(cx);
-            let worktree_paths = project.worktree_paths(cx);
-            let remote_connection = project.remote_connection_options(cx);
+        let (worktree_paths, remote_connection) =
+            if let Some(existing) = existing_thread.filter(|t| t.archived) {
+                (
+                    existing.worktree_paths.clone(),
+                    existing.remote_connection.clone(),
+                )
+            } else {
+                let project = thread_ref.project().read(cx);
+                let worktree_paths = project.worktree_paths(cx);
+                let remote_connection = project.remote_connection_options(cx);
 
-            let mut branch_names = existing_thread
-                .map(|t| t.branch_names.clone())
-                .unwrap_or_default();
-            for repo in project.repositories(cx).values() {
-                let snapshot = repo.read(cx).snapshot();
-                if let Some(branch) = &snapshot.branch {
-                    branch_names.insert(
-                        snapshot.work_directory_abs_path.to_path_buf(),
-                        SharedString::from(branch.name().to_string()),
-                    );
-                } else {
-                    branch_names.remove(&*snapshot.work_directory_abs_path);
-                }
-                for linked_wt in snapshot.linked_worktrees() {
-                    if let Some(branch) = linked_wt.branch_name() {
-                        branch_names.insert(
-                            linked_wt.path.clone(),
-                            SharedString::from(branch.to_string()),
-                        );
-                    } else {
-                        branch_names.remove(&linked_wt.path);
-                    }
-                }
-            }
-
-            // Prune branch entries for paths no longer in this thread's worktree paths,
-            // so the map doesn't accumulate stale entries over time.
-            branch_names.retain(|path, _| worktree_paths.folder_path_list().paths().contains(path));
-
-            (worktree_paths, remote_connection, branch_names)
-        };
+                (worktree_paths, remote_connection)
+            };
 
         // Threads without a folder path (e.g. started in an empty
         // window) are archived by default so they don't get lost,
@@ -1265,7 +1224,6 @@ impl ThreadMetadataStore {
             worktree_paths,
             remote_connection,
             archived,
-            branch_names,
         };
 
         self.save(metadata, cx);
@@ -1352,7 +1310,6 @@ impl Domain for ThreadMetadataDb {
             DROP TABLE sidebar_threads;
             ALTER TABLE sidebar_threads_v2 RENAME TO sidebar_threads;
         ),
-        sql!(ALTER TABLE sidebar_threads ADD COLUMN branch_names TEXT),
     ];
 }
 
@@ -1370,7 +1327,7 @@ impl ThreadMetadataDb {
     /// List all sidebar thread metadata, ordered by updated_at descending.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
         self.select::<ThreadMetadata>(
-            "SELECT thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, branch_names \
+            "SELECT thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection \
              FROM sidebar_threads \
              ORDER BY updated_at DESC"
         )?()
@@ -1410,22 +1367,12 @@ impl ThreadMetadataDb {
             .map(serde_json::to_string)
             .transpose()
             .context("serialize thread metadata remote connection")?;
-        let branch_names_json: Option<String> = if row.branch_names.is_empty() {
-            None
-        } else {
-            let string_map: std::collections::HashMap<String, String> = row
-                .branch_names
-                .iter()
-                .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string()))
-                .collect();
-            Some(serde_json::to_string(&string_map).context("serialize branch_names")?)
-        };
         let thread_id = row.thread_id;
         let archived = row.archived;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, branch_names) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
                        ON CONFLICT(thread_id) DO UPDATE SET \
                            session_id = excluded.session_id, \
                            agent_id = excluded.agent_id, \
@@ -1437,8 +1384,7 @@ impl ThreadMetadataDb {
                            archived = excluded.archived, \
                            main_worktree_paths = excluded.main_worktree_paths, \
                            main_worktree_paths_order = excluded.main_worktree_paths_order, \
-                           remote_connection = excluded.remote_connection, \
-                           branch_names = excluded.branch_names";
+                           remote_connection = excluded.remote_connection";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&thread_id, 1)?;
             i = stmt.bind(&session_id, i)?;
@@ -1451,8 +1397,7 @@ impl ThreadMetadataDb {
             i = stmt.bind(&archived, i)?;
             i = stmt.bind(&main_worktree_paths, i)?;
             i = stmt.bind(&main_worktree_paths_order, i)?;
-            i = stmt.bind(&remote_connection, i)?;
-            stmt.bind(&branch_names_json, i)?;
+            stmt.bind(&remote_connection, i)?;
             stmt.exec()
         })
         .await
@@ -1567,6 +1512,30 @@ impl ThreadMetadataDb {
         )?(archived_worktree_id)
         .map(|count| count.unwrap_or(0) > 0)
     }
+
+    pub async fn get_all_archived_branch_names(
+        &self,
+    ) -> anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, String>>> {
+        self.write(|conn| {
+            let rows = conn.select::<(ThreadId, String, Option<String>)>(
+                "SELECT t.thread_id, a.worktree_path, a.branch_name \
+                 FROM thread_archived_worktrees t \
+                 JOIN archived_git_worktrees a ON a.id = t.archived_worktree_id",
+            )?()?;
+
+            let mut result: HashMap<ThreadId, HashMap<PathBuf, String>> = HashMap::default();
+            for (thread_id, worktree_path, branch_name) in rows {
+                if let Some(branch_name) = branch_name {
+                    result
+                        .entry(thread_id)
+                        .or_default()
+                        .insert(PathBuf::from(worktree_path), branch_name);
+                }
+            }
+            Ok(result)
+        })
+        .await
+    }
 }
 
 impl Column for ThreadMetadata {
@@ -1587,7 +1556,6 @@ impl Column for ThreadMetadata {
             Column::column(statement, next)?;
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
-        let (branch_names_json, next): (Option<String>, i32) = Column::column(statement, next)?;
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
@@ -1624,19 +1592,6 @@ impl Column for ThreadMetadata {
             .transpose()
             .context("deserialize thread metadata remote connection")?;
 
-        let branch_names: HashMap<PathBuf, SharedString> = branch_names_json
-            .as_deref()
-            .map(|json| -> anyhow::Result<_> {
-                let map: std::collections::HashMap<String, String> =
-                    serde_json::from_str(json).context("deserialize branch_names")?;
-                Ok(map
-                    .into_iter()
-                    .map(|(k, v)| (PathBuf::from(k), SharedString::from(v)))
-                    .collect())
-            })
-            .transpose()?
-            .unwrap_or_default();
-
         let worktree_paths = WorktreePaths::from_path_lists(main_worktree_paths, folder_paths)
             .unwrap_or_else(|_| WorktreePaths::default());
 
@@ -1657,7 +1612,6 @@ impl Column for ThreadMetadata {
                 worktree_paths,
                 remote_connection,
                 archived,
-                branch_names,
             },
             next,
         ))
@@ -1746,7 +1700,6 @@ mod tests {
             created_at: Some(updated_at),
             worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
             remote_connection: None,
-            branch_names: HashMap::default(),
         }
     }
 
@@ -1929,7 +1882,6 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&second_paths),
             remote_connection: None,
             archived: false,
-            branch_names: HashMap::default(),
         };
 
         cx.update(|cx| {
@@ -2013,7 +1965,6 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&project_a_paths),
             remote_connection: None,
             archived: false,
-            branch_names: HashMap::default(),
         };
 
         cx.update(|cx| {
@@ -2134,7 +2085,6 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&project_paths),
             remote_connection: None,
             archived: false,
-            branch_names: HashMap::default(),
         };
 
         cx.update(|cx| {
@@ -2810,7 +2760,6 @@ mod tests {
             created_at: Some(now),
             worktree_paths: linked_worktree_paths.clone(),
             remote_connection: None,
-            branch_names: HashMap::default(),
         };
 
         let remote_linked_thread = ThreadMetadata {
@@ -2823,7 +2772,6 @@ mod tests {
             created_at: Some(now - chrono::Duration::seconds(1)),
             worktree_paths: linked_worktree_paths,
             remote_connection: Some(remote_a.clone()),
-            branch_names: HashMap::default(),
         };
 
         cx.update(|cx| {

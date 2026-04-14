@@ -1103,16 +1103,8 @@ impl Sidebar {
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        // Prefer live git data for branch names, falling back
-                        // to persisted branch names from the thread metadata.
-                        let mut branch_names = row.branch_names.clone();
-                        for (_, folder_path) in row.worktree_paths.ordered_pairs() {
-                            if let Some(branch) = branch_by_path.get(folder_path) {
-                                branch_names.insert(folder_path.clone(), branch.clone());
-                            }
-                        }
                         let worktrees =
-                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
+                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
                         let is_draft = row.is_draft();
                         ThreadEntry {
                             metadata: row,
