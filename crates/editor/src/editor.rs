@@ -8613,6 +8613,9 @@ impl Editor {
 
         let mouse_position = window.mouse_position();
         if !position_map.text_hitbox.is_hovered(window) {
+            if self.gutter_breakpoint_indicator.0.is_some() {
+                cx.notify();
+            }
             return;
         }
 
@@ -9425,7 +9428,7 @@ impl Editor {
             SharedString::from("No executable code is associated with this line.")
         } else if !breakpoint.is_disabled() {
             SharedString::from(format!(
-                "{alt_as_text}-click to disable,\nright-click for more options."
+                "{alt_as_text}click to disable,\nright-click for more options."
             ))
         } else {
             SharedString::from("Right-click for more options.")
@@ -9473,48 +9476,69 @@ impl Editor {
     // We add the gutter breakpoint indicator to breakpoint_rows after painting
     // line numbers so we don't paint a line number debug accent color if a user
     // has their mouse over that line when a breakpoint isn't there
-    fn render_phantom_breakpoint(
+    fn render_gutter_hover_button(
         &self,
         position: Anchor,
         row: DisplayRow,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let meta = SharedString::from("Right-click for more options.");
+        let alt_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+
+        let meta = format!("{alt_as_text}click to add a bookmark,\nright-click for more options.");
+        let action = if window.modifiers().secondary() {
+            "Set Bookmark"
+        } else {
+            "Set Breakpoint"
+        };
         let proposed_breakpoint = Breakpoint::new_standard();
 
+        let (icon, color) = if window.modifiers().secondary() {
+            (ui::IconName::Bookmark, Color::Info)
+        } else {
+            (ui::IconName::DebugBreakpoint, Color::Hint)
+        };
+
         let focus_handle = self.focus_handle.clone();
-        IconButton::new(
-            ("add_breakpoint_button", row.0 as usize),
-            ui::IconName::DebugBreakpoint,
-        )
-        .icon_size(IconSize::XSmall)
-        .size(ui::ButtonSize::None)
-        .icon_color(Color::Hint)
-        .style(ButtonStyle::Transparent)
-        .on_click(cx.listener({
-            move |editor, _: &ClickEvent, window, cx| {
-                window.focus(&editor.focus_handle(cx), cx);
-                editor.update_breakpoint_collision_on_toggle(row, &BreakpointEditAction::Toggle);
-                editor.edit_breakpoint_at_anchor(
-                    position,
-                    proposed_breakpoint.clone(),
-                    BreakpointEditAction::Toggle,
+        IconButton::new(("add_breakpoint_button", row.0 as usize), icon)
+            .icon_size(IconSize::XSmall)
+            .size(ui::ButtonSize::None)
+            .icon_color(color)
+            .style(ButtonStyle::Transparent)
+            .on_click(cx.listener({
+                move |editor, _: &ClickEvent, window, cx| {
+                    if window.modifiers().secondary() {
+                        editor.toggle_bookmark_at_row(row, cx);
+                    } else {
+                        window.focus(&editor.focus_handle(cx), cx);
+                        editor.update_breakpoint_collision_on_toggle(
+                            row,
+                            &BreakpointEditAction::Toggle,
+                        );
+                        editor.edit_breakpoint_at_anchor(
+                            position,
+                            proposed_breakpoint.clone(),
+                            BreakpointEditAction::Toggle,
+                            cx,
+                        );
+                    }
+                }
+            }))
+            .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+                editor.set_gutter_context_menu(row, Some(position), event.position(), window, cx);
+            }))
+            .tooltip(move |_window, cx| {
+                Tooltip::with_meta_in(
+                    action,
+                    Some(&ToggleBreakpoint),
+                    meta.clone(),
+                    &focus_handle,
                     cx,
-                );
-            }
-        }))
-        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_gutter_context_menu(row, Some(position), event.position(), window, cx);
-        }))
-        .tooltip(move |_window, cx| {
-            Tooltip::with_meta_in(
-                "Set breakpoint",
-                Some(&ToggleBreakpoint),
-                meta.clone(),
-                &focus_handle,
-                cx,
-            )
-        })
+                )
+            })
     }
 
     fn build_tasks_context(

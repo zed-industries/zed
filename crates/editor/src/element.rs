@@ -3150,7 +3150,7 @@ impl EditorElement {
                 .filter_map(|row| {
                     gutter.layout_item_skipping_folds(
                         *row,
-                        |cx| editor.render_bookmark(*row, cx).into_any_element(),
+                        |cx, _| editor.render_bookmark(*row, cx).into_any_element(),
                         window,
                         cx,
                     )
@@ -3159,7 +3159,7 @@ impl EditorElement {
         })
     }
 
-    fn layout_breakpoint_button(
+    fn layout_gutter_hover_button(
         &self,
         gutter: &Gutter,
         position: Anchor,
@@ -3174,9 +3174,9 @@ impl EditorElement {
         self.editor.update(cx, |editor, cx| {
             gutter.layout_item_skipping_folds(
                 row,
-                |cx| {
+                |cx, window| {
                     editor
-                        .render_phantom_breakpoint(position, row, cx)
+                        .render_gutter_hover_button(position, row, window, cx)
                         .into_any_element()
                 },
                 window,
@@ -3202,7 +3202,7 @@ impl EditorElement {
                 .filter_map(|(row, (text_anchor, bp, state))| {
                     gutter.layout_item_skipping_folds(
                         *row,
-                        |cx| {
+                        |cx, _| {
                             editor
                                 .render_breakpoint(*text_anchor, *row, &bp, *state, cx)
                                 .into_any_element()
@@ -3298,7 +3298,7 @@ impl EditorElement {
                 .filter_map(|display_row| {
                     gutter.layout_item(
                         *display_row,
-                        |cx| {
+                        |cx, _| {
                             editor
                                 .render_run_indicator(
                                     &self.style,
@@ -7925,7 +7925,7 @@ impl Gutter<'_> {
     fn layout_item_skipping_folds(
         &self,
         display_row: DisplayRow,
-        render_item: impl Fn(&mut Context<'_, Editor>) -> AnyElement,
+        render_item: impl Fn(&mut Context<'_, Editor>, &mut Window) -> AnyElement,
         window: &mut Window,
         cx: &mut Context<'_, Editor>,
     ) -> Option<AnyElement> {
@@ -7944,7 +7944,7 @@ impl Gutter<'_> {
     fn layout_item(
         &self,
         display_row: DisplayRow,
-        render_item: impl Fn(&mut Context<'_, Editor>) -> AnyElement,
+        render_item: impl Fn(&mut Context<'_, Editor>, &mut Window) -> AnyElement,
         window: &mut Window,
         cx: &mut Context<'_, Editor>,
     ) -> Option<AnyElement> {
@@ -7965,7 +7965,7 @@ impl Gutter<'_> {
             return None;
         }
 
-        let button = self.prepaint_button(render_item(cx), display_row, window, cx);
+        let button = self.prepaint_button(render_item(cx, window), display_row, window, cx);
         Some(button)
     }
 
@@ -10787,7 +10787,7 @@ impl Element for EditorElement {
                         let position = snapshot
                             .display_point_to_anchor(DisplayPoint::new(row, 0), Bias::Right);
                         breakpoints.extend(
-                            self.layout_breakpoint_button(&gutter, position, row, window, cx),
+                            self.layout_gutter_hover_button(&gutter, position, row, window, cx),
                         );
                     }
 
