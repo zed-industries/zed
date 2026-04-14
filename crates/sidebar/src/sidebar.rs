@@ -1795,9 +1795,6 @@ impl Sidebar {
                             move |this, _, window, cx| {
                                 this.set_group_expanded(&key, true, cx);
                                 this.selection = None;
-                                // If the active workspace belongs to this
-                                // group, use it (preserves linked worktree
-                                // context). Otherwise resolve from the key.
                                 let workspace = this.multi_workspace.upgrade().and_then(|mw| {
                                     let mw = mw.read(cx);
                                     let active = mw.workspace().clone();

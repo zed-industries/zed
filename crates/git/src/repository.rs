@@ -74,6 +74,7 @@ pub fn original_repo_path(
 ) -> PathBuf {
     if common_dir != repository_dir {
         original_repo_path_from_common_dir(common_dir)
+            .unwrap_or_else(|| work_directory.to_path_buf())
     } else {
         work_directory.to_path_buf()
     }
@@ -86,16 +87,13 @@ pub fn original_repo_path(
 /// is the working directory. For a git worktree, `common_dir` is the **main**
 /// repo's `.git` directory, so the parent is the original repo's working directory.
 ///
-/// Falls back to returning `common_dir` itself if it doesn't end with `.git`
-/// (e.g. bare repos or unusual layouts).
-pub fn original_repo_path_from_common_dir(common_dir: &Path) -> PathBuf {
+/// Returns `None` if `common_dir` doesn't end with `.git` (e.g. bare repos),
+/// because there is no working-tree root to resolve to in that case.
+pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> {
     if common_dir.file_name() == Some(OsStr::new(".git")) {
-        common_dir
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| common_dir.to_path_buf())
+        common_dir.parent().map(|p| p.to_path_buf())
     } else {
-        common_dir.to_path_buf()
+        None
     }
 }
 
@@ -4446,26 +4444,26 @@ mod tests {
         // Normal repo: common_dir is <work_dir>/.git
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5/.git")),
-            PathBuf::from("/code/zed5")
+            Some(PathBuf::from("/code/zed5"))
         );
 
         // Worktree: common_dir is the main repo's .git
         // (same result — that's the point, it always traces back to the original)
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5/.git")),
-            PathBuf::from("/code/zed5")
+            Some(PathBuf::from("/code/zed5"))
         );
 
-        // Bare repo: no .git suffix, returns as-is
+        // Bare repo: no .git suffix, returns None (no working-tree root)
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5.git")),
-            PathBuf::from("/code/zed5.git")
+            None
         );
 
         // Root-level .git directory
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/.git")),
-            PathBuf::from("/")
+            Some(PathBuf::from("/"))
         );
     }
 

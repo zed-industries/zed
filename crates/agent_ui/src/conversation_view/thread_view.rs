@@ -754,6 +754,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
+                    && self.thread.read(cx).supports_truncate(cx)
                     && user_message.id.is_some()
                     && !self.is_subagent()
                 {
@@ -764,6 +765,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::LostFocus) => {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
+                    && self.thread.read(cx).supports_truncate(cx)
                     && user_message.id.is_some()
                     && !self.is_subagent()
                 {
@@ -4495,7 +4497,8 @@ impl ThreadView {
                     .is_some_and(|checkpoint| checkpoint.show);
 
                 let is_subagent = self.is_subagent();
-                let is_editable = message.id.is_some() && !is_subagent;
+                let can_rewind = self.thread.read(cx).supports_truncate(cx);
+                let is_editable = can_rewind && message.id.is_some() && !is_subagent;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {

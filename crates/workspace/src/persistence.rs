@@ -4667,6 +4667,51 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_resolve_worktree_workspaces_bare_repo(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Bare repo at /foo/.bare (commondir doesn't end with .git)
+        fs.insert_tree(
+            "/foo/.bare",
+            json!({
+                "worktrees": {
+                    "my-feature": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/my-feature"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        // Linked worktree whose commondir resolves to a bare repo (/foo/.bare)
+        fs.insert_tree(
+            "/foo/my-feature",
+            json!({
+                ".git": "gitdir: /foo/.bare/worktrees/my-feature",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let t0 = Utc::now();
+
+        let workspaces = vec![(
+            WorkspaceId(1),
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&["/foo/my-feature"]),
+            t0,
+        )];
+
+        let result = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
+
+        // The worktree path must be preserved unchanged — /foo/.bare is a bare repo
+        // and cannot serve as a working-tree root, so resolution must return None.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].2.paths(), &[PathBuf::from("/foo/my-feature")]);
+    }
+
+    #[gpui::test]
     async fn test_restore_window_with_linked_worktree_and_multiple_project_groups(
         cx: &mut gpui::TestAppContext,
     ) {

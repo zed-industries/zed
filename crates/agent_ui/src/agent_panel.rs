@@ -2153,63 +2153,8 @@ impl AgentPanel {
             return;
         }
 
-        let is_empty_draft = match conversation_view.read(cx).root_thread(cx) {
-            Some(tv) => tv.read(cx).is_draft(cx),
-            None => conversation_view.read(cx).is_new_draft(),
-        };
-        if is_empty_draft {
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store.delete(thread_id, cx);
-            });
-            return;
-        }
-
         self.retained_threads.insert(thread_id, conversation_view);
         self.cleanup_retained_threads(cx);
-    }
-
-    fn remove_empty_draft(&mut self, cx: &mut Context<Self>) {
-        let draft_ids: Vec<ThreadId> = self
-            .retained_threads
-            .iter()
-            .filter(|(_, cv)| match cv.read(cx).root_thread(cx) {
-                Some(tv) => tv.read(cx).is_draft(cx),
-                None => cv.read(cx).is_new_draft(),
-            })
-            .map(|(id, _)| *id)
-            .collect();
-        for id in draft_ids {
-            self.retained_threads.remove(&id);
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store.delete(id, cx);
-            });
-        }
-
-        // Also clean up orphaned draft metadata in the store for this
-        // panel's worktree paths (e.g. from a previously removed workspace).
-        let path_list = {
-            let project = self.project.read(cx);
-            let worktree_paths = project.worktree_paths(cx);
-            worktree_paths.main_worktree_path_list().clone()
-        };
-        if let Some(store) = ThreadMetadataStore::try_global(cx) {
-            let orphaned: Vec<ThreadId> = {
-                let store = store.read(cx);
-                store
-                    .entries_for_path(&path_list)
-                    .chain(store.entries_for_main_worktree_path(&path_list))
-                    .filter(|entry| entry.is_draft())
-                    .map(|entry| entry.thread_id)
-                    .collect()
-            };
-            if !orphaned.is_empty() {
-                store.update(cx, |store, cx| {
-                    for id in orphaned {
-                        store.delete(id, cx);
-                    }
-                });
-            }
-        }
     }
 
     fn cleanup_retained_threads(&mut self, cx: &App) {
@@ -2808,7 +2753,6 @@ impl AgentPanel {
                     window,
                     cx,
                 );
-                self.remove_empty_draft(cx);
                 return;
             }
         }
@@ -2823,7 +2767,6 @@ impl AgentPanel {
             window,
             cx,
         );
-        self.remove_empty_draft(cx);
     }
 
     pub(crate) fn create_agent_thread(
@@ -5234,16 +5177,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let active_id = self.active_thread_id(cx);
-        let empty_draft_ids: Vec<ThreadId> = self
-            .draft_thread_ids(cx)
-            .into_iter()
-            .filter(|id| Some(*id) != active_id && self.editor_text(*id, cx).is_none())
-            .collect();
-        for id in empty_draft_ids {
-            self.remove_thread(id, cx);
-        }
-
         let ext_agent = Agent::Custom {
             id: server.agent_id(),
         };
@@ -5880,33 +5813,6 @@ mod tests {
         });
 
         (panel, cx)
-    }
-
-    #[gpui::test]
-    async fn test_empty_draft_discarded_when_navigating_away(cx: &mut TestAppContext) {
-        let (panel, mut cx) = setup_panel(cx).await;
-
-        let connection_a = StubAgentConnection::new();
-        open_thread_with_connection(&panel, connection_a, &mut cx);
-
-        panel.read_with(&cx, |panel, cx| {
-            let thread = panel.active_agent_thread(cx).unwrap();
-            assert!(
-                thread.read(cx).entries().is_empty(),
-                "newly opened draft thread should have no entries"
-            );
-            assert!(panel.retained_threads.is_empty());
-        });
-
-        let connection_b = StubAgentConnection::new();
-        open_thread_with_connection(&panel, connection_b, &mut cx);
-
-        panel.read_with(&cx, |panel, _cx| {
-            assert!(
-                panel.retained_threads.is_empty(),
-                "empty draft should be discarded, not retained"
-            );
-        });
     }
 
     #[gpui::test]
