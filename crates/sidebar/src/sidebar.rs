@@ -1730,11 +1730,13 @@ impl Sidebar {
                         })
                     })
                     .child(
-                        div().visible_on_hover(&group_name).child(
-                            Icon::new(disclosure_icon)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        div()
+                            .when(!is_focused, |this| this.visible_on_hover(&group_name))
+                            .child(
+                                Icon::new(disclosure_icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            ),
                     ),
             )
             .child(gradient_overlay())
