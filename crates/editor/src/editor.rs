@@ -29086,7 +29086,7 @@ pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors
         lsp::DiagnosticSeverity::ERROR => colors.error,
         lsp::DiagnosticSeverity::WARNING => colors.warning,
         lsp::DiagnosticSeverity::INFORMATION => colors.info,
-        lsp::DiagnosticSeverity::HINT => colors.info,
+        lsp::DiagnosticSeverity::HINT => colors.hint,
         _ => colors.ignored,
     }
 }
