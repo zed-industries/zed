@@ -3099,6 +3099,19 @@ mod internal_tests {
         // closing the session from the first view must not break the second
         // view's ability to prompt.
         //
+        // How a user can trigger this:
+        //
+        //   A user has thread A open, then clicks a @thread mention link
+        //   (or pastes a thread link, or opens one via the CLI) pointing
+        //   to the same thread. AgentPanel::open_thread bypasses the
+        //   load_agent_thread de-duplication guards and always creates a
+        //   new ConversationView via external_thread. The old CV goes
+        //   to background_threads keyed by session_id. Clicking the
+        //   link a second time creates yet another CV, and storing it in
+        //   background_threads under the same key overwrites (and drops)
+        //   the first CV. Its on_release fires close_all_sessions,
+        //   which calls close_session on the NativeAgent.
+        //
         // Timeline being tested:
         //   1. CV1 creates session "abc"  (ref in NativeAgent.sessions)
         //   2. CV2 calls open_thread("abc") → reuses existing session
