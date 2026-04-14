@@ -24,12 +24,14 @@ use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
 use project::{
-    AgentId, AgentRegistryStore, Event as ProjectEvent, ProjectGroupKey, linked_worktree_short_name,
+    AgentId, AgentRegistryStore, Event as ProjectEvent, ProjectGroupKey,
+    linked_worktree_short_name, worktrees_directory_for_repo,
 };
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::RemoteConnectionOptions;
 use ui::utils::platform_title_bar_height;
 
+use project::project_settings::ProjectSettings;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
@@ -2760,6 +2762,10 @@ impl Sidebar {
                         workspaces.push(workspace);
                     }
                 }
+                let worktree_dir_setting = ProjectSettings::get_global(cx)
+                    .git
+                    .worktree_directory
+                    .clone();
                 metadata
                     .folder_paths()
                     .ordered_paths()
@@ -2772,6 +2778,12 @@ impl Sidebar {
                             &plan.root_path,
                             cx,
                         )
+                    })
+                    .filter(|plan| {
+                        worktrees_directory_for_repo(&plan.main_repo_path, &worktree_dir_setting)
+                            .map(|worktrees_dir| plan.root_path.starts_with(&worktrees_dir))
+                            .log_err()
+                            .unwrap_or(false)
                     })
                     .collect::<Vec<_>>()
             })

@@ -6114,6 +6114,20 @@ impl Repository {
         })
     }
 
+    pub fn resolve_ref(&mut self, ref_name: String) -> oneshot::Receiver<Result<Option<String>>> {
+        self.send_job(None, move |repo, _cx| async move {
+            match repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    let results = backend.revparse_batch(vec![ref_name]).await?;
+                    Ok(results.into_iter().next().flatten())
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("resolve_ref is not supported for remote repositories")
+                }
+            }
+        })
+    }
+
     pub fn update_ref(
         &mut self,
         ref_name: String,

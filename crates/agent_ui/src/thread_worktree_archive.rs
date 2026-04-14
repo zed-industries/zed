@@ -547,25 +547,55 @@ pub async fn restore_worktree_via_git(
         }
     };
 
-    // Switch to the branch. Since the branch was never moved during
-    // archival (WIP commits are detached), it still points at
-    // original_commit_hash, so this is essentially a no-op for HEAD.
+    // There's a small race window between checking whether the branch has moved
+    // and switching to it — the branch could advance in between. The consequence
+    // is the same as the pre-check behavior (landing on a moved branch), and the
+    // window is negligibly small for local git operations.
     if let Some(branch_name) = &row.branch_name {
-        let rx = wt_repo.update(cx, |repo, _cx| repo.change_branch(branch_name.clone()));
-        if let Err(checkout_error) = rx.await.map_err(|e| anyhow!("{e}")).and_then(|r| r) {
-            log::debug!(
-                "change_branch('{}') failed: {checkout_error:#}, trying create_branch",
-                branch_name
+        let branch_ref = format!("refs/heads/{}", branch_name);
+        let rx = main_repo.update(cx, |repo, _cx| repo.resolve_ref(branch_ref));
+        let branch_sha = match rx.await {
+            Ok(Ok(sha)) => sha,
+            Ok(Err(error)) => {
+                log::warn!("Failed to resolve branch ref '{branch_name}': {error:#}");
+                None
+            }
+            Err(_) => {
+                log::warn!("resolve_ref channel for '{branch_name}' was canceled");
+                None
+            }
+        };
+
+        // If the branch no longer exists (None), fall through to the
+        // change_branch/create_branch path which will recreate it.
+        let branch_has_moved = branch_sha
+            .as_deref()
+            .is_some_and(|sha| sha != row.original_commit_hash);
+
+        if branch_has_moved {
+            log::info!(
+                "Branch '{}' has moved since archival — \
+                 restoring worktree in detached HEAD at {}",
+                branch_name,
+                row.original_commit_hash
             );
-            let rx = wt_repo.update(cx, |repo, _cx| {
-                repo.create_branch(branch_name.clone(), None)
-            });
-            if let Ok(Err(error)) | Err(error) = rx.await.map_err(|e| anyhow!("{e}")) {
-                log::warn!(
-                    "Could not create branch '{}': {error} — \
-                     restored worktree will be in detached HEAD state.",
+        } else {
+            let rx = wt_repo.update(cx, |repo, _cx| repo.change_branch(branch_name.clone()));
+            if let Err(checkout_error) = rx.await.map_err(|e| anyhow!("{e}")).and_then(|r| r) {
+                log::debug!(
+                    "change_branch('{}') failed: {checkout_error:#}, trying create_branch",
                     branch_name
                 );
+                let rx = wt_repo.update(cx, |repo, _cx| {
+                    repo.create_branch(branch_name.clone(), None)
+                });
+                if let Ok(Err(error)) | Err(error) = rx.await.map_err(|e| anyhow!("{e}")) {
+                    log::warn!(
+                        "Could not create branch '{}': {error} — \
+                         restored worktree will be in detached HEAD state.",
+                        branch_name
+                    );
+                }
             }
         }
     }
