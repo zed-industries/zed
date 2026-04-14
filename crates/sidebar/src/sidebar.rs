@@ -439,8 +439,6 @@ pub struct Sidebar {
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     pending_thread_activation: Option<agent_ui::ThreadId>,
-    needs_branch_backfill: bool,
-    pending_branch_backfills: Vec<ThreadMetadata>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
@@ -533,8 +531,6 @@ impl Sidebar {
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
-            needs_branch_backfill: true,
-            pending_branch_backfills: Vec::new(),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -645,7 +641,6 @@ impl Sidebar {
                         _,
                     )
                 ) {
-                    this.needs_branch_backfill = true;
                     this.update_entries(cx);
                 }
             },
@@ -1096,7 +1091,6 @@ impl Sidebar {
         let path_detail_map: HashMap<PathBuf, usize> =
             all_paths.into_iter().zip(path_details).collect();
 
-        let mut branch_backfills: Vec<ThreadMetadata> = Vec::new();
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
@@ -1118,32 +1112,6 @@ impl Sidebar {
                 }
             }
         }
-
-        // Backfill branch_names for ALL threads (including archived)
-        // with live git data. Overwrites stale values with current branch data.
-        // Only runs when a git event has signaled that branches may have changed.
-        if self.needs_branch_backfill && !branch_by_path.is_empty() {
-            let thread_store = ThreadMetadataStore::global(cx);
-            for thread in thread_store.read(cx).entries() {
-                let mut changed = false;
-                let mut updated_names = thread.branch_names.clone();
-                // Add/update entries from live data.
-                for (path, branch) in &branch_by_path {
-                    let existing = updated_names.get(path);
-                    if existing != Some(branch) {
-                        updated_names.insert(path.clone(), branch.clone());
-                        changed = true;
-                    }
-                }
-
-                if changed {
-                    let mut updated = thread.clone();
-                    updated.branch_names = updated_names;
-                    branch_backfills.push(updated);
-                }
-            }
-        }
-        self.needs_branch_backfill = false;
 
         for group in &groups {
             let group_key = &group.key;
@@ -1196,48 +1164,19 @@ impl Sidebar {
                         })
                 };
 
-                // Build a per-path fallback branch map from this group's
-                // workspaces. We only use branches from workspaces that
-                // are directly associated with this group — guessing
-                // from other workspaces produces incorrect results.
-                let group_fallback_branches: HashMap<PathBuf, SharedString> = group_workspaces
-                    .iter()
-                    .flat_map(|ws| {
-                        let project = ws.read(cx).project().read(cx);
-                        let mut entries = Vec::new();
-                        for repo in project.repositories(cx).values() {
-                            let snapshot = repo.read(cx).snapshot();
-                            if let Some(branch) = &snapshot.branch {
-                                entries.push((
-                                    snapshot.work_directory_abs_path.to_path_buf(),
-                                    SharedString::from(branch.name().to_string()),
-                                ));
-                            }
-                            for linked_wt in snapshot.linked_worktrees() {
-                                if let Some(branch) = linked_wt.branch_name() {
-                                    entries.push((
-                                        linked_wt.path.clone(),
-                                        SharedString::from(branch.to_string()),
-                                    ));
-                                }
-                            }
-                        }
-                        entries
-                    })
-                    .collect();
-
                 // Build a ThreadEntry from a metadata row.
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        // Build branch names for just this thread's folder paths.
-                        // Use live git data, falling back to the group's per-path
-                        // branch map for paths without live data.
-                        let mut branch_names: HashMap<PathBuf, SharedString> = HashMap::new();
+                        // Prefer live git data for branch names, falling back
+                        // to persisted branch names from the thread metadata.
+                        let mut branch_names: HashMap<PathBuf, SharedString> = row
+                            .branch_names
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
                         for (_, folder_path) in row.worktree_paths.ordered_pairs() {
                             if let Some(branch) = branch_by_path.get(folder_path) {
-                                branch_names.insert(folder_path.clone(), branch.clone());
-                            } else if let Some(branch) = group_fallback_branches.get(folder_path) {
                                 branch_names.insert(folder_path.clone(), branch.clone());
                             }
                         }
@@ -1551,7 +1490,6 @@ impl Sidebar {
             project_header_indices,
             has_open_projects,
         };
-        self.pending_branch_backfills = branch_backfills;
     }
 
     /// Rebuilds the sidebar's visible entries from already-cached state.
@@ -1567,18 +1505,6 @@ impl Sidebar {
         let scroll_position = self.list_state.logical_scroll_top();
 
         self.rebuild_contents(cx);
-
-        // Persist branch names for threads that gained new branch data
-        // from live git repos. This backfills existing threads so branch
-        // names survive worktree deletion.
-        if !self.pending_branch_backfills.is_empty() {
-            let backfills = std::mem::take(&mut self.pending_branch_backfills);
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                for metadata in backfills {
-                    store.save(metadata, cx);
-                }
-            });
-        }
 
         self.list_state.reset(self.contents.entries.len());
         self.list_state.scroll_to(scroll_position);
