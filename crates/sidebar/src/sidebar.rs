@@ -1283,13 +1283,41 @@ impl Sidebar {
                     // of whatever is currently checked out from the same
                     // repo.
                     for (main_path, folder_path) in row.worktree_paths.ordered_pairs() {
-                        if !branch_names.contains_key(folder_path) {
+                        let live_match = branch_names.get(folder_path).cloned();
+                        if live_match.is_none() {
                             let fallback = branch_by_repo
                                 .get(main_path)
                                 .or(group_fallback_branch.as_ref());
                             if let Some(branch) = fallback {
+                                log::info!(
+                                    "sidebar branch fallback: title={:?} main={:?} folder={:?} → {:?} (via {:?})",
+                                    row.title,
+                                    main_path,
+                                    folder_path,
+                                    branch,
+                                    if branch_by_repo.get(main_path).is_some() {
+                                        "branch_by_repo"
+                                    } else {
+                                        "group_fallback"
+                                    },
+                                );
                                 branch_names.insert(folder_path.clone(), branch.clone());
+                            } else {
+                                log::info!(
+                                    "sidebar branch MISS: title={:?} main={:?} folder={:?} group_fallback={:?}",
+                                    row.title,
+                                    main_path,
+                                    folder_path,
+                                    group_fallback_branch,
+                                );
                             }
+                        } else {
+                            log::info!(
+                                "sidebar branch LIVE: title={:?} folder={:?} → {:?}",
+                                row.title,
+                                folder_path,
+                                live_match,
+                            );
                         }
                     }
                     let worktrees =
