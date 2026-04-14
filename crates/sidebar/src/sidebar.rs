@@ -1138,13 +1138,14 @@ impl Sidebar {
         }
 
         // Backfill branch_names for ALL threads (including archived)
-        // with live git data. Always overwrites existing values so that
-        // stale/incorrect persisted data gets corrected.
+        // with live git data. Overwrites stale values and removes entries
+        // that can't be verified from live repos.
         if !branch_by_path.is_empty() {
             let thread_store = ThreadMetadataStore::global(cx);
             for thread in thread_store.read(cx).entries() {
                 let mut changed = false;
                 let mut updated_names = thread.branch_names.clone();
+                // Add/update entries from live data.
                 for (path, branch) in &branch_by_path {
                     let existing = updated_names.get(path);
                     if existing != Some(branch) {
@@ -1152,6 +1153,15 @@ impl Sidebar {
                         changed = true;
                     }
                 }
+                // Remove entries for paths not verifiable from live data
+                // (they may be stale from a previous buggy backfill).
+                updated_names.retain(|path, _| {
+                    let dominated = branch_by_path.contains_key(path);
+                    if !dominated {
+                        changed = true;
+                    }
+                    dominated
+                });
                 if changed {
                     let mut updated = thread.clone();
                     updated.branch_names = updated_names;
@@ -1213,9 +1223,8 @@ impl Sidebar {
 
                 // Find a fallback branch for this group. First try the
                 // group's own workspaces. Then try matching group paths
-                // against branch_by_repo. Finally, if there's exactly
-                // one repo loaded, use its branch (safe for single-repo
-                // setups; avoids wrong matches in multi-repo setups).
+                // against branch_by_repo. Finally, check if any group
+                // path lives under a known repo's worktree directory.
                 let group_fallback_branch: Option<SharedString> = group_workspaces
                     .iter()
                     .find_map(|ws| {
@@ -1236,61 +1245,71 @@ impl Sidebar {
                             .find_map(|p| branch_by_repo.get(p).cloned())
                     })
                     .or_else(|| {
-                        let mut unique_branches = branch_by_repo.values().collect::<HashSet<_>>();
-                        if unique_branches.len() == 1 {
-                            unique_branches.drain().next().cloned()
-                        } else {
-                            None
-                        }
-                    });
-
-                // Build a ThreadEntry from a metadata row.
-                let make_thread_entry =
-                    |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
-                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        // Start with persisted branch names, then override
-                        // with live data (which is always more current).
-                        let mut branch_names: HashMap<PathBuf, SharedString> = row
-                            .branch_names
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect();
-                        for (path, branch) in &branch_by_path {
-                            branch_names.insert(path.clone(), branch.clone());
-                        }
-                        // For folder paths that still have no branch, fall
-                        // back to the repo-level branch. This handles threads
-                        // whose worktrees were deleted: we show the branch
-                        // of whatever is currently checked out from the same
-                        // repo.
-                        for (main_path, folder_path) in row.worktree_paths.ordered_pairs() {
-                            if !branch_names.contains_key(folder_path) {
-                                let fallback = branch_by_repo
-                                    .get(main_path)
-                                    .or(group_fallback_branch.as_ref());
-                                if let Some(branch) = fallback {
-                                    branch_names.insert(folder_path.clone(), branch.clone());
+                        // For groups whose paths point to deleted worktrees,
+                        // check if the path is a child of any repo's worktree
+                        // directory (e.g. .../worktrees/zed/focal-arrow/zed
+                        // is a child of the worktree dir for repo "zed").
+                        for group_path in group_key.path_list().paths() {
+                            for (repo_path, branch) in &branch_by_repo {
+                                let wt_dir = project::git_store::worktrees_directory_for_repo(
+                                    repo_path,
+                                    &project::project_settings::ProjectSettings::get_global(cx)
+                                        .git
+                                        .worktree_directory,
+                                );
+                                if let Ok(wt_dir) = wt_dir {
+                                    if group_path.starts_with(&wt_dir) {
+                                        return Some(branch.clone());
+                                    }
                                 }
                             }
                         }
-                        let worktrees =
-                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
-                        let is_draft = row.is_draft();
-                        ThreadEntry {
-                            metadata: row,
-                            icon,
-                            icon_from_external_svg,
-                            status: AgentThreadStatus::default(),
-                            workspace,
-                            is_live: false,
-                            is_background: false,
-                            is_title_generating: false,
-                            is_draft,
-                            highlight_positions: Vec::new(),
-                            worktrees,
-                            diff_stats: DiffStats::default(),
+                        None
+                    });
+
+                // Build a ThreadEntry from a metadata row.
+                let make_thread_entry = |row: ThreadMetadata,
+                                         workspace: ThreadEntryWorkspace|
+                 -> ThreadEntry {
+                    let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
+                    // Use only live git data for the sidebar. Persisted
+                    // branch_names may contain stale/incorrect values
+                    // from previous runs. The backfill loop will persist
+                    // correct live data for the archive view to use.
+                    let mut branch_names: HashMap<PathBuf, SharedString> = branch_by_path.clone();
+                    // For folder paths that still have no branch, fall
+                    // back to the repo-level branch. This handles threads
+                    // whose worktrees were deleted: we show the branch
+                    // of whatever is currently checked out from the same
+                    // repo.
+                    for (main_path, folder_path) in row.worktree_paths.ordered_pairs() {
+                        if !branch_names.contains_key(folder_path) {
+                            let fallback = branch_by_repo
+                                .get(main_path)
+                                .or(group_fallback_branch.as_ref());
+                            if let Some(branch) = fallback {
+                                branch_names.insert(folder_path.clone(), branch.clone());
+                            }
                         }
-                    };
+                    }
+                    let worktrees =
+                        worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
+                    let is_draft = row.is_draft();
+                    ThreadEntry {
+                        metadata: row,
+                        icon,
+                        icon_from_external_svg,
+                        status: AgentThreadStatus::default(),
+                        workspace,
+                        is_live: false,
+                        is_background: false,
+                        is_title_generating: false,
+                        is_draft,
+                        highlight_positions: Vec::new(),
+                        worktrees,
+                        diff_stats: DiffStats::default(),
+                    }
+                };
 
                 // Main code path: one query per group via main_worktree_paths.
                 // The main_worktree_paths column is set on all new threads and
