@@ -5,7 +5,7 @@ use itertools::Itertools as _;
 use crate::{
     git::{CommitDetails, CommitList},
     github::{
-        CommitAuthor, GitHubClient, GitHubUser, GithubLogin, PullRequestComment, PullRequestData,
+        CommitAuthor, GitHubClient, GithubLogin, PullRequestComment, PullRequestData,
         PullRequestReview, Repository, ReviewState,
     },
     report::Report,
@@ -18,7 +18,6 @@ const ZED_ZIPPY_GROUP_APPROVAL: &str = "@zed-industries/approved";
 pub enum ReviewSuccess {
     ApprovingComment(Vec<PullRequestComment>),
     CoAuthored(Vec<CommitAuthor>),
-    ExternalMergedContribution { merged_by: GitHubUser },
     PullRequestReviewed(Vec<PullRequestReview>),
 }
 
@@ -35,9 +34,6 @@ impl ReviewSuccess {
                 .iter()
                 .map(|comment| format!("@{}", comment.user.login))
                 .collect_vec(),
-            Self::ExternalMergedContribution { merged_by } => {
-                vec![format!("@{}", merged_by.login)]
-            }
         };
 
         let reviewers = reviewers.into_iter().unique().collect_vec();
@@ -60,9 +56,6 @@ impl fmt::Display for ReviewSuccess {
             Self::ApprovingComment(_) => {
                 formatter.write_str("Approved by an organization approval comment")
             }
-            Self::ExternalMergedContribution { .. } => {
-                formatter.write_str("External merged contribution")
-            }
         }
     }
 }
@@ -72,7 +65,6 @@ pub enum ReviewFailure {
     // todo: We could still query the GitHub API here to search for one
     NoPullRequestFound,
     Unreviewed,
-    UnableToDetermineReviewer,
     Other(anyhow::Error),
 }
 
@@ -82,7 +74,6 @@ impl fmt::Display for ReviewFailure {
             Self::NoPullRequestFound => formatter.write_str("No pull request found"),
             Self::Unreviewed => formatter
                 .write_str("No qualifying organization approval found for the pull request"),
-            Self::UnableToDetermineReviewer => formatter.write_str("Could not determine reviewer"),
             Self::Other(error) => write!(formatter, "Failed to inspect review state: {error}"),
         }
     }
@@ -141,10 +132,6 @@ impl<'a> Reporter<'a> {
             return Ok(approval);
         }
 
-        // if let Some(approval) = self.check_external_merged_pr(pr_number).await? {
-        //     return Ok(approval);
-        // }
-
         Err(ReviewFailure::Unreviewed)
     }
 
@@ -176,31 +163,6 @@ impl<'a> Reporter<'a> {
                 .is_empty()
                 .not()
                 .then_some(ReviewSuccess::CoAuthored(org_co_authors)))
-        } else {
-            Ok(None)
-        }
-    }
-
-    #[allow(unused)]
-    async fn check_external_merged_pr(
-        &self,
-        pull_request: PullRequestData,
-    ) -> Result<Option<ReviewSuccess>, ReviewFailure> {
-        if let Some(user) = pull_request.user
-            && self
-                .github_client
-                .check_repo_write_permission(&Repository::ZED, &GithubLogin::new(user.login))
-                .await?
-                .not()
-        {
-            pull_request.merged_by.map_or(
-                Err(ReviewFailure::UnableToDetermineReviewer),
-                |merged_by| {
-                    Ok(Some(ReviewSuccess::ExternalMergedContribution {
-                        merged_by,
-                    }))
-                },
-            )
         } else {
             Ok(None)
         }
