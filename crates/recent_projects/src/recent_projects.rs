@@ -1130,6 +1130,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     return;
                 };
 
+                let key = key.clone();
                 let path_list = key.path_list().clone();
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
@@ -1137,6 +1138,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             .update(cx, |multi_workspace, window, cx| {
                                 multi_workspace.find_or_create_local_workspace(
                                     path_list,
+                                    Some(key.clone()),
                                     &[],
                                     window,
                                     cx,

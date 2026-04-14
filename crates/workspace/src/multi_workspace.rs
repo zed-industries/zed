@@ -1,4 +1,6 @@
 use anyhow::Result;
+use fs::Fs;
+
 use gpui::PathPromptOptions;
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
@@ -994,6 +996,7 @@ impl MultiWorkspace {
                 if let Some(neighbor_key) = neighbor_key {
                     return this.find_or_create_local_workspace(
                         neighbor_key.path_list().clone(),
+                        Some(neighbor_key.clone()),
                         &excluded_workspaces,
                         window,
                         cx,
@@ -1131,7 +1134,13 @@ impl MultiWorkspace {
         }
 
         let Some(connection_options) = host else {
-            return self.find_or_create_local_workspace(paths, &[], window, cx);
+            return self.find_or_create_local_workspace(
+                paths,
+                provisional_project_group_key,
+                &[],
+                window,
+                cx,
+            );
         };
 
         let app_state = self.workspace().read(cx).app_state().clone();
@@ -1189,6 +1198,7 @@ impl MultiWorkspace {
     pub fn find_or_create_local_workspace(
         &mut self,
         path_list: PathList,
+        project_group: Option<ProjectGroupKey>,
         excluding: &[Entity<Workspace>],
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1202,12 +1212,55 @@ impl MultiWorkspace {
         let paths = path_list.paths().to_vec();
         let app_state = self.workspace().read(cx).app_state().clone();
         let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
+        let fs = <dyn Fs>::global(cx);
+        let excluding = excluding.to_vec();
 
         cx.spawn(async move |_this, cx| {
+            let effective_path_list = if let Some(project_group) = project_group {
+                let metadata_tasks: Vec<_> = paths
+                    .iter()
+                    .map(|path| fs.metadata(path.as_path()))
+                    .collect();
+                let metadata_results = futures::future::join_all(metadata_tasks).await;
+                let all_paths_missing = !paths.is_empty()
+                    && metadata_results
+                        .into_iter()
+                        .all(|result| result.ok().flatten().is_none());
+
+                if all_paths_missing {
+                    project_group.path_list().clone()
+                } else {
+                    PathList::new(&paths)
+                }
+            } else {
+                PathList::new(&paths)
+            };
+
+            if let Some(requesting_window) = requesting_window
+                && let Some(workspace) = requesting_window
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace
+                            .workspace_for_paths_excluding(
+                                &effective_path_list,
+                                None,
+                                &excluding,
+                                cx,
+                            )
+                            .map(|workspace| {
+                                multi_workspace.activate(workspace.clone(), window, cx);
+                                workspace
+                            })
+                    })
+                    .ok()
+                    .flatten()
+            {
+                return Ok(workspace);
+            }
+
             let result = cx
                 .update(|cx| {
                     Workspace::new_local(
-                        paths,
+                        effective_path_list.paths().to_vec(),
                         app_state,
                         requesting_window,
                         None,
@@ -1753,7 +1806,7 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(PathList::new(&paths), &[], window, cx)
+            self.find_or_create_local_workspace(PathList::new(&paths), None, &[], window, cx)
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {
