@@ -458,16 +458,15 @@ impl RenderOnce for ThreadItem {
                         (false, false) => "Thread Running in a Local Git Worktree",
                     };
 
-                    // Deduplicate chips by name — e.g. two paths both named
-                    // "olivetti" produce a single chip. Highlight positions
-                    // come from the first occurrence.
-                    let mut seen_names: Vec<SharedString> = Vec::new();
+                    // Deduplicate chips by full path so that the same
+                    // worktree isn't shown twice.
+                    let mut seen_paths: Vec<SharedString> = Vec::new();
                     let mut worktree_labels: Vec<AnyElement> = Vec::new();
 
                     let slash_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.4));
 
                     for wt in self.worktrees {
-                        if seen_names.contains(&wt.name) {
+                        if seen_paths.contains(&wt.full_path) {
                             continue;
                         }
 
@@ -477,17 +476,31 @@ impl RenderOnce for ThreadItem {
                             continue;
                         }
 
-                        let chip_index = seen_names.len();
-                        seen_names.push(wt.name.clone());
+                        let chip_index = seen_paths.len();
+                        seen_paths.push(wt.full_path.clone());
 
                         if wt.kind == WorktreeKind::Main {
-                            // Main worktree with a branch name but no worktree chip:
-                            // show just the branch name, no icon, no slash.
-                            let branch = wt.branch_name.unwrap();
+                            let Some(branch) = wt.branch_name else {
+                                continue;
+                            };
+                            let tooltip_title = worktree_tooltip_title;
+                            let tooltip_meta = worktree_tooltip.clone();
                             worktree_labels.push(
-                                Label::new(branch)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
+                                h_flex()
+                                    .id(format!("{}-worktree-{chip_index}", self.id.clone()))
+                                    .child(
+                                        Label::new(branch)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::with_meta(
+                                            tooltip_title,
+                                            None,
+                                            tooltip_meta.clone(),
+                                            cx,
+                                        )
+                                    })
                                     .into_any_element(),
                             );
                             continue;
