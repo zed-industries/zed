@@ -5290,12 +5290,12 @@ mod tests {
     use workspace::MultiWorkspace;
 
     #[derive(Clone, Default)]
-    struct DuplicateOwnerConnection {
+    struct SessionTrackingConnection {
         next_session_number: Arc<Mutex<usize>>,
         sessions: Arc<Mutex<HashSet<acp::SessionId>>>,
     }
 
-    impl DuplicateOwnerConnection {
+    impl SessionTrackingConnection {
         fn new() -> Self {
             Self::default()
         }
@@ -5332,13 +5332,13 @@ mod tests {
         }
     }
 
-    impl AgentConnection for DuplicateOwnerConnection {
+    impl AgentConnection for SessionTrackingConnection {
         fn agent_id(&self) -> AgentId {
             agent::ZED_AGENT_ID.clone()
         }
 
         fn telemetry_id(&self) -> SharedString {
-            "duplicate-owner-test".into()
+            "session-tracking-test".into()
         }
 
         fn new_session(
@@ -5350,7 +5350,7 @@ mod tests {
             let session_id = {
                 let mut next_session_number = self.next_session_number.lock();
                 let session_id = acp::SessionId::new(format!(
-                    "duplicate-owner-session-{}",
+                    "session-tracking-session-{}",
                     *next_session_number
                 ));
                 *next_session_number += 1;
@@ -6128,7 +6128,7 @@ mod tests {
             panel.connection_store.update(cx, |store, cx| {
                 store.restart_connection(
                     Agent::NativeAgent,
-                    Rc::new(StubAgentServer::new(DuplicateOwnerConnection::new())),
+                    Rc::new(StubAgentServer::new(SessionTrackingConnection::new())),
                     cx,
                 );
             });
