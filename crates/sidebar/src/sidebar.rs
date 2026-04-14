@@ -1188,6 +1188,21 @@ impl Sidebar {
                         })
                 };
 
+                // Get a fallback branch from this group's open workspaces.
+                // Used for threads whose worktrees have been deleted — we
+                // can at least show the current workspace's branch.
+                let group_fallback_branch: Option<SharedString> =
+                    group_workspaces.iter().find_map(|ws| {
+                        let project = ws.read(cx).project().read(cx);
+                        project.repositories(cx).values().find_map(|repo| {
+                            repo.read(cx)
+                                .snapshot()
+                                .branch
+                                .as_ref()
+                                .map(|b| SharedString::from(b.name().to_string()))
+                        })
+                    });
+
                 // Build a ThreadEntry from a metadata row.
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
@@ -1203,6 +1218,15 @@ impl Sidebar {
                             branch_names
                                 .entry(path.clone())
                                 .or_insert_with(|| branch.clone());
+                        }
+                        // For folder paths that still have no branch, fall back
+                        // to the project group's current workspace branch.
+                        if let Some(fallback) = &group_fallback_branch {
+                            for (_, folder_path) in row.worktree_paths.ordered_pairs() {
+                                branch_names
+                                    .entry(folder_path.clone())
+                                    .or_insert_with(|| fallback.clone());
+                            }
                         }
                         let worktrees =
                             worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
