@@ -2469,17 +2469,18 @@ impl ConversationView {
             return false;
         };
 
-        multi_workspace.read(cx).workspace() == &workspace
-            && AgentPanel::is_visible(&workspace, cx)
-            && multi_workspace
-                .read(cx)
-                .workspace()
-                .read(cx)
-                .panel::<AgentPanel>(cx)
-                .map_or(false, |p| {
-                    p.read(cx).active_conversation_view().map(|c| c.entity_id())
-                        == Some(cx.entity_id())
-                })
+        multi_workspace.read(cx).sidebar_open()
+            || multi_workspace.read(cx).workspace() == &workspace
+                && AgentPanel::is_visible(&workspace, cx)
+                && multi_workspace
+                    .read(cx)
+                    .workspace()
+                    .read(cx)
+                    .panel::<AgentPanel>(cx)
+                    .map_or(false, |p| {
+                        p.read(cx).active_conversation_view().map(|c| c.entity_id())
+                            == Some(cx.entity_id())
+                    })
     }
 
     fn agent_status_visible(&self, window: &Window, cx: &Context<Self>) -> bool {
@@ -3731,6 +3732,93 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some()),
             "Expected notification when a different conversation is active in the visible panel"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_notification_when_sidebar_open_but_different_thread_focused(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        // Open the sidebar so that sidebar_open() returns true.
+        multi_workspace_handle
+            .update(cx, |mw, _window, cx| {
+                mw.open_sidebar(cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert!(
+            multi_workspace_handle
+                .read_with(cx, |mw, _cx| mw.sidebar_open())
+                .unwrap(),
+            "Sidebar should be open"
+        );
+
+        // Create a conversation view that is NOT the active one in the panel.
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected no notification when the sidebar is open, even if focused on another thread"
         );
     }
 
