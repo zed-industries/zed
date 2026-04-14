@@ -339,7 +339,7 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 ///
 fn worktree_info_from_thread_paths(
     worktree_paths: &WorktreePaths,
-    branch_by_path: &HashMap<PathBuf, SharedString>,
+    resolve_branch: &impl Fn(&std::path::Path) -> Option<SharedString>,
 ) -> Vec<ThreadItemWorktreeInfo> {
     let mut infos: Vec<ThreadItemWorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
@@ -361,7 +361,7 @@ fn worktree_info_from_thread_paths(
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Linked,
-                branch_name: branch_by_path.get(folder_path).cloned(),
+                branch_name: resolve_branch(folder_path.as_ref()),
             });
         } else {
             let Some(name) = folder_path.file_name() else {
@@ -372,7 +372,7 @@ fn worktree_info_from_thread_paths(
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
                 kind: ui::WorktreeKind::Main,
-                branch_name: branch_by_path.get(folder_path).cloned(),
+                branch_name: resolve_branch(folder_path.as_ref()),
             });
         }
     }
@@ -1090,25 +1090,49 @@ impl Sidebar {
         let path_detail_map: HashMap<PathBuf, usize> =
             all_paths.into_iter().zip(path_details).collect();
 
-        let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
+        let mut repo_snapshots = Vec::new();
         for ws in &workspaces {
-            for snapshot in root_repository_snapshots(ws, cx) {
-                if let Some(branch) = &snapshot.branch {
-                    branch_by_path.insert(
-                        snapshot.work_directory_abs_path.to_path_buf(),
-                        SharedString::from(branch.name().to_string()),
-                    );
-                }
+            let project = ws.read(cx).project().read(cx);
+            for repo in project.repositories(cx).values() {
+                repo_snapshots.push(repo.read(cx).snapshot());
+            }
+        }
+
+        let resolve_branch = |path: &std::path::Path| -> Option<SharedString> {
+            // First, check if the path matches any linked worktree across all
+            // repo snapshots. This handles the case where a thread was created
+            // in a linked worktree whose workspace isn't currently open, but
+            // the parent repo IS loaded in another workspace.
+            for snapshot in &repo_snapshots {
                 for linked_wt in snapshot.linked_worktrees() {
-                    if let Some(branch) = linked_wt.branch_name() {
-                        branch_by_path.insert(
-                            linked_wt.path.clone(),
-                            SharedString::from(branch.to_string()),
-                        );
+                    if linked_wt.path == path {
+                        return linked_wt
+                            .branch_name()
+                            .map(|b| SharedString::from(b.to_string()));
                     }
                 }
             }
-        }
+
+            // Fall back to matching against work_directory_abs_path.
+            let mut matched_repo = None;
+            let mut max_len = 0;
+            for snapshot in &repo_snapshots {
+                if path.starts_with(&snapshot.work_directory_abs_path) {
+                    let len = snapshot.work_directory_abs_path.as_os_str().len();
+                    if len > max_len {
+                        max_len = len;
+                        matched_repo = Some(snapshot);
+                    }
+                }
+            }
+
+            matched_repo.and_then(|snapshot| {
+                snapshot
+                    .branch
+                    .as_ref()
+                    .map(|b| SharedString::from(b.name().to_string()))
+            })
+        };
 
         for group in &groups {
             let group_key = &group.key;
@@ -1166,7 +1190,7 @@ impl Sidebar {
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees =
-                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
+                            worktree_info_from_thread_paths(&row.worktree_paths, &resolve_branch);
                         let is_draft = row.is_draft();
                         ThreadEntry {
                             metadata: row,
