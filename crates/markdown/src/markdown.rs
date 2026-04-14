@@ -249,6 +249,7 @@ pub struct Markdown {
     source: SharedString,
     selection: Selection,
     pressed_link: Option<RenderedLink>,
+    pressed_footnote_ref: Option<RenderedFootnoteRef>,
     autoscroll_request: Option<usize>,
     active_root_block: Option<usize>,
     parsed_markdown: ParsedMarkdown,
@@ -419,6 +420,7 @@ impl Markdown {
             source,
             selection: Selection::default(),
             pressed_link: None,
+            pressed_footnote_ref: None,
             autoscroll_request: None,
             active_root_block: None,
             should_reparse: false,
@@ -530,6 +532,13 @@ impl Markdown {
     ) {
         self.autoscroll_request = Some(source_index);
         cx.refresh_windows();
+    }
+
+    fn footnote_definition_content_start(&self, label: &SharedString) -> Option<usize> {
+        self.parsed_markdown
+            .footnote_definitions
+            .get(label)
+            .copied()
     }
 
     pub fn set_active_root_for_source_index(
@@ -696,6 +705,7 @@ impl Markdown {
                         html_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
+                        footnote_definitions: HashMap::default(),
                     },
                     Default::default(),
                 );
@@ -709,6 +719,7 @@ impl Markdown {
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
             let heading_slugs = parsed.heading_slugs;
+            let footnote_definitions = parsed.footnote_definitions;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -776,6 +787,7 @@ impl Markdown {
                     html_blocks,
                     mermaid_diagrams,
                     heading_slugs,
+                    footnote_definitions,
                 },
                 images_by_source_offset,
             )
@@ -900,6 +912,7 @@ pub struct ParsedMarkdown {
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
+    pub footnote_definitions: HashMap<SharedString, usize>,
 }
 
 impl ParsedMarkdown {
@@ -1300,18 +1313,22 @@ impl MarkdownElement {
             return;
         }
 
-        let is_hovering_link = hitbox.is_hovered(window)
+        let is_hovering_clickable = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
             && rendered_text
-                .link_for_position(window.mouse_position())
-                .is_some();
+                .source_index_for_position(window.mouse_position())
+                .ok()
+                .is_some_and(|source_index| {
+                    rendered_text.link_for_source_index(source_index).is_some()
+                        || rendered_text
+                            .footnote_ref_for_source_index(source_index)
+                            .is_some()
+                });
 
-        if !self.style.prevent_mouse_interaction {
-            if is_hovering_link {
-                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-            } else {
-                window.set_cursor_style(CursorStyle::IBeam, hitbox);
-            }
+        if is_hovering_clickable {
+            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+        } else {
+            window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
         let on_open_url = self.on_url_click.take();
@@ -1336,13 +1353,27 @@ impl MarkdownElement {
             move |markdown, event: &MouseDownEvent, phase, window, cx| {
                 if hitbox.is_hovered(window) {
                     if phase.bubble() {
-                        if let Some(link) = rendered_text.link_for_position(event.position) {
-                            markdown.pressed_link = Some(link.clone());
-                        } else {
-                            let source_index =
-                                match rendered_text.source_index_for_position(event.position) {
-                                    Ok(ix) | Err(ix) => ix,
-                                };
+                        let position_result =
+                            rendered_text.source_index_for_position(event.position);
+
+                        if let Ok(source_index) = position_result {
+                            if let Some(footnote_ref) =
+                                rendered_text.footnote_ref_for_source_index(source_index)
+                            {
+                                markdown.pressed_footnote_ref = Some(footnote_ref.clone());
+                            } else if let Some(link) =
+                                rendered_text.link_for_source_index(source_index)
+                            {
+                                markdown.pressed_link = Some(link.clone());
+                            }
+                        }
+
+                        if markdown.pressed_footnote_ref.is_none()
+                            && markdown.pressed_link.is_none()
+                        {
+                            let source_index = match position_result {
+                                Ok(ix) | Err(ix) => ix,
+                            };
                             if let Some(handler) = on_source_click.as_ref() {
                                 let blocked = handler(source_index, event.click_count, window, cx);
                                 if blocked {
@@ -1398,7 +1429,7 @@ impl MarkdownElement {
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
             let hitbox = hitbox.clone();
-            let was_hovering_link = is_hovering_link;
+            let was_hovering_clickable = is_hovering_clickable;
             move |markdown, event: &MouseMoveEvent, phase, window, cx| {
                 if phase.capture() {
                     return;
@@ -1414,9 +1445,17 @@ impl MarkdownElement {
                     markdown.autoscroll_request = Some(source_index);
                     cx.notify();
                 } else {
-                    let is_hovering_link = hitbox.is_hovered(window)
-                        && rendered_text.link_for_position(event.position).is_some();
-                    if is_hovering_link != was_hovering_link {
+                    let is_hovering_clickable = hitbox.is_hovered(window)
+                        && rendered_text
+                            .source_index_for_position(event.position)
+                            .ok()
+                            .is_some_and(|source_index| {
+                                rendered_text.link_for_source_index(source_index).is_some()
+                                    || rendered_text
+                                        .footnote_ref_for_source_index(source_index)
+                                        .is_some()
+                            });
+                    if is_hovering_clickable != was_hovering_clickable {
                         cx.notify();
                     }
                 }
@@ -1426,8 +1465,21 @@ impl MarkdownElement {
             let rendered_text = rendered_text.clone();
             move |markdown, event: &MouseUpEvent, phase, window, cx| {
                 if phase.bubble() {
-                    if let Some(pressed_link) = markdown.pressed_link.take()
-                        && Some(&pressed_link) == rendered_text.link_for_position(event.position)
+                    let source_index = rendered_text.source_index_for_position(event.position).ok();
+                    if let Some(pressed_footnote_ref) = markdown.pressed_footnote_ref.take()
+                        && source_index
+                            .and_then(|ix| rendered_text.footnote_ref_for_source_index(ix))
+                            == Some(&pressed_footnote_ref)
+                    {
+                        if let Some(source_index) =
+                            markdown.footnote_definition_content_start(&pressed_footnote_ref.label)
+                        {
+                            markdown.autoscroll_request = Some(source_index);
+                            cx.notify();
+                        }
+                    } else if let Some(pressed_link) = markdown.pressed_link.take()
+                        && source_index.and_then(|ix| rendered_text.link_for_source_index(ix))
+                            == Some(&pressed_link)
                     {
                         if let Some(open_url) = on_open_url.as_ref() {
                             open_url(pressed_link.destination_url, window, cx);
@@ -1818,6 +1870,36 @@ impl Element for MarkdownElement {
                                 builder.push_text_style(style)
                             }
                         }
+                        MarkdownTag::FootnoteDefinition(label) => {
+                            if !builder.rendered_footnote_separator {
+                                builder.rendered_footnote_separator = true;
+                                builder.push_div(
+                                    div()
+                                        .border_t_1()
+                                        .mt_2()
+                                        .border_color(self.style.rule_color),
+                                    range,
+                                    markdown_end,
+                                );
+                                builder.pop_div();
+                            }
+                            builder.push_div(
+                                div()
+                                    .pt_1()
+                                    .mb_1()
+                                    .line_height(rems(1.3))
+                                    .text_size(rems(0.85))
+                                    .h_flex()
+                                    .items_start()
+                                    .gap_2()
+                                    .child(
+                                        div().text_size(rems(0.85)).child(format!("{}.", label)),
+                                    ),
+                                range,
+                                markdown_end,
+                            );
+                            builder.push_div(div().flex_1().w_0(), range, markdown_end);
+                        }
                         MarkdownTag::MetadataBlock(_) => {}
                         MarkdownTag::Table(alignments) => {
                             builder.table.start(alignments.clone());
@@ -1973,6 +2055,10 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                         builder.table.end_cell();
                     }
+                    MarkdownTagEnd::FootnoteDefinition => {
+                        builder.pop_div();
+                        builder.pop_div();
+                    }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
@@ -2028,7 +2114,12 @@ impl Element for MarkdownElement {
                 MarkdownEvent::TaskListMarker(_) => {
                     // handled inside the `MarkdownTag::Item` case
                 }
-                _ => log::debug!("unsupported markdown event {:?}", event),
+                MarkdownEvent::FootnoteReference(label) => {
+                    builder.push_footnote_ref(label.clone(), range.clone());
+                    builder.push_text_style(self.style.link.clone());
+                    builder.push_text(&format!("[{label}]"), range.clone());
+                    builder.pop_text_style();
+                }
             }
         }
         if self.style.code_block_overflow_x_scroll {
@@ -2270,8 +2361,10 @@ struct MarkdownElementBuilder {
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
+    rendered_footnote_refs: Vec<RenderedFootnoteRef>,
     current_source_index: usize,
     html_comment: bool,
+    rendered_footnote_separator: bool,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
@@ -2306,8 +2399,10 @@ impl MarkdownElementBuilder {
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
+            rendered_footnote_refs: Vec::new(),
             current_source_index: 0,
             html_comment: false,
+            rendered_footnote_separator: false,
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
@@ -2459,6 +2554,13 @@ impl MarkdownElementBuilder {
         });
     }
 
+    fn push_footnote_ref(&mut self, label: SharedString, source_range: Range<usize>) {
+        self.rendered_footnote_refs.push(RenderedFootnoteRef {
+            source_range,
+            label,
+        });
+    }
+
     fn push_text(&mut self, text: &str, source_range: Range<usize>) {
         self.pending_line.source_mappings.push(SourceMapping {
             rendered_index: self.pending_line.text.len(),
@@ -2576,6 +2678,7 @@ impl MarkdownElementBuilder {
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
+                footnote_refs: self.rendered_footnote_refs.into(),
             },
         }
     }
@@ -2690,12 +2793,19 @@ pub struct RenderedMarkdown {
 struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
+    footnote_refs: Rc<[RenderedFootnoteRef]>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
     destination_url: SharedString,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct RenderedFootnoteRef {
+    source_range: Range<usize>,
+    label: SharedString,
 }
 
 impl RenderedText {
@@ -2844,11 +2954,16 @@ impl RenderedText {
         accumulator
     }
 
-    fn link_for_position(&self, position: Point<Pixels>) -> Option<&RenderedLink> {
-        let source_index = self.source_index_for_position(position).ok()?;
+    fn link_for_source_index(&self, source_index: usize) -> Option<&RenderedLink> {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
+    }
+
+    fn footnote_ref_for_source_index(&self, source_index: usize) -> Option<&RenderedFootnoteRef> {
+        self.footnote_refs
+            .iter()
+            .find(|fref| fref.source_range.contains(&source_index))
     }
 }
 

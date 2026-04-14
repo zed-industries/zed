@@ -74,6 +74,7 @@ pub fn original_repo_path(
 ) -> PathBuf {
     if common_dir != repository_dir {
         original_repo_path_from_common_dir(common_dir)
+            .unwrap_or_else(|| work_directory.to_path_buf())
     } else {
         work_directory.to_path_buf()
     }
@@ -86,16 +87,13 @@ pub fn original_repo_path(
 /// is the working directory. For a git worktree, `common_dir` is the **main**
 /// repo's `.git` directory, so the parent is the original repo's working directory.
 ///
-/// Falls back to returning `common_dir` itself if it doesn't end with `.git`
-/// (e.g. bare repos or unusual layouts).
-pub fn original_repo_path_from_common_dir(common_dir: &Path) -> PathBuf {
+/// Returns `None` if `common_dir` doesn't end with `.git` (e.g. bare repos),
+/// because there is no working-tree root to resolve to in that case.
+pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> {
     if common_dir.file_name() == Some(OsStr::new(".git")) {
-        common_dir
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| common_dir.to_path_buf())
+        common_dir.parent().map(|p| p.to_path_buf())
     } else {
-        common_dir.to_path_buf()
+        None
     }
 }
 
@@ -755,6 +753,13 @@ pub trait GitRepository: Send + Sync {
         &self,
         target: CreateWorktreeTarget,
         path: PathBuf,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn checkout_branch_in_worktree(
+        &self,
+        branch_name: String,
+        worktree_path: PathBuf,
+        create: bool,
     ) -> BoxFuture<'_, Result<()>>;
 
     fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>>;
@@ -1476,7 +1481,7 @@ impl GitRepository for RealGitRepository {
                 } else {
                     log::debug!("removing path {path:?} from the index");
                     let output = git
-                        .build_command(&["update-index", "--force-remove"])
+                        .build_command(&["update-index", "--force-remove", "--"])
                         .envs(env.iter())
                         .arg(path.as_unix_str())
                         .output()
@@ -1799,6 +1804,32 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn checkout_branch_in_worktree(
+        &self,
+        branch_name: String,
+        worktree_path: PathBuf,
+        create: bool,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary = GitBinary::new(
+            self.any_git_binary_path.clone(),
+            worktree_path,
+            self.path(),
+            self.executor.clone(),
+            self.is_trusted(),
+        );
+
+        self.executor
+            .spawn(async move {
+                if create {
+                    git_binary.run(&["checkout", "-b", &branch_name]).await?;
+                } else {
+                    git_binary.run(&["checkout", &branch_name]).await?;
+                }
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         let repo = self.repository.clone();
         let git_binary = self.git_binary();
@@ -2114,7 +2145,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git_binary?;
                 let output = git
-                    .build_command(&["stash", "push", "--quiet", "--include-untracked"])
+                    .build_command(&["stash", "push", "--quiet", "--include-untracked", "--"])
                     .envs(env.iter())
                     .args(paths.iter().map(|p| p.as_unix_str()))
                     .output()
@@ -3146,6 +3177,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("--untracked-files=all"),
         OsString::from("--no-renames"),
         OsString::from("-z"),
+        OsString::from("--"),
     ];
     args.extend(path_prefixes.iter().map(|path_prefix| {
         if path_prefix.is_empty() {
@@ -4412,26 +4444,26 @@ mod tests {
         // Normal repo: common_dir is <work_dir>/.git
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5/.git")),
-            PathBuf::from("/code/zed5")
+            Some(PathBuf::from("/code/zed5"))
         );
 
         // Worktree: common_dir is the main repo's .git
         // (same result — that's the point, it always traces back to the original)
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5/.git")),
-            PathBuf::from("/code/zed5")
+            Some(PathBuf::from("/code/zed5"))
         );
 
-        // Bare repo: no .git suffix, returns as-is
+        // Bare repo: no .git suffix, returns None (no working-tree root)
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/code/zed5.git")),
-            PathBuf::from("/code/zed5.git")
+            None
         );
 
         // Root-level .git directory
         assert_eq!(
             original_repo_path_from_common_dir(Path::new("/.git")),
-            PathBuf::from("/")
+            Some(PathBuf::from("/"))
         );
     }
 

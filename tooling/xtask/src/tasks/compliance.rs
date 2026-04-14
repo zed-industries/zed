@@ -92,11 +92,18 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
     );
 
     for report in report.errors() {
-        if let Some(pr_number) = report.commit.pr_number() {
+        if let Some(pr_number) = report.commit.pr_number()
+            && let Ok(pull_request) = client.get_pull_request(pr_number).await
+            && pull_request.labels.is_none_or(|labels| {
+                labels
+                    .iter()
+                    .all(|label| label != compliance::github::PR_REVIEW_LABEL)
+            })
+        {
             println!("Adding review label to PR {}...", pr_number);
 
             client
-                .ensure_pull_request_has_label(compliance::github::PR_REVIEW_LABEL, pr_number)
+                .add_label_to_issue(compliance::github::PR_REVIEW_LABEL, pr_number)
                 .await?;
         }
     }

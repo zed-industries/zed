@@ -4,7 +4,6 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod agent_registry_ui;
-mod branch_names;
 mod buffer_codegen;
 mod completion_provider;
 mod config_options;
@@ -37,6 +36,7 @@ pub mod thread_worktree_archive;
 mod thread_worktree_picker;
 pub mod threads_archive_view;
 mod ui;
+mod worktree_names;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -48,7 +48,7 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
+use gpui::{Action, App, Context, Entity, SharedString, UpdateGlobal as _, Window, actions};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -58,18 +58,22 @@ use language_model::{
 };
 use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
+use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{DockPosition, DockSide, LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
-pub use crate::agent_panel::{AgentPanel, AgentPanelEvent, WorktreeCreationStatus};
+pub use crate::agent_panel::{
+    AgentPanel, AgentPanelEvent, MaxIdleRetainedThreads, WorktreeCreationStatus,
+};
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
-pub(crate) use conversation_view::ConversationView;
+pub use conversation_view::ConversationView;
 pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
@@ -79,7 +83,7 @@ pub(crate) use thread_history_view::*;
 pub use thread_import::{AcpThreadImportOnboarding, ThreadImportModal};
 use zed_actions;
 
-pub const DEFAULT_THREAD_TITLE: &str = "New Thread";
+pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
 actions!(
     agent,
@@ -511,7 +515,34 @@ pub fn init(
     })
     .detach();
 
-    maybe_backfill_editor_layout(fs, is_new_install, cx);
+    let agent_v2_enabled = agent_v2_enabled(cx);
+    if agent_v2_enabled {
+        maybe_backfill_editor_layout(fs, is_new_install, cx);
+    }
+
+    SettingsStore::update_global(cx, |store, cx| {
+        store.update_default_settings(cx, |defaults| {
+            if agent_v2_enabled {
+                defaults.agent.get_or_insert_default().dock = Some(DockPosition::Left);
+                defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Right);
+                defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Right);
+                defaults.collaboration_panel.get_or_insert_default().dock =
+                    Some(DockPosition::Right);
+                defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Right);
+            } else {
+                defaults.agent.get_or_insert_default().dock = Some(DockPosition::Right);
+                defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Left);
+                defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Left);
+                defaults.collaboration_panel.get_or_insert_default().dock =
+                    Some(DockPosition::Left);
+                defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Left);
+            }
+        });
+    });
+}
+
+fn agent_v2_enabled(cx: &App) -> bool {
+    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
@@ -539,6 +570,7 @@ fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let agent_v2_enabled = agent_v2_enabled(cx);
 
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
@@ -608,7 +640,11 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
 
-        filter.show_namespace("multi_workspace");
+        if agent_v2_enabled {
+            filter.show_namespace("multi_workspace");
+        } else {
+            filter.hide_namespace("multi_workspace");
+        }
     });
 }
 
@@ -823,6 +859,7 @@ mod tests {
         .unwrap();
 
         cx.update(|cx| {
+            cx.set_global(db::AppDatabase::test_new());
             let store = SettingsStore::test(cx);
             cx.set_global(store);
             AgentSettings::register(cx);

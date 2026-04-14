@@ -1,9 +1,6 @@
-use crate::{ListBulletItem, Vector, VectorName, prelude::*};
+use crate::{ListBulletItem, prelude::*};
 use component::{Component, ComponentScope, example_group, single_example};
-use gpui::{
-    AnyElement, ClickEvent, IntoElement, ParentElement, SharedString, linear_color_stop,
-    linear_gradient,
-};
+use gpui::{AnyElement, ClickEvent, IntoElement, ParentElement, SharedString};
 use smallvec::SmallVec;
 
 #[derive(IntoElement, RegisterComponent)]
@@ -165,55 +162,13 @@ impl Component for AnnouncementToast {
         Some("A special toast for announcing new and exciting features.")
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        let illustration = h_flex()
-            .relative()
-            .h(rems_from_px(126.))
-            .bg(cx.theme().colors().editor_background)
-            .justify_center()
-            .gap_8()
-            .rounded_t_md()
-            .overflow_hidden()
-            .child(
-                div().absolute().inset_0().w(px(515.)).h(px(126.)).child(
-                    Vector::new(VectorName::AcpGrid, rems_from_px(515.), rems_from_px(126.))
-                        .color(Color::Custom(cx.theme().colors().text.opacity(0.02))),
-                ),
-            )
-            .child(div().absolute().inset_0().size_full().bg(linear_gradient(
-                0.,
-                linear_color_stop(
-                    cx.theme().colors().elevated_surface_background.opacity(0.1),
-                    0.9,
-                ),
-                linear_color_stop(
-                    cx.theme().colors().elevated_surface_background.opacity(0.),
-                    0.,
-                ),
-            )))
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .size_full()
-                    .bg(gpui::black().opacity(0.15)),
-            )
-            .child(
-                Vector::new(
-                    VectorName::AcpLogoSerif,
-                    rems_from_px(257.),
-                    rems_from_px(47.),
-                )
-                .color(Color::Custom(cx.theme().colors().text.opacity(0.8))),
-            );
-
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         let examples = vec![single_example(
             "Basic",
             div()
                 .w_80()
                 .child(
                     AnnouncementToast::new()
-                        .illustration(illustration)
                         .heading("Introducing Parallel Agents")
                         .description("Run multiple agent threads simultaneously across projects.")
                         .bullet_item(ListBulletItem::new(

@@ -125,7 +125,7 @@ pub trait AgentConnection {
 
     fn prompt(
         &self,
-        user_message_id: Option<UserMessageId>,
+        user_message_id: UserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
@@ -665,6 +665,23 @@ mod test_support {
         )
     }
 
+    /// Test-scoped counter for generating unique session IDs across all
+    /// `StubAgentConnection` instances within a test case. Set as a GPUI
+    /// global in test init so each case starts fresh.
+    pub struct StubSessionCounter(pub AtomicUsize);
+    impl gpui::Global for StubSessionCounter {}
+
+    impl StubSessionCounter {
+        pub fn next(cx: &App) -> usize {
+            cx.try_global::<Self>()
+                .map(|g| g.0.fetch_add(1, Ordering::SeqCst))
+                .unwrap_or_else(|| {
+                    static FALLBACK: AtomicUsize = AtomicUsize::new(0);
+                    FALLBACK.fetch_add(1, Ordering::SeqCst)
+                })
+        }
+    }
+
     #[derive(Clone)]
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
@@ -823,9 +840,7 @@ mod test_support {
             work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
-            let session_id =
-                acp::SessionId::new(NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst).to_string());
+            let session_id = acp::SessionId::new(StubSessionCounter::next(cx).to_string());
             let thread = self.create_session(session_id, project, work_dirs, None, cx);
             Task::ready(Ok(thread))
         }
@@ -860,7 +875,7 @@ mod test_support {
 
         fn prompt(
             &self,
-            _id: Option<UserMessageId>,
+            _id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
