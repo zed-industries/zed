@@ -82,7 +82,6 @@ struct Session {
     /// The ACP thread that handles protocol communication
     acp_thread: Entity<acp_thread::AcpThread>,
     project_id: EntityId,
-    ref_count: usize,
     pending_save: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -387,7 +386,6 @@ impl NativeAgent {
                 thread: thread_handle,
                 acp_thread: acp_thread.clone(),
                 project_id,
-                ref_count: 1,
                 _subscriptions: subscriptions,
                 pending_save: Task::ready(Ok(())),
             },
@@ -928,8 +926,7 @@ impl NativeAgent {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if let Some(session) = self.sessions.get_mut(&id) {
-            session.ref_count += 1;
+        if let Some(session) = self.sessions.get(&id) {
             return Task::ready(Ok(session.acp_thread.clone()));
         }
 
@@ -1459,13 +1456,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             let thread = agent.sessions.get(session_id).map(|s| s.thread.clone());
             if let Some(thread) = thread {
                 agent.save_thread(thread, cx);
-            }
-
-            if let Some(session) = agent.sessions.get_mut(session_id) {
-                session.ref_count -= 1;
-                if session.ref_count > 0 {
-                    return Task::ready(Ok(()));
-                }
             }
 
             let Some(session) = agent.sessions.remove(session_id) else {
@@ -3090,115 +3080,6 @@ mod internal_tests {
                 .map(|entry| (entry.id.clone(), entry.title.to_string()))
                 .collect::<Vec<_>>()
         })
-    }
-
-    #[gpui::test]
-    async fn test_close_session_does_not_remove_reused_session(cx: &mut TestAppContext) {
-        // Regression test: when two ConversationViews share the same session
-        // (because open_thread found the session still in the HashMap),
-        // closing the session from the first view must not break the second
-        // view's ability to prompt.
-        //
-        // How a user can trigger this:
-        //
-        //   A user has thread A open, then clicks a @thread mention link
-        //   (or pastes a thread link, or opens one via the CLI) pointing
-        //   to the same thread. AgentPanel::open_thread bypasses the
-        //   load_agent_thread de-duplication guards and always creates a
-        //   new ConversationView via external_thread. The old CV goes
-        //   to background_threads keyed by session_id. Clicking the
-        //   link a second time creates yet another CV, and storing it in
-        //   background_threads under the same key overwrites (and drops)
-        //   the first CV. Its on_release fires close_all_sessions,
-        //   which calls close_session on the NativeAgent.
-        //
-        // Timeline being tested:
-        //   1. CV1 creates session "abc"  (ref in NativeAgent.sessions)
-        //   2. CV2 calls open_thread("abc") → reuses existing session
-        //   3. CV1 is dropped → close_session("abc") removes the entry
-        //   4. CV2 tries to prompt → "Session not found"
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/", json!({ "a": { "file.txt": "hello" } }))
-            .await;
-        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
-
-        // Step 1: CV1 creates a new session.
-        let acp_thread = cx
-            .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
-            })
-            .await
-            .unwrap();
-        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
-
-        // Give the thread a model so we can send messages.
-        let model = Arc::new(FakeLanguageModel::default());
-        let thread = agent.read_with(cx, |agent, _| {
-            agent.sessions.get(&session_id).unwrap().thread.clone()
-        });
-        thread.update(cx, |thread, cx| {
-            thread.set_model(model.clone(), cx);
-        });
-
-        // Send a first message so the thread has content (required for
-        // persistence so that open_thread can reload it if needed).
-        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
-        let send = cx.foreground_executor().spawn(send);
-        cx.run_until_parked();
-        model.send_last_completion_stream_text_chunk("world");
-        model.end_last_completion_stream();
-        send.await.unwrap();
-        cx.run_until_parked();
-
-        // Step 2: CV2 opens the same thread. Because the session is still in
-        // the HashMap, open_thread returns the existing AcpThread.
-        let cv2_acp_thread = agent
-            .update(cx, |agent, cx| {
-                agent.open_thread(session_id.clone(), project.clone(), cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            cv2_acp_thread.entity_id(),
-            acp_thread.entity_id(),
-            "open_thread should reuse the existing session's AcpThread"
-        );
-
-        // Step 3: CV1 is dropped and calls close_session.
-        cx.update(|cx| connection.clone().close_session(&session_id, cx))
-            .await
-            .unwrap();
-
-        // Step 4: CV2 tries to prompt on the session.
-        // This must succeed — CV2 is still actively using this session.
-        let prompt = cx.update(|cx| {
-            connection.prompt(
-                acp_thread::UserMessageId::new(),
-                acp::PromptRequest::new(session_id.clone(), vec!["follow-up".into()]),
-                cx,
-            )
-        });
-        let prompt = cx.foreground_executor().spawn(prompt);
-        cx.run_until_parked();
-
-        model.send_last_completion_stream_text_chunk("response");
-        model.end_last_completion_stream();
-
-        let result = prompt.await;
-        assert!(
-            result.is_ok(),
-            "prompt after close_session should succeed when another view \
-             still holds the session, but got: {:?}",
-            result.unwrap_err()
-        );
     }
 
     fn init_test(cx: &mut TestAppContext) {

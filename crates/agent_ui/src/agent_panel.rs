@@ -1287,12 +1287,11 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.external_thread(
-            Some(crate::Agent::NativeAgent),
-            Some(session_id),
+        self.load_agent_thread(
+            crate::Agent::NativeAgent,
+            session_id,
             work_dirs,
             title,
-            None,
             true,
             window,
             cx,
