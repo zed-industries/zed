@@ -1751,16 +1751,14 @@ impl Sidebar {
             .child(gradient_overlay())
             .child(
                 h_flex()
-                    .when(has_threads && !is_ellipsis_menu_open, |this| {
+                    .when(!is_ellipsis_menu_open, |this| {
                         this.visible_on_hover(&group_name)
                     })
                     .child(gradient_overlay())
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
-                    .when(has_threads, |this| {
-                        this.child(self.render_project_header_ellipsis_menu(ix, id_prefix, key, cx))
-                    })
+                    .child(self.render_project_header_ellipsis_menu(ix, id_prefix, key, cx))
                     .when(has_threads && view_more_expanded && !is_collapsed, |this| {
                         this.child(
                             IconButton::new(
