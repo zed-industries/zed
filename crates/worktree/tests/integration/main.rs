@@ -2828,24 +2828,16 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
 }
 
 #[gpui::test]
-async fn test_linked_worktree_git_dir_events_do_not_panic(
+async fn test_linked_worktree_gitfile_event_preserves_repo(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
-
     use git::repository::Worktree as GitWorktree;
 
     let fs = FakeFs::new(executor);
-
-    fs.insert_tree(
-        path!("/main_repo"),
-        json!({
-            ".git": {},
-            "file.txt": "content",
-        }),
-    )
-    .await;
+    fs.insert_tree(path!("/main_repo"), json!({ ".git": {}, "file.txt": "" }))
+        .await;
     fs.add_linked_worktree_for_repo(
         Path::new(path!("/main_repo/.git")),
         false,
@@ -2857,12 +2849,9 @@ async fn test_linked_worktree_git_dir_events_do_not_panic(
         },
     )
     .await;
-    fs.write(
-        path!("/linked_worktree/file.txt").as_ref(),
-        "content".as_bytes(),
-    )
-    .await
-    .unwrap();
+    fs.write(path!("/linked_worktree/file.txt").as_ref(), b"content")
+        .await
+        .unwrap();
 
     let tree = Worktree::local(
         path!("/linked_worktree").as_ref(),
@@ -2879,16 +2868,18 @@ async fn test_linked_worktree_git_dir_events_do_not_panic(
         .await;
     cx.run_until_parked();
 
-    // Trigger an fs event in the common git dir (main repo's .git),
-    // which is outside the linked worktree root. The watcher monitors
-    // this directory, so events from it flow through process_events.
-    // This must not panic when the .git path is outside the worktree root.
-    tree.flush_fs_events_in_root_git_repository(cx).await;
+    // Overwrite the .git gitfile with garbage to trigger an event for the
+    // gitfile path itself, which only matches `dot_git_abs_path`.
+    fs.write(path!("/linked_worktree/.git").as_ref(), b"garbage")
+        .await
+        .unwrap();
+    tree.flush_fs_events(cx).await;
 
     tree.read_with(cx, |tree, _| {
-        assert!(
-            tree.snapshot().root_repo_common_dir().is_some(),
-            "linked worktree should still have its git repository after git dir events"
+        assert_eq!(
+            tree.snapshot().root_repo_common_dir().map(|p| p.as_ref()),
+            Some(Path::new(path!("/main_repo/.git"))),
+            "linked worktree repo should survive a gitfile change event"
         );
     });
 }
