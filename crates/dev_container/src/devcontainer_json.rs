@@ -222,7 +222,7 @@ pub(crate) struct DevContainer {
     #[serde(default, deserialize_with = "deserialize_mount_definition")]
     pub(crate) workspace_mount: Option<MountDefinition>,
     pub(crate) workspace_folder: Option<String>,
-    run_args: Option<Vec<String>>,
+    pub(crate) run_args: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_string_or_array")]
     pub(crate) docker_compose_file: Option<Vec<String>>,
     pub(crate) service: Option<String>,
