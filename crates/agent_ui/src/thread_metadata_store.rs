@@ -3110,4 +3110,106 @@ mod tests {
         let result = ThreadWorktreePaths::from_path_lists(main, folder);
         assert!(result.is_err());
     }
+
+    /// Regression test: archiving a thread created in a git worktree must
+    /// preserve the thread's folder paths so that restoring it later does
+    /// not prompt the user to re-associate a project.
+    ///
+    /// The bug: `handle_thread_event` always recalculates `worktree_paths`
+    /// from the project's current visible worktrees. When the linked
+    /// worktree is removed from the project during the archive flow and a
+    /// subsequent thread event fires (e.g. a title update from an async
+    /// summarization task), `from_project` returns empty paths, overwriting
+    /// the stored paths for the archived thread.
+    #[gpui::test]
+    async fn test_archived_thread_retains_paths_after_worktree_removal(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/worktrees/feature",
+            serde_json::json!({ "src": { "main.rs": "" } }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/worktrees/feature")], cx).await;
+        let connection = Rc::new(StubAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::default(), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = cx.read(|cx| thread.read(cx).session_id().clone());
+
+        // Push content so `handle_thread_event` saves metadata with the
+        // project's worktree paths.
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.push_user_content_block(None, "Hello".into(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        // Verify paths were saved correctly.
+        let folder_paths_before = cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            let entry = store.entry(&session_id).unwrap();
+            assert!(
+                !entry.folder_paths().is_empty(),
+                "thread should have folder paths before archiving"
+            );
+            entry.folder_paths().clone()
+        });
+
+        // Archive the thread.
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.archive(&session_id, None, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        // Remove the worktree from the project, simulating what the
+        // archive flow does for linked git worktrees.
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id()
+        });
+        project.update(cx, |project, cx| {
+            project.remove_worktree(worktree_id, cx);
+        });
+        cx.run_until_parked();
+
+        // Trigger a thread event after archiving + worktree removal.
+        // In production this happens when an async title-generation task
+        // completes after the thread was archived.
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_title("Generated title".into(), cx).detach();
+            });
+        });
+        cx.run_until_parked();
+
+        // The archived thread must still have its original folder paths.
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            let entry = store.entry(&session_id).unwrap();
+            assert!(entry.archived, "thread should still be archived");
+            assert_eq!(
+                entry.folder_paths(),
+                &folder_paths_before,
+                "archived thread must retain its folder paths after worktree \
+                 removal + subsequent thread event, otherwise restoring it \
+                 will prompt the user to re-associate a project"
+            );
+        });
+    }
 }
