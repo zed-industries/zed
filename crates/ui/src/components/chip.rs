@@ -115,9 +115,7 @@ impl RenderOnce for Chip {
             .bg(bg_color)
             .overflow_hidden()
             .when_some(self.icon, |this, icon| {
-                this
-                    .pl_0()
-                    .child(
+                this.pl_0().child(
                     h_flex()
                         .flex_grow()
                         .h_full()
@@ -129,10 +127,10 @@ impl RenderOnce for Chip {
                         .items_center()
                         .justify_center()
                         .child(
-                    Icon::new(icon)
-                        .size(IconSize::XSmall)
-                        .color(self.icon_color),
-                        )
+                            Icon::new(icon)
+                                .size(IconSize::XSmall)
+                                .color(self.icon_color),
+                        ),
                 )
             })
             .child(
