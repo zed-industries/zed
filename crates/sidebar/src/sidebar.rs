@@ -1232,35 +1232,37 @@ impl Sidebar {
                         })
                     })
                     .or_else(|| {
-                        // For groups with deleted worktrees, check if the
-                        // group path is under the active workspace's repo's
-                        // worktree directory. Use the active workspace's
-                        // branch specifically (not any random worktree).
-                        let active_snapshot = active_workspace.as_ref().and_then(|ws| {
-                            let project = ws.read(cx).project().read(cx);
-                            project
-                                .repositories(cx)
-                                .values()
-                                .next()
-                                .map(|repo| repo.read(cx).snapshot())
-                        });
-                        if let Some(snapshot) = active_snapshot {
-                            let branch = snapshot.branch.as_ref()?;
-                            for group_path in group_key.path_list().paths() {
-                                if *group_path == *snapshot.work_directory_abs_path {
-                                    return Some(SharedString::from(branch.name().to_string()));
-                                }
-                                let wt_dir = project::git_store::worktrees_directory_for_repo(
+                        // For groups with deleted worktrees, find a repo
+                        // snapshot whose worktree directory contains a
+                        // group path. Prefer linked worktrees over the
+                        // main checkout since deleted threads were likely
+                        // from linked worktrees too.
+                        let mut main_checkout_branch: Option<SharedString> = None;
+                        for group_path in group_key.path_list().paths() {
+                            for snapshot in &repo_snapshots {
+                                let Some(branch) = &snapshot.branch else {
+                                    continue;
+                                };
+                                let wt_dir = match project::git_store::worktrees_directory_for_repo(
                                     &snapshot.original_repo_abs_path,
                                     wt_dir_setting,
-                                )
-                                .ok()?;
-                                if group_path.starts_with(&wt_dir) {
+                                ) {
+                                    Ok(d) => d,
+                                    Err(_) => continue,
+                                };
+                                if !group_path.starts_with(&wt_dir) {
+                                    continue;
+                                }
+                                let is_linked = snapshot.work_directory_abs_path
+                                    != snapshot.original_repo_abs_path;
+                                if is_linked {
                                     return Some(SharedString::from(branch.name().to_string()));
                                 }
+                                main_checkout_branch =
+                                    Some(SharedString::from(branch.name().to_string()));
                             }
                         }
-                        None
+                        main_checkout_branch
                     });
 
                 // Build a ThreadEntry from a metadata row.
