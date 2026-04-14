@@ -1116,6 +1116,23 @@ impl Sidebar {
             }
         }
 
+        // Build a map from original repo path → branch name. This serves
+        // as a last-resort fallback for threads whose worktree was deleted:
+        // we can still show the branch of whatever worktree is currently
+        // checked out from the same repo.
+        let mut branch_by_repo: HashMap<PathBuf, SharedString> = HashMap::new();
+        for ws in &workspaces {
+            let project = ws.read(cx).project().read(cx);
+            for repo in project.repositories(cx).values() {
+                let snapshot = repo.read(cx).snapshot();
+                if let Some(branch) = &snapshot.branch {
+                    branch_by_repo
+                        .entry(snapshot.original_repo_abs_path.to_path_buf())
+                        .or_insert_with(|| SharedString::from(branch.name().to_string()));
+                }
+            }
+        }
+
         // Backfill branch_names for ALL threads (including archived) that
         // are missing branch data we now have from live git repos.
         if !branch_by_path.is_empty() {
@@ -1188,21 +1205,6 @@ impl Sidebar {
                         })
                 };
 
-                // Get a fallback branch from this group's open workspaces.
-                // Used for threads whose worktrees have been deleted — we
-                // can at least show the current workspace's branch.
-                let group_fallback_branch: Option<SharedString> =
-                    group_workspaces.iter().find_map(|ws| {
-                        let project = ws.read(cx).project().read(cx);
-                        project.repositories(cx).values().find_map(|repo| {
-                            repo.read(cx)
-                                .snapshot()
-                                .branch
-                                .as_ref()
-                                .map(|b| SharedString::from(b.name().to_string()))
-                        })
-                    });
-
                 // Build a ThreadEntry from a metadata row.
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
@@ -1219,13 +1221,21 @@ impl Sidebar {
                                 .entry(path.clone())
                                 .or_insert_with(|| branch.clone());
                         }
-                        // For folder paths that still have no branch, fall back
-                        // to the project group's current workspace branch.
-                        if let Some(fallback) = &group_fallback_branch {
-                            for (_, folder_path) in row.worktree_paths.ordered_pairs() {
-                                branch_names
-                                    .entry(folder_path.clone())
-                                    .or_insert_with(|| fallback.clone());
+                        // For folder paths that still have no branch, fall
+                        // back to the repo-level branch. This handles threads
+                        // whose worktrees were deleted: we show the branch
+                        // of whatever is currently checked out from the same
+                        // repo. We try the thread's main_path first, then
+                        // folder_path, and finally any repo in the group.
+                        for (main_path, folder_path) in row.worktree_paths.ordered_pairs() {
+                            if !branch_names.contains_key(folder_path) {
+                                let fallback = branch_by_repo
+                                    .get(main_path)
+                                    .or_else(|| branch_by_repo.get(folder_path))
+                                    .or_else(|| branch_by_repo.values().next());
+                                if let Some(branch) = fallback {
+                                    branch_names.insert(folder_path.clone(), branch.clone());
+                                }
                             }
                         }
                         let worktrees =
