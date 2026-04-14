@@ -18,10 +18,10 @@ use db::{
 use fs::Fs;
 use futures::{FutureExt, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
-use project::AgentId;
 pub use project::WorktreePaths;
+use project::{AgentId, linked_worktree_short_name};
 use remote::RemoteConnectionOptions;
-use ui::{App, Context, SharedString};
+use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
 use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
@@ -314,6 +314,73 @@ impl ThreadMetadata {
     pub fn main_worktree_paths(&self) -> &PathList {
         self.worktree_paths.main_worktree_path_list()
     }
+}
+
+/// Derives worktree display info from a thread's stored path list.
+///
+/// For each path in the thread's `folder_paths`, produces a
+/// [`ThreadItemWorktreeInfo`] with a short display name, full path, and whether
+/// the worktree is the main checkout or a linked git worktree. When
+/// multiple main paths exist and a linked worktree's short name alone
+/// wouldn't identify which main project it belongs to, the main project
+/// name is prefixed for disambiguation (e.g. `project:feature`).
+pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
+    worktree_paths: &WorktreePaths,
+    branch_names: &std::collections::HashMap<PathBuf, SharedString, S>,
+) -> Vec<ThreadItemWorktreeInfo> {
+    let mut infos: Vec<ThreadItemWorktreeInfo> = Vec::new();
+    let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
+    let mut unique_main_count = HashSet::default();
+
+    for (main_path, folder_path) in worktree_paths.ordered_pairs() {
+        unique_main_count.insert(main_path.clone());
+        let is_linked = main_path != folder_path;
+
+        if is_linked {
+            let short_name = linked_worktree_short_name(main_path, folder_path).unwrap_or_default();
+            let project_name = main_path
+                .file_name()
+                .map(|n| SharedString::from(n.to_string_lossy().to_string()))
+                .unwrap_or_default();
+            linked_short_names.push((short_name.clone(), project_name));
+            infos.push(ThreadItemWorktreeInfo {
+                name: short_name,
+                full_path: SharedString::from(folder_path.display().to_string()),
+                highlight_positions: Vec::new(),
+                kind: WorktreeKind::Linked,
+                branch_name: branch_names.get(folder_path).cloned(),
+            });
+        } else {
+            let Some(name) = folder_path.file_name() else {
+                continue;
+            };
+            infos.push(ThreadItemWorktreeInfo {
+                name: SharedString::from(name.to_string_lossy().to_string()),
+                full_path: SharedString::from(folder_path.display().to_string()),
+                highlight_positions: Vec::new(),
+                kind: WorktreeKind::Main,
+                branch_name: branch_names.get(folder_path).cloned(),
+            });
+        }
+    }
+
+    // When the group has multiple main worktree paths and the thread's
+    // folder paths don't all share the same short name, prefix each
+    // linked worktree chip with its main project name so the user knows
+    // which project it belongs to.
+    let all_same_name = infos.len() > 1 && infos.iter().all(|i| i.name == infos[0].name);
+
+    if unique_main_count.len() > 1 && !all_same_name {
+        for (info, (_short_name, project_name)) in infos
+            .iter_mut()
+            .filter(|i| i.kind == WorktreeKind::Linked)
+            .zip(linked_short_names.iter())
+        {
+            info.name = SharedString::from(format!("{}:{}", project_name, info.name));
+        }
+    }
+
+    infos
 }
 
 impl From<&ThreadMetadata> for acp_thread::AgentSessionInfo {
@@ -648,8 +715,11 @@ impl ThreadMetadataStore {
             if thread.worktree_paths == worktree_paths {
                 continue;
             }
+            let mut branch_names = thread.branch_names.clone();
+            branch_names.retain(|path, _| worktree_paths.folder_path_list().paths().contains(path));
             self.save_internal(ThreadMetadata {
                 worktree_paths: worktree_paths.clone(),
+                branch_names,
                 ..thread.clone()
             });
             changed = true;

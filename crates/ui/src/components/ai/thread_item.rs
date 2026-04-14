@@ -375,12 +375,116 @@ impl RenderOnce for ThreadItem {
 
         let has_project_name = self.project_name.is_some();
         let has_project_paths = project_paths.is_some();
-        let has_worktree = self
-            .worktrees
-            .iter()
-            .any(|wt| wt.kind == WorktreeKind::Linked || wt.branch_name.is_some());
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
+
+        let worktree_tooltip_title = match (self.is_remote, self.worktrees.len() > 1) {
+            (true, true) => "Thread Running in Remote Git Worktrees",
+            (true, false) => "Thread Running in a Remote Git Worktree",
+            (false, true) => "Thread Running in Local Git Worktrees",
+            (false, false) => "Thread Running in a Local Git Worktree",
+        };
+
+        let mut seen_paths: Vec<SharedString> = Vec::new();
+        let mut worktree_labels: Vec<AnyElement> = Vec::new();
+
+        let slash_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.4));
+        let worktree_count = self.worktrees.len();
+
+        for wt in self.worktrees {
+            if seen_paths.contains(&wt.full_path) {
+                continue;
+            }
+
+            let chip_index = seen_paths.len();
+            seen_paths.push(wt.full_path.clone());
+
+            let tooltip_title = worktree_tooltip_title;
+            let full_path = wt.full_path.clone();
+
+            match (wt.kind, wt.branch_name) {
+                (WorktreeKind::Main, None) => continue,
+                (WorktreeKind::Main, Some(branch)) => {
+                    worktree_labels.push(
+                        h_flex()
+                            .id(format!("{}-worktree-{chip_index}", self.id.clone()))
+                            .min_w_0()
+                            .when(worktree_count > 1, |this| {
+                                this.child(
+                                    Label::new(wt.name)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .truncate(),
+                                )
+                                .child(
+                                    Label::new("/")
+                                        .size(LabelSize::Small)
+                                        .color(slash_color)
+                                        .flex_shrink_0(),
+                                )
+                            })
+                            .child(
+                                Label::new(branch)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .flex_shrink_0(),
+                            )
+                            .tooltip(move |_, cx| {
+                                Tooltip::with_meta(tooltip_title, None, full_path.clone(), cx)
+                            })
+                            .into_any_element(),
+                    );
+                }
+                (WorktreeKind::Linked, branch) => {
+                    let label = if wt.highlight_positions.is_empty() {
+                        Label::new(wt.name)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate()
+                            .into_any_element()
+                    } else {
+                        HighlightedLabel::new(wt.name, wt.highlight_positions)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .truncate()
+                            .into_any_element()
+                    };
+
+                    worktree_labels.push(
+                        h_flex()
+                            .id(format!("{}-worktree-{chip_index}", self.id.clone()))
+                            .min_w_0()
+                            .gap_0p5()
+                            .child(
+                                Icon::new(IconName::GitWorktree)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(label)
+                            .when_some(branch, |this, branch| {
+                                this.child(
+                                    Label::new("/")
+                                        .size(LabelSize::Small)
+                                        .color(slash_color)
+                                        .flex_shrink_0(),
+                                )
+                                .child(
+                                    Label::new(branch)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .flex_shrink_0(),
+                                )
+                            })
+                            .tooltip(move |_, cx| {
+                                Tooltip::with_meta(tooltip_title, None, full_path.clone(), cx)
+                            })
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
+
+        let has_worktree = !worktree_labels.is_empty();
 
         v_flex()
             .id(self.id.clone())
@@ -442,129 +546,6 @@ impl RenderOnce for ThreadItem {
                     || has_diff_stats
                     || has_timestamp,
                 |this| {
-                    // Collect all full paths for the shared tooltip.
-                    let worktree_tooltip: SharedString = self
-                        .worktrees
-                        .iter()
-                        .map(|wt| wt.full_path.as_ref())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                        .into();
-
-                    let worktree_tooltip_title = match (self.is_remote, self.worktrees.len() > 1) {
-                        (true, true) => "Thread Running in Remote Git Worktrees",
-                        (true, false) => "Thread Running in a Remote Git Worktree",
-                        (false, true) => "Thread Running in Local Git Worktrees",
-                        (false, false) => "Thread Running in a Local Git Worktree",
-                    };
-
-                    // Deduplicate chips by full path so that the same
-                    // worktree isn't shown twice.
-                    let mut seen_paths: Vec<SharedString> = Vec::new();
-                    let mut worktree_labels: Vec<AnyElement> = Vec::new();
-
-                    let slash_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.4));
-                    let worktree_count = self.worktrees.len();
-
-                    for wt in self.worktrees {
-                        if seen_paths.contains(&wt.full_path) {
-                            continue;
-                        }
-
-                        let has_branch = wt.branch_name.is_some();
-
-                        if wt.kind == WorktreeKind::Main && !has_branch {
-                            continue;
-                        }
-
-                        let chip_index = seen_paths.len();
-                        seen_paths.push(wt.full_path.clone());
-
-                        if wt.kind == WorktreeKind::Main {
-                            let Some(branch) = wt.branch_name else {
-                                continue;
-                            };
-                            let tooltip_title = worktree_tooltip_title;
-                            let full_path = wt.full_path.clone();
-                            worktree_labels.push(
-                                h_flex()
-                                    .id(format!("{}-worktree-{chip_index}", self.id.clone()))
-                                    .when(worktree_count > 1, |this| {
-                                        this.child(
-                                            Label::new(wt.name)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new("/")
-                                                .size(LabelSize::Small)
-                                                .color(slash_color),
-                                        )
-                                    })
-                                    .child(
-                                        Label::new(branch)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .tooltip(move |_, cx| {
-                                        Tooltip::with_meta(
-                                            tooltip_title,
-                                            None,
-                                            full_path.clone(),
-                                            cx,
-                                        )
-                                    })
-                                    .into_any_element(),
-                            );
-                            continue;
-                        }
-
-                        let label = if wt.highlight_positions.is_empty() {
-                            Label::new(wt.name)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .into_any_element()
-                        } else {
-                            HighlightedLabel::new(wt.name, wt.highlight_positions)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .into_any_element()
-                        };
-                        let tooltip_title = worktree_tooltip_title;
-                        let tooltip_meta = worktree_tooltip.clone();
-
-                        worktree_labels.push(
-                            h_flex()
-                                .id(format!("{}-worktree-{chip_index}", self.id.clone()))
-                                .gap_0p5()
-                                .child(
-                                    Icon::new(IconName::GitWorktree)
-                                        .size(IconSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .child(label)
-                                .when_some(wt.branch_name, |this, branch| {
-                                    this.child(
-                                        Label::new("/").size(LabelSize::Small).color(slash_color),
-                                    )
-                                    .child(
-                                        Label::new(branch)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                })
-                                .tooltip(move |_, cx| {
-                                    Tooltip::with_meta(
-                                        tooltip_title,
-                                        None,
-                                        tooltip_meta.clone(),
-                                        cx,
-                                    )
-                                })
-                                .into_any_element(),
-                        );
-                    }
-
                     this.child(
                         h_flex()
                             .min_w_0()
