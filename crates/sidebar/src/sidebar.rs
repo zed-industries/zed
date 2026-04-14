@@ -3003,7 +3003,7 @@ impl Sidebar {
                     })
                     .filter(|plan| {
                         thread_id.map_or(true, |tid| {
-                            store
+                            !store
                                 .read(cx)
                                 .path_is_referenced_by_other_unarchived_threads(
                                     tid,

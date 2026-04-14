@@ -40,13 +40,10 @@ These were completed in the previous PR and are now merged:
 5. Made sidebar workspace lookup / activation flows host-aware in `crates/sidebar/src/sidebar.rs`.
    - `find_current_workspace_for_path_list` and `find_open_workspace_for_path_list` now compare `remote_connection_options` via `same_remote_connection_identity`.
    - All three `ProjectGroupKey::new(None, ...)` in `activate_archived_thread` replaced with `ProjectGroupKey::new(metadata.remote_connection.clone(), ...)`.
-
-### TODO
-
-6. Make archive/worktree-reference logic host-aware in `crates/sidebar/src/sidebar.rs` and `crates/agent_ui/src/thread_worktree_archive.rs`.
-   - `archive_thread(...)` neighbor lookup at ~L2998 matches by path only.
-   - `path_is_referenced_by_other_unarchived_threads(...)` does not consider host.
-   - Compare host + path instead of path alone.
+6. Made archive/worktree-reference logic host-aware.
+   - Moved `path_is_referenced_by_other_unarchived_threads` into `ThreadMetadataStore` with a `remote_connection` parameter; call site passes `metadata.remote_connection.as_ref()`.
+   - `archive_thread` workspace removal fallback now uses `find_or_create_workspace` with `project_group_key.host()`.
+   - Neighbor selection remains host-agnostic by design (picks nearest visible thread for UX).
 
 ### Separate follow-ups
 
@@ -90,4 +87,4 @@ These are not required for this PR but should reuse the normalized remote identi
 - [x] Make `ThreadMetadataStore` lookups host-aware
 - [x] Filter sidebar threads by matching remote connection in `rebuild_contents`
 - [x] Use remote host in sidebar workspace lookup / activation flows
-- [ ] Make archive/worktree-reference matching host-aware
+- [x] Make archive/worktree-reference matching host-aware
