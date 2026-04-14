@@ -66,6 +66,11 @@ pub enum MentionUri {
 
 impl MentionUri {
     pub fn parse(input: &str, path_style: PathStyle) -> Result<Self> {
+        let input = input
+            .strip_prefix('`')
+            .and_then(|input| input.strip_suffix('`'))
+            .unwrap_or(input);
+
         fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
             let range = fragment.strip_prefix("L").unwrap_or(fragment);
 
@@ -753,6 +758,35 @@ mod tests {
                 assert_eq!(abs_path, Path::new("C:\\Users\\zed\\project\\main.rs"));
             }
             _ => panic!("Expected File variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_backticked_absolute_file_path() {
+        let file_path = "`/path/to/file.rs`";
+        let parsed = MentionUri::parse(file_path, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::File { abs_path } => {
+                assert_eq!(abs_path, Path::new(path!("/path/to/file.rs")));
+            }
+            _ => panic!("Expected File variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_backticked_absolute_file_path_with_fragment_line() {
+        let file_path = "`/path/to/file.rs#L42`";
+        let parsed = MentionUri::parse(file_path, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
         }
     }
 
