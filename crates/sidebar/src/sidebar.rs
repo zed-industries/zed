@@ -2676,8 +2676,10 @@ impl Sidebar {
                 ) {
                     self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
                 } else {
-                    let key =
-                        ProjectGroupKey::new(metadata.remote_connection.clone(), path_list.clone());
+                    let key = ProjectGroupKey::from_worktree_paths(
+                        &metadata.worktree_paths,
+                        metadata.remote_connection.clone(),
+                    );
                     self.open_workspace_and_activate_thread(metadata, path_list, &key, window, cx);
                 }
             }
@@ -2721,9 +2723,9 @@ impl Sidebar {
                                 cx,
                             );
                         } else {
-                            let key = ProjectGroupKey::new(
+                            let key = ProjectGroupKey::from_worktree_paths(
+                                &metadata.worktree_paths,
                                 metadata.remote_connection.clone(),
-                                path_list.clone(),
                             );
                             this.open_workspace_and_activate_thread(
                                 metadata, path_list, &key, window, cx,
