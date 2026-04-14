@@ -1303,6 +1303,10 @@ impl AcpThread {
         &self.session_id
     }
 
+    pub fn supports_truncate(&self, cx: &App) -> bool {
+        self.connection.truncate(&self.session_id, cx).is_some()
+    }
+
     pub fn work_dirs(&self) -> Option<&PathList> {
         self.work_dirs.as_ref()
     }
@@ -4362,6 +4366,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeAgentConnection {
         auth_methods: Vec<acp::AuthMethod>,
+        supports_truncate: bool,
         sessions: Arc<parking_lot::Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
         set_title_calls: Rc<RefCell<Vec<SharedString>>>,
         on_user_message: Option<
@@ -4380,10 +4385,16 @@ mod tests {
         fn new() -> Self {
             Self {
                 auth_methods: Vec::new(),
+                supports_truncate: true,
                 on_user_message: None,
                 sessions: Arc::default(),
                 set_title_calls: Default::default(),
             }
+        }
+
+        fn without_truncate_support(mut self) -> Self {
+            self.supports_truncate = false;
+            self
         }
 
         #[expect(unused)]
@@ -4487,9 +4498,11 @@ mod tests {
             session_id: &acp::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
-            Some(Rc::new(FakeAgentSessionEditor {
-                _session_id: session_id.clone(),
-            }))
+            self.supports_truncate.then(|| {
+                Rc::new(FakeAgentSessionEditor {
+                    _session_id: session_id.clone(),
+                }) as Rc<dyn AgentSessionTruncate>
+            })
         }
 
         fn set_title(
@@ -5042,6 +5055,37 @@ mod tests {
             !running_turn_after_second,
             "second turn completing should clear running_turn"
         );
+    }
+
+    #[gpui::test]
+    async fn test_send_assigns_message_id_without_truncate_support(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let connection = Rc::new(FakeAgentConnection::new().without_truncate_support());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let response = thread
+            .update(cx, |thread, cx| thread.send_raw("test message", cx))
+            .await;
+
+        assert!(response.is_ok(), "send should not fail: {response:?}");
+        thread.read_with(cx, |thread, _| {
+            let AgentThreadEntry::UserMessage(message) = &thread.entries[0] else {
+                panic!("expected first entry to be a user message")
+            };
+            assert!(
+                message.id.is_some(),
+                "user message should always have an id"
+            );
+        });
     }
 
     #[gpui::test]
