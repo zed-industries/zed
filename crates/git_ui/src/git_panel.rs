@@ -1272,6 +1272,14 @@ impl GitPanel {
     }
 
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(GitListEntry::Directory(dir_entry)) = self
+            .selected_entry
+            .and_then(|i| self.entries.get(i))
+            .cloned()
+        {
+            self.toggle_directory(&dir_entry.key, window, cx);
+            return;
+        }
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
             let workspace = self.workspace.upgrade()?;

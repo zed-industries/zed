@@ -31,10 +31,11 @@ mod workspace_settings;
 pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
-    CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MultiWorkspace,
-    MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject, PreviousThread,
-    ShowFewerThreads, ShowMoreThreads, Sidebar, SidebarEvent, SidebarHandle, SidebarRenderState,
-    SidebarSide, ToggleWorkspaceSidebar, sidebar_side_context_menu,
+    CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectToNewWindow,
+    MultiWorkspace, MultiWorkspaceEvent, NewThread, NextProject, NextThread, PreviousProject,
+    PreviousThread, ProjectGroup, ProjectGroupKey, SerializedProjectGroupState, ShowFewerThreads,
+    ShowMoreThreads, Sidebar, SidebarEvent, SidebarHandle, SidebarRenderState, SidebarSide,
+    ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
@@ -86,14 +87,14 @@ pub use persistence::{
     WorkspaceDb, delete_unloaded_items,
     model::{
         DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
-        SerializedProjectGroupKey, SerializedWorkspaceLocation, SessionWorkspace,
+        SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces, resolve_worktree_workspaces,
 };
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectGroupKey, ProjectPath, ResolvedPath, Worktree,
-    WorktreeId, WorktreeSettings,
+    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
@@ -2847,6 +2848,9 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        // TODO: If `on_prompt_for_open_path` is set, we should always use it
+        // rather than gating on `use_system_path_prompts`. This would let tests
+        // inject a mock without also having to disable the setting.
         if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
             let rx = prompt(self, lister, window, cx);
@@ -7457,6 +7461,7 @@ impl Workspace {
         let dock = dock.read(cx);
         if let Some(panel) = dock.visible_panel() {
             let size_state = dock.stored_panel_size_state(panel.as_ref());
+            let min_size = panel.min_size(window, cx);
             if position.axis() == Axis::Horizontal {
                 let use_flexible = panel.has_flexible_size(window, cx);
                 let flex_grow = if use_flexible {
@@ -7477,6 +7482,9 @@ impl Workspace {
                         .and_then(|state| state.size)
                         .unwrap_or_else(|| panel.default_size(window, cx));
                     container = container.w(size);
+                }
+                if let Some(min) = min_size {
+                    container = container.min_w(min);
                 }
             } else {
                 let size = size_state
@@ -8722,7 +8730,7 @@ pub async fn restore_multiworkspace(
             log::error!("Failed to restore active workspace: {err:#}");
 
             let mut fallback_handle = None;
-            for key in &state.project_group_keys {
+            for key in &state.project_groups {
                 let key: ProjectGroupKey = key.clone().into();
                 let paths = key.path_list().paths().to_vec();
                 match cx
@@ -8772,20 +8780,21 @@ pub async fn apply_restored_multiworkspace_state(
 ) {
     let MultiWorkspaceState {
         sidebar_open,
-        project_group_keys,
+        project_groups,
         sidebar_state,
         ..
     } = state;
 
-    if !project_group_keys.is_empty() {
+    if !project_groups.is_empty() {
         // Resolve linked worktree paths to their main repo paths so
         // stale keys from previous sessions get normalized and deduped.
-        let mut resolved_keys: Vec<ProjectGroupKey> = Vec::new();
-        for key in project_group_keys
-            .iter()
-            .cloned()
-            .map(ProjectGroupKey::from)
-        {
+        let mut resolved_groups: Vec<SerializedProjectGroupState> = Vec::new();
+        for serialized in project_groups.iter().cloned() {
+            let SerializedProjectGroupState {
+                key,
+                expanded,
+                visible_thread_count,
+            } = serialized.into_restored_state();
             if key.path_list().paths().is_empty() {
                 continue;
             }
@@ -8802,14 +8811,18 @@ pub async fn apply_restored_multiworkspace_state(
                 }
             }
             let resolved = ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths));
-            if !resolved_keys.contains(&resolved) {
-                resolved_keys.push(resolved);
+            if !resolved_groups.iter().any(|g| g.key == resolved) {
+                resolved_groups.push(SerializedProjectGroupState {
+                    key: resolved,
+                    expanded,
+                    visible_thread_count,
+                });
             }
         }
 
         window_handle
-            .update(cx, |multi_workspace, _window, _cx| {
-                multi_workspace.restore_project_group_keys(resolved_keys);
+            .update(cx, |multi_workspace, _window, cx| {
+                multi_workspace.restore_project_groups(resolved_groups, cx);
             })
             .ok();
     }
@@ -9317,11 +9330,18 @@ pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
     pub open_new_workspace: Option<bool>,
+    pub force_existing_window: bool,
     pub wait: bool,
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
     pub open_mode: OpenMode,
     pub env: Option<HashMap<String, String>>,
     pub open_in_dev_container: bool,
+}
+
+impl OpenOptions {
+    fn should_reuse_existing_window(&self) -> bool {
+        self.open_new_workspace.is_none() && self.open_mode != OpenMode::NewWindow
+    }
 }
 
 /// The result of opening a workspace via [`open_paths`], [`Workspace::new_local`],
@@ -9471,7 +9491,7 @@ pub fn open_paths(
 
         // Fallback: if no workspace contains the paths and all paths are files,
         // prefer an existing local workspace window (active window first).
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
+        if open_options.should_reuse_existing_window() && existing.is_none() {
             let all_paths = abs_paths.iter().map(|path| app_state.fs.metadata(path));
             let all_metadatas = futures::future::join_all(all_paths)
                 .await
@@ -9501,31 +9521,48 @@ pub fn open_paths(
         }
 
         // Fallback for directories: when no flag is specified and no existing
-        // workspace matched, add the directory as a new workspace in the
-        // active window's MultiWorkspace (instead of opening a new window).
-        if open_options.open_new_workspace.is_none() && existing.is_none() {
-            let target_window = cx.update(|cx| {
-                let windows = workspace_windows_for_location(
-                    &SerializedWorkspaceLocation::Local,
-                    cx,
-                );
-                let window = cx
-                    .active_window()
-                    .and_then(|window| window.downcast::<MultiWorkspace>())
-                    .filter(|window| windows.contains(window))
-                    .or_else(|| windows.into_iter().next());
-                window.filter(|window| {
-                    window.read(cx).is_ok_and(|mw| mw.multi_workspace_enabled(cx))
-                })
-            });
+        // workspace matched, check the user's setting to decide whether to add
+        // the directory as a new workspace in the active window's MultiWorkspace
+        // or open a new window.
+        // Skip when requesting_window is already set: the caller (e.g.
+        // open_workspace_for_paths reusing an empty window) already chose the
+        // target window, so we must not open the sidebar as a side-effect.
+        if open_options.should_reuse_existing_window()
+            && existing.is_none()
+            && open_options.requesting_window.is_none()
+        {
+            let use_existing_window = open_options.force_existing_window
+                || cx.update(|cx| {
+                    WorkspaceSettings::get_global(cx).cli_default_open_behavior
+                        == settings::CliDefaultOpenBehavior::ExistingWindow
+                });
 
-            if let Some(window) = target_window {
-                open_options.requesting_window = Some(window);
-                window
-                    .update(cx, |multi_workspace, _, cx| {
-                        multi_workspace.open_sidebar(cx);
+            if use_existing_window {
+                let target_window = cx.update(|cx| {
+                    let windows = workspace_windows_for_location(
+                        &SerializedWorkspaceLocation::Local,
+                        cx,
+                    );
+                    let window = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<MultiWorkspace>())
+                        .filter(|window| windows.contains(window))
+                        .or_else(|| windows.into_iter().next());
+                    window.filter(|window| {
+                        window
+                            .read(cx)
+                            .is_ok_and(|mw| mw.multi_workspace_enabled(cx))
                     })
-                    .log_err();
+                });
+
+                if let Some(window) = target_window {
+                    open_options.requesting_window = Some(window);
+                    window
+                        .update(cx, |multi_workspace, _, cx| {
+                            multi_workspace.open_sidebar(cx);
+                        })
+                        .log_err();
+                }
             }
         }
 
@@ -9863,7 +9900,7 @@ async fn open_remote_project_inner(
         });
 
         if let Some(project_group_key) = provisional_project_group_key.clone() {
-            multi_workspace.set_workspace_group_key(&new_workspace, project_group_key);
+            multi_workspace.retain_workspace(new_workspace.clone(), project_group_key, cx);
         }
         multi_workspace.activate(new_workspace.clone(), window, cx);
         new_workspace
@@ -9935,14 +9972,13 @@ pub fn join_in_room_project(
                 .and_then(|window_handle| {
                     window_handle
                         .update(cx, |multi_workspace, _window, cx| {
-                            for workspace in multi_workspace.workspaces() {
-                                if workspace.read(cx).project().read(cx).remote_id()
-                                    == Some(project_id)
-                                {
-                                    return Some((window_handle, workspace.clone()));
-                                }
-                            }
-                            None
+                            multi_workspace
+                                .workspaces()
+                                .find(|workspace| {
+                                    workspace.read(cx).project().read(cx).remote_id()
+                                        == Some(project_id)
+                                })
+                                .map(|workspace| (window_handle, workspace.clone()))
                         })
                         .unwrap_or(None)
                 })
@@ -10893,8 +10929,7 @@ mod tests {
         // Activate workspace A
         multi_workspace_handle
             .update(cx, |mw, window, cx| {
-                let workspace = mw.workspaces().next().unwrap().clone();
-                mw.activate(workspace, window, cx);
+                mw.activate(workspace_a.clone(), window, cx);
             })
             .unwrap();
 
@@ -11017,7 +11052,7 @@ mod tests {
         assert!(!removed, "removal should have been cancelled");
 
         multi_workspace_handle
-            .read_with(cx, |mw, _| {
+            .read_with(cx, |mw, _cx| {
                 assert_eq!(
                     mw.workspace(),
                     &workspace_b,
@@ -11045,7 +11080,7 @@ mod tests {
 
         // Should be back on workspace A, and B should be gone.
         multi_workspace_handle
-            .read_with(cx, |mw, _| {
+            .read_with(cx, |mw, _cx| {
                 assert_eq!(
                     mw.workspace(),
                     &workspace_a,

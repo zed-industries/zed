@@ -6,6 +6,7 @@ use std::sync::{Arc, LazyLock};
 use agent_client_protocol::ModelId;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
+use futures::channel::oneshot;
 use gpui::{App, Pixels, px};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
@@ -15,7 +16,7 @@ use settings::{
     DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection, NewThreadLocation,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
-    update_settings_file,
+    update_settings_file, update_settings_file_with_completion,
 };
 
 pub use crate::agent_profile::*;
@@ -242,26 +243,30 @@ impl AgentSettings {
         });
     }
 
-    pub fn set_layout(layout: WindowLayout, fs: Arc<dyn Fs>, cx: &App) {
+    pub fn set_layout(
+        layout: WindowLayout,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
         let merged = PanelLayout::read_from(cx.global::<SettingsStore>().merged_settings());
 
         match layout {
             WindowLayout::Agent(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::AGENT.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Editor(None) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     PanelLayout::EDITOR.write_diff_to(&merged, settings);
-                });
+                })
             }
             WindowLayout::Agent(Some(saved))
             | WindowLayout::Editor(Some(saved))
             | WindowLayout::Custom(saved) => {
-                update_settings_file(fs, cx, move |settings, _cx| {
+                update_settings_file_with_completion(fs, cx, move |settings, _cx| {
                     saved.write_to(settings);
-                });
+                })
             }
         }
     }
@@ -1356,8 +1361,10 @@ mod tests {
             let layout = AgentSettings::get_layout(cx);
             assert!(matches!(layout, WindowLayout::Custom(_)));
 
-            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx);
-        });
+            AgentSettings::set_layout(WindowLayout::agent(), fs.clone(), cx)
+        })
+        .await
+        .ok();
 
         cx.run_until_parked();
 

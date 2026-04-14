@@ -217,10 +217,7 @@ impl WgpuRenderer {
             None => ctx_ref.insert(WgpuContext::new(instance, &surface, compositor_gpu)?),
         };
 
-        let atlas = Arc::new(WgpuAtlas::new(
-            Arc::clone(&context.device),
-            Arc::clone(&context.queue),
-        ));
+        let atlas = Arc::new(WgpuAtlas::from_context(context));
 
         Self::new_internal(
             Some(Rc::clone(&gpu_context)),
@@ -243,10 +240,7 @@ impl WgpuRenderer {
             .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
             .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?;
 
-        let atlas = Arc::new(WgpuAtlas::new(
-            Arc::clone(&context.device),
-            Arc::clone(&context.queue),
-        ));
+        let atlas = Arc::new(WgpuAtlas::from_context(context));
 
         Self::new_internal(None, context, surface, config, None, atlas)
     }
@@ -1807,8 +1801,7 @@ impl WgpuRenderer {
         let context = ctx_ref.as_ref().expect("context should exist");
 
         self.resources = None;
-        self.atlas
-            .handle_device_lost(Arc::clone(&context.device), Arc::clone(&context.queue));
+        self.atlas.handle_device_lost(context);
 
         *self = Self::new_internal(
             Some(gpu_context.clone()),
