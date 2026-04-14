@@ -2419,8 +2419,6 @@ async fn test_confirm_on_historical_thread_preserves_historical_timestamp_and_or
         sidebar.confirm(&Confirm, window, cx);
     });
     cx.run_until_parked();
-    cx.run_until_parked();
-    cx.run_until_parked();
 
     let older_metadata = cx.update(|_, cx| {
         ThreadMetadataStore::global(cx)
@@ -2523,8 +2521,7 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
         sidebar.selection = Some(2);
         sidebar.confirm(&Confirm, window, cx);
     });
-    cx.run_until_parked();
-    cx.run_until_parked();
+
     cx.run_until_parked();
 
     assert_eq!(
@@ -5373,8 +5370,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     // removal → git persist → disk removal), each of which may spawn
     // further background work. Each run_until_parked() call drives one
     // layer of pending work.
-    cx.run_until_parked();
-    cx.run_until_parked();
+
     cx.run_until_parked();
 
     // The linked worktree workspace should have been removed.
@@ -5539,8 +5535,6 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
         sidebar.archive_thread(&wt_thread_id, window, cx);
     });
 
-    cx.run_until_parked();
-    cx.run_until_parked();
     cx.run_until_parked();
 
     // The linked worktree workspace should be removed because the
@@ -6380,8 +6374,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_archived_thread(metadata, window, cx);
     });
-    cx.run_until_parked();
-    cx.run_until_parked();
+
     cx.run_until_parked();
 
     assert_eq!(
@@ -6620,8 +6613,6 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
         panel_b_before_settle.read_with(cx, |panel, cx| panel.draft_thread_ids(cx));
 
     cx.run_until_parked();
-    cx.run_until_parked();
-    cx.run_until_parked();
 
     sidebar.read_with(cx, |sidebar, _cx| {
         assert_active_thread(
@@ -6713,8 +6704,7 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.archive_thread(&session_id, window, cx);
     });
-    cx.run_until_parked();
-    cx.run_until_parked();
+
     cx.run_until_parked();
 
     let archived_metadata = cx.update(|_, cx| {
@@ -6744,7 +6734,6 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
         .await
         .expect("remove project group task should complete");
     cx.run_until_parked();
-    cx.run_until_parked();
 
     assert_eq!(
         multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
@@ -6755,8 +6744,6 @@ async fn test_unarchive_after_removing_parent_project_group_restores_real_thread
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_archived_thread(archived_metadata.clone(), window, cx);
     });
-    cx.run_until_parked();
-    cx.run_until_parked();
     cx.run_until_parked();
 
     let restored_workspace = multi_workspace.read_with(cx, |mw, cx| {
@@ -7456,9 +7443,6 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_archived_thread(metadata, window, cx);
     });
-
-    cx.run_until_parked();
-    cx.run_until_parked();
     cx.run_until_parked();
 
     assert_eq!(
@@ -7522,7 +7506,6 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
     assert_no_extra_rows(&entries_after_restore);
 
     // The reported bug may only appear after an extra scheduling turn.
-    cx.run_until_parked();
     cx.run_until_parked();
 
     let entries_after_extra_turns = visible_entries_as_strings(&sidebar, cx);
