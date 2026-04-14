@@ -2790,6 +2790,10 @@ impl Sidebar {
 
                     if let Some(updated_metadata) = updated_metadata {
                         let new_paths = updated_metadata.folder_paths().clone();
+                        let key = ProjectGroupKey::from_worktree_paths(
+                            &updated_metadata.worktree_paths,
+                            updated_metadata.remote_connection.clone(),
+                        );
 
                         cx.update(|_window, cx| {
                             store.update(cx, |store, cx| {
@@ -2799,10 +2803,6 @@ impl Sidebar {
 
                         this.update_in(cx, |this, window, cx| {
                             this.restoring_tasks.remove(&thread_id);
-                            let key = ProjectGroupKey::new(
-                                updated_metadata.remote_connection.clone(),
-                                new_paths.clone(),
-                            );
                             this.open_workspace_and_activate_thread(
                                 updated_metadata,
                                 new_paths,
