@@ -755,10 +755,8 @@ impl UserStore {
             };
         }
 
-        if let Some(organization) = &self.current_organization
-            && let Some(plan) = self.plan_for_organization(&organization.id)
-        {
-            return Some(plan);
+        if let Some(organization) = &self.current_organization {
+            return self.plan_for_organization(&organization.id);
         }
 
         self.plan_info.as_ref().map(|info| info.plan())

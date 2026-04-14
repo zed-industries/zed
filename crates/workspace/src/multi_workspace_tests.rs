@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::*;
 use client::proto;
-use fs::FakeFs;
+use fs::{FakeFs, Fs};
 use gpui::TestAppContext;
 use project::DisableAiSettings;
 use serde_json::json;
@@ -433,6 +433,7 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_when_sideba
         .update_in(cx, |mw, window, cx| {
             mw.find_or_create_local_workspace(
                 PathList::new(&[PathBuf::from("/root_a")]),
+                None,
                 &[],
                 window,
                 cx,
@@ -457,6 +458,73 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_when_sideba
             mw.workspaces().count(),
             1,
             "reusing the active workspace should not create a second open workspace"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_missing(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    let main_workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    let main_workspace_id = main_workspace.entity_id();
+
+    let workspace = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.find_or_create_workspace(
+                PathList::new(&[PathBuf::from("/wt-feature-a")]),
+                None,
+                Some(project_group_key.clone()),
+                |_options, _window, _cx| Task::ready(Ok(None)),
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening a missing linked-worktree path should fall back to the project group key workspace");
+
+    assert_eq!(
+        workspace.entity_id(),
+        main_workspace_id,
+        "missing linked-worktree paths should reuse the main worktree workspace from the project group key"
+    );
+
+    multi_workspace.read_with(cx, |mw, cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            main_workspace_id,
+            "the active workspace should remain the main worktree workspace"
+        );
+        assert_eq!(
+            PathList::new(&mw.workspace().read(cx).root_paths(cx)),
+            project_group_key.path_list().clone(),
+            "the activated workspace should use the project group key path list rather than the missing linked-worktree path"
+        );
+        assert_eq!(
+            mw.workspaces().count(),
+            1,
+            "falling back to the project group key should not create a second workspace"
         );
     });
 }
@@ -492,6 +560,7 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_after_sideb
         .update_in(cx, |mw, window, cx| {
             mw.find_or_create_local_workspace(
                 PathList::new(&[PathBuf::from("/root_a")]),
+                None,
                 &[],
                 window,
                 cx,
