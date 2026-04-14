@@ -9888,16 +9888,46 @@ async fn open_remote_project_inner(
 
     for path in paths {
         let result = cx
-            .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))
+            .update(|cx| {
+                Workspace::project_path_for_path(project.clone(), path.as_path(), true, cx)
+            })
             .await;
         match result {
             Ok((_, project_path)) => {
-                project_paths_to_open.push((path.clone(), Some(project_path)));
+                project_paths_to_open.push((path, Some(project_path)));
             }
             Err(error) => {
                 project_path_errors.push(error);
             }
         };
+    }
+
+    if project_paths_to_open.is_empty()
+        && let Some(project_group_key) = provisional_project_group_key.as_ref()
+    {
+        let fallback_paths: Vec<PathBuf> = project_group_key.path_list().paths().to_vec();
+        let mut fallback_project_paths_to_open = vec![];
+        let mut fallback_project_path_errors = vec![];
+
+        for path in &fallback_paths {
+            let result = cx
+                .update(|cx| Workspace::project_path_for_path(project.clone(), path, true, cx))
+                .await;
+            match result {
+                Ok((_, project_path)) => {
+                    fallback_project_paths_to_open.push((path.clone(), Some(project_path)));
+                }
+                Err(error) => {
+                    fallback_project_path_errors.push(error);
+                }
+            };
+        }
+
+        if !fallback_project_paths_to_open.is_empty() {
+            project_paths_to_open = fallback_project_paths_to_open;
+            // todo! below seems wrong
+            project_path_errors = fallback_project_path_errors;
+        }
     }
 
     if project_paths_to_open.is_empty() {

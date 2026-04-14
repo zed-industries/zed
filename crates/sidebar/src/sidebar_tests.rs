@@ -2450,6 +2450,87 @@ async fn test_confirm_on_historical_thread_preserves_historical_timestamp_and_or
 }
 
 #[gpui::test]
+async fn test_confirm_on_closed_thread_with_invalid_folder_paths_rewrites_thread_to_main_worktree(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {},
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    main_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let project_group_key = main_project.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    save_thread_metadata_with_main_paths(
+        "stale-worktree-thread",
+        "Historical Thread in Removed Worktree",
+        PathList::new(&[PathBuf::from("/wt-feature-a")]),
+        project_group_key.path_list().clone(),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 6, 1, 0, 0, 0).unwrap(),
+        cx,
+    );
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [project]",
+            "  Historical Thread in Removed Worktree {wt-feature-a}",
+        ],
+        "expected the stale linked-worktree thread to initially render with its linked-worktree chip"
+    );
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.selection = Some(1);
+        sidebar.confirm(&Confirm, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        main_workspace,
+        "confirming the stale linked-worktree thread should reopen it in the main worktree workspace"
+    );
+
+    let entries_after = visible_entries_as_strings(&sidebar, cx);
+    let matching_rows: Vec<_> = entries_after
+        .iter()
+        .filter(|entry| {
+            entry.contains("Historical Thread in Removed Worktree") || entry.contains("Draft")
+        })
+        .cloned()
+        .collect();
+    assert_eq!(
+        matching_rows.len(),
+        1,
+        "expected only the reopened historical thread row to remain, got entries: {entries_after:?}"
+    );
+    assert_eq!(
+        matching_rows[0], "  Historical Thread in Removed Worktree",
+        "after reopening through the main worktree fallback, the thread should render as a main-worktree thread without a linked-worktree chip"
+    );
+}
+
+#[gpui::test]
 async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_thread(
     cx: &mut TestAppContext,
 ) {
