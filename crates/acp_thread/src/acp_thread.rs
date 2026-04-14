@@ -355,7 +355,10 @@ impl ToolCall {
             let new_status: ToolCallStatus = status.into();
             if matches!(
                 (&self.status, &new_status),
-                (ToolCallStatus::WaitingForConfirmation { .. }, ToolCallStatus::Pending)
+                (
+                    ToolCallStatus::WaitingForConfirmation { .. },
+                    ToolCallStatus::Pending
+                )
             ) {
                 log::warn!(
                     "update_fields: skipping status downgrade from WaitingForConfirmation to Pending for tool_call {:?}",
@@ -1921,7 +1924,10 @@ impl AcpThread {
             )?;
             if matches!(
                 (&call.status, &status),
-                (ToolCallStatus::WaitingForConfirmation { .. }, ToolCallStatus::Pending)
+                (
+                    ToolCallStatus::WaitingForConfirmation { .. },
+                    ToolCallStatus::Pending
+                )
             ) {
                 log::warn!(
                     "upsert_tool_call_inner: skipping status downgrade from WaitingForConfirmation to Pending for tool_call {:?}",
@@ -2968,8 +2974,7 @@ impl AcpThread {
                 for (ix, entry) in self.entries.iter_mut().enumerate() {
                     if let AgentThreadEntry::ToolCall(call) = entry {
                         if call.pending_terminal_id.as_ref() == Some(&terminal_id) {
-                            call.content
-                                .push(ToolCallContent::Terminal(entity.clone()));
+                            call.content.push(ToolCallContent::Terminal(entity.clone()));
                             call.pending_terminal_id = None;
                             cx.emit(AcpThreadEvent::EntryUpdated(ix));
                         }
@@ -3273,9 +3278,9 @@ mod tests {
                     acp::ToolCallUpdateFields::new()
                         .title("odin test .".to_string())
                         .kind(acp::ToolKind::Execute)
-                        .content(vec![acp::ToolCallContent::Terminal(
-                            acp::Terminal::new(terminal_id.clone()),
-                        )]),
+                        .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                            terminal_id.clone(),
+                        ))]),
                 ),
                 PermissionOptions::Flat(vec![acp::PermissionOption::new(
                     "allow",
@@ -3323,9 +3328,9 @@ mod tests {
                         acp::ToolCallUpdateFields::new()
                             .title("odin test .".to_string())
                             .kind(acp::ToolKind::Execute)
-                            .content(vec![acp::ToolCallContent::Terminal(
-                                acp::Terminal::new(terminal_id.clone()),
-                            )]),
+                            .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                                terminal_id.clone(),
+                            ))]),
                     ),
                     PermissionOptions::Flat(vec![acp::PermissionOption::new(
                         "allow",
@@ -3355,9 +3360,9 @@ mod tests {
                         acp::ToolCall::new(tool_call_id.clone(), "odin test .")
                             .kind(acp::ToolKind::Execute)
                             .status(acp::ToolCallStatus::Pending)
-                            .content(vec![acp::ToolCallContent::Terminal(
-                                acp::Terminal::new(terminal_id.clone()),
-                            )]),
+                            .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                                terminal_id.clone(),
+                            ))]),
                     ),
                     cx,
                 )
@@ -3408,9 +3413,9 @@ mod tests {
                         acp::ToolCallUpdateFields::new()
                             .title("odin test .".to_string())
                             .kind(acp::ToolKind::Execute)
-                            .content(vec![acp::ToolCallContent::Terminal(
-                                acp::Terminal::new(terminal_id.clone()),
-                            )]),
+                            .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                                terminal_id.clone(),
+                            ))]),
                     ),
                     PermissionOptions::Flat(vec![acp::PermissionOption::new(
                         "allow",
@@ -3503,9 +3508,9 @@ mod tests {
                         acp::ToolCall::new(tool_call_id.clone(), "odin test .")
                             .kind(acp::ToolKind::Execute)
                             .status(acp::ToolCallStatus::InProgress)
-                            .content(vec![acp::ToolCallContent::Terminal(
-                                acp::Terminal::new(terminal_id.clone()),
-                            )]),
+                            .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                                terminal_id.clone(),
+                            ))]),
                     ),
                     cx,
                 )
