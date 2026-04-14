@@ -187,7 +187,7 @@ pub struct EditPredictionSettingsContent {
     ///
     /// - `"default"`: use the preference previously set via the status-bar toggle,
     ///   or false if no preference has been stored.
-    /// - `"yes"`: always allow data collection.
+    /// - `"yes"`: allow data collection for files in open-source projects.
     /// - `"no"`: never allow data collection.
     pub allow_data_collection: Option<EditPredictionDataCollectionChoice>,
 }
