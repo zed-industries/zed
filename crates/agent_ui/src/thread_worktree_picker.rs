@@ -442,9 +442,15 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                 if is_current {
                     // Already in this worktree — just dismiss
                 } else {
+                    let main_worktree_path = self
+                        .all_worktrees
+                        .iter()
+                        .find(|wt| wt.is_main)
+                        .map(|wt| wt.path.as_path());
                     window.dispatch_action(
                         Box::new(SwitchToLinkedWorktree {
                             path: worktree.path.clone(),
+                            display_name: worktree.directory_name(main_worktree_path),
                         }),
                         cx,
                     );

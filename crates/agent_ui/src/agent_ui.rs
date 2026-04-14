@@ -357,6 +357,7 @@ pub struct CreateWorktreeImmediately {
 #[serde(deny_unknown_fields)]
 pub struct SwitchToLinkedWorktree {
     pub path: PathBuf,
+    pub display_name: String,
 }
 
 /// Content to initialize new external agent with.

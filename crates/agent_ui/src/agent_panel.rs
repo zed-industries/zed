@@ -664,6 +664,7 @@ enum WhichFontSize {
 #[allow(dead_code)]
 pub enum WorktreeCreationStatus {
     Creating(SharedString),
+    Loading(SharedString),
     Error(SharedString),
 }
 
@@ -675,6 +676,7 @@ enum WorktreeCreationArgs {
     },
     Linked {
         worktree_path: PathBuf,
+        display_name: String,
     },
 }
 
@@ -2985,7 +2987,10 @@ impl AgentPanel {
         }
         if matches!(
             self.worktree_creation_status,
-            Some((_, WorktreeCreationStatus::Creating(_)))
+            Some((
+                _,
+                WorktreeCreationStatus::Creating(_) | WorktreeCreationStatus::Loading(_)
+            ))
         ) {
             return;
         }
@@ -3025,7 +3030,10 @@ impl AgentPanel {
         }
         if matches!(
             self.worktree_creation_status,
-            Some((_, WorktreeCreationStatus::Creating(_)))
+            Some((
+                _,
+                WorktreeCreationStatus::Creating(_) | WorktreeCreationStatus::Loading(_)
+            ))
         ) {
             return;
         }
@@ -3040,6 +3048,7 @@ impl AgentPanel {
             content_blocks,
             WorktreeCreationArgs::Linked {
                 worktree_path: action.path.clone(),
+                display_name: action.display_name.clone(),
             },
             previous_workspace_state,
             window,
@@ -3073,7 +3082,10 @@ impl AgentPanel {
     ) {
         if matches!(
             self.worktree_creation_status,
-            Some((_, WorktreeCreationStatus::Creating(_)))
+            Some((
+                _,
+                WorktreeCreationStatus::Creating(_) | WorktreeCreationStatus::Loading(_)
+            ))
         ) {
             return;
         }
@@ -3088,16 +3100,14 @@ impl AgentPanel {
                 ..
             } => name.clone().into(),
             WorktreeCreationArgs::New { .. } => "worktree".into(),
-            WorktreeCreationArgs::Linked { worktree_path } => worktree_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "worktree".to_string())
-                .into(),
+            WorktreeCreationArgs::Linked { display_name, .. } => display_name.clone().into(),
         };
-        self.worktree_creation_status = Some((
-            conversation_view_id,
-            WorktreeCreationStatus::Creating(display_name),
-        ));
+        let status = if matches!(args, WorktreeCreationArgs::Linked { .. }) {
+            WorktreeCreationStatus::Loading(display_name)
+        } else {
+            WorktreeCreationStatus::Creating(display_name)
+        };
+        self.worktree_creation_status = Some((conversation_view_id, status));
         cx.notify();
 
         let (git_repos, non_git_paths) = self.classify_worktrees(cx);
@@ -3264,7 +3274,7 @@ impl AgentPanel {
                     all_paths.extend(non_git_paths.iter().cloned());
                     (all_paths, path_remapping, has_non_git)
                 }
-                WorktreeCreationArgs::Linked { worktree_path } => {
+                WorktreeCreationArgs::Linked { worktree_path, .. } => {
                     let mut all_paths = vec![worktree_path];
                     let has_non_git = !non_git_paths.is_empty();
                     all_paths.extend(non_git_paths.iter().cloned());
@@ -3914,6 +3924,15 @@ impl AgentPanel {
         }
     }
 
+    fn is_active_view_loading_worktree(&self, _cx: &App) -> bool {
+        match &self.worktree_creation_status {
+            Some((view_id, WorktreeCreationStatus::Loading(_))) => {
+                self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id)
+            }
+            _ => false,
+        }
+    }
+
     fn current_worktree_label(&self, cx: &App) -> SharedString {
         let project = self.project.read(cx);
 
@@ -3941,17 +3960,21 @@ impl AgentPanel {
 
     fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let is_creating = self.is_active_view_creating_worktree(cx);
+        let is_loading = self.is_active_view_loading_worktree(cx);
+        let is_busy = is_creating || is_loading;
 
-        let label = if let Some((view_id, WorktreeCreationStatus::Creating(name))) =
-            &self.worktree_creation_status
-        {
-            if self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id) {
+        let label = match &self.worktree_creation_status {
+            Some((view_id, WorktreeCreationStatus::Creating(name)))
+                if self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id) =>
+            {
                 SharedString::from(format!("Creating {name}…"))
-            } else {
-                self.current_worktree_label(cx)
             }
-        } else {
-            self.current_worktree_label(cx)
+            Some((view_id, WorktreeCreationStatus::Loading(name)))
+                if self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id) =>
+            {
+                SharedString::from(format!("Loading {name}…"))
+            }
+            _ => self.current_worktree_label(cx),
         };
 
         let chevron_icon = if self.start_thread_in_menu_handle.is_deployed() {
@@ -3963,8 +3986,8 @@ impl AgentPanel {
         let focus_handle = self.focus_handle(cx);
 
         let trigger_button = Button::new("thread-target-trigger", label)
-            .disabled(is_creating)
-            .loading(is_creating)
+            .disabled(is_busy)
+            .loading(is_busy)
             .start_icon(
                 Icon::new(IconName::GitWorktree)
                     .size(IconSize::Small)
@@ -4442,7 +4465,7 @@ impl AgentPanel {
             return None;
         }
         match status {
-            WorktreeCreationStatus::Creating(_) => None,
+            WorktreeCreationStatus::Creating(_) | WorktreeCreationStatus::Loading(_) => None,
             WorktreeCreationStatus::Error(message) => Some(
                 Callout::new()
                     .icon(IconName::XCircleFilled)
@@ -7307,6 +7330,7 @@ mod tests {
                 content,
                 WorktreeCreationArgs::Linked {
                     worktree_path: linked_path,
+                    display_name: "test-worktree".to_string(),
                 },
                 PreviousWorkspaceState::empty(),
                 window,
