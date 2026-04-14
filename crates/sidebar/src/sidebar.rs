@@ -1749,31 +1749,6 @@ impl Sidebar {
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
-                    .child(self.render_project_header_ellipsis_menu(ix, id_prefix, key, cx))
-                    .when(has_threads && view_more_expanded && !is_collapsed, |this| {
-                        this.child(
-                            IconButton::new(
-                                SharedString::from(format!(
-                                    "{id_prefix}project-header-collapse-{ix}",
-                                )),
-                                IconName::ListCollapse,
-                            )
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Collapse Displayed Threads"))
-                            .on_click(cx.listener({
-                                let key_for_collapse = key_for_collapse.clone();
-                                move |this, _, _window, cx| {
-                                    this.selection = None;
-                                    this.set_group_visible_thread_count(
-                                        &key_for_collapse,
-                                        None,
-                                        cx,
-                                    );
-                                    this.update_entries(cx);
-                                }
-                            })),
-                        )
-                    })
                     .child({
                         let key = key.clone();
                         let focus_handle = self.focus_handle.clone();
@@ -1804,7 +1779,32 @@ impl Sidebar {
                                 }
                             },
                         ))
-                    }),
+                    })
+                    .when(has_threads && view_more_expanded && !is_collapsed, |this| {
+                        this.child(
+                            IconButton::new(
+                                SharedString::from(format!(
+                                    "{id_prefix}project-header-collapse-{ix}",
+                                )),
+                                IconName::ListCollapse,
+                            )
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Show Fewer Threads"))
+                            .on_click(cx.listener({
+                                let key_for_collapse = key_for_collapse.clone();
+                                move |this, _, _window, cx| {
+                                    this.selection = None;
+                                    this.set_group_visible_thread_count(
+                                        &key_for_collapse,
+                                        None,
+                                        cx,
+                                    );
+                                    this.update_entries(cx);
+                                }
+                            })),
+                        )
+                    })
+                    .child(self.render_project_header_ellipsis_menu(ix, id_prefix, key, cx)),
             )
             .tooltip(Tooltip::element({
                 move |_, cx| {
