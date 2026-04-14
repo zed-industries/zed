@@ -1116,24 +1116,15 @@ impl Sidebar {
             }
         }
 
-        // Build a map from repo paths → branch name. Keyed by both
-        // original_repo_abs_path and work_directory_abs_path so we can
-        // find the branch for threads whose worktree was deleted (the
-        // thread's main_path may point to either).
-        let mut branch_by_repo: HashMap<PathBuf, SharedString> = HashMap::new();
+        // Collect all repo snapshots for fallback branch resolution.
+        // We need the actual snapshots (not just a map) because multiple
+        // worktrees share the same original_repo_abs_path, and we need
+        // to match by worktree directory to find the correct one.
+        let mut repo_snapshots: Vec<project::git_store::RepositorySnapshot> = Vec::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
             for repo in project.repositories(cx).values() {
-                let snapshot = repo.read(cx).snapshot();
-                if let Some(branch) = &snapshot.branch {
-                    let branch_str = SharedString::from(branch.name().to_string());
-                    branch_by_repo
-                        .entry(snapshot.original_repo_abs_path.to_path_buf())
-                        .or_insert_with(|| branch_str.clone());
-                    branch_by_repo
-                        .entry(snapshot.work_directory_abs_path.to_path_buf())
-                        .or_insert_with(|| branch_str);
-                }
+                repo_snapshots.push(repo.read(cx).snapshot());
             }
         }
 
@@ -1225,6 +1216,9 @@ impl Sidebar {
                 // group's own workspaces. Then try matching group paths
                 // against branch_by_repo. Finally, check if any group
                 // path lives under a known repo's worktree directory.
+                let wt_dir_setting = &project::project_settings::ProjectSettings::get_global(cx)
+                    .git
+                    .worktree_directory;
                 let group_fallback_branch: Option<SharedString> = group_workspaces
                     .iter()
                     .find_map(|ws| {
@@ -1238,29 +1232,31 @@ impl Sidebar {
                         })
                     })
                     .or_else(|| {
-                        group_key
-                            .path_list()
-                            .paths()
-                            .iter()
-                            .find_map(|p| branch_by_repo.get(p).cloned())
-                    })
-                    .or_else(|| {
-                        // For groups whose paths point to deleted worktrees,
-                        // check if the path is a child of any repo's worktree
-                        // directory (e.g. .../worktrees/zed/focal-arrow/zed
-                        // is a child of the worktree dir for repo "zed").
-                        for group_path in group_key.path_list().paths() {
-                            for (repo_path, branch) in &branch_by_repo {
+                        // For groups with deleted worktrees, check if the
+                        // group path is under the active workspace's repo's
+                        // worktree directory. Use the active workspace's
+                        // branch specifically (not any random worktree).
+                        let active_snapshot = active_workspace.as_ref().and_then(|ws| {
+                            let project = ws.read(cx).project().read(cx);
+                            project
+                                .repositories(cx)
+                                .values()
+                                .next()
+                                .map(|repo| repo.read(cx).snapshot())
+                        });
+                        if let Some(snapshot) = active_snapshot {
+                            let branch = snapshot.branch.as_ref()?;
+                            for group_path in group_key.path_list().paths() {
+                                if *group_path == *snapshot.work_directory_abs_path {
+                                    return Some(SharedString::from(branch.name().to_string()));
+                                }
                                 let wt_dir = project::git_store::worktrees_directory_for_repo(
-                                    repo_path,
-                                    &project::project_settings::ProjectSettings::get_global(cx)
-                                        .git
-                                        .worktree_directory,
-                                );
-                                if let Ok(wt_dir) = wt_dir {
-                                    if group_path.starts_with(&wt_dir) {
-                                        return Some(branch.clone());
-                                    }
+                                    &snapshot.original_repo_abs_path,
+                                    wt_dir_setting,
+                                )
+                                .ok()?;
+                                if group_path.starts_with(&wt_dir) {
+                                    return Some(SharedString::from(branch.name().to_string()));
                                 }
                             }
                         }
@@ -1285,9 +1281,18 @@ impl Sidebar {
                     for (main_path, folder_path) in row.worktree_paths.ordered_pairs() {
                         let live_match = branch_names.get(folder_path).cloned();
                         if live_match.is_none() {
-                            let fallback = branch_by_repo
-                                .get(main_path)
-                                .or(group_fallback_branch.as_ref());
+                            let repo_match = repo_snapshots.iter().find_map(|s| {
+                                if *s.work_directory_abs_path == *main_path
+                                    || *s.original_repo_abs_path == *main_path
+                                {
+                                    s.branch
+                                        .as_ref()
+                                        .map(|b| SharedString::from(b.name().to_string()))
+                                } else {
+                                    None
+                                }
+                            });
+                            let fallback = repo_match.as_ref().or(group_fallback_branch.as_ref());
                             if let Some(branch) = fallback {
                                 log::info!(
                                     "sidebar branch fallback: title={:?} main={:?} folder={:?} → {:?} (via {:?})",
@@ -1295,8 +1300,8 @@ impl Sidebar {
                                     main_path,
                                     folder_path,
                                     branch,
-                                    if branch_by_repo.get(main_path).is_some() {
-                                        "branch_by_repo"
+                                    if repo_match.is_some() {
+                                        "repo_snapshot"
                                     } else {
                                         "group_fallback"
                                     },
