@@ -3413,7 +3413,7 @@ impl AgentPanel {
 
         let initial_content = AgentInitialContent::ContentBlock {
             blocks: content,
-            auto_submit: true,
+            auto_submit: false,
         };
 
         window_handle.update(cx, |_multi_workspace, window, cx| {
