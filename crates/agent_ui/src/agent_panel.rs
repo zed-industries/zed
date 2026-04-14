@@ -7376,6 +7376,206 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_linked_worktree_switch_remaps_open_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let app_state = workspace::AppState::test(cx);
+            workspace::init(app_state.clone(), cx);
+            app_state
+        });
+
+        let fs = app_state.fs.as_fake();
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                    "lib.rs": "pub fn hello() {}"
+                }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        // Create a linked worktree directory with the same file structure.
+        let linked_path = PathBuf::from("/linked-worktree");
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            git::repository::Worktree {
+                path: linked_path.clone(),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+        fs.insert_tree(
+            "/linked-worktree",
+            json!({
+                "src": {
+                    "main.rs": "fn main() { // linked }",
+                    "lib.rs": "pub fn hello() { // linked }"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(app_state.fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        // Register observer so new workspaces get AgentPanel automatically.
+        cx.update(|cx| {
+            cx.observe_new(
+                |workspace: &mut Workspace,
+                 window: Option<&mut Window>,
+                 cx: &mut Context<Workspace>| {
+                    if let Some(window) = window {
+                        let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Open files in the original workspace.
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![
+                        PathBuf::from("/project/src/main.rs"),
+                        PathBuf::from("/project/src/lib.rs"),
+                    ],
+                    workspace::OpenOptions::default(),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .await;
+        cx.run_until_parked();
+
+        // Verify files are open.
+        workspace.read_with(cx, |workspace, cx| {
+            let open_paths = workspace.open_item_abs_paths(cx);
+            assert!(
+                open_paths.iter().any(|p| p.ends_with("src/main.rs")),
+                "main.rs should be open, got: {open_paths:?}"
+            );
+            assert!(
+                open_paths.iter().any(|p| p.ends_with("src/lib.rs")),
+                "lib.rs should be open, got: {open_paths:?}"
+            );
+        });
+
+        // Open a thread so the panel is in a valid state.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Build a PreviousWorkspaceState with the open files.
+        let previous_state =
+            workspace.update_in(cx, |workspace, window, cx| PreviousWorkspaceState {
+                dock_structure: workspace.capture_dock_state(window, cx),
+                open_file_paths: vec![
+                    PathBuf::from("/project/src/main.rs"),
+                    PathBuf::from("/project/src/lib.rs"),
+                ],
+                active_file_path: Some(PathBuf::from("/project/src/main.rs")),
+            });
+
+        // Trigger the linked worktree switch.
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from linked worktree test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_requested(
+                content,
+                WorktreeCreationArgs::Linked {
+                    worktree_path: linked_path.clone(),
+                    display_name: "feature".to_string(),
+                },
+                previous_state,
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Find the new workspace.
+        let new_workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace
+                    .workspaces()
+                    .find(|ws| ws.entity_id() != workspace.entity_id())
+                    .cloned()
+            })
+            .unwrap()
+            .expect("a new workspace should have been created for the linked worktree");
+
+        // Verify that files were remapped and opened in the new workspace.
+        // The original /project/src/main.rs should now be /linked-worktree/src/main.rs.
+        let new_open_paths =
+            new_workspace.read_with(cx, |workspace, cx| workspace.open_item_abs_paths(cx));
+
+        assert!(
+            new_open_paths
+                .iter()
+                .any(|p| p == &linked_path.join("src/main.rs")),
+            "main.rs should have been remapped to the linked worktree. \
+             Open paths: {new_open_paths:?}"
+        );
+        assert!(
+            new_open_paths
+                .iter()
+                .any(|p| p == &linked_path.join("src/lib.rs")),
+            "lib.rs should have been remapped to the linked worktree. \
+             Open paths: {new_open_paths:?}"
+        );
+    }
+
+    #[gpui::test]
     async fn test_selected_agent_syncs_when_navigating_between_threads(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
 
