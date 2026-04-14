@@ -1116,6 +1116,27 @@ impl Sidebar {
             }
         }
 
+        // Backfill branch_names for ALL threads (including archived) that
+        // are missing branch data we now have from live git repos.
+        if !branch_by_path.is_empty() {
+            let thread_store = ThreadMetadataStore::global(cx);
+            for thread in thread_store.read(cx).entries() {
+                let mut changed = false;
+                let mut updated_names = thread.branch_names.clone();
+                for (path, branch) in &branch_by_path {
+                    if !updated_names.contains_key(path) {
+                        updated_names.insert(path.clone(), branch.clone());
+                        changed = true;
+                    }
+                }
+                if changed {
+                    let mut updated = thread.clone();
+                    updated.branch_names = updated_names;
+                    branch_backfills.push(updated);
+                }
+            }
+        }
+
         for group in &groups {
             let group_key = &group.key;
             let group_workspaces = &group.workspaces;
@@ -1168,48 +1189,39 @@ impl Sidebar {
                 };
 
                 // Build a ThreadEntry from a metadata row.
-                let make_thread_entry = |row: ThreadMetadata,
-                                         workspace: ThreadEntryWorkspace,
-                                         backfills: &mut Vec<ThreadMetadata>|
-                 -> ThreadEntry {
-                    // Merge live git branch data into the thread's persisted
-                    // branch_names. If anything new was added, queue the metadata
-                    // for a DB write so branches survive worktree deletion.
-                    let mut merged = row.branch_names.clone();
-                    let mut changed = false;
-                    for (path, branch) in &branch_by_path {
-                        if !merged.contains_key(path) {
-                            merged.insert(path.clone(), branch.clone());
-                            changed = true;
+                let make_thread_entry =
+                    |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
+                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
+                        // Merge live branch data for the current render. The
+                        // global backfill above will persist these to the DB.
+                        let mut branch_names: HashMap<PathBuf, SharedString> = row
+                            .branch_names
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect();
+                        for (path, branch) in &branch_by_path {
+                            branch_names
+                                .entry(path.clone())
+                                .or_insert_with(|| branch.clone());
                         }
-                    }
-                    if changed {
-                        let mut updated = row.clone();
-                        updated.branch_names = merged.clone();
-                        backfills.push(updated);
-                    }
-
-                    let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                    let branch_names: HashMap<PathBuf, SharedString> =
-                        merged.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                    let worktrees =
-                        worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
-                    let is_draft = row.is_draft();
-                    ThreadEntry {
-                        metadata: row,
-                        icon,
-                        icon_from_external_svg,
-                        status: AgentThreadStatus::default(),
-                        workspace,
-                        is_live: false,
-                        is_background: false,
-                        is_title_generating: false,
-                        is_draft,
-                        highlight_positions: Vec::new(),
-                        worktrees,
-                        diff_stats: DiffStats::default(),
-                    }
-                };
+                        let worktrees =
+                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
+                        let is_draft = row.is_draft();
+                        ThreadEntry {
+                            metadata: row,
+                            icon,
+                            icon_from_external_svg,
+                            status: AgentThreadStatus::default(),
+                            workspace,
+                            is_live: false,
+                            is_background: false,
+                            is_title_generating: false,
+                            is_draft,
+                            highlight_positions: Vec::new(),
+                            worktrees,
+                            diff_stats: DiffStats::default(),
+                        }
+                    };
 
                 // Main code path: one query per group via main_worktree_paths.
                 // The main_worktree_paths column is set on all new threads and
@@ -1224,7 +1236,7 @@ impl Sidebar {
                         continue;
                     }
                     let workspace = resolve_workspace(&row);
-                    threads.push(make_thread_entry(row, workspace, &mut branch_backfills));
+                    threads.push(make_thread_entry(row, workspace));
                 }
 
                 // Legacy threads did not have `main_worktree_paths` populated, so they
@@ -1240,7 +1252,7 @@ impl Sidebar {
                         continue;
                     }
                     let workspace = resolve_workspace(&row);
-                    threads.push(make_thread_entry(row, workspace, &mut branch_backfills));
+                    threads.push(make_thread_entry(row, workspace));
                 }
 
                 // Load any legacy threads for any single linked wortree of this project group.
@@ -1271,7 +1283,6 @@ impl Sidebar {
                                 folder_paths: worktree_path_list.clone(),
                                 project_group_key: group_key.clone(),
                             },
-                            &mut branch_backfills,
                         ));
                     }
                 }
