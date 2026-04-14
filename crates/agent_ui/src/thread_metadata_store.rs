@@ -707,16 +707,19 @@ impl ThreadMetadataStore {
         path: &Path,
         remote_connection: Option<&RemoteConnectionOptions>,
     ) -> bool {
-        self.entries()
-            .any(|thread| {
-                thread.thread_id != thread_id && !thread.archived &&
-                same_remote_connection_identity(thread.remote_connection.as_ref(), remote_connection) &&
-                thread
+        self.entries().any(|thread| {
+            thread.thread_id != thread_id
+                && !thread.archived
+                && same_remote_connection_identity(
+                    thread.remote_connection.as_ref(),
+                    remote_connection,
+                )
+                && thread
                     .folder_paths()
                     .paths()
                     .iter()
                     .any(|other_path| other_path.as_path() == path)
-            })
+        })
     }
 
     /// Updates a thread's `folder_paths` after an archived worktree has been
