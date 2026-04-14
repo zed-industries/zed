@@ -1834,7 +1834,7 @@ impl Sidebar {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 if event.modifiers().platform {
                     let key = key_for_toggle.clone();
-                    let metadata = {
+                    let most_recent_thread = {
                         let store = ThreadMetadataStore::global(cx).read(cx);
                         store
                             .entries_for_main_worktree_path(key.path_list())
@@ -1842,16 +1842,18 @@ impl Sidebar {
                             .max_by_key(|m| m.created_at.unwrap_or(m.updated_at))
                             .cloned()
                     };
-                    if let Some(metadata) = metadata {
-                        let folder_paths = metadata.folder_paths().clone();
+                    if let Some(thread) = most_recent_thread {
+                        let folder_paths = thread.folder_paths().clone();
                         this.open_workspace_and_activate_thread(
-                            metadata,
+                            thread,
                             folder_paths,
                             &key,
                             window,
                             cx,
                         );
                     } else {
+                        this.selection = None;
+                        this.active_entry = None;
                         this.open_workspace_for_group(&key, window, cx);
                     }
                 } else {
