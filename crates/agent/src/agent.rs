@@ -1489,11 +1489,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn prompt(
         &self,
-        id: Option<acp_thread::UserMessageId>,
+        id: acp_thread::UserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
-        let id = id.expect("UserMessageId is required");
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());

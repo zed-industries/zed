@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::agent_connection_store::AgentConnectionStore;
 
-use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
-use crate::{Agent, RemoveSelectedThread};
+use crate::thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore};
+use crate::{Agent, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol as acp;
@@ -113,7 +113,7 @@ fn fuzzy_match_positions(query: &str, text: &str) -> Option<Vec<usize>> {
 pub enum ThreadsArchiveViewEvent {
     Close,
     Unarchive { thread: ThreadMetadata },
-    CancelRestore { session_id: acp::SessionId },
+    CancelRestore { thread_id: ThreadId },
 }
 
 impl EventEmitter<ThreadsArchiveViewEvent> for ThreadsArchiveView {}
@@ -132,7 +132,7 @@ pub struct ThreadsArchiveView {
     workspace: WeakEntity<Workspace>,
     agent_connection_store: WeakEntity<AgentConnectionStore>,
     agent_server_store: WeakEntity<AgentServerStore>,
-    restoring: HashSet<acp::SessionId>,
+    restoring: HashSet<ThreadId>,
 }
 
 impl ThreadsArchiveView {
@@ -216,13 +216,13 @@ impl ThreadsArchiveView {
         self.selection = None;
     }
 
-    pub fn mark_restoring(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
-        self.restoring.insert(session_id.clone());
+    pub fn mark_restoring(&mut self, thread_id: &ThreadId, cx: &mut Context<Self>) {
+        self.restoring.insert(*thread_id);
         cx.notify();
     }
 
-    pub fn clear_restoring(&mut self, session_id: &acp::SessionId, cx: &mut Context<Self>) {
-        self.restoring.remove(session_id);
+    pub fn clear_restoring(&mut self, thread_id: &ThreadId, cx: &mut Context<Self>) {
+        self.restoring.remove(thread_id);
         cx.notify();
     }
 
@@ -255,7 +255,14 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                match fuzzy_match_positions(&query, &session.title) {
+                match fuzzy_match_positions(
+                    &query,
+                    session
+                        .title
+                        .as_ref()
+                        .map(|t| t.as_ref())
+                        .unwrap_or(DEFAULT_THREAD_TITLE),
+                ) {
                     Some(positions) => positions,
                     None => continue,
                 }
@@ -336,7 +343,7 @@ impl ThreadsArchiveView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.restoring.contains(&thread.session_id) {
+        if self.restoring.contains(&thread.thread_id) {
             return;
         }
 
@@ -345,7 +352,7 @@ impl ThreadsArchiveView {
             return;
         }
 
-        self.mark_restoring(&thread.session_id, cx);
+        self.mark_restoring(&thread.thread_id, cx);
         self.selection = None;
         self.reset_filter_editor_text(window, cx);
         cx.emit(ThreadsArchiveViewEvent::Unarchive { thread });
@@ -528,9 +535,9 @@ impl ThreadsArchiveView {
                     IconName::Sparkle
                 };
 
-                let is_restoring = self.restoring.contains(&thread.session_id);
+                let is_restoring = self.restoring.contains(&thread.thread_id);
 
-                let base = ThreadItem::new(id, thread.title.clone())
+                let base = ThreadItem::new(id, thread.display_title())
                     .icon(icon)
                     .when_some(icon_from_external_svg, |this, svg| {
                         this.custom_icon_from_external_svg(svg)
@@ -557,11 +564,11 @@ impl ThreadsArchiveView {
                                 .icon_color(Color::Muted)
                                 .tooltip(Tooltip::text("Cancel Restore"))
                                 .on_click({
-                                    let session_id = thread.session_id.clone();
+                                    let thread_id = thread.thread_id;
                                     cx.listener(move |this, _, _, cx| {
-                                        this.clear_restoring(&session_id, cx);
+                                        this.clear_restoring(&thread_id, cx);
                                         cx.emit(ThreadsArchiveViewEvent::CancelRestore {
-                                            session_id: session_id.clone(),
+                                            thread_id,
                                         });
                                         cx.stop_propagation();
                                     })
@@ -586,10 +593,16 @@ impl ThreadsArchiveView {
                             })
                             .on_click({
                                 let agent = thread.agent_id.clone();
+                                let thread_id = thread.thread_id;
                                 let session_id = thread.session_id.clone();
                                 cx.listener(move |this, _, _, cx| {
                                     this.preserve_selection_on_next_update = true;
-                                    this.delete_thread(session_id.clone(), agent.clone(), cx);
+                                    this.delete_thread(
+                                        thread_id,
+                                        session_id.clone(),
+                                        agent.clone(),
+                                        cx,
+                                    );
                                     cx.stop_propagation();
                                 })
                             }),
@@ -619,17 +632,22 @@ impl ThreadsArchiveView {
         };
 
         self.preserve_selection_on_next_update = true;
-        self.delete_thread(thread.session_id.clone(), thread.agent_id.clone(), cx);
+        self.delete_thread(
+            thread.thread_id,
+            thread.session_id.clone(),
+            thread.agent_id.clone(),
+            cx,
+        );
     }
 
     fn delete_thread(
         &mut self,
-        session_id: acp::SessionId,
+        thread_id: ThreadId,
+        session_id: Option<acp::SessionId>,
         agent: AgentId,
         cx: &mut Context<Self>,
     ) {
-        ThreadMetadataStore::global(cx)
-            .update(cx, |store, cx| store.delete(session_id.clone(), cx));
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.delete(thread_id, cx));
 
         let agent = Agent::from(agent);
 
@@ -645,13 +663,16 @@ impl ThreadsArchiveView {
                 .wait_for_connection()
         });
         cx.spawn(async move |_this, cx| {
-            crate::thread_worktree_archive::cleanup_thread_archived_worktrees(&session_id, cx)
-                .await;
+            crate::thread_worktree_archive::cleanup_thread_archived_worktrees(thread_id, cx).await;
 
             let state = task.await?;
             let task = cx.update(|cx| {
-                if let Some(list) = state.connection.session_list(cx) {
-                    list.delete_session(&session_id, cx)
+                if let Some(session_id) = &session_id {
+                    if let Some(list) = state.connection.session_list(cx) {
+                        list.delete_session(session_id, cx)
+                    } else {
+                        Task::ready(Ok(()))
+                    }
                 } else {
                     Task::ready(Ok(()))
                 }
@@ -929,9 +950,9 @@ impl ProjectPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) {
         self.thread.worktree_paths =
-            super::thread_metadata_store::ThreadWorktreePaths::from_folder_paths(&paths);
+            super::thread_metadata_store::WorktreePaths::from_folder_paths(&paths);
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-            store.update_working_directories(&self.thread.session_id, paths, cx);
+            store.update_working_directories(self.thread.thread_id, paths, cx);
         });
 
         self.archive_view
@@ -995,7 +1016,15 @@ impl PickerDelegate for ProjectPickerDelegate {
     type ListItem = AnyElement;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        format!("Associate the \"{}\" thread with...", self.thread.title).into()
+        format!(
+            "Associate the \"{}\" thread with...",
+            self.thread
+                .title
+                .as_ref()
+                .map(|t| t.as_ref())
+                .unwrap_or(DEFAULT_THREAD_TITLE)
+        )
+        .into()
     }
 
     fn render_editor(

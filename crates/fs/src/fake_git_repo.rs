@@ -783,6 +783,15 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn checkout_branch_in_worktree(
+        &self,
+        _branch_name: String,
+        _worktree_path: PathBuf,
+        _create: bool,
+    ) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
+    }
+
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, |state| {
             state.current_branch_name = Some(name);

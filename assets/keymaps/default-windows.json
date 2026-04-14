@@ -340,6 +340,24 @@
     },
   },
   {
+    "context": "AcpThread > Editor && start_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pageup": "agent::ScrollOutputPageUp",
+      "ctrl-pageup": "agent::ScrollOutputPageUp",
+      "ctrl-home": "agent::ScrollOutputToTop",
+    },
+  },
+  {
+    "context": "AcpThread > Editor && end_of_input",
+    "use_key_equivalents": true,
+    "bindings": {
+      "pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-pagedown": "agent::ScrollOutputPageDown",
+      "ctrl-end": "agent::ScrollOutputToBottom",
+    },
+  },
+  {
     "context": "AcpThread > Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
