@@ -51,7 +51,7 @@
 
 use crate::{
     Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, Window,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, ScrollDirection, Window,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -437,7 +437,7 @@ impl DispatchTree {
         binding: &KeyBinding,
         context_stack: &[KeyContext],
     ) -> bool {
-        let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
+        let (bindings, _) = keymap.bindings_for_input(binding.keystrokes(), context_stack);
         if let Some(found) = bindings.iter().next() {
             found.action.partial_eq(binding.action.as_ref())
         } else {
@@ -558,6 +558,43 @@ impl DispatchTree {
             });
         }
         (input, to_replay)
+    }
+
+    fn context_stack(&self, dispatch_path: &SmallVec<[DispatchNodeId; 32]>) -> Vec<KeyContext> {
+        dispatch_path
+            .iter()
+            .filter_map(|node_id| self.node(*node_id).context.clone())
+            .collect()
+    }
+
+    /// Look up mouse bindings matching the given button/modifiers/click_count for the dispatch path.
+    pub fn dispatch_mouse(
+        &self,
+        button: &MouseButton,
+        modifiers: &Modifiers,
+        click_count: usize,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> SmallVec<[KeyBinding; 1]> {
+        self.keymap.borrow().bindings_for_mouse(
+            button,
+            modifiers,
+            click_count,
+            &self.context_stack(dispatch_path),
+        )
+    }
+
+    /// Look up scroll bindings matching the given direction/modifiers for the dispatch path.
+    pub fn dispatch_scroll(
+        &self,
+        direction: ScrollDirection,
+        modifiers: &Modifiers,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) -> SmallVec<[KeyBinding; 1]> {
+        self.keymap.borrow().bindings_for_scroll(
+            direction,
+            modifiers,
+            &self.context_stack(dispatch_path),
+        )
     }
 
     pub fn dispatch_path(&self, target: DispatchNodeId) -> SmallVec<[DispatchNodeId; 32]> {

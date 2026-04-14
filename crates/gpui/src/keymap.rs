@@ -4,7 +4,10 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{Action, AsKeystroke, Keystroke, Unbind, is_no_action, is_unbind};
+use crate::{
+    Action, AsKeystroke, KeybindingKeystroke, Keystroke, Modifiers, MouseButton, ScrollDirection,
+    Unbind, is_no_action, is_unbind,
+};
 use collections::{HashMap, HashSet};
 use smallvec::SmallVec;
 use std::any::TypeId;
@@ -39,7 +42,7 @@ fn disabled_binding_matches_context(disabled_binding: &KeyBinding, binding: &Key
 }
 
 fn binding_is_unbound(disabled_binding: &KeyBinding, binding: &KeyBinding) -> bool {
-    disabled_binding.keystrokes == binding.keystrokes
+    disabled_binding.input == binding.input
         && disabled_binding
             .action()
             .as_any()
@@ -113,7 +116,7 @@ impl Keymap {
             for disabled_ix in &self.disabled_binding_indices {
                 if disabled_ix > ix {
                     let disabled_binding = &self.bindings[*disabled_ix];
-                    if disabled_binding.keystrokes != binding.keystrokes {
+                    if disabled_binding.input != binding.input {
                         continue;
                     }
 
@@ -225,7 +228,7 @@ impl Keymap {
             first_binding_index.get_or_insert(ix);
         }
 
-        let mut pending = HashSet::default();
+        let mut pending: HashSet<&[KeybindingKeystroke]> = HashSet::default();
         for (ix, binding) in pending_bindings.into_iter().rev() {
             if let Some(binding_ix) = first_binding_index
                 && binding_ix > ix
@@ -233,10 +236,13 @@ impl Keymap {
                 continue;
             }
             if is_no_action(&*binding.action) || is_unbind(&*binding.action) {
-                pending.remove(&&binding.keystrokes);
+                pending.remove(binding.keystrokes());
                 continue;
             }
-            pending.insert(&binding.keystrokes);
+            let keystrokes = binding.keystrokes();
+            if !keystrokes.is_empty() {
+                pending.insert(keystrokes);
+            }
         }
 
         (bindings, !pending.is_empty())
@@ -287,6 +293,55 @@ impl Keymap {
             .into_iter()
             .map(|(_, _, binding)| binding.clone())
             .collect::<Vec<_>>()
+    }
+
+    /// Returns all bindings matching a mouse button event, in precedence order (higher first).
+    pub fn bindings_for_mouse(
+        &self,
+        button: &MouseButton,
+        modifiers: &Modifiers,
+        click_count: usize,
+        context_stack: &[KeyContext],
+    ) -> SmallVec<[KeyBinding; 1]> {
+        self.bindings_matching(context_stack, |binding| {
+            binding.is_mouse_binding() && binding.match_mouse(button, modifiers, click_count)
+        })
+    }
+
+    /// Returns all bindings matching a scroll wheel event, in precedence order (higher first).
+    pub fn bindings_for_scroll(
+        &self,
+        direction: ScrollDirection,
+        modifiers: &Modifiers,
+        context_stack: &[KeyContext],
+    ) -> SmallVec<[KeyBinding; 1]> {
+        self.bindings_matching(context_stack, |binding| {
+            binding.is_scroll_binding() && binding.match_scroll(direction, modifiers)
+        })
+    }
+
+    fn bindings_matching(
+        &self,
+        context_stack: &[KeyContext],
+        filter: impl Fn(&KeyBinding) -> bool,
+    ) -> SmallVec<[KeyBinding; 1]> {
+        let mut matched: SmallVec<[(usize, BindingIndex, &KeyBinding); 1]> = SmallVec::new();
+        for (ix, binding) in self.bindings().enumerate().rev() {
+            if !filter(binding) {
+                continue;
+            }
+            let Some(depth) = self.binding_enabled(binding, context_stack) else {
+                continue;
+            };
+            if is_no_action(&*binding.action) || is_unbind(&*binding.action) {
+                continue;
+            }
+            matched.push((depth, BindingIndex(ix), binding));
+        }
+        matched.sort_by(|(depth_a, ix_a, _), (depth_b, ix_b, _)| {
+            depth_b.cmp(depth_a).then(ix_b.cmp(ix_a))
+        });
+        matched.into_iter().map(|(_, _, b)| b.clone()).collect()
     }
 }
 
@@ -752,7 +807,7 @@ mod tests {
         fn assert_bindings(keymap: &Keymap, action: &dyn Action, expected: &[&str]) {
             let actual = keymap
                 .bindings_for_action(action)
-                .map(|binding| binding.keystrokes[0].inner().unparse())
+                .map(|binding| binding.keystrokes()[0].inner().unparse())
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "{:?}", action);
         }
@@ -805,7 +860,7 @@ mod tests {
         fn assert_bindings(keymap: &Keymap, action: &dyn Action, expected: &[&str]) {
             let actual = keymap
                 .bindings_for_action(action)
-                .map(|binding| binding.keystrokes[0].inner().unparse())
+                .map(|binding| binding.keystrokes()[0].inner().unparse())
                 .collect::<Vec<_>>();
             assert_eq!(actual, expected, "{:?}", action);
         }
