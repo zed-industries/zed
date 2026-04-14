@@ -3526,6 +3526,7 @@ async fn test_cmd_n_shows_new_thread_entry_in_absorbed_worktree(cx: &mut TestApp
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -3642,6 +3643,7 @@ async fn test_search_matches_worktree_name(cx: &mut TestAppContext) {
                 ref_name: Some("refs/heads/rosewood".into()),
                 sha: "abc".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;
@@ -3726,6 +3728,7 @@ async fn test_git_worktree_added_live_updates_sidebar(cx: &mut TestAppContext) {
                 ref_name: Some("refs/heads/rosewood".into()),
                 sha: "abc".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;
@@ -3767,6 +3770,7 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -3778,6 +3782,7 @@ async fn test_two_worktree_workspaces_absorbed_when_main_added(cx: &mut TestAppC
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "bbb".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -3877,6 +3882,7 @@ async fn test_threadless_workspace_shows_new_thread_with_worktree_chip(cx: &mut 
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -3888,6 +3894,7 @@ async fn test_threadless_workspace_shows_new_thread_with_worktree_chip(cx: &mut 
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "bbb".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -3960,6 +3967,7 @@ async fn test_multi_worktree_thread_shows_multiple_chips(cx: &mut TestAppContext
                     ref_name: Some(format!("refs/heads/{branch}").into()),
                     sha: "aaa".into(),
                     is_main: false,
+                    is_bare: false,
                 },
             )
             .await;
@@ -4037,6 +4045,7 @@ async fn test_same_named_worktree_chips_are_deduplicated(cx: &mut TestAppContext
                 ref_name: Some("refs/heads/olivetti".into()),
                 sha: "aaa".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;
@@ -4110,6 +4119,7 @@ async fn test_absorbed_worktree_running_thread_shows_live_status(cx: &mut TestAp
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -4206,6 +4216,7 @@ async fn test_absorbed_worktree_completion_triggers_notification(cx: &mut TestAp
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -4290,6 +4301,7 @@ async fn test_clicking_worktree_thread_opens_workspace_when_none_exists(cx: &mut
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -4386,6 +4398,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -4528,6 +4541,7 @@ async fn test_clicking_absorbed_worktree_thread_activates_worktree_workspace(
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -5140,6 +5154,7 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -5306,6 +5321,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -5605,6 +5621,7 @@ async fn test_linked_worktree_threads_not_duplicated_across_groups(cx: &mut Test
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -7079,6 +7096,7 @@ async fn test_archive_last_thread_on_linked_worktree_does_not_create_new_thread_
             ref_name: Some("refs/heads/ochre-drift".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -7248,6 +7266,7 @@ async fn test_archive_last_thread_on_linked_worktree_with_no_siblings_leaves_gro
             ref_name: Some("refs/heads/ochre-drift".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -7378,6 +7397,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
             ref_name: Some("refs/heads/ochre-drift".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -7545,6 +7565,7 @@ async fn test_archive_thread_on_linked_worktree_selects_sibling_thread(cx: &mut 
             ref_name: Some("refs/heads/ochre-drift".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -7694,6 +7715,7 @@ async fn test_linked_worktree_workspace_reachable_and_dismissable(cx: &mut TestA
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -7847,6 +7869,7 @@ async fn test_linked_worktree_workspace_shows_main_worktree_threads(cx: &mut Tes
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -8094,6 +8117,7 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -8249,6 +8273,7 @@ async fn test_linked_worktree_workspace_reachable_after_adding_unrelated_project
             ref_name: Some(format!("refs/heads/{}", worktree_name).into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -8766,6 +8791,7 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
             ref_name: Some("refs/heads/feature".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -8900,6 +8926,7 @@ async fn test_linked_worktree_workspace_reachable_after_adding_worktree_to_proje
             ref_name: Some("refs/heads/wt-0".into()),
             sha: "aaa".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -9341,6 +9368,7 @@ mod property_test {
                             ref_name: Some(format!("refs/heads/{}", worktree_name).into()),
                             sha: "aaa".into(),
                             is_main: false,
+                            is_bare: false,
                         },
                     )
                     .await;
@@ -10129,6 +10157,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
                 ref_name: Some("refs/heads/feature-wt".into()),
                 sha: "abc123".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;
@@ -10217,6 +10246,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -10361,6 +10391,7 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "def".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;

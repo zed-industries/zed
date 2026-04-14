@@ -494,6 +494,7 @@ impl GitRepository for FakeGitRepository {
                     ref_name: Some(branch_ref.into()),
                     sha: head_sha.into(),
                     is_main: true,
+                    is_bare: false,
                 };
                 (main_wt, state.refs.clone())
             })?;
@@ -532,6 +533,7 @@ impl GitRepository for FakeGitRepository {
                         ref_name: ref_name.map(Into::into),
                         sha: sha.into(),
                         is_main: false,
+                        is_bare: false,
                     });
                 }
             }

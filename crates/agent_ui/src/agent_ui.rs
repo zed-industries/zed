@@ -27,7 +27,6 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-mod thread_branch_picker;
 mod thread_history;
 mod thread_history_view;
 mod thread_import;
@@ -90,8 +89,8 @@ actions!(
     [
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
-        /// Cycles through the options for where new threads start (current project or new worktree).
-        CycleStartThreadIn,
+        /// Toggles the worktree selector popover for choosing which worktree to use.
+        ToggleWorktreeSelector,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
