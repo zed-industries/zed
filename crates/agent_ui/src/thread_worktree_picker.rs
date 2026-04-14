@@ -12,8 +12,7 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
 use project::git_store::RepositoryEvent;
 use ui::{
-    Divider, DocumentationAside, HighlightedLabel, Icon, IconName, Label, LabelCommon, ListItem,
-    ListItemSpacing, Tooltip, prelude::*,
+    Divider, DocumentationAside, HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::paths::PathExt;
@@ -164,7 +163,7 @@ impl EventEmitter<DismissEvent> for ThreadWorktreePicker {}
 impl Render for ThreadWorktreePicker {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(rems(22.))
+            .w(rems(34.))
             .elevation_3(cx)
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|_, _, _, cx| {
@@ -175,19 +174,15 @@ impl Render for ThreadWorktreePicker {
 
 #[derive(Clone)]
 enum ThreadWorktreeEntry {
-    /// "Create new worktree based on <current branch>"
     CreateFromCurrentBranch,
-    /// "Create new worktree based on <default branch>" (e.g. main)
     CreateFromDefaultBranch {
         default_branch_name: String,
     },
     Separator,
-    /// A worktree (main or linked) — the check icon indicates which is current
     Worktree {
         worktree: GitWorktree,
         positions: Vec<usize>,
     },
-    /// User typed a custom name — create a worktree with that name
     CreateNamed {
         name: String,
         disabled_reason: Option<String>,
@@ -209,11 +204,8 @@ impl ThreadWorktreePickerDelegate {
     fn build_fixed_entries(&self) -> Vec<ThreadWorktreeEntry> {
         let mut entries = Vec::new();
 
-        // "Create new worktree based on <current branch>" — always shown
         entries.push(ThreadWorktreeEntry::CreateFromCurrentBranch);
 
-        // "Create new worktree based on <default branch>" — shown when
-        // default branch differs from the current branch and we're not multi-repo
         if !self.has_multiple_repositories {
             if let Some(ref default_branch) = self.default_branch_name {
                 let is_different = self
@@ -498,6 +490,38 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         let project = self.project.read(cx);
         let is_create_disabled = project.repositories(cx).is_empty() || project.is_via_collab();
 
+        let create_new_list_item =
+            |id: SharedString, label: SharedString, is_disabled: bool, selected: bool| {
+                ListItem::new(id)
+                    .inset(true)
+                    .spacing(ListItemSpacing::Sparse)
+                    .toggle_state(selected)
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2p5()
+                            .child(
+                                Icon::new(IconName::Plus)
+                                    .map(|this| {
+                                        if is_disabled {
+                                            this.color(Color::Disabled)
+                                        } else {
+                                            this.color(Color::Muted)
+                                        }
+                                    })
+                                    .size(IconSize::Small),
+                            )
+                            .child(
+                                Label::new(label)
+                                    .when(is_disabled, |this| this.color(Color::Disabled)),
+                            ),
+                    )
+                    .when(is_disabled, |this| {
+                        this.tooltip(Tooltip::text("Requires a Git repository in the project"))
+                    })
+                    .into_any_element()
+            };
+
         match entry {
             ThreadWorktreeEntry::Separator => Some(
                 div()
@@ -515,63 +539,31 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                         .unwrap_or_else(|| "HEAD".to_string())
                 };
 
-                let item = ListItem::new("create-from-current")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .disabled(is_create_disabled)
-                    .start_slot(Icon::new(IconName::Plus).size(IconSize::Small).color(
-                        if is_create_disabled {
-                            Color::Disabled
-                        } else {
-                            Color::Muted
-                        },
-                    ))
-                    .child(
-                        Label::new(format!("Create new worktree based on {branch_label}"))
-                            .when(is_create_disabled, |this| this.color(Color::Disabled)),
-                    );
+                let label = format!("Create new worktree based on {branch_label}");
 
-                Some(
-                    if is_create_disabled {
-                        item.tooltip(Tooltip::text("Requires a Git repository in the project"))
-                    } else {
-                        item
-                    }
-                    .into_any_element(),
-                )
+                let item = create_new_list_item(
+                    "create-from-current".to_string().into(),
+                    label.into(),
+                    is_create_disabled,
+                    selected,
+                );
+
+                Some(item.into_any_element())
             }
 
             ThreadWorktreeEntry::CreateFromDefaultBranch {
                 default_branch_name,
             } => {
-                let item = ListItem::new("create-from-default")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .disabled(is_create_disabled)
-                    .start_slot(Icon::new(IconName::Plus).size(IconSize::Small).color(
-                        if is_create_disabled {
-                            Color::Disabled
-                        } else {
-                            Color::Muted
-                        },
-                    ))
-                    .child(
-                        Label::new(format!(
-                            "Create new worktree based on {default_branch_name}"
-                        ))
-                        .when(is_create_disabled, |this| this.color(Color::Disabled)),
-                    );
+                let label = format!("Create new worktree based on {default_branch_name}");
 
-                Some(
-                    if is_create_disabled {
-                        item.tooltip(Tooltip::text("Requires a Git repository in the project"))
-                    } else {
-                        item
-                    }
-                    .into_any_element(),
-                )
+                let item = create_new_list_item(
+                    "create-from-main".to_string().into(),
+                    label.into(),
+                    is_create_disabled,
+                    selected,
+                );
+
+                Some(item.into_any_element())
             }
 
             ThreadWorktreeEntry::Worktree {
@@ -680,53 +672,17 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                 disabled_reason,
             } => {
                 let is_disabled = disabled_reason.is_some();
-                let item = ListItem::new("create-named-worktree")
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .disabled(is_disabled)
-                    .start_slot(Icon::new(IconName::Plus).size(IconSize::Small).color(
-                        if is_disabled {
-                            Color::Disabled
-                        } else {
-                            Color::Muted
-                        },
-                    ))
-                    .child(
-                        Label::new(format!("Create Worktree: \"{name}\"\u{2026}")).color(
-                            if is_disabled {
-                                Color::Disabled
-                            } else {
-                                Color::Default
-                            },
-                        ),
-                    );
+                let label = format!("Create Worktree: \"{name}\"…");
 
-                Some(
-                    if let Some(reason) = disabled_reason.clone() {
-                        item.tooltip(Tooltip::text(reason))
-                    } else {
-                        item
-                    }
-                    .into_any_element(),
-                )
+                let item = create_new_list_item(
+                    "create-fresh-new".to_string().into(),
+                    label.into(),
+                    is_disabled,
+                    selected,
+                );
+
+                Some(item.into_any_element())
             }
         }
-    }
-
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        None
-    }
-
-    fn documentation_aside(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> Option<DocumentationAside> {
-        None
-    }
-
-    fn documentation_aside_index(&self) -> Option<usize> {
-        None
     }
 }

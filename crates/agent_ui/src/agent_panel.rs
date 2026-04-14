@@ -3965,6 +3965,11 @@ impl AgentPanel {
         let trigger_button = Button::new("thread-target-trigger", label)
             .disabled(is_creating)
             .loading(is_creating)
+            .start_icon(
+                Icon::new(IconName::GitWorktree)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
             .end_icon(
                 Icon::new(chevron_icon)
                     .size(IconSize::XSmall)
