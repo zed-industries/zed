@@ -4270,7 +4270,7 @@ impl AgentPanel {
                 }))
             })
             .with_handle(self.thread_branch_menu_handle.clone())
-            .anchor(Corner::TopLeft)
+            .anchor(gpui::Anchor::TopLeft)
             .offset(gpui::Point {
                 x: px(1.0),
                 y: px(1.0),
