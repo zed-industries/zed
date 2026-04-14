@@ -12,6 +12,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future;
 
+use feature_flags::FeatureFlagAppExt as _;
 use futures::{FutureExt, StreamExt};
 use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
 use gpui::{App, AsyncApp, Global, WindowHandle};
@@ -497,25 +498,23 @@ pub async fn handle_cli_connection(
                     return;
                 }
 
-                if let Some(behavior) = maybe_prompt_open_behavior(
-                    open_new_workspace,
-                    force_existing_window,
-                    reuse,
-                    &paths,
-                    &app_state,
-                    responses.as_ref(),
-                    &mut requests,
-                    cx,
-                )
-                .await
-                {
-                    match behavior {
-                        settings::CliDefaultOpenBehavior::ExistingWindow => {
+                if open_new_workspace.is_none() && !force_existing_window && !reuse {
+                    match resolve_open_behavior(
+                        &paths,
+                        &app_state,
+                        responses.as_ref(),
+                        &mut requests,
+                        cx,
+                    )
+                    .await
+                    {
+                        Some(settings::CliDefaultOpenBehavior::ExistingWindow) => {
                             force_existing_window = true;
                         }
-                        settings::CliDefaultOpenBehavior::NewWindow => {
+                        Some(settings::CliDefaultOpenBehavior::NewWindow) => {
                             open_new_workspace = Some(true);
                         }
+                        None => {}
                     }
                 }
 
@@ -540,34 +539,29 @@ pub async fn handle_cli_connection(
             }
             CliRequest::SetOpenBehavior { .. } => {
                 // We handle this case in a situation-specific way in
-                // maybe_prompt_open_behavior
+                // resolve_open_behavior
                 debug_panic!("unexpected SetOpenBehavior message");
             }
         }
     }
 }
 
-/// Checks whether the CLI user should be prompted to configure their default
-/// open behavior. Sends `CliResponse::PromptOpenBehavior` and waits for the
-/// CLI's response if all of these are true:
-///   - No explicit flag was given (`-n`, `-e`, `-a`)
-///   - There is at least one existing Zed window
-///   - The user has not yet configured `cli_default_open_behavior` in settings
+/// Resolves the CLI open behavior when no explicit flag (`-n`, `-e`, `--reuse`)
+/// was given. May prompt the user interactively on first run.
 ///
-/// Returns the user's choice, or `None` if no prompt was needed or the CLI
-/// didn't respond.
-async fn maybe_prompt_open_behavior(
-    open_new_workspace: Option<bool>,
-    force_existing_window: bool,
-    reuse: bool,
+/// Returns `Some(behavior)` to override the default, or `None` if no override
+/// is needed (e.g. no existing windows, paths already in a workspace, or the
+/// user has already configured `cli_default_open_behavior` in settings).
+async fn resolve_open_behavior(
     paths: &[String],
     app_state: &Arc<AppState>,
     responses: &dyn CliResponseSink,
     requests: &mut mpsc::UnboundedReceiver<CliRequest>,
     cx: &mut AsyncApp,
 ) -> Option<settings::CliDefaultOpenBehavior> {
-    if open_new_workspace.is_some() || force_existing_window || reuse {
-        return None;
+    let cli_prompt_enabled = cx.update(|cx| cx.has_flag::<feature_flags::AgentV2FeatureFlag>());
+    if !cli_prompt_enabled {
+        return Some(settings::CliDefaultOpenBehavior::NewWindow);
     }
 
     let has_existing_windows = cx.update(|cx| {
