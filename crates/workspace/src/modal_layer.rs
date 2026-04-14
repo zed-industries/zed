@@ -80,8 +80,10 @@ pub struct ModalLayer {
 }
 
 pub(crate) struct ModalOpenedEvent;
+pub(crate) struct ModalDismissedEvent;
 
 impl EventEmitter<ModalOpenedEvent> for ModalLayer {}
+impl EventEmitter<ModalDismissedEvent> for ModalLayer {}
 
 impl Default for ModalLayer {
     fn default() -> Self {
@@ -185,6 +187,7 @@ impl ModalLayer {
             {
                 previous_focus.focus(window, cx);
             }
+            cx.emit(ModalDismissedEvent);
             cx.notify();
         }
         self.dismiss_on_focus_lost = false;

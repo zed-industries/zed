@@ -1333,6 +1333,7 @@ pub struct Workspace {
     status_bar: Entity<StatusBar>,
     pub(crate) modal_layer: Entity<ModalLayer>,
     toast_layer: Entity<ToastLayer>,
+    deferred_autosave_items: Vec<Box<dyn WeakItemHandle>>,
     titlebar_item: Option<AnyView>,
     notifications: Notifications,
     suppressed_notifications: HashSet<NotificationId>,
@@ -1660,6 +1661,16 @@ impl Workspace {
             },
         )
         .detach();
+        cx.subscribe_in(
+            &modal_layer,
+            window,
+            |_, _, _: &modal_layer::ModalDismissedEvent, window, cx| {
+                cx.defer_in(window, |this, window, cx| {
+                    this.autosave_deferred_items(window, cx);
+                });
+            },
+        )
+        .detach();
 
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
@@ -1757,6 +1768,7 @@ impl Workspace {
             status_bar,
             modal_layer,
             toast_layer,
+            deferred_autosave_items: Vec::new(),
             titlebar_item: None,
             notifications: Notifications::default(),
             suppressed_notifications: HashSet::default(),
@@ -6336,6 +6348,20 @@ impl Workspace {
     ) -> Option<Entity<SharedScreen>> {
         self.active_call()?
             .create_shared_screen(peer_id, pane, window, cx)
+    }
+
+    fn autosave_deferred_items(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let deferred = std::mem::take(&mut self.deferred_autosave_items);
+        for weak_item in deferred {
+            let Some(item) = weak_item.upgrade() else {
+                continue;
+            };
+            let focus_handle = item.item_focus_handle(cx);
+            if !focus_handle.contains_focused(window, cx) {
+                Pane::autosave_item(item.as_ref(), self.project.clone(), window, cx)
+                    .detach_and_log_err(cx);
+            }
+        }
     }
 
     pub fn on_window_activation_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {

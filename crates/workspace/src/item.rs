@@ -956,13 +956,13 @@ impl<T: Item> ItemHandle for Entity<T> {
 
                         if vim_mode || helix_mode {
                             // We use the command palette for executing commands in Vim and Helix modes (e.g., `:w`), so
-                            // in those cases we don't want to trigger auto-save if the focus has just been transferred
-                            // to the command palette.
-                            //
-                            // This isn't totally perfect, as you could still switch files indirectly via the command
-                            // palette (such as by opening up the tab switcher from it and then switching tabs that
-                            // way).
+                            // in those cases we don't want to immediately trigger auto-save if the focus has just been
+                            // transferred to the command palette. Instead, we defer the autosave until the command
+                            // palette is dismissed. If focus returns to this item (e.g., the user pressed Escape),
+                            // the deferred save is skipped. If focus moves elsewhere (e.g., the user opened a new
+                            // panel via the command palette), the item is saved at that point.
                             if workspace.is_active_modal_command_palette(cx) {
+                                workspace.deferred_autosave_items.push(item.downgrade_item());
                                 return;
                             }
                         }
