@@ -32,13 +32,13 @@ use zed_actions::{
 use crate::DEFAULT_THREAD_TITLE;
 use crate::thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore};
 use crate::{
-    AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CycleStartThreadIn,
-    Follow, InlineAssistant, LoadThreadFromClipboard, NewThread, NewWorktreeBranchTarget,
-    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
-    StartThreadIn, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard,
+    CreateWorktreeImmediately, Follow, InlineAssistant, LoadThreadFromClipboard, NewThread,
+    NewWorktreeBranchTarget, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory,
+    ResetTrialEndUpsell, ResetTrialUpsell, SwitchToLinkedWorktree, ToggleNavigationMenu,
+    ToggleNewThreadMenu, ToggleOptionsMenu, ToggleWorktreeSelector,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
-    thread_branch_picker::ThreadBranchPicker,
     thread_worktree_picker::ThreadWorktreePicker,
     ui::EndTrialUpsell,
 };
@@ -67,7 +67,6 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
-use project::git_store::{GitStoreEvent, RepositoryEvent};
 use project::project_settings::ProjectSettings;
 use project::{Project, ProjectPath, Worktree, WorktreePaths, linked_worktree_short_name};
 use prompt_store::{PromptStore, UserPromptId};
@@ -80,8 +79,8 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, ButtonLike, Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, PopoverMenu,
-    PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, Callout, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tab, Tooltip,
+    prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
@@ -170,8 +169,6 @@ struct SerializedAgentPanel {
     selected_agent: Option<Agent>,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
-    #[serde(default)]
-    start_thread_in: Option<StartThreadIn>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -276,6 +273,14 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.toggle_new_thread_menu(&ToggleNewThreadMenu, window, cx);
+                        });
+                    }
+                })
+                .register_action(|workspace, _: &ToggleWorktreeSelector, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_worktree_selector(&ToggleWorktreeSelector, window, cx);
                         });
                     }
                 })
@@ -1570,6 +1575,15 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         self.new_thread_menu_handle.toggle(window, cx);
+    }
+
+    pub fn toggle_worktree_selector(
+        &mut self,
+        _: &ToggleWorktreeSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_thread_in_menu_handle.toggle(window, cx);
     }
 
     pub fn increase_font_size(
@@ -3881,15 +3895,13 @@ impl AgentPanel {
             );
 
         let project = self.project.clone();
-        let current_target = self.start_thread_in.clone();
-        let fs = self.fs.clone();
 
         PopoverMenu::new("thread-target-selector")
             .trigger_with_tooltip(trigger_button, {
                 move |_window, cx| {
                     Tooltip::for_action_in(
-                        "Start Thread In…",
-                        &CycleStartThreadIn,
+                        "Select Worktree…",
+                        &ToggleWorktreeSelector,
                         &focus_handle,
                         cx,
                     )

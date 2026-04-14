@@ -237,7 +237,7 @@
       "shift-alt-j": "agent::ToggleNavigationMenu",
       "shift-alt-i": "agent::ToggleOptionsMenu",
       "ctrl-alt-shift-n": "agent::ToggleNewThreadMenu",
-      "ctrl-shift-t": "agent::CycleStartThreadIn",
+      "ctrl-shift-t": "agent::ToggleWorktreeSelector",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl->": "agent::AddSelectionToThread",
       "ctrl-shift-e": "project_panel::ToggleFocus",
