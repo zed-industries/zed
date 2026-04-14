@@ -57,8 +57,8 @@ impl DockerInspectConfig {
         let mut map = HashMap::new();
         for env_var in &self.env {
             let Some((key, value)) = env_var.split_once('=') else {
-                log::error!("Unable to parse {env_var} into an environment key-value");
-                return Err(DevContainerError::DevContainerParseFailed);
+                log::warn!("Skipping environment variable without a value: {env_var}");
+                continue;
             };
             map.insert(key.to_string(), value.to_string());
         }
@@ -575,6 +575,44 @@ mod test {
 
         let map = config.env_as_map().unwrap();
         assert_eq!(map.get("COMPLEX").unwrap(), "key=val other>=1.0");
+    }
+
+    #[test]
+    fn should_parse_database_url_with_equals_in_query_string() {
+        let config = super::DockerInspectConfig {
+            labels: super::DockerConfigLabels { metadata: None },
+            image_user: None,
+            env: vec![
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".to_string(),
+                "TEST_DATABASE_URL=postgres://postgres:postgres@db:5432/mydb?sslmode=disable"
+                    .to_string(),
+            ],
+        };
+
+        let map = config.env_as_map().unwrap();
+        assert_eq!(
+            map.get("TEST_DATABASE_URL").unwrap(),
+            "postgres://postgres:postgres@db:5432/mydb?sslmode=disable"
+        );
+    }
+
+    #[test]
+    fn should_skip_env_var_without_equals() {
+        let config = super::DockerInspectConfig {
+            labels: super::DockerConfigLabels { metadata: None },
+            image_user: None,
+            env: vec![
+                "VALID_KEY=valid_value".to_string(),
+                "NO_EQUALS_VAR".to_string(),
+                "ANOTHER_VALID=value".to_string(),
+            ],
+        };
+
+        let map = config.env_as_map().unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map.get("VALID_KEY").unwrap(), "valid_value");
+        assert_eq!(map.get("ANOTHER_VALID").unwrap(), "value");
+        assert!(!map.contains_key("NO_EQUALS_VAR"));
     }
 
     #[test]
