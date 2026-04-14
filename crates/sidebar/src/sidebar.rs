@@ -25,13 +25,11 @@ use menu::{
 };
 use project::{
     AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId, linked_worktree_short_name,
-    worktrees_directory_for_repo,
 };
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::utils::platform_title_bar_height;
 
-use project::project_settings::ProjectSettings;
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::collections::{HashMap, HashSet};
@@ -3014,11 +3012,6 @@ impl Sidebar {
                         workspaces.push(workspace);
                     }
                 }
-                let worktree_dir_setting = ProjectSettings::get_global(cx)
-                    .git
-                    .worktree_directory
-                    .clone();
-                let mut worktree_dir_cache: HashMap<PathBuf, Option<PathBuf>> = HashMap::new();
                 metadata
                     .folder_paths()
                     .ordered_paths()
@@ -3035,20 +3028,6 @@ impl Sidebar {
                                     metadata.remote_connection.as_ref(),
                                 )
                         })
-                    })
-                    .filter(|plan| {
-                        let worktrees_dir = worktree_dir_cache
-                            .entry(plan.main_repo_path.clone())
-                            .or_insert_with(|| {
-                                worktrees_directory_for_repo(
-                                    &plan.main_repo_path,
-                                    &worktree_dir_setting,
-                                )
-                                .log_err()
-                            });
-                        worktrees_dir
-                            .as_ref()
-                            .is_some_and(|dir| plan.root_path.starts_with(dir))
                     })
                     .collect::<Vec<_>>()
             })
