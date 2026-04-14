@@ -3026,6 +3026,61 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         }]),
                 ),
             )
+            .child(section_label(
+                "Linked worktree + branch + diff stats + timestamp",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-linked-full", "Full metadata with diff stats")
+                        .icon(IconName::AiClaude)
+                        .timestamp("3w")
+                        .added(42)
+                        .removed(17)
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "jade-glen".into(),
+                            full_path: "/worktrees/jade-glen/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some("feature-branch".into()),
+                        }]),
+                ),
+            )
+            .child(section_label("Long branch name truncation with diff stats"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-long-branch", "Overflow test with very long branch")
+                        .icon(IconName::AiClaude)
+                        .timestamp("2d")
+                        .added(108)
+                        .removed(53)
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "my-project".into(),
+                            full_path: "/worktrees/my-project/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some(
+                                "fix-very-long-branch-name-that-should-truncate".into(),
+                            ),
+                        }]),
+                ),
+            )
+            .child(section_label("Main branch + diff stats + timestamp"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-main-full", "Main worktree with everything")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("5m")
+                        .added(23)
+                        .removed(8)
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            name: "zed".into(),
+                            full_path: "/projects/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Main,
+                            branch_name: Some("sidebar-show-branch-name".into()),
+                        }]),
+                ),
+            )
     }
 }
 
@@ -3035,7 +3090,7 @@ fn run_thread_item_branch_name_visual_tests(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    let window_size = size(px(400.0), px(850.0));
+    let window_size = size(px(400.0), px(1150.0));
     let bounds = Bounds {
         origin: point(px(0.0), px(0.0)),
         size: window_size,

@@ -570,27 +570,36 @@ impl RenderOnce for ThreadItem {
                             .min_w_0()
                             .gap_1p5()
                             .child(icon_container()) // Icon Spacing
-                            .when_some(self.project_name, |this, name| {
-                                this.child(
-                                    Label::new(name).size(LabelSize::Small).color(Color::Muted),
-                                )
-                            })
-                            .when(
-                                has_project_name && (has_project_paths || has_worktree),
-                                |this| this.child(dot_separator()),
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .flex_shrink()
+                                    .overflow_hidden()
+                                    .gap_1p5()
+                                    .when_some(self.project_name, |this, name| {
+                                        this.child(
+                                            Label::new(name)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                    })
+                                    .when(
+                                        has_project_name && (has_project_paths || has_worktree),
+                                        |this| this.child(dot_separator()),
+                                    )
+                                    .when_some(project_paths, |this, paths| {
+                                        this.child(
+                                            Label::new(paths)
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted)
+                                                .into_any_element(),
+                                        )
+                                    })
+                                    .when(has_project_paths && has_worktree, |this| {
+                                        this.child(dot_separator())
+                                    })
+                                    .children(worktree_labels),
                             )
-                            .when_some(project_paths, |this, paths| {
-                                this.child(
-                                    Label::new(paths)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element(),
-                                )
-                            })
-                            .when(has_project_paths && has_worktree, |this| {
-                                this.child(dot_separator())
-                            })
-                            .children(worktree_labels)
                             .when(
                                 (has_project_name || has_project_paths || has_worktree)
                                     && (has_diff_stats || has_timestamp),
@@ -735,6 +744,63 @@ impl Component for ThreadItem {
                             .added(42)
                             .removed(17)
                             .timestamp("3w"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Worktree + Branch + Changes + Timestamp",
+                container()
+                    .child(
+                        ThreadItem::new("ti-5c", "Full metadata with branch")
+                            .icon(IconName::AiClaude)
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "my-project".into(),
+                                full_path: "/worktrees/my-project/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
+                                branch_name: Some("feature-branch".into()),
+                            }])
+                            .added(42)
+                            .removed(17)
+                            .timestamp("3w"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Long Branch + Changes (truncation)",
+                container()
+                    .child(
+                        ThreadItem::new("ti-5d", "Metadata overflow with long branch name")
+                            .icon(IconName::AiClaude)
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "my-project".into(),
+                                full_path: "/worktrees/my-project/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Linked,
+                                branch_name: Some("fix-very-long-branch-name-here".into()),
+                            }])
+                            .added(108)
+                            .removed(53)
+                            .timestamp("2d"),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Main Branch + Changes + Timestamp",
+                container()
+                    .child(
+                        ThreadItem::new("ti-5e", "Main worktree branch with diff stats")
+                            .icon(IconName::ZedAgent)
+                            .worktrees(vec![ThreadItemWorktreeInfo {
+                                name: "zed".into(),
+                                full_path: "/projects/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Main,
+                                branch_name: Some("sidebar-show-branch-name".into()),
+                            }])
+                            .added(23)
+                            .removed(8)
+                            .timestamp("5m"),
                     )
                     .into_any_element(),
             ),
