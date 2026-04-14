@@ -182,15 +182,6 @@ impl ThreadEntryWorkspace {
 }
 
 #[derive(Clone)]
-struct WorktreeInfo {
-    name: SharedString,
-    full_path: SharedString,
-    highlight_positions: Vec<usize>,
-    kind: ui::WorktreeKind,
-    branch_name: Option<SharedString>,
-}
-
-#[derive(Clone)]
 struct ThreadEntry {
     metadata: ThreadMetadata,
     icon: IconName,
@@ -202,7 +193,7 @@ struct ThreadEntry {
     is_title_generating: bool,
     is_draft: bool,
     highlight_positions: Vec<usize>,
-    worktrees: Vec<WorktreeInfo>,
+    worktrees: Vec<ThreadItemWorktreeInfo>,
     diff_stats: DiffStats,
 }
 
@@ -340,7 +331,7 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 /// Derives worktree display info from a thread's stored path list.
 ///
 /// For each path in the thread's `folder_paths`, produces a
-/// [`WorktreeInfo`] with a short display name, full path, and whether
+/// [`ThreadItemWorktreeInfo`] with a short display name, full path, and whether
 /// the worktree is the main checkout or a linked git worktree. When
 /// multiple main paths exist and a linked worktree's short name alone
 /// wouldn't identify which main project it belongs to, the main project
@@ -349,8 +340,8 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
 fn worktree_info_from_thread_paths(
     worktree_paths: &WorktreePaths,
     branch_by_path: &HashMap<PathBuf, SharedString>,
-) -> Vec<WorktreeInfo> {
-    let mut infos: Vec<WorktreeInfo> = Vec::new();
+) -> Vec<ThreadItemWorktreeInfo> {
+    let mut infos: Vec<ThreadItemWorktreeInfo> = Vec::new();
     let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
     let mut unique_main_count = HashSet::new();
 
@@ -365,7 +356,7 @@ fn worktree_info_from_thread_paths(
                 .map(|n| SharedString::from(n.to_string_lossy().to_string()))
                 .unwrap_or_default();
             linked_short_names.push((short_name.clone(), project_name));
-            infos.push(WorktreeInfo {
+            infos.push(ThreadItemWorktreeInfo {
                 name: short_name,
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
@@ -376,7 +367,7 @@ fn worktree_info_from_thread_paths(
             let Some(name) = folder_path.file_name() else {
                 continue;
             };
-            infos.push(WorktreeInfo {
+            infos.push(ThreadItemWorktreeInfo {
                 name: SharedString::from(name.to_string_lossy().to_string()),
                 full_path: SharedString::from(folder_path.display().to_string()),
                 highlight_positions: Vec::new(),
@@ -3541,12 +3532,10 @@ impl Sidebar {
                         worktrees: thread
                             .worktrees
                             .iter()
-                            .map(|wt| ThreadItemWorktreeInfo {
-                                name: wt.name.clone(),
-                                full_path: wt.full_path.clone(),
-                                highlight_positions: Vec::new(),
-                                kind: wt.kind,
-                                branch_name: wt.branch_name.clone(),
+                            .cloned()
+                            .map(|mut wt| {
+                                wt.highlight_positions = Vec::new();
+                                wt
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,
@@ -3811,19 +3800,7 @@ impl Sidebar {
             .when_some(thread.icon_from_external_svg.clone(), |this, svg| {
                 this.custom_icon_from_external_svg(svg)
             })
-            .worktrees(
-                thread
-                    .worktrees
-                    .iter()
-                    .map(|wt| ThreadItemWorktreeInfo {
-                        name: wt.name.clone(),
-                        full_path: wt.full_path.clone(),
-                        highlight_positions: wt.highlight_positions.clone(),
-                        kind: wt.kind,
-                        branch_name: wt.branch_name.clone(),
-                    })
-                    .collect(),
-            )
+            .worktrees(thread.worktrees.clone())
             .timestamp(timestamp)
             .highlight_positions(thread.highlight_positions.to_vec())
             .title_generating(thread.is_title_generating)
