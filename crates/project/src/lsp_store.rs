@@ -1611,10 +1611,22 @@ impl LocalLspStore {
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
-            let diff = buffer
-                .handle
-                .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
-                .await;
+            let diff = if let Some(ranges) = buffer.ranges.as_ref() {
+                let row_ranges = buffer.handle.read_with(cx, |buffer, _cx| {
+                    anchor_ranges_to_row_ranges(ranges, buffer)
+                });
+                buffer
+                    .handle
+                    .read_with(cx, |buffer, cx| {
+                        buffer.remove_trailing_whitespace_in_ranges(&row_ranges, cx)
+                    })
+                    .await
+            } else {
+                buffer
+                    .handle
+                    .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
+                    .await
+            };
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.apply_diff(diff, cx);
             })?;
@@ -1622,9 +1634,34 @@ impl LocalLspStore {
 
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
-            extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
-                buffer.ensure_final_newline(cx);
-            })?;
+            if let Some(ranges) = buffer.ranges.as_ref() {
+                let row_ranges = buffer.handle.read_with(cx, |buffer, _cx| {
+                    anchor_ranges_to_row_ranges(ranges, buffer)
+                });
+                let diff = buffer
+                    .handle
+                    .read_with(cx, |buffer, cx| {
+                        buffer.ensure_final_newline_in_range(&row_ranges, cx)
+                    })
+                    .await;
+                extend_formatting_transaction(
+                    buffer,
+                    formatting_transaction_id,
+                    cx,
+                    |buffer, cx| {
+                        buffer.apply_diff(diff, cx);
+                    },
+                )?;
+            } else {
+                extend_formatting_transaction(
+                    buffer,
+                    formatting_transaction_id,
+                    cx,
+                    |buffer, cx| {
+                        buffer.ensure_final_newline(cx);
+                    },
+                )?;
+            }
         }
 
         let line_ending_policy = match settings.line_ending {
@@ -1894,10 +1931,12 @@ impl LocalLspStore {
                         buffer_path_abs,
                         &language_server,
                         &settings,
+                        logger,
                         cx,
                     )
                     .await
                     .context("Failed to format ranges via language server")?
+                    .unwrap_or_default()
                 } else {
                     zlog::trace!(logger => "formatting full");
                     Self::format_via_lsp(
@@ -2294,15 +2333,20 @@ impl LocalLspStore {
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
+        logger: zlog::Logger,
         cx: &mut AsyncApp,
-    ) -> Result<Vec<(Range<Anchor>, Arc<str>)>> {
+    ) -> Result<Option<Vec<(Range<Anchor>, Arc<str>)>>> {
         let capabilities = &language_server.capabilities();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-        if range_formatting_provider == Some(&OneOf::Left(false)) {
-            anyhow::bail!(
-                "{} language server does not support range formatting",
+        if !matches!(
+            range_formatting_provider,
+            Some(OneOf::Left(true) | OneOf::Right(_))
+        ) {
+            zlog::debug!(
+                logger => "Skipping range formatting - LSP {} does not support document_range_formatting_provider",
                 language_server.name()
             );
+            return Ok(None);
         }
 
         let uri = file_path_to_lsp_url(abs_path)?;
@@ -2361,8 +2405,9 @@ impl LocalLspStore {
                 )
             })?
             .await
+            .map(Some)
         } else {
-            Ok(Vec::with_capacity(0))
+            Ok(Some(Vec::with_capacity(0)))
         }
     }
 
@@ -3920,6 +3965,18 @@ impl LocalLspStore {
             None
         }
     }
+}
+
+fn anchor_ranges_to_row_ranges(ranges: &[Range<Anchor>], buffer: &Buffer) -> Vec<Range<u32>> {
+    let snapshot = buffer.snapshot();
+    ranges
+        .iter()
+        .map(|r| {
+            let start = r.start.to_point(&snapshot).row;
+            let end = r.end.to_point(&snapshot).row;
+            start..end + 1
+        })
+        .collect()
 }
 
 fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
