@@ -6641,7 +6641,10 @@ mod tests {
             AgentPanel::resolve_worktree_branch_target(&NewWorktreeBranchTarget::ExistingBranch {
                 name: "feature".to_string(),
             });
-        assert_eq!(resolved, (Some("feature".to_string()), None));
+        assert_eq!(
+            resolved,
+            (Some("feature".to_string()), Some("feature".to_string()))
+        );
 
         let resolved =
             AgentPanel::resolve_worktree_branch_target(&NewWorktreeBranchTarget::CurrentBranch);
