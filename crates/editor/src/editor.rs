@@ -137,11 +137,11 @@ use gpui::{
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
     DispatchPhase, Edges, Entity, EntityId, EntityInputHandler, EventEmitter, FocusHandle,
     FocusOutEvent, Focusable, FontId, FontStyle, FontWeight, Global, HighlightStyle, Hsla,
-    KeyContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad, ParentElement,
-    Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size, Stateful, Styled,
-    Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
-    UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point, prelude::*,
-    pulsating_between, px, relative, size,
+    KeyContext, KeystrokeEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, PaintQuad,
+    ParentElement, Pixels, PressureStage, Render, ScrollHandle, SharedString, SharedUri, Size,
+    Stateful, Styled, Subscription, Task, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    UnderlineStyle, UniformListScrollHandle, WeakEntity, WeakFocusHandle, Window, div, point,
+    prelude::*, pulsating_between, px, relative, size,
 };
 use hover_links::{HoverLink, HoveredLinkState, find_file};
 use hover_popover::{HoverState, hide_hover};
@@ -1314,6 +1314,7 @@ pub struct Editor {
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
     selection_mark_mode: bool,
+    universal_argument: Option<UniversalArgumentState>,
     kill_ring_yank_state: Option<KillRingYankState>,
     in_kill_ring_yank: bool,
     toggle_fold_multiple_buffers: Task<()>,
@@ -2556,6 +2557,7 @@ impl Editor {
                         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
                         cx.observe_global_in::<GlobalTheme>(window, Self::theme_changed),
                         observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
+                        cx.observe_keystrokes(Self::observe_keystrokes),
                         cx.observe_window_activation(window, |editor, window, cx| {
                             let active = window.is_window_active();
                             editor.blink_manager.update(cx, |blink_manager, cx| {
@@ -2590,6 +2592,7 @@ impl Editor {
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
+            universal_argument: None,
             kill_ring_yank_state: None,
             in_kill_ring_yank: false,
             toggle_fold_multiple_buffers: Task::ready(()),
@@ -2883,6 +2886,10 @@ impl Editor {
 
         if self.selection_mark_mode {
             key_context.add("selection_mode");
+        }
+
+        if self.universal_argument.is_some() {
+            key_context.add("universal_argument");
         }
 
         let disjoint = self.selections.disjoint_anchors();
@@ -3651,8 +3658,14 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        let cleared_universal_argument = self.clear_universal_argument(cx);
         self.selection_mark_mode = false;
         self.selection_drag_state = SelectionDragState::None;
+
+        if cleared_universal_argument {
+            cx.notify();
+            return;
+        }
 
         if self.dismiss_menus_and_popups(true, window, cx) {
             cx.notify();
@@ -3781,7 +3794,16 @@ impl Editor {
     }
 
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let text: Arc<str> = text.into();
+        let repeat_count = self.take_numeric_universal_argument_or(1, cx);
+        if repeat_count <= 0 {
+            return;
+        }
+
+        let text: Arc<str> = if repeat_count == 1 {
+            text.into()
+        } else {
+            text.repeat(repeat_count as usize).into()
+        };
 
         if self.read_only(cx) {
             return;
@@ -8677,78 +8699,112 @@ impl Editor {
     }
 
     pub fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        let count = -self.take_numeric_universal_argument_or(1, cx);
+        self.delete_by_char_count(count, true, window, cx);
+    }
+
+    fn delete_by_char_count(
+        &mut self,
+        count: i32,
+        use_autoclose_pair: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if count == 0 {
+            return;
+        }
         if self.read_only(cx) {
             return;
         }
         self.transact(window, cx, |this, window, cx| {
-            this.select_autoclose_pair(window, cx);
+            if use_autoclose_pair || count < 0 {
+                this.select_autoclose_pair(window, cx);
+            }
 
-            let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
+            let linked_edits_before_selection_change = if count < 0 {
+                Some(this.linked_edits_for_selections(Arc::from(""), cx))
+            } else {
+                None
+            };
 
             let display_map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = this.selections.all::<MultiBufferPoint>(&display_map);
             for selection in &mut selections {
                 if selection.is_empty() {
-                    let old_head = selection.head();
-                    let mut new_head =
-                        movement::left(&display_map, old_head.to_display_point(&display_map))
-                            .to_point(&display_map);
-                    if let Some((buffer, line_buffer_range)) = display_map
-                        .buffer_snapshot()
-                        .buffer_line_for_row(MultiBufferRow(old_head.row))
-                    {
-                        let indent_size = buffer.indent_size_for_line(line_buffer_range.start.row);
-                        let indent_len = match indent_size.kind {
-                            IndentKind::Space => {
-                                buffer.settings_at(line_buffer_range.start, cx).tab_size
-                            }
-                            IndentKind::Tab => NonZeroU32::new(1).unwrap(),
-                        };
-                        if old_head.column <= indent_size.len && old_head.column > 0 {
-                            let indent_len = indent_len.get();
-                            new_head = cmp::min(
-                                new_head,
-                                MultiBufferPoint::new(
-                                    old_head.row,
-                                    ((old_head.column - 1) / indent_len) * indent_len,
-                                ),
-                            );
+                    if count < 0 {
+                        let mut cursor = selection.head();
+                        for _ in 0..count.unsigned_abs() {
+                            cursor = this.previous_deletion_point(&display_map, cursor, cx);
                         }
+                        selection.set_head(cursor, SelectionGoal::None);
+                    } else {
+                        let mut cursor = selection.head();
+                        for _ in 0..count as usize {
+                            cursor = movement::right(
+                                &display_map,
+                                cursor.to_display_point(&display_map),
+                            )
+                            .to_point(&display_map);
+                        }
+                        selection.end = cursor;
+                        selection.reversed = true;
+                        selection.goal = SelectionGoal::None;
                     }
-
-                    selection.set_head(new_head, SelectionGoal::None);
                 }
             }
 
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
-            this.insert("", window, cx);
-            linked_edits.apply_with_left_expansion(cx);
+            match linked_edits_before_selection_change {
+                Some(linked_edits) => {
+                    this.insert("", window, cx);
+                    linked_edits.apply_with_left_expansion(cx);
+                }
+                None => {
+                    let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
+                    this.insert("", window, cx);
+                    linked_edits.apply(cx);
+                }
+            }
             this.refresh_edit_prediction(true, false, window, cx);
             refresh_linked_ranges(this, window, cx);
         });
     }
 
     pub fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only(cx) {
-            return;
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        self.delete_by_char_count(count, false, window, cx);
+    }
+
+    fn previous_deletion_point(
+        &self,
+        display_map: &DisplaySnapshot,
+        old_head: MultiBufferPoint,
+        cx: &App,
+    ) -> MultiBufferPoint {
+        let mut new_head = movement::left(display_map, old_head.to_display_point(display_map))
+            .to_point(display_map);
+        if let Some((buffer, line_buffer_range)) = display_map
+            .buffer_snapshot()
+            .buffer_line_for_row(MultiBufferRow(old_head.row))
+        {
+            let indent_size = buffer.indent_size_for_line(line_buffer_range.start.row);
+            let indent_len = match indent_size.kind {
+                IndentKind::Space => buffer.settings_at(line_buffer_range.start, cx).tab_size,
+                IndentKind::Tab => NonZeroU32::new(1).unwrap(),
+            };
+            if old_head.column <= indent_size.len && old_head.column > 0 {
+                let indent_len = indent_len.get();
+                new_head = cmp::min(
+                    new_head,
+                    MultiBufferPoint::new(
+                        old_head.row,
+                        ((old_head.column - 1) / indent_len) * indent_len,
+                    ),
+                );
+            }
         }
-        self.transact(window, cx, |this, window, cx| {
-            this.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(&mut |map, selection| {
-                    if selection.is_empty() {
-                        let cursor = movement::right(map, selection.head());
-                        selection.end = cursor;
-                        selection.reversed = true;
-                        selection.goal = SelectionGoal::None;
-                    }
-                })
-            });
-            let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
-            this.insert("", window, cx);
-            linked_edits.apply(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
-            refresh_linked_ranges(this, window, cx);
-        });
+
+        new_head
     }
 
     pub fn backtab(&mut self, _: &Backtab, window: &mut Window, cx: &mut Context<Self>) {
@@ -11417,18 +11473,66 @@ impl Editor {
         cx.write_to_clipboard(item);
     }
 
+    pub fn universal_argument(
+        &mut self,
+        _: &UniversalArgument,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next_argument = self.universal_argument.map_or_else(
+            UniversalArgumentState::new_plain,
+            UniversalArgumentState::multiply,
+        );
+
+        if self.universal_argument != Some(next_argument) {
+            self.universal_argument = Some(next_argument);
+            cx.notify();
+        }
+    }
+
+    pub fn universal_argument_digit(
+        &mut self,
+        action: &UniversalArgumentDigit,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(argument) = self.universal_argument.take() else {
+            return;
+        };
+
+        self.universal_argument = Some(argument.push_digit(action.0));
+        cx.notify();
+    }
+
+    pub fn universal_argument_minus(
+        &mut self,
+        _: &UniversalArgumentMinus,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(argument) = self.universal_argument.take() else {
+            return;
+        };
+
+        self.universal_argument = Some(argument.apply_minus());
+        cx.notify();
+    }
+
     pub fn kill_ring_cut(&mut self, _: &KillRingCut, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only(cx) {
+            return;
+        }
+        let universal_argument = self.take_universal_argument(cx);
+        let line_count = universal_argument.map_or(1, ResolvedUniversalArgument::numeric_value);
+        if line_count == 0 {
+            self.deactivate_selection_mark_mode(cx);
             return;
         }
         let allow_append = self.should_append_to_kill_ring(cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |map, sel| {
                 if sel.is_empty() {
-                    sel.end = movement::line_end(map, sel.end, false);
-                }
-                if sel.is_empty() {
-                    sel.end = DisplayPoint::new(sel.end.row() + 1_u32, 0);
+                    extend_selection_for_kill_ring_cut(map, sel, line_count);
                 }
             });
         });
@@ -11468,9 +11572,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let universal_argument = self.take_universal_argument(cx);
+        let entry_count = cx
+            .try_global::<KillRingState>()
+            .map_or(0, |state| state.entries.len());
+        if entry_count == 0 {
+            return;
+        }
+
+        let (entry_index, cursor_after_yank) = match universal_argument {
+            None => (0, true),
+            Some(ResolvedUniversalArgument::Plain(_)) => (0, false),
+            Some(ResolvedUniversalArgument::Numeric(value)) => {
+                (universal_argument_yank_index(value, entry_count), true)
+            }
+        };
+
         let Some((text, metadata)) = cx
             .try_global::<KillRingState>()
-            .and_then(KillRingState::latest)
+            .and_then(|state| state.entry_at(entry_index))
             .map(KillRingEntry::to_paste_data)
         else {
             return;
@@ -11479,8 +11599,11 @@ impl Editor {
         cx.default_global::<KillRingState>().clear_pending_append();
         let start_anchors = self.yank_start_anchors(cx);
         self.do_paste(&text, metadata, false, window, cx);
+        if !cursor_after_yank {
+            self.restore_selections_to_anchors(&start_anchors, window, cx);
+        }
         self.kill_ring_yank_state = Some(KillRingYankState {
-            index: 0,
+            index: entry_index,
             start_anchors,
         });
     }
@@ -11559,11 +11682,32 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.kill_ring_backward_kill_word_count(count.unsigned_abs() as usize, window, cx);
+            return;
+        }
+
+        self.kill_ring_kill_word_count(count as usize, window, cx);
+    }
+
+    fn kill_ring_kill_word_count(
+        &mut self,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let allow_append = self.should_append_to_kill_ring(cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 if selection.is_empty() {
-                    let cursor = movement::next_word_end_or_newline(map, selection.head());
+                    let mut cursor = selection.head();
+                    for _ in 0..count {
+                        cursor = movement::next_word_end_or_newline(map, cursor);
+                    }
                     selection.set_head(cursor, SelectionGoal::None);
                 }
             });
@@ -11578,11 +11722,32 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.kill_ring_kill_word_count(count.unsigned_abs() as usize, window, cx);
+            return;
+        }
+
+        self.kill_ring_backward_kill_word_count(count as usize, window, cx);
+    }
+
+    fn kill_ring_backward_kill_word_count(
+        &mut self,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let allow_append = self.should_append_to_kill_ring(cx);
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 if selection.is_empty() {
-                    let cursor = movement::previous_word_start_or_newline(map, selection.head());
+                    let mut cursor = selection.head();
+                    for _ in 0..count {
+                        cursor = movement::previous_word_start_or_newline(map, cursor);
+                    }
                     selection.set_head(cursor, SelectionGoal::None);
                 }
             });
@@ -11715,6 +11880,72 @@ impl Editor {
             .iter()
             .map(|selection| buffer.anchor_before(selection.head()))
             .collect()
+    }
+
+    fn restore_selections_to_anchors(
+        &mut self,
+        anchors: &[Anchor],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let display_snapshot = self.display_snapshot(cx);
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let current_selections = self.selections.all::<Point>(&display_snapshot);
+        if current_selections.len() != anchors.len() {
+            return;
+        }
+
+        let selections = anchors
+            .iter()
+            .zip(current_selections.iter())
+            .map(|(anchor, current)| {
+                let point = anchor.to_point(buffer_snapshot);
+                Selection {
+                    id: current.id,
+                    start: point,
+                    end: point,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }
+            })
+            .collect();
+
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.select(selections);
+        });
+    }
+
+    fn take_universal_argument(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<ResolvedUniversalArgument> {
+        let argument = self
+            .universal_argument
+            .take()
+            .map(UniversalArgumentState::resolve);
+        if argument.is_some() {
+            cx.notify();
+        }
+        argument
+    }
+
+    fn take_numeric_universal_argument_or(&mut self, default: i32, cx: &mut Context<Self>) -> i32 {
+        self.take_universal_argument(cx)
+            .map_or(default, ResolvedUniversalArgument::numeric_value)
+    }
+
+    fn clear_universal_argument(&mut self, cx: &mut Context<Self>) -> bool {
+        let did_clear = self.universal_argument.take().is_some();
+        if did_clear {
+            cx.notify();
+        }
+        did_clear
+    }
+
+    fn is_universal_argument_action(action: &dyn Action) -> bool {
+        action.as_any().is::<UniversalArgument>()
+            || action.as_any().is::<UniversalArgumentDigit>()
+            || action.as_any().is::<UniversalArgumentMinus>()
     }
 
     fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
@@ -12139,13 +12370,31 @@ impl Editor {
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.move_right_count(count.unsigned_abs() as usize, window, cx);
+            return;
+        }
+
+        self.move_left_count(count as usize, window, cx);
+    }
+
+    fn move_left_count(&mut self, count: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
-                let cursor = if selection.is_empty() {
-                    movement::left(map, selection.start)
+                let mut cursor = selection.start;
+                if selection.is_empty() {
+                    for _ in 0..count {
+                        cursor = movement::left(map, cursor);
+                    }
                 } else {
-                    selection.start
-                };
+                    for _ in 1..count {
+                        cursor = movement::left(map, cursor);
+                    }
+                }
                 selection.collapse_to(cursor, SelectionGoal::None);
             });
         })
@@ -12158,13 +12407,31 @@ impl Editor {
     }
 
     pub fn move_right(&mut self, _: &MoveRight, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.move_left_count(count.unsigned_abs() as usize, window, cx);
+            return;
+        }
+
+        self.move_right_count(count as usize, window, cx);
+    }
+
+    fn move_right_count(&mut self, count: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
-                let cursor = if selection.is_empty() {
-                    movement::right(map, selection.end)
+                let mut cursor = selection.end;
+                if selection.is_empty() {
+                    for _ in 0..count {
+                        cursor = movement::right(map, cursor);
+                    }
                 } else {
-                    selection.end
-                };
+                    for _ in 1..count {
+                        cursor = movement::right(map, cursor);
+                    }
+                }
                 selection.collapse_to(cursor, SelectionGoal::None)
             });
         })
@@ -12179,6 +12446,19 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.move_down_count(count.unsigned_abs(), window, cx);
+            return;
+        }
+
+        self.move_up_count(count as u32, window, cx);
+    }
+
+    fn move_up_count(&mut self, count: u32, window: &mut Window, cx: &mut Context<Self>) {
         if self.take_rename(true, window, cx).is_some() {
             return;
         }
@@ -12197,9 +12477,10 @@ impl Editor {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up(
+                let (cursor, goal) = movement::up_by_rows(
                     map,
                     selection.start,
+                    count,
                     selection.goal,
                     false,
                     text_layout_details,
@@ -12396,6 +12677,19 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.move_up_count(count.unsigned_abs(), window, cx);
+            return;
+        }
+
+        self.move_down_count(count as u32, window, cx);
+    }
+
+    fn move_down_count(&mut self, count: u32, window: &mut Window, cx: &mut Context<Self>) {
         self.take_rename(true, window, cx);
 
         if self.mode.is_single_line() {
@@ -12412,9 +12706,10 @@ impl Editor {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down(
+                let (cursor, goal) = movement::down_by_rows(
                     map,
                     selection.end,
+                    count,
                     selection.goal,
                     false,
                     text_layout_details,
@@ -12593,12 +12888,31 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.move_to_next_word_end_count(count.unsigned_abs() as usize, window, cx);
+            return;
+        }
+
+        self.move_to_previous_word_start_count(count as usize, window, cx);
+    }
+
+    fn move_to_previous_word_start_count(
+        &mut self,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
-                (
-                    movement::previous_word_start(map, head),
-                    SelectionGoal::None,
-                )
+                let mut cursor = head;
+                for _ in 0..count {
+                    cursor = movement::previous_word_start(map, cursor);
+                }
+                (cursor, SelectionGoal::None)
             });
         })
     }
@@ -12660,22 +12974,57 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.delete_to_next_word_end_count(
+                count.unsigned_abs() as usize,
+                action.ignore_newlines,
+                action.ignore_brackets,
+                window,
+                cx,
+            );
+            return;
+        }
+
+        self.delete_to_previous_word_start_count(
+            count as usize,
+            action.ignore_newlines,
+            action.ignore_brackets,
+            window,
+            cx,
+        );
+    }
+
+    fn delete_to_previous_word_start_count(
+        &mut self,
+        count: usize,
+        ignore_newlines: bool,
+        ignore_brackets: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
-                        let mut cursor = if action.ignore_newlines {
-                            movement::previous_word_start(map, selection.head())
-                        } else {
-                            movement::previous_word_start_or_newline(map, selection.head())
-                        };
-                        cursor = movement::adjust_greedy_deletion(
-                            map,
-                            selection.head(),
-                            cursor,
-                            action.ignore_brackets,
-                        );
+                        let mut cursor = selection.head();
+                        for _ in 0..count {
+                            let next_cursor = if ignore_newlines {
+                                movement::previous_word_start(map, cursor)
+                            } else {
+                                movement::previous_word_start_or_newline(map, cursor)
+                            };
+                            cursor = movement::adjust_greedy_deletion(
+                                map,
+                                cursor,
+                                next_cursor,
+                                ignore_brackets,
+                            );
+                        }
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -12723,9 +13072,31 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.move_to_previous_word_start_count(count.unsigned_abs() as usize, window, cx);
+            return;
+        }
+
+        self.move_to_next_word_end_count(count as usize, window, cx);
+    }
+
+    fn move_to_next_word_end_count(
+        &mut self,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                let mut cursor = head;
+                for _ in 0..count {
+                    cursor = movement::next_word_end(map, cursor);
+                }
+                (cursor, SelectionGoal::None)
             });
         })
     }
@@ -12778,21 +13149,56 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.delete_to_previous_word_start_count(
+                count.unsigned_abs() as usize,
+                action.ignore_newlines,
+                action.ignore_brackets,
+                window,
+                cx,
+            );
+            return;
+        }
+
+        self.delete_to_next_word_end_count(
+            count as usize,
+            action.ignore_newlines,
+            action.ignore_brackets,
+            window,
+            cx,
+        );
+    }
+
+    fn delete_to_next_word_end_count(
+        &mut self,
+        count: usize,
+        ignore_newlines: bool,
+        ignore_brackets: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
-                        let mut cursor = if action.ignore_newlines {
-                            movement::next_word_end(map, selection.head())
-                        } else {
-                            movement::next_word_end_or_newline(map, selection.head())
-                        };
-                        cursor = movement::adjust_greedy_deletion(
-                            map,
-                            selection.head(),
-                            cursor,
-                            action.ignore_brackets,
-                        );
+                        let mut cursor = selection.head();
+                        for _ in 0..count {
+                            let next_cursor = if ignore_newlines {
+                                movement::next_word_end(map, cursor)
+                            } else {
+                                movement::next_word_end_or_newline(map, cursor)
+                            };
+                            cursor = movement::adjust_greedy_deletion(
+                                map,
+                                cursor,
+                                next_cursor,
+                                ignore_brackets,
+                            );
+                        }
                         selection.set_head(cursor, SelectionGoal::None);
                     }
                 });
@@ -12839,13 +13245,30 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        self.move_to_beginning_of_line_count(count, action, window, cx);
+    }
+
+    fn move_to_beginning_of_line_count(
+        &mut self,
+        count: i32,
+        action: &MoveToBeginningOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let stop_at_indent = action.stop_at_indent && !self.mode.is_single_line();
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
+                let point = head.to_point(map);
+                let target_row = universal_argument_line_target_row(
+                    point.row,
+                    count,
+                    map.buffer_snapshot().max_row().0,
+                );
                 (
                     movement::indented_line_beginning(
                         map,
-                        head,
+                        Point::new(target_row, point.column).to_display_point(map),
                         action.stop_at_soft_wraps,
                         stop_at_indent,
                     ),
@@ -12911,10 +13334,31 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        self.move_to_end_of_line_count(count, action, window, cx);
+    }
+
+    fn move_to_end_of_line_count(
+        &mut self,
+        count: i32,
+        action: &MoveToEndOfLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
+                let point = head.to_point(map);
+                let target_row = universal_argument_line_target_row(
+                    point.row,
+                    count,
+                    map.buffer_snapshot().max_row().0,
+                );
                 (
-                    movement::line_end(map, head, action.stop_at_soft_wraps),
+                    movement::line_end(
+                        map,
+                        Point::new(target_row, point.column).to_display_point(map),
+                        action.stop_at_soft_wraps,
+                    ),
                     SelectionGoal::None,
                 )
             });
@@ -12995,6 +13439,24 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.move_to_end_of_paragraph_count(count.unsigned_abs() as usize, window, cx);
+            return;
+        }
+
+        self.move_to_start_of_paragraph_count(count as usize, window, cx);
+    }
+
+    fn move_to_start_of_paragraph_count(
+        &mut self,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -13002,7 +13464,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 selection.collapse_to(
-                    movement::start_of_paragraph(map, selection.head(), 1),
+                    movement::start_of_paragraph(map, selection.head(), count),
                     SelectionGoal::None,
                 )
             });
@@ -13015,6 +13477,24 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let count = self.take_numeric_universal_argument_or(1, cx);
+        if count == 0 {
+            return;
+        }
+        if count < 0 {
+            self.move_to_start_of_paragraph_count(count.unsigned_abs() as usize, window, cx);
+            return;
+        }
+
+        self.move_to_end_of_paragraph_count(count as usize, window, cx);
+    }
+
+    fn move_to_end_of_paragraph_count(
+        &mut self,
+        count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate();
             return;
@@ -13022,7 +13502,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_with(&mut |map, selection| {
                 selection.collapse_to(
-                    movement::end_of_paragraph(map, selection.head(), 1),
+                    movement::end_of_paragraph(map, selection.head(), count),
                     SelectionGoal::None,
                 )
             });
@@ -21701,6 +22181,7 @@ impl Editor {
         self.blink_manager.update(cx, BlinkManager::disable);
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+        self.clear_universal_argument(cx);
 
         if let Some(blame) = self.blame.as_ref() {
             blame.update(cx, GitBlame::blur)
@@ -21719,6 +22200,35 @@ impl Editor {
         self.take_active_edit_prediction(true, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
+    }
+
+    fn observe_keystrokes(
+        &mut self,
+        event: &KeystrokeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.universal_argument.is_none()
+            || !self.focus_handle(cx).contains_focused(window, cx)
+            || window.has_pending_keystrokes()
+            || event.keystroke.is_ime_in_progress()
+        {
+            return;
+        }
+
+        if event
+            .action
+            .as_ref()
+            .is_some_and(|action| Self::is_universal_argument_action(action.as_ref()))
+        {
+            return;
+        }
+
+        if event.action.is_none() && event.keystroke.key_char.is_some() {
+            return;
+        }
+
+        self.clear_universal_argument(cx);
     }
 
     pub fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -24543,6 +25053,148 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
         range
     } else {
         range.start..range.start
+    }
+}
+
+fn extend_selection_for_kill_ring_cut(
+    map: &DisplaySnapshot,
+    selection: &mut Selection<DisplayPoint>,
+    line_count: i32,
+) {
+    if line_count > 0 {
+        if line_count == 1 {
+            selection.end = movement::line_end(map, selection.end, false);
+            if selection.is_empty() {
+                selection.end = DisplayPoint::new(selection.end.row() + 1_u32, 0);
+            }
+        } else {
+            let point = selection.end.to_point(map);
+            let max_point = map.buffer_snapshot().max_point();
+            let target_row = point.row.saturating_add(line_count as u32);
+            selection.end = if target_row > max_point.row {
+                map.point_to_display_point(max_point, Bias::Right)
+            } else {
+                map.point_to_display_point(Point::new(target_row, 0), Bias::Right)
+            };
+        }
+    } else {
+        let point = selection.start.to_point(map);
+        let target_row = point.row.saturating_sub(line_count.unsigned_abs());
+        selection.start = map.point_to_display_point(Point::new(target_row, 0), Bias::Left);
+    }
+
+    selection.goal = SelectionGoal::None;
+}
+
+fn universal_argument_yank_index(value: i32, entry_count: usize) -> usize {
+    let magnitude = value.unsigned_abs() as usize;
+    if magnitude <= 1 {
+        0
+    } else {
+        (magnitude - 1) % entry_count
+    }
+}
+
+fn universal_argument_line_target_row(current_row: u32, count: i32, max_row: u32) -> u32 {
+    let row_delta = count.saturating_sub(1);
+    if row_delta >= 0 {
+        current_row.saturating_add(row_delta as u32).min(max_row)
+    } else {
+        current_row.saturating_sub(row_delta.unsigned_abs())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UniversalArgumentState {
+    Plain { value: i32 },
+    Numeric(UniversalArgumentNumericState),
+}
+
+impl UniversalArgumentState {
+    fn new_plain() -> Self {
+        Self::Plain { value: 4 }
+    }
+
+    fn multiply(self) -> Self {
+        match self {
+            Self::Plain { value } => Self::Plain {
+                value: value.saturating_mul(4),
+            },
+            Self::Numeric(numeric) => Self::Numeric(numeric),
+        }
+    }
+
+    fn push_digit(self, digit: usize) -> Self {
+        let digit = digit.min(9) as i32;
+        match self {
+            Self::Plain { .. } => Self::Numeric(UniversalArgumentNumericState {
+                magnitude: digit,
+                is_negative: false,
+                has_digits: true,
+            }),
+            Self::Numeric(numeric) => Self::Numeric(numeric.push_digit(digit)),
+        }
+    }
+
+    fn apply_minus(self) -> Self {
+        match self {
+            Self::Plain { .. } => Self::Numeric(UniversalArgumentNumericState {
+                magnitude: 0,
+                is_negative: true,
+                has_digits: false,
+            }),
+            Self::Numeric(numeric) => Self::Numeric(numeric.apply_minus()),
+        }
+    }
+
+    fn resolve(self) -> ResolvedUniversalArgument {
+        match self {
+            Self::Plain { value } => ResolvedUniversalArgument::Plain(value),
+            Self::Numeric(numeric) => ResolvedUniversalArgument::Numeric(numeric.value()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct UniversalArgumentNumericState {
+    magnitude: i32,
+    is_negative: bool,
+    has_digits: bool,
+}
+
+impl UniversalArgumentNumericState {
+    fn push_digit(mut self, digit: i32) -> Self {
+        self.magnitude = self.magnitude.saturating_mul(10).saturating_add(digit);
+        self.has_digits = true;
+        self
+    }
+
+    fn apply_minus(mut self) -> Self {
+        self.is_negative = !self.is_negative;
+        self
+    }
+
+    fn value(self) -> i32 {
+        let magnitude = if self.has_digits { self.magnitude } else { 1 };
+        if self.is_negative {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResolvedUniversalArgument {
+    Plain(i32),
+    Numeric(i32),
+}
+
+impl ResolvedUniversalArgument {
+    fn numeric_value(self) -> i32 {
+        match self {
+            Self::Plain(value) | Self::Numeric(value) => value,
+        }
     }
 }
 

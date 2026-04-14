@@ -224,6 +224,11 @@ pub struct ExpandExcerptsDown {
 #[action(namespace = editor)]
 pub struct HandleInput(pub String);
 
+/// Accumulates a digit for the active universal argument (Emacs-style).
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+pub struct UniversalArgumentDigit(pub usize);
+
 /// Deletes from the cursor to the end of the next word.
 /// Stops before the end of the next word, if whitespace sequences of length >= 2 are encountered.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
@@ -634,6 +639,10 @@ actions!(
         KillRingYank,
         /// Cycles through kill ring entries, replacing the last yank (Emacs-style).
         KillRingYankPop,
+        /// Starts or extends a universal argument (Emacs-style).
+        UniversalArgument,
+        /// Applies a minus sign to the active universal argument (Emacs-style).
+        UniversalArgumentMinus,
         /// Moves cursor down one line.
         LineDown,
         /// Moves cursor up one line.

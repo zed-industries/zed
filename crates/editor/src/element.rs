@@ -249,6 +249,9 @@ impl EditorElement {
         register_action(editor, window, Editor::select_page_down);
         register_action(editor, window, Editor::select_page_up);
         register_action(editor, window, Editor::cancel);
+        register_action(editor, window, Editor::universal_argument);
+        register_action(editor, window, Editor::universal_argument_digit);
+        register_action(editor, window, Editor::universal_argument_minus);
         register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::next_snippet_tabstop);
         register_action(editor, window, Editor::previous_snippet_tabstop);

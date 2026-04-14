@@ -56,6 +56,7 @@
       "alt-,": "pane::GoBack", // xref-pop-marker-stack
       "ctrl-x h": "editor::SelectAll", // mark-whole-buffer
       "ctrl-d": "editor::Delete", // delete-char
+      "ctrl-u": "editor::UniversalArgument", // universal-argument
       "alt-d": "editor::KillRingKillWord", // kill-word
       "alt-backspace": "editor::KillRingBackwardKillWord", // backward-kill-word
       "alt-delete": "editor::KillRingBackwardKillWord", // backward-kill-word
@@ -84,6 +85,23 @@
       "ctrl-r": "buffer_search::Deploy", // isearch-backward
       "alt-^": "editor::JoinLines", // join-line
       "alt-q": "editor::Rewrap", // fill-paragraph
+    },
+  },
+  {
+    "context": "Editor && universal_argument",
+    "bindings": {
+      "ctrl-u": "editor::UniversalArgument",
+      "-": "editor::UniversalArgumentMinus",
+      "0": ["editor::UniversalArgumentDigit", 0],
+      "1": ["editor::UniversalArgumentDigit", 1],
+      "2": ["editor::UniversalArgumentDigit", 2],
+      "3": ["editor::UniversalArgumentDigit", 3],
+      "4": ["editor::UniversalArgumentDigit", 4],
+      "5": ["editor::UniversalArgumentDigit", 5],
+      "6": ["editor::UniversalArgumentDigit", 6],
+      "7": ["editor::UniversalArgumentDigit", 7],
+      "8": ["editor::UniversalArgumentDigit", 8],
+      "9": ["editor::UniversalArgumentDigit", 9]
     },
   },
   {
