@@ -319,10 +319,27 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
             let mut matches = self.build_fixed_entries();
 
             if !repo_worktrees.is_empty() {
+                let main_worktree_path = repo_worktrees
+                    .iter()
+                    .find(|wt| wt.is_main)
+                    .map(|wt| wt.path.clone());
+
+                let mut sorted = repo_worktrees.clone();
+                let project_paths = &self.project_worktree_paths;
+
+                sorted.sort_by(|a, b| {
+                    let a_is_current = project_paths.contains(&a.path);
+                    let b_is_current = project_paths.contains(&b.path);
+                    b_is_current.cmp(&a_is_current).then_with(|| {
+                        a.directory_name(main_worktree_path.as_deref())
+                            .cmp(&b.directory_name(main_worktree_path.as_deref()))
+                    })
+                });
+
                 matches.push(ThreadWorktreeEntry::Separator);
-                for worktree in &repo_worktrees {
+                for worktree in sorted {
                     matches.push(ThreadWorktreeEntry::Worktree {
-                        worktree: worktree.clone(),
+                        worktree,
                         positions: Vec::new(),
                     });
                 }
