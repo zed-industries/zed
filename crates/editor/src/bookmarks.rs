@@ -2,12 +2,14 @@ use std::ops::Range;
 
 use gpui::Entity;
 use multi_buffer::{Anchor, MultiBufferOffset, MultiBufferSnapshot, ToOffset as _};
+use text::Bias;
 use project::{Project, bookmark_store::BookmarkStore};
 use rope::Point;
 use ui::{Context, Window};
 use util::ResultExt as _;
 use workspace::{Workspace, searchable::Direction};
 
+use crate::display_map::DisplayRow;
 use crate::{
     Editor, GoToNextBookmark, GoToPreviousBookmark, MultibufferSelectionMode, SelectionEffects,
     ToggleBookmark, ViewBookmarks, scroll::Autoscroll,
@@ -54,6 +56,48 @@ impl Editor {
                 }
             }
         }
+
+        cx.notify();
+    }
+
+    pub fn toggle_bookmark_at_row(&mut self, row: DisplayRow, cx: &mut Context<Self>) {
+        let Some(bookmark_store) = &self.bookmark_store else {
+            return;
+        };
+        let display_snapshot = self.display_snapshot(cx);
+        let point = display_snapshot.display_point_to_point(row.as_display_point(), Bias::Left);
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let anchor = buffer_snapshot.anchor_before(point);
+
+        let Some((position, _)) = buffer_snapshot.anchor_to_buffer_anchor(anchor) else {
+            return;
+        };
+        let Some(buffer) = self.buffer.read(cx).buffer(position.buffer_id) else {
+            return;
+        };
+
+        bookmark_store.update(cx, |bookmark_store, cx| {
+            bookmark_store.toggle_bookmark(buffer, position, cx);
+        });
+
+        cx.notify();
+    }
+
+    pub fn toggle_bookmark_at_anchor(&mut self, anchor: Anchor, cx: &mut Context<Self>) {
+        let Some(bookmark_store) = &self.bookmark_store else {
+            return;
+        };
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some((position, _)) = buffer_snapshot.anchor_to_buffer_anchor(anchor) else {
+            return;
+        };
+        let Some(buffer) = self.buffer.read(cx).buffer(position.buffer_id) else {
+            return;
+        };
+
+        bookmark_store.update(cx, |bookmark_store, cx| {
+            bookmark_store.toggle_bookmark(buffer, position, cx);
+        });
 
         cx.notify();
     }

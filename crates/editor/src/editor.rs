@@ -9110,8 +9110,8 @@ impl Editor {
             .size(ui::ButtonSize::None)
             .icon_color(Color::Info)
             .style(ButtonStyle::Transparent)
-            .on_click(cx.listener(move |editor, _: &ClickEvent, window, cx| {
-                editor.toggle_bookmark(&ToggleBookmark, window, cx);
+            .on_click(cx.listener(move |editor, _, _, cx| {
+                editor.toggle_bookmark_at_row(row, cx);
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, None, event.position(), window, cx);
@@ -12573,25 +12573,6 @@ impl Editor {
     #[cfg(any(test, feature = "test-support"))]
     pub fn breakpoint_store(&self) -> Option<Entity<BreakpointStore>> {
         self.breakpoint_store.clone()
-    }
-
-    fn toggle_bookmark_at_anchor(&mut self, anchor: Anchor, cx: &mut Context<Self>) {
-        let Some(bookmark_store) = &self.bookmark_store else {
-            return;
-        };
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some((position, _)) = buffer_snapshot.anchor_to_buffer_anchor(anchor) else {
-            return;
-        };
-        let Some(buffer) = self.buffer.read(cx).buffer(position.buffer_id) else {
-            return;
-        };
-
-        bookmark_store.update(cx, |bookmark_store, cx| {
-            bookmark_store.toggle_bookmark(buffer, position, cx);
-        });
-
-        cx.notify();
     }
 
     pub fn prepare_restore_change(
