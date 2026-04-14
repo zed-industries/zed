@@ -1027,15 +1027,14 @@ enum ColumnarSelectionState {
     },
 }
 
-/// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
-/// a breakpoint on them.
+/// Represents a button that shows up when hovering over lines in the gutter that don't have
+/// any button on them already (like a bookmark, breakpoint or run indicator).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PhantomBreakpointIndicator {
+struct GutterHoverButton {
     display_row: DisplayRow,
     /// There's a small debounce between hovering over the line and showing the indicator.
     /// We don't want to show the indicator when moving the mouse from editor to e.g. project panel.
     is_active: bool,
-    collides_with_existing_breakpoint: bool,
 }
 
 /// Represents a diff review button indicator that shows up when hovering over lines in the gutter
@@ -1298,7 +1297,7 @@ pub struct Editor {
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
-    gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
+    gutter_hover_button: (Option<GutterHoverButton>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
     pub(crate) diff_review_drag_state: Option<DiffReviewDragState>,
     /// Active diff review overlays. Multiple overlays can be open simultaneously
@@ -2537,7 +2536,7 @@ impl Editor {
 
             bookmark_store,
             breakpoint_store,
-            gutter_breakpoint_indicator: (None, None),
+            gutter_hover_button: (None, None),
             gutter_diff_review_indicator: (None, None),
             diff_review_drag_state: None,
             diff_review_overlays: Vec::new(),
@@ -8613,7 +8612,7 @@ impl Editor {
 
         let mouse_position = window.mouse_position();
         if !position_map.text_hitbox.is_hovered(window) {
-            if self.gutter_breakpoint_indicator.0.is_some() {
+            if self.gutter_hover_button.0.is_some() {
                 cx.notify();
             }
             return;
@@ -9374,20 +9373,6 @@ impl Editor {
         })
     }
 
-    /// TODO!(yara) This renders two kinds of breakpoints:
-    /// - a phantom breakpoint, aka a button to add a breakpoint
-    /// - an already set breakpoint
-    ///
-    /// To me it does not make sense to have the phantom breakpoint aka
-    /// add breakpoint button (only ever one) be set as part of looping
-    /// over all the actual existing breakpoints. This feels like forced
-    /// deduplication.
-    ///
-    /// We need to not show an add breakpoint button when there is a bookmark
-    /// such that we can click the bookmark to remove it.
-    ///
-    /// => Can we get rid of the phantom breakpoint in the breakpoint "list"?
-    ///    Then 'just' call this separately, since its a separate concern right?
     fn render_breakpoint(
         &self,
         position: Anchor,
@@ -9450,7 +9435,6 @@ impl Editor {
                     };
 
                     window.focus(&editor.focus_handle(cx), cx);
-                    editor.update_breakpoint_collision_on_toggle(row, &edit_action);
                     editor.edit_breakpoint_at_anchor(
                         position,
                         breakpoint.as_ref().clone(),
@@ -9514,10 +9498,6 @@ impl Editor {
                         editor.toggle_bookmark_at_row(row, cx);
                     } else {
                         window.focus(&editor.focus_handle(cx), cx);
-                        editor.update_breakpoint_collision_on_toggle(
-                            row,
-                            &BreakpointEditAction::Toggle,
-                        );
                         editor.edit_breakpoint_at_anchor(
                             position,
                             proposed_breakpoint.clone(),
@@ -12514,19 +12494,7 @@ impl Editor {
             return;
         }
 
-        let snapshot = self.snapshot(window, cx);
         for (anchor, breakpoint) in self.breakpoints_at_cursors(window, cx) {
-            if self.gutter_breakpoint_indicator.0.is_some() {
-                let display_row = anchor
-                    .to_point(snapshot.buffer_snapshot())
-                    .to_display_point(&snapshot.display_snapshot)
-                    .row();
-                self.update_breakpoint_collision_on_toggle(
-                    display_row,
-                    &BreakpointEditAction::Toggle,
-                );
-            }
-
             if let Some(breakpoint) = breakpoint {
                 self.edit_breakpoint_at_anchor(
                     anchor,
@@ -12541,21 +12509,6 @@ impl Editor {
                     BreakpointEditAction::Toggle,
                     cx,
                 );
-            }
-        }
-    }
-
-    fn update_breakpoint_collision_on_toggle(
-        &mut self,
-        display_row: DisplayRow,
-        edit_action: &BreakpointEditAction,
-    ) {
-        if let Some(ref mut breakpoint_indicator) = self.gutter_breakpoint_indicator.0 {
-            if breakpoint_indicator.display_row == display_row
-                && matches!(edit_action, BreakpointEditAction::Toggle)
-            {
-                breakpoint_indicator.collides_with_existing_breakpoint =
-                    !breakpoint_indicator.collides_with_existing_breakpoint;
             }
         }
     }

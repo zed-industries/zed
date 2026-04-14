@@ -4,12 +4,12 @@ use crate::{
     ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
     CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
     Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
-    FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
-    InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    FocusedBlock, GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput,
+    HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
     MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
-    PhantomBreakpointIndicator, PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, Selection, SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
+    PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
+    SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
+    ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -62,7 +62,7 @@ use multi_buffer::{
 };
 
 use project::{
-    DisableAiSettings, Entry, ProjectPath,
+    DisableAiSettings, Entry,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::ProjectSettings,
 };
@@ -1396,49 +1396,26 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_anchor(valid_point, Bias::Left);
 
-            if let Some((buffer_anchor, buffer_snapshot)) = position_map
+            if position_map
                 .snapshot
                 .buffer_snapshot()
                 .anchor_to_buffer_anchor(buffer_anchor)
-                && let Some(file) = buffer_snapshot.file()
+                .is_some()
             {
-                let as_point = text::ToPoint::to_point(&buffer_anchor, buffer_snapshot);
-
                 let is_visible = editor
-                    .gutter_breakpoint_indicator
+                    .gutter_hover_button
                     .0
                     .is_some_and(|indicator| indicator.is_active);
 
-                let has_existing_breakpoint =
-                    editor.breakpoint_store.as_ref().is_some_and(|store| {
-                        let Some(project) = &editor.project else {
-                            return false;
-                        };
-                        let Some(abs_path) = project.read(cx).absolute_path(
-                            &ProjectPath {
-                                path: file.path().clone(),
-                                worktree_id: file.worktree_id(cx),
-                            },
-                            cx,
-                        ) else {
-                            return false;
-                        };
-                        store
-                            .read(cx)
-                            .breakpoint_at_row(&abs_path, as_point.row, cx)
-                            .is_some()
-                    });
-
                 if !is_visible {
-                    editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
+                    editor.gutter_hover_button.1.get_or_insert_with(|| {
                         cx.spawn(async move |this, cx| {
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
                                 .await;
 
                             this.update(cx, |this, cx| {
-                                if let Some(indicator) = this.gutter_breakpoint_indicator.0.as_mut()
-                                {
+                                if let Some(indicator) = this.gutter_hover_button.0.as_mut() {
                                     indicator.is_active = true;
                                     cx.notify();
                                 }
@@ -1448,22 +1425,21 @@ impl EditorElement {
                     });
                 }
 
-                Some(PhantomBreakpointIndicator {
+                Some(GutterHoverButton {
                     display_row: valid_point.row(),
                     is_active: is_visible,
-                    collides_with_existing_breakpoint: has_existing_breakpoint,
                 })
             } else {
-                editor.gutter_breakpoint_indicator.1 = None;
+                editor.gutter_hover_button.1 = None;
                 None
             }
         } else {
-            editor.gutter_breakpoint_indicator.1 = None;
+            editor.gutter_hover_button.1 = None;
             None
         };
 
-        if &breakpoint_indicator != &editor.gutter_breakpoint_indicator.0 {
-            editor.gutter_breakpoint_indicator.0 = breakpoint_indicator;
+        if &breakpoint_indicator != &editor.gutter_hover_button.0 {
+            editor.gutter_hover_button.0 = breakpoint_indicator;
             cx.notify();
         }
 
@@ -10771,15 +10747,15 @@ impl Element for EditorElement {
                         Vec::new()
                     };
 
-                    let phantom_breakpoint = self
+                    let gutter_hover_button = self
                         .editor
                         .read(cx)
-                        .gutter_breakpoint_indicator
+                        .gutter_hover_button
                         .0
                         .filter(|phantom| phantom.is_active)
                         .map(|phantom| phantom.display_row);
 
-                    if let Some(row) = phantom_breakpoint
+                    if let Some(row) = gutter_hover_button
                         && !breakpoint_rows.contains_key(&row)
                         && !run_indicator_rows.contains(&row)
                         && !bookmark_rows.contains(&row)
@@ -12463,7 +12439,7 @@ mod tests {
         editor_tests::{init_test, update_test_language_settings},
     };
     use gpui::{TestAppContext, VisualTestContext};
-    use language::{Buffer, language_settings, tree_sitter_python};
+    use language::language_settings;
     use log::info;
     use rand::{RngCore, rngs::StdRng};
     use std::num::NonZeroU32;
