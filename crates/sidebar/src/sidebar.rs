@@ -3493,8 +3493,7 @@ impl Sidebar {
                     }?;
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
                     let timestamp: SharedString =
-                        format_history_entry_timestamp(self.display_time(&thread.metadata))
-                            .into();
+                        format_history_entry_timestamp(self.display_time(&thread.metadata)).into();
                     Some(ThreadSwitcherEntry {
                         session_id,
                         title: thread.metadata.display_title(),
@@ -3544,9 +3543,7 @@ impl Sidebar {
                         (Some(a_time), Some(b_time)) => b_time.cmp(a_time),
                         (Some(_), None) => std::cmp::Ordering::Less,
                         (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => {
-                            b.metadata.updated_at.cmp(&a.metadata.updated_at)
-                        }
+                        (None, None) => b.metadata.updated_at.cmp(&a.metadata.updated_at),
                     }
                 }
             }
