@@ -1198,7 +1198,14 @@ impl GitGraph {
         accent_color: gpui::Hsla,
         is_head: bool,
     ) -> impl IntoElement {
-        Chip::new(name.clone())
+        let is_tag = name.clone().contains("tag: ");
+
+        let display_name = match is_tag {
+            true => name.replace("tag: ", "").into(),
+            false => name.clone(),
+        };
+
+        Chip::new(display_name)
             .label_size(LabelSize::Small)
             .truncate()
             .map(|chip| {
@@ -1207,8 +1214,13 @@ impl GitGraph {
                         .bg_color(accent_color.opacity(0.25))
                         .border_color(accent_color.opacity(0.5))
                 } else {
-                    chip.bg_color(accent_color.opacity(0.08))
-                        .border_color(accent_color.opacity(0.25))
+                    chip.icon(if is_tag {
+                        IconName::GitTag
+                    } else {
+                        IconName::GitBranch
+                    })
+                    .bg_color(accent_color.opacity(0.08))
+                    .border_color(accent_color.opacity(0.25))
                 }
             })
     }
