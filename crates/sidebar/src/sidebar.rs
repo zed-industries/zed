@@ -1217,45 +1217,38 @@ impl Sidebar {
                     });
 
                 // Build a ThreadEntry from a metadata row.
-                let make_thread_entry = |row: ThreadMetadata,
-                                         workspace: ThreadEntryWorkspace|
-                 -> ThreadEntry {
-                    let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                    // Use only live git data for the sidebar. Persisted
-                    // branch_names may contain stale/incorrect values
-                    // from previous runs. The backfill loop will persist
-                    // correct live data for the archive view to use.
-                    let mut branch_names: HashMap<PathBuf, SharedString> = branch_by_path.clone();
-                    // For folder paths that still have no branch, fall
-                    // back to the repo-level branch. This handles threads
-                    // whose worktrees were deleted: we show the branch
-                    // of whatever is currently checked out from the same
-                    // repo.
-                    for (main_path, folder_path) in row.worktree_paths.ordered_pairs() {
-                        if !branch_names.contains_key(folder_path) {
-                            if let Some(branch) = group_fallback_branch.as_ref() {
+                let make_thread_entry =
+                    |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
+                        let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
+                        // Build branch names for just this thread's folder paths.
+                        // Use live git data, falling back to the group's workspace
+                        // branch for paths without live data.
+                        let mut branch_names: HashMap<PathBuf, SharedString> = HashMap::new();
+                        for (_, folder_path) in row.worktree_paths.ordered_pairs() {
+                            if let Some(branch) = branch_by_path.get(folder_path) {
+                                branch_names.insert(folder_path.clone(), branch.clone());
+                            } else if let Some(branch) = group_fallback_branch.as_ref() {
                                 branch_names.insert(folder_path.clone(), branch.clone());
                             }
                         }
-                    }
-                    let worktrees =
-                        worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
-                    let is_draft = row.is_draft();
-                    ThreadEntry {
-                        metadata: row,
-                        icon,
-                        icon_from_external_svg,
-                        status: AgentThreadStatus::default(),
-                        workspace,
-                        is_live: false,
-                        is_background: false,
-                        is_title_generating: false,
-                        is_draft,
-                        highlight_positions: Vec::new(),
-                        worktrees,
-                        diff_stats: DiffStats::default(),
-                    }
-                };
+                        let worktrees =
+                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_names);
+                        let is_draft = row.is_draft();
+                        ThreadEntry {
+                            metadata: row,
+                            icon,
+                            icon_from_external_svg,
+                            status: AgentThreadStatus::default(),
+                            workspace,
+                            is_live: false,
+                            is_background: false,
+                            is_title_generating: false,
+                            is_draft,
+                            highlight_positions: Vec::new(),
+                            worktrees,
+                            diff_stats: DiffStats::default(),
+                        }
+                    };
 
                 // Main code path: one query per group via main_worktree_paths.
                 // The main_worktree_paths column is set on all new threads and
