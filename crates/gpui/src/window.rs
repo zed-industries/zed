@@ -7,12 +7,13 @@ use crate::{
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
+    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton,
+    MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, ScrollDirection,
+    ScrollWheelEvent, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
     SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
     TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
     TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
@@ -1046,6 +1047,25 @@ pub(crate) struct ElementStateBox {
     pub(crate) inner: Box<dyn Any>,
     #[cfg(debug_assertions)]
     pub(crate) type_name: &'static str,
+}
+
+/// Primary direction of a vertical scroll delta, or `None` if the delta is
+/// zero or primarily horizontal.
+fn scroll_direction(delta: &crate::ScrollDelta) -> Option<ScrollDirection> {
+    let (x, y) = match delta {
+        crate::ScrollDelta::Pixels(p) => (p.x.0, p.y.0),
+        crate::ScrollDelta::Lines(p) => (p.x, p.y),
+    };
+    if y.abs() <= x.abs() {
+        return None;
+    }
+    if y > 0.0 {
+        Some(ScrollDirection::Up)
+    } else if y < 0.0 {
+        Some(ScrollDirection::Down)
+    } else {
+        None
+    }
 }
 
 fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
@@ -4244,6 +4264,67 @@ impl Window {
             self.handle_inspector_mouse_event(event, cx);
             // When inspector is picking, all other mouse handling is skipped.
             return;
+        }
+
+        if let Some(mouse_down) = event.downcast_ref::<MouseDownEvent>() {
+            let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+            let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+            let bindings = self.rendered_frame.dispatch_tree.dispatch_mouse(
+                &mouse_down.button,
+                &mouse_down.modifiers,
+                mouse_down.click_count,
+                &dispatch_path,
+            );
+            if !bindings.is_empty() {
+                cx.propagate_event = true;
+                for binding in bindings {
+                    self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                    if !cx.propagate_event {
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Suppress the platform-level MouseUp (e.g. Linux middle-click paste)
+        // only when the matching MouseDown would have fired a user binding.
+        // Probing with the event's own modifiers/click_count avoids swallowing
+        // unrelated releases (e.g. plain mouse1 drag-release when only
+        // `shift-mouse1` is bound).
+        if let Some(mouse_up) = event.downcast_ref::<MouseUpEvent>() {
+            let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+            let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+            let bindings = self.rendered_frame.dispatch_tree.dispatch_mouse(
+                &mouse_up.button,
+                &mouse_up.modifiers,
+                mouse_up.click_count,
+                &dispatch_path,
+            );
+            if !bindings.is_empty() {
+                return;
+            }
+        }
+
+        // Scroll bindings only fire when modifiers are held, so unmodified scrolling
+        // reaches normal scroll handlers.
+        if let Some(scroll) = event.downcast_ref::<ScrollWheelEvent>()
+            && scroll.modifiers.number_of_modifiers() > 0
+            && let Some(direction) = scroll_direction(&scroll.delta)
+        {
+            let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+            let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+            let bindings = self.rendered_frame.dispatch_tree.dispatch_scroll(
+                direction,
+                &scroll.modifiers,
+                &dispatch_path,
+            );
+            cx.propagate_event = true;
+            for binding in bindings {
+                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if !cx.propagate_event {
+                    return;
+                }
+            }
         }
 
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
