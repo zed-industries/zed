@@ -1797,21 +1797,7 @@ impl Sidebar {
                             move |this, _, window, cx| {
                                 this.set_group_expanded(&key, true, cx);
                                 this.selection = None;
-                                let workspace = this.multi_workspace.upgrade().and_then(|mw| {
-                                    let mw = mw.read(cx);
-                                    let active = mw.workspace().clone();
-                                    let active_key = active.read(cx).project_group_key(cx);
-                                    if active_key == key {
-                                        Some(active)
-                                    } else {
-                                        mw.workspace_for_paths(
-                                            key.path_list(),
-                                            key.host().as_ref(),
-                                            cx,
-                                        )
-                                    }
-                                });
-                                if let Some(workspace) = workspace {
+                                if let Some(workspace) = this.workspace_for_group(&key, cx) {
                                     this.create_new_thread(&workspace, window, cx);
                                 } else {
                                     this.open_workspace_and_create_draft(&key, window, cx);
@@ -4074,22 +4060,17 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // If there is a keyboard selection, walk backwards through
-        // `project_header_indices` to find the header that owns the selected
-        // row. Otherwise fall back to the active workspace.
-        // Always use the currently active workspace so that drafts
-        // are created in the linked worktree the user is focused on,
-        // not the main worktree resolved from the project header.
-        let workspace = self
-            .multi_workspace
-            .upgrade()
-            .map(|mw| mw.read(cx).workspace().clone());
-
-        let Some(workspace) = workspace else {
-            return;
-        };
-
-        self.create_new_thread(&workspace, window, cx);
+        if let Some(key) = self.selected_group_key() {
+            self.set_group_expanded(&key, true, cx);
+            self.selection = None;
+            if let Some(workspace) = self.workspace_for_group(&key, cx) {
+                self.create_new_thread(&workspace, window, cx);
+            } else {
+                self.open_workspace_and_create_draft(&key, window, cx);
+            }
+        } else if let Some(workspace) = self.active_workspace(cx) {
+            self.create_new_thread(&workspace, window, cx);
+        }
     }
 
     fn create_new_thread(
@@ -4205,6 +4186,34 @@ impl Sidebar {
         let panel = workspace.read(cx).panel::<AgentPanel>(cx)?;
         let raw = panel.read(cx).editor_text(draft_id, cx)?;
         Self::truncate_draft_label(&raw)
+    }
+
+    fn selected_group_key(&self) -> Option<ProjectGroupKey> {
+        let ix = self.selection?;
+        match self.contents.entries.get(ix) {
+            Some(ListEntry::ProjectHeader { key, .. }) => Some(key.clone()),
+            Some(ListEntry::Thread(_) | ListEntry::ViewMore { .. }) => {
+                (0..ix)
+                    .rev()
+                    .find_map(|i| match self.contents.entries.get(i) {
+                        Some(ListEntry::ProjectHeader { key, .. }) => Some(key.clone()),
+                        _ => None,
+                    })
+            }
+            _ => None,
+        }
+    }
+
+    fn workspace_for_group(&self, key: &ProjectGroupKey, cx: &App) -> Option<Entity<Workspace>> {
+        let mw = self.multi_workspace.upgrade()?;
+        let mw = mw.read(cx);
+        let active = mw.workspace().clone();
+        let active_key = active.read(cx).project_group_key(cx);
+        if active_key == *key {
+            Some(active)
+        } else {
+            mw.workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
+        }
     }
 
     fn active_project_group_key(&self, cx: &App) -> Option<ProjectGroupKey> {
@@ -4411,18 +4420,6 @@ impl Sidebar {
             return;
         };
         self.collapse_thread_group(&active_key, cx);
-    }
-
-    fn on_new_thread(
-        &mut self,
-        _: &workspace::NewThread,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(workspace) = self.active_workspace(cx) else {
-            return;
-        };
-        self.create_new_thread(&workspace, window, cx);
     }
 
     fn render_no_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4971,7 +4968,6 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::on_previous_thread))
             .on_action(cx.listener(Self::on_show_more_threads))
             .on_action(cx.listener(Self::on_show_fewer_threads))
-            .on_action(cx.listener(Self::on_new_thread))
             .on_action(cx.listener(|this, _: &OpenRecent, window, cx| {
                 this.recent_projects_popover_handle.toggle(window, cx);
             }))
