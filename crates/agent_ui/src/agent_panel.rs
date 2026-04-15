@@ -32,11 +32,11 @@ use zed_actions::{
 use crate::DEFAULT_THREAD_TITLE;
 use crate::thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore};
 use crate::{
-    AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard,
-    CreateWorktree, Follow, InlineAssistant, LoadThreadFromClipboard, NewThread,
-    NewWorktreeBranchTarget, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory,
-    ResetTrialEndUpsell, ResetTrialUpsell, SwitchWorktree, ToggleNavigationMenu,
-    ToggleNewThreadMenu, ToggleOptionsMenu, ToggleWorktreeSelector,
+    AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CreateWorktree,
+    Follow, InlineAssistant, LoadThreadFromClipboard, NewThread, NewWorktreeBranchTarget,
+    OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
+    SwitchWorktree, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    ToggleWorktreeSelector,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
     thread_worktree_picker::ThreadWorktreePicker,
@@ -491,12 +491,7 @@ pub fn init(cx: &mut App) {
                             AgentPanel::capture_workspace_state(workspace, window, cx);
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                             panel.update(cx, |panel, cx| {
-                                panel.create_worktree(
-                                    action,
-                                    previous_state,
-                                    window,
-                                    cx,
-                                );
+                                panel.create_worktree(action, previous_state, window, cx);
                             });
                         }
                     },

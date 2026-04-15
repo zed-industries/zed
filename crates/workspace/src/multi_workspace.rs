@@ -1683,7 +1683,15 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(PathList::new(&paths), None, &[], None, OpenMode::Activate, window, cx)
+            self.find_or_create_local_workspace(
+                PathList::new(&paths),
+                None,
+                &[],
+                None,
+                OpenMode::Activate,
+                window,
+                cx,
+            )
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {

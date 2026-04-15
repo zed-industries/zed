@@ -531,8 +531,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                                 .size(IconSize::Small),
                         )
                         .child(
-                            Label::new(label)
-                                .when(is_disabled, |this| this.color(Color::Disabled)),
+                            Label::new(label).when(is_disabled, |this| this.color(Color::Disabled)),
                         ),
                 )
                 .when_some(disabled_tooltip, |this, reason| {
@@ -560,8 +559,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
 
                 let label = format!("Create new worktree based on {branch_label}");
 
-                let disabled_tooltip =
-                    is_create_disabled.then(|| no_git_reason.clone());
+                let disabled_tooltip = is_create_disabled.then(|| no_git_reason.clone());
 
                 let item = create_new_list_item(
                     "create-from-current".to_string().into(),
@@ -578,8 +576,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
             } => {
                 let label = format!("Create new worktree based on {default_branch_name}");
 
-                let disabled_tooltip =
-                    is_create_disabled.then(|| no_git_reason.clone());
+                let disabled_tooltip = is_create_disabled.then(|| no_git_reason.clone());
 
                 let item = create_new_list_item(
                     "create-from-main".to_string().into(),
@@ -840,10 +837,14 @@ mod tests {
         )
         .await;
 
-        picker.update(cx, |picker, window, cx| picker.refresh(window, cx)).unwrap();
+        picker
+            .update(cx, |picker, window, cx| picker.refresh(window, cx))
+            .unwrap();
         cx.run_until_parked();
 
-        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        let names = picker
+            .read_with(cx, |picker, _| entry_names(&picker.delegate))
+            .unwrap();
 
         assert_eq!(
             names,
@@ -857,15 +858,21 @@ mod tests {
         );
 
         // When current branch differs from default, CreateFromDefaultBranch appears.
-        picker.update(cx, |picker, _window, cx| {
-            picker.delegate.current_branch_name = Some("feature".into());
-            picker.delegate.default_branch_name = Some("main".into());
-            cx.notify();
-        }).unwrap();
-        picker.update(cx, |picker, window, cx| picker.refresh(window, cx)).unwrap();
+        picker
+            .update(cx, |picker, _window, cx| {
+                picker.delegate.current_branch_name = Some("feature".into());
+                picker.delegate.default_branch_name = Some("main".into());
+                cx.notify();
+            })
+            .unwrap();
+        picker
+            .update(cx, |picker, window, cx| picker.refresh(window, cx))
+            .unwrap();
         cx.run_until_parked();
 
-        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        let names = picker
+            .read_with(cx, |picker, _| entry_names(&picker.delegate))
+            .unwrap();
 
         assert!(names.contains(&"CreateFromDefaultBranch(main)".to_string()));
     }
@@ -890,29 +897,47 @@ mod tests {
         .await;
 
         // Partial match filters to matching worktrees and offers to create.
-        picker.update(cx, |picker, window, cx| picker.set_query("feat", window, cx)).unwrap();
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.set_query("feat", window, cx)
+            })
+            .unwrap();
         cx.run_until_parked();
 
-        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        let names = picker
+            .read_with(cx, |picker, _| entry_names(&picker.delegate))
+            .unwrap();
         assert!(names.contains(&"Worktree(/repo-feature)".to_string()));
         assert!(names.contains(&"CreateNamed(feat)".to_string()));
         assert!(!names.contains(&"Worktree(/repo-bugfix)".to_string()));
 
         // Exact match: the create entry appears but is disabled.
-        picker.update(cx, |picker, window, cx| picker.set_query("repo-feature", window, cx)).unwrap();
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.set_query("repo-feature", window, cx)
+            })
+            .unwrap();
         cx.run_until_parked();
 
-        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        let names = picker
+            .read_with(cx, |picker, _| entry_names(&picker.delegate))
+            .unwrap();
         assert!(
             names.contains(&"CreateNamed(repo-feature, disabled)".to_string()),
             "exact name match should show a disabled create entry, got: {names:?}"
         );
 
         // Spaces are normalized to hyphens: "my worktree" matches "my-worktree".
-        picker.update(cx, |picker, window, cx| picker.set_query("my worktree", window, cx)).unwrap();
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.set_query("my worktree", window, cx)
+            })
+            .unwrap();
         cx.run_until_parked();
 
-        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        let names = picker
+            .read_with(cx, |picker, _| entry_names(&picker.delegate))
+            .unwrap();
         assert!(
             names.contains(&"CreateNamed(my-worktree, disabled)".to_string()),
             "spaces should normalize to hyphens and detect existing worktree, got: {names:?}"
@@ -920,9 +945,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_multi_repo_hides_worktrees_and_disables_create_named(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_multi_repo_hides_worktrees_and_disables_create_named(cx: &mut TestAppContext) {
         init_test(cx);
 
         let picker = make_picker(
@@ -938,16 +961,26 @@ mod tests {
         )
         .await;
 
-        picker.update(cx, |picker, window, cx| picker.refresh(window, cx)).unwrap();
+        picker
+            .update(cx, |picker, window, cx| picker.refresh(window, cx))
+            .unwrap();
         cx.run_until_parked();
 
-        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        let names = picker
+            .read_with(cx, |picker, _| entry_names(&picker.delegate))
+            .unwrap();
         assert_eq!(names, vec!["CreateFromCurrentBranch"]);
 
-        picker.update(cx, |picker, window, cx| picker.set_query("new-thing", window, cx)).unwrap();
+        picker
+            .update(cx, |picker, window, cx| {
+                picker.set_query("new-thing", window, cx)
+            })
+            .unwrap();
         cx.run_until_parked();
 
-        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        let names = picker
+            .read_with(cx, |picker, _| entry_names(&picker.delegate))
+            .unwrap();
         assert!(
             names.contains(&"CreateNamed(new-thing, disabled)".to_string()),
             "multi-repo should disable create named, got: {names:?}"
