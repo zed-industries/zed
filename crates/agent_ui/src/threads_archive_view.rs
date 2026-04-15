@@ -632,6 +632,7 @@ impl ThreadsArchiveView {
                     })
                     .timestamp(timestamp)
                     .highlight_positions(highlight_positions.clone())
+                    .project_paths(thread.folder_paths().paths_owned())
                     .worktrees(worktrees)
                     .focused(is_focused)
                     .hovered(is_hovered)
