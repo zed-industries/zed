@@ -2072,10 +2072,10 @@
       "ensure_final_newline_on_save": false,
     },
     "EEx": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "!emmet-language-server", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
       "tab_size": 4,
@@ -2101,7 +2101,7 @@
       },
     },
     "HEEx": {
-      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."],
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
       "prettier": {
