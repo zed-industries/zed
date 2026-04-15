@@ -189,20 +189,40 @@ async fn remove_root_after_worktree_removal(
         }
     }
 
+    // Delete the directory ourselves first, then tell git to clean up the
+    // metadata. This avoids a problem where `git worktree remove` can
+    // remove the metadata in `.git/worktrees/<name>` but fail to delete
+    // the directory (git continues past directory-removal errors), leaving
+    // an orphaned folder on disk. By deleting the directory first, we
+    // guarantee it's gone, and `git worktree remove --force` with a
+    // missing working tree just cleans up the admin entry.
+    let root_path = root.root_path.clone();
+    cx.background_executor()
+        .spawn(async move {
+            match std::fs::remove_dir_all(&root_path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete worktree directory '{}'",
+                root.root_path.display()
+            )
+        })?;
+
     let (repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx).await?;
-    // force=true is required because the working directory is still dirty
-    // — persist_worktree_state captures state into detached commits without
-    // modifying the real index or working tree, so git refuses to delete
-    // the worktree without --force.
     let receiver = repo.update(cx, |repo: &mut Repository, _cx| {
         repo.remove_worktree(root.root_path.clone(), true)
     });
     let result = receiver
         .await
-        .map_err(|_| anyhow!("git worktree removal was canceled"))?;
+        .map_err(|_| anyhow!("git worktree metadata cleanup was canceled"))?;
     // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
     drop(_temp_project);
-    result.context("git worktree removal failed")?;
+    result.context("git worktree metadata cleanup failed")?;
 
     remove_empty_parent_dirs_up_to_worktrees_base(
         root.root_path.clone(),
