@@ -2529,7 +2529,11 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let ref_name = envelope.payload.ref_name;
-        let commit = envelope.payload.commit;
+        let commit = match envelope.payload.action {
+            Some(proto::git_edit_ref::Action::UpdateToCommit(sha)) => Some(sha),
+            Some(proto::git_edit_ref::Action::Delete(_)) => None,
+            None => anyhow::bail!("GitEditRef missing action"),
+        };
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
@@ -6211,12 +6215,16 @@ impl Repository {
                     None => backend.delete_ref(ref_name).await,
                 },
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let action = match commit {
+                        Some(sha) => proto::git_edit_ref::Action::UpdateToCommit(sha),
+                        None => proto::git_edit_ref::Action::Delete(true),
+                    };
                     client
                         .request(proto::GitEditRef {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             ref_name,
-                            commit,
+                            action: Some(action),
                         })
                         .await?;
                     Ok(())

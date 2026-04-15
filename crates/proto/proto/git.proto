@@ -581,7 +581,10 @@ message GitEditRef {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   string ref_name = 3;
-  optional string commit = 4;
+  oneof action {
+    string update_to_commit = 4;
+    bool delete = 5;
+  }
 }
 
 message GitRepairWorktrees {
