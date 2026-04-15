@@ -820,38 +820,6 @@ impl ThreadMetadataStore {
         self.mutate_thread_paths(&thread_ids, mutate, cx);
     }
 
-    /// Like `change_worktree_paths`, but looks up threads by their
-    /// `main_worktree_paths` instead of `folder_paths`. Used when
-    /// migrating threads for project group key changes where the
-    /// lookup key is the group key's main paths.
-    /// When `remote_connection` is provided, only threads with a matching
-    /// remote connection are affected.
-    pub fn change_worktree_paths_by_main(
-        &mut self,
-        current_main_paths: &PathList,
-        remote_connection: Option<&RemoteConnectionOptions>,
-        mutate: impl Fn(&mut WorktreePaths),
-        cx: &mut Context<Self>,
-    ) {
-        let thread_ids: Vec<_> = self
-            .threads_by_main_paths
-            .get(current_main_paths)
-            .into_iter()
-            .flatten()
-            .filter(|id| {
-                same_remote_connection_identity(
-                    self.threads
-                        .get(id)
-                        .and_then(|t| t.remote_connection.as_ref()),
-                    remote_connection,
-                )
-            })
-            .copied()
-            .collect();
-
-        self.mutate_thread_paths(&thread_ids, mutate, cx);
-    }
-
     fn mutate_thread_paths(
         &mut self,
         thread_ids: &[ThreadId],

@@ -426,7 +426,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         create_new_window: false,
                     };
 
-                    Button::new("open_local_folder", "Add Local Project")
+                    Button::new("open_local_folder", "Add Local Folders")
                         .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
                         .on_click(cx.listener(move |_, _, window, cx| {
                             window.dispatch_action(open_action.boxed_clone(), cx);
@@ -434,7 +434,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                         }))
                 })
                 .child(
-                    Button::new("open_remote_folder", "Add Remote Project")
+                    Button::new("open_remote_folder", "Add Remote Folder")
                         .key_binding(KeyBinding::for_action(
                             &OpenRemote {
                                 from_existing_connection: false,
