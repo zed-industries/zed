@@ -3258,26 +3258,6 @@ impl AgentPanel {
             return;
         }
 
-        let (worktree_receivers, worktree_directory_setting) =
-            if matches!(args, WorktreeCreationArgs::New { .. }) {
-                (
-                    Some(
-                        git_repos
-                            .iter()
-                            .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
-                            .collect::<Vec<_>>(),
-                    ),
-                    Some(
-                        ProjectSettings::get_global(cx)
-                            .git
-                            .worktree_directory
-                            .clone(),
-                    ),
-                )
-            } else {
-                (None, None)
-            };
-
         let remote_connection_options = self.project.read(cx).remote_connection_options(cx);
 
         if remote_connection_options.is_some() {
@@ -3314,10 +3294,18 @@ impl AgentPanel {
                     worktree_name,
                     branch_target,
                 } => {
-                    let worktree_receivers = worktree_receivers
-                        .expect("worktree receivers must be prepared for new worktree creation");
-                    let worktree_directory_setting = worktree_directory_setting
-                        .expect("worktree directory must be prepared for new worktree creation");
+                    let worktree_receivers: Vec<_> = this.update_in(cx, |_this, _window, cx| {
+                        git_repos
+                            .iter()
+                            .map(|repo| repo.update(cx, |repo, _cx| repo.worktrees()))
+                            .collect()
+                    })?;
+                    let worktree_directory_setting = this.update_in(cx, |_this, _window, cx| {
+                        ProjectSettings::get_global(cx)
+                            .git
+                            .worktree_directory
+                            .clone()
+                    })?;
 
                     let mut existing_worktree_names = Vec::new();
                     let mut existing_worktree_paths = HashSet::default();
