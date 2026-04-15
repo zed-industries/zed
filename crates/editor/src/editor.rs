@@ -1068,6 +1068,7 @@ pub struct Editor {
     context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<()>)>,
+    completion_additional_edits_pending: bool,
     inline_blame_popover: Option<InlineBlamePopover>,
     inline_blame_popover_show_task: Option<Task<()>>,
     signature_help_state: SignatureHelpState,
@@ -2321,6 +2322,7 @@ impl Editor {
             context_menu_options: None,
             mouse_context_menu: None,
             completion_tasks: Vec::new(),
+            completion_additional_edits_pending: false,
             inline_blame_popover: None,
             inline_blame_popover_show_task: None,
             signature_help_state: SignatureHelpState::default(),
@@ -5696,6 +5698,10 @@ impl Editor {
                 .borrow()
                 .as_ref()
                 .is_some_and(|menu| menu.visible())
+    }
+
+    pub fn completion_additional_edits_pending(&self) -> bool {
+        self.completion_additional_edits_pending
     }
 
     pub fn context_menu_origin(&self) -> Option<ContextMenuOrigin> {
