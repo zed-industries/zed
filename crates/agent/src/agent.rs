@@ -84,6 +84,7 @@ struct Session {
     project_id: EntityId,
     pending_save: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
+    ref_count: usize,
 }
 
 pub struct LanguageModels {
@@ -388,6 +389,7 @@ impl NativeAgent {
                 project_id,
                 _subscriptions: subscriptions,
                 pending_save: Task::ready(Ok(())),
+                ref_count: 1,
             },
         );
 
@@ -926,7 +928,8 @@ impl NativeAgent {
         project: Entity<Project>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<AcpThread>>> {
-        if let Some(session) = self.sessions.get(&id) {
+        if let Some(session) = self.sessions.get_mut(&id) {
+            session.ref_count += 1;
             return Task::ready(Ok(session.acp_thread.clone()));
         }
 
@@ -968,9 +971,41 @@ impl NativeAgent {
                 })?
                 .await
                 .context("Failed to generate summary")?;
+
+            this.update(cx, |this, cx| this.close_session(&id, cx))?
+                .await?;
             drop(acp_thread);
             Ok(result)
         })
+    }
+
+    fn close_session(
+        &mut self,
+        session_id: &acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let Some(session) = self.sessions.get_mut(session_id) else {
+            return Task::ready(Ok(()));
+        };
+
+        session.ref_count -= 1;
+        if session.ref_count > 0 {
+            return Task::ready(Ok(()));
+        }
+
+        let thread = session.thread.clone();
+        self.save_thread(thread, cx);
+        let Some(session) = self.sessions.remove(session_id) else {
+            return Task::ready(Ok(()));
+        };
+        let project_id = session.project_id;
+
+        let has_remaining = self.sessions.values().any(|s| s.project_id == project_id);
+        if !has_remaining {
+            self.projects.remove(&project_id);
+        }
+
+        session.pending_save
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
@@ -1452,24 +1487,8 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         session_id: &acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        self.0.update(cx, |agent, cx| {
-            let thread = agent.sessions.get(session_id).map(|s| s.thread.clone());
-            if let Some(thread) = thread {
-                agent.save_thread(thread, cx);
-            }
-
-            let Some(session) = agent.sessions.remove(session_id) else {
-                return Task::ready(Ok(()));
-            };
-            let project_id = session.project_id;
-
-            let has_remaining = agent.sessions.values().any(|s| s.project_id == project_id);
-            if !has_remaining {
-                agent.projects.remove(&project_id);
-            }
-
-            session.pending_save
-        })
+        self.0
+            .update(cx, |agent, cx| agent.close_session(session_id, cx))
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
