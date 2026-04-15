@@ -1,6 +1,4 @@
-use crate::{
-    CommonAnimationExt, DiffStat, Divider, GradientFade, HighlightedLabel, Tooltip, prelude::*,
-};
+use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
 
 use gpui::{
     Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString, pulsating_between,
@@ -465,6 +463,7 @@ impl RenderOnce for ThreadItem {
 
             Tooltip::element(move |_window, cx| {
                 v_flex()
+                    .min_w_0()
                     .gap_1()
                     .child(Label::new(title.clone()))
                     .children(worktrees.iter().map(|wt| {
@@ -520,9 +519,12 @@ impl RenderOnce for ThreadItem {
                             })
                     }))
                     .when(status == AgentThreadStatus::Error, |this| {
-                        this.child(Divider::horizontal()).child(
+                        this.child(
                             h_flex()
                                 .gap_1()
+                                .pt_1()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
                                 .child(
                                     Icon::new(IconName::Close)
                                         .size(IconSize::Small)
@@ -534,8 +536,11 @@ impl RenderOnce for ThreadItem {
                     .when(
                         status == AgentThreadStatus::WaitingForConfirmation,
                         |this| {
-                            this.child(Divider::horizontal()).child(
+                            this.child(
                                 h_flex()
+                                    .pt_1()
+                                    .border_t_1()
+                                    .border_color(cx.theme().colors().border_variant)
                                     .gap_1()
                                     .child(
                                         Icon::new(IconName::Warning)
@@ -550,8 +555,11 @@ impl RenderOnce for ThreadItem {
                         },
                     )
                     .when(added.is_some() || removed.is_some(), |this| {
-                        this.child(Divider::horizontal()).child(
+                        this.child(
                             h_flex()
+                                .pt_1()
+                                .border_t_1()
+                                .border_color(cx.theme().colors().border_variant)
                                 .gap_1()
                                 .child(DiffStat::new(
                                     "diff",
