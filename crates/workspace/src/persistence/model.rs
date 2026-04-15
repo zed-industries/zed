@@ -66,8 +66,6 @@ pub struct SerializedProjectGroup {
     pub(crate) location: SerializedWorkspaceLocation,
     #[serde(default = "default_expanded")]
     pub expanded: bool,
-    #[serde(default)]
-    pub visible_thread_count: Option<usize>,
 }
 
 fn default_expanded() -> bool {
@@ -75,11 +73,7 @@ fn default_expanded() -> bool {
 }
 
 impl SerializedProjectGroup {
-    pub fn from_group(
-        key: &ProjectGroupKey,
-        expanded: bool,
-        visible_thread_count: Option<usize>,
-    ) -> Self {
+    pub fn from_group(key: &ProjectGroupKey, expanded: bool) -> Self {
         Self {
             path_list: key.path_list().serialize(),
             location: match key.host() {
@@ -87,7 +81,6 @@ impl SerializedProjectGroup {
                 None => SerializedWorkspaceLocation::Local,
             },
             expanded,
-            visible_thread_count,
         }
     }
 
@@ -100,7 +93,6 @@ impl SerializedProjectGroup {
         SerializedProjectGroupState {
             key: ProjectGroupKey::new(host, path_list),
             expanded: self.expanded,
-            visible_thread_count: self.visible_thread_count,
         }
     }
 }
