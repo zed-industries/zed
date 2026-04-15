@@ -611,11 +611,11 @@ impl ThreadsArchiveView {
                     .title_bar_background
                     .blend(color.panel_background.opacity(0.25));
                 let archived_decoration =
-                    IconDecoration::new(IconDecorationKind::Dot, knockout_color, cx)
-                        .color(cx.theme().status().info)
+                    IconDecoration::new(IconDecorationKind::Archive, knockout_color, cx)
+                        .color(color.icon_disabled)
                         .position(gpui::Point {
-                            x: px(-2.),
-                            y: px(-2.),
+                            x: px(-3.),
+                            y: px(-3.5),
                         });
 
                 let base = ThreadItem::new(id, thread.display_title())
@@ -623,9 +623,7 @@ impl ThreadsArchiveView {
                     .when(is_archived, |this| {
                         this.icon_color(Color::Muted)
                             .title_label_color(Color::Muted)
-                    })
-                    .when(!is_archived, |this| {
-                        this.icon_decoration(archived_decoration)
+                            .icon_decoration(archived_decoration)
                     })
                     .when_some(icon_from_external_svg, |this, svg| {
                         this.custom_icon_from_external_svg(svg)
@@ -696,7 +694,9 @@ impl ThreadsArchiveView {
                                 })
                             }),
                     )
-                    .tooltip(move |_, cx| Tooltip::for_action("Open Thread", &menu::Confirm, cx))
+                    .tooltip(move |_, cx| {
+                        Tooltip::for_action("Open Archived Thread", &menu::Confirm, cx)
+                    })
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
