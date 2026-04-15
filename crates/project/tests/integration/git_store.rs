@@ -1652,3 +1652,113 @@ mod resolve_worktree_tests {
         }
     }
 }
+
+mod bare_worktree_diff_tests {
+    use crate::{Project, init_test};
+
+    use fs::RealFs;
+    use gpui::TestAppContext;
+    use std::path::Path;
+    use std::process::Command;
+    use std::sync::Arc;
+
+    fn run_git(cwd: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "")
+            .env("GIT_CONFIG_SYSTEM", "")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .current_dir(cwd)
+            .status()
+            .unwrap_or_else(|e| panic!("failed to run git {args:?} in {cwd:?}: {e}"));
+        assert!(status.success(), "git {args:?} in {cwd:?} failed");
+    }
+
+    /// Reproduces the user-reported layout:
+    ///
+    /// ```text
+    /// <root>/
+    ///   .git                       <- file: "gitdir: ./.bare"
+    ///   .bare/                     <- bare repo (HEAD, config, refs, objects, worktrees/)
+    ///     worktrees/claude-code/
+    ///       commondir              <- "../.."
+    ///   claude-code/
+    ///     .git                     <- file: "gitdir: ../.bare/worktrees/claude-code"
+    ///     file.txt                 <- modified vs HEAD
+    /// ```
+    ///
+    /// Opening ONLY the `claude-code` subfolder as the project root should still
+    /// surface the HEAD version of `file.txt` via `open_uncommitted_diff`.
+    #[gpui::test]
+    async fn test_uncommitted_diff_in_bare_linked_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        run_git(root, &["init", "--bare", ".bare"]);
+        std::fs::write(root.join(".git"), "gitdir: ./.bare").unwrap();
+
+        let scratch = root.join("scratch");
+        run_git(root, &["clone", ".bare", "scratch"]);
+        std::fs::write(scratch.join("file.txt"), "committed\n").unwrap();
+        run_git(&scratch, &["add", "file.txt"]);
+        run_git(&scratch, &["commit", "-m", "init"]);
+        run_git(&scratch, &["push", "origin", "HEAD:refs/heads/main"]);
+
+        run_git(
+            root,
+            &[
+                "--git-dir=.bare",
+                "-c",
+                "worktree.userelativepaths=true",
+                "worktree",
+                "add",
+                "claude-code",
+                "main",
+            ],
+        );
+
+        let checkout = root.join("claude-code");
+        assert_eq!(
+            std::fs::read_to_string(checkout.join(".git")).unwrap().trim(),
+            "gitdir: ../.bare/worktrees/claude-code",
+            "test requires a RELATIVE gitdir pointer to reproduce the bug",
+        );
+        std::fs::write(checkout.join("file.txt"), "modified\n").unwrap();
+
+        let project = Project::test(
+            Arc::new(RealFs::new(None, cx.executor())),
+            [checkout.as_path()],
+            cx,
+        )
+        .await;
+
+        let buffer = project
+            .update(cx, |p, cx| {
+                p.open_local_buffer(checkout.join("file.txt"), cx)
+            })
+            .await
+            .unwrap();
+
+        let diff = project
+            .update(cx, |p, cx| p.open_uncommitted_diff(buffer.clone(), cx))
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        diff.read_with(cx, |diff, cx| {
+            assert_eq!(
+                diff.base_text_string(cx).as_deref(),
+                Some("committed\n"),
+                "diff base text should be the HEAD version of file.txt; \
+                 empty/missing means the repo was not associated with the worktree"
+            );
+        });
+    }
+}
