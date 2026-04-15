@@ -607,6 +607,7 @@ By default, OpenAI-compatible models inherit the following capabilities:
 - `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
 - `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
 - `chat_completions`: true (calls the `/chat/completions` endpoint)
+- `interleaved_reasoning`: false (thinking tokens are sent inline in message text; set to true to send them as a dedicated `reasoning_content` field for models that expect it)
 
 If a provider exposes models that only work with the Responses API, set `chat_completions` to `false` for those entries. Zed uses the Responses endpoint for these models.
 
