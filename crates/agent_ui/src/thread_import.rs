@@ -29,6 +29,7 @@ use crate::{
 };
 
 pub struct AcpThreadImportOnboarding;
+pub struct CrossChannelImportOnboarding;
 
 impl AcpThreadImportOnboarding {
     pub fn dismissed(cx: &App) -> bool {
@@ -42,6 +43,38 @@ impl AcpThreadImportOnboarding {
 
 impl Dismissable for AcpThreadImportOnboarding {
     const KEY: &'static str = "dismissed-acp-thread-import";
+}
+
+impl CrossChannelImportOnboarding {
+    pub fn dismissed(cx: &App) -> bool {
+        <Self as Dismissable>::dismissed(cx)
+    }
+
+    pub fn dismiss(cx: &mut App) {
+        <Self as Dismissable>::set_dismissed(true, cx);
+    }
+}
+
+impl Dismissable for CrossChannelImportOnboarding {
+    const KEY: &'static str = "dismissed-cross-channel-thread-import";
+}
+
+/// Returns the list of non-Dev, non-current release channels that have
+/// at least one thread in their database.  The result is suitable for
+/// building a user-facing message ("from Zed Preview and Nightly").
+pub fn channels_with_threads(cx: &App) -> Vec<ReleaseChannel> {
+    let current_channel = ReleaseChannel::global(cx);
+    let database_dir = paths::database_dir();
+
+    ReleaseChannel::ALL
+        .iter()
+        .copied()
+        .filter(|channel| {
+            *channel != current_channel
+                && *channel != ReleaseChannel::Dev
+                && channel_has_threads(database_dir, *channel)
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -591,6 +624,19 @@ fn import_threads_from_other_channels_in(
         })
     })
     .detach();
+}
+
+fn channel_has_threads(database_dir: &std::path::Path, channel: ReleaseChannel) -> bool {
+    let db_path = db::db_path(database_dir, channel);
+    if !db_path.exists() {
+        return false;
+    }
+    let connection = sqlez::connection::Connection::open_file(&db_path.to_string_lossy());
+    connection
+        .select_row::<bool>("SELECT 1 FROM sidebar_threads LIMIT 1")
+        .ok()
+        .and_then(|mut query| query().ok().flatten())
+        .unwrap_or(false)
 }
 
 fn read_threads_from_channel(

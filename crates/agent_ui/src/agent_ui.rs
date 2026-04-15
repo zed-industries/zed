@@ -80,7 +80,8 @@ pub(crate) use model_selector_popover::ModelSelectorPopover;
 pub(crate) use thread_history::ThreadHistory;
 pub(crate) use thread_history_view::*;
 pub use thread_import::{
-    AcpThreadImportOnboarding, ThreadImportModal, import_threads_from_other_channels,
+    AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
+    channels_with_threads, import_threads_from_other_channels,
 };
 use zed_actions;
 
