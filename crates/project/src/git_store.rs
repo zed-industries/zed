@@ -589,6 +589,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_remove_worktree);
         client.add_entity_request_handler(Self::handle_rename_worktree);
         client.add_entity_request_handler(Self::handle_get_head_sha);
+        client.add_entity_request_handler(Self::handle_repair_worktrees);
     }
 
     pub fn is_local(&self) -> bool {
@@ -2515,6 +2516,23 @@ impl GitStore {
             .await??;
 
         Ok(proto::GitGetHeadShaResponse { sha: head_sha })
+    }
+
+    async fn handle_repair_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRepairWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.repair_worktrees()
+            })
+            .await??;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_get_branches(
@@ -6150,13 +6168,20 @@ impl Repository {
     }
 
     pub fn repair_worktrees(&mut self) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.repair_worktrees().await
                 }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("repair_worktrees is not supported for remote repositories")
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitRepairWorktrees {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+                    Ok(())
                 }
             }
         })

@@ -577,6 +577,11 @@ message GitGetHeadShaResponse {
   optional string sha = 1;
 }
 
+message GitRepairWorktrees {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
 message GitWorktreesResponse {
   repeated Worktree worktrees = 1;
 }

@@ -476,7 +476,8 @@ message Envelope {
     GitDiffCheckpoints git_diff_checkpoints = 438;
     GitDiffCheckpointsResponse git_diff_checkpoints_response = 439;
     GitGetHeadSha git_get_head_sha = 440;
-    GitGetHeadShaResponse git_get_head_sha_response = 441; // current max
+    GitGetHeadShaResponse git_get_head_sha_response = 441;
+    GitRepairWorktrees git_repair_worktrees = 442; // current max
   }
 
   reserved 87 to 88;
