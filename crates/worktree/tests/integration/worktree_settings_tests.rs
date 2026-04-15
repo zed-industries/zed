@@ -18,6 +18,7 @@ fn make_settings_with_read_only(patterns: &[&str]) -> WorktreeSettings {
             PathStyle::local(),
         )
         .unwrap(),
+        discover_nested_repositories: true,
     }
 }
 
