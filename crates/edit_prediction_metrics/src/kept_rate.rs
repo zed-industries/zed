@@ -56,9 +56,9 @@ fn dp_index(width: usize, row: usize, column: usize) -> usize {
 
 /// Fill masks over `a` and `b` using one-sided LCS tie-breaking for each side
 /// while sharing a single DP table construction.
-fn fill_lcs_keep_masks(
-    a: &[&str],
-    b: &[&str],
+fn fill_lcs_keep_masks<T: Eq>(
+    a: &[T],
+    b: &[T],
     mut keep_a: Option<&mut [bool]>,
     mut keep_b: Option<&mut [bool]>,
 ) {
@@ -129,10 +129,10 @@ fn fill_lcs_keep_masks(
     let mut dp = vec![0u32; row_count * column_count];
 
     for i in 1..row_count {
-        let token_a = a_mid[i - 1];
+        let token_a = &a_mid[i - 1];
         for j in 1..column_count {
             let index = dp_index(column_count, i, j);
-            if token_a == b_mid[j - 1] {
+            if token_a == &b_mid[j - 1] {
                 dp[index] = dp[dp_index(column_count, i - 1, j - 1)] + 1;
             } else {
                 let up = dp[dp_index(column_count, i - 1, j)];
@@ -185,41 +185,91 @@ fn fill_lcs_keep_masks(
     }
 }
 
-fn lcs_keep_mask(a: &[&str], b: &[&str]) -> Vec<bool> {
+fn lcs_keep_mask<T: Eq>(a: &[T], b: &[T]) -> Vec<bool> {
     let mut keep_a = vec![false; a.len()];
     fill_lcs_keep_masks(a, b, Some(&mut keep_a), None);
     keep_a
 }
 
-fn lcs_keep_masks(a: &[&str], b: &[&str]) -> (Vec<bool>, Vec<bool>) {
+fn lcs_keep_masks<T: Eq>(a: &[T], b: &[T]) -> (Vec<bool>, Vec<bool>) {
     let mut keep_a = vec![false; a.len()];
     let mut keep_b = vec![false; b.len()];
     fill_lcs_keep_masks(a, b, Some(&mut keep_a), Some(&mut keep_b));
     (keep_a, keep_b)
 }
 
-fn analyze_masked_tokens<'a>(tokens: &[&'a str], mask: &[bool]) -> (Vec<&'a str>, usize, usize) {
-    let mut unmasked_tokens = Vec::with_capacity(tokens.len());
-    let mut unmasked_chars = 0;
-    let mut masked_chars = 0;
+#[derive(Debug, Clone)]
+struct ComparisonUnit {
+    text: String,
+    token_start: usize,
+    token_end: usize,
+}
 
-    for (&token, &is_masked) in tokens.iter().zip(mask.iter()) {
-        if is_masked {
-            masked_chars += token.len();
+fn is_identifier_token(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_')
+}
+
+fn build_comparison_units(tokens: &[&str]) -> Vec<ComparisonUnit> {
+    let mut units = Vec::new();
+    let mut index = 0;
+
+    while index < tokens.len() {
+        let token_start = index;
+
+        if is_identifier_token(tokens[index]) {
+            let mut text = String::new();
+
+            while index < tokens.len() && is_identifier_token(tokens[index]) {
+                text.push_str(tokens[index]);
+                index += 1;
+            }
+
+            units.push(ComparisonUnit {
+                text,
+                token_start,
+                token_end: index,
+            });
         } else {
-            unmasked_tokens.push(token);
-            unmasked_chars += token.len();
+            units.push(ComparisonUnit {
+                text: tokens[index].to_string(),
+                token_start,
+                token_end: index + 1,
+            });
+            index += 1;
         }
     }
 
-    (unmasked_tokens, unmasked_chars, masked_chars)
+    units
 }
 
-fn count_unmasked_chars(tokens: &[&str], mask: &[bool]) -> usize {
-    tokens
+fn analyze_masked_units<'a>(
+    units: &'a [ComparisonUnit],
+    mask: &[bool],
+) -> (Vec<&'a str>, usize, usize) {
+    let mut unmasked_units = Vec::with_capacity(units.len());
+    let mut unmasked_chars = 0;
+    let mut masked_chars = 0;
+
+    for (unit, &is_masked) in units.iter().zip(mask.iter()) {
+        if is_masked {
+            masked_chars += unit.text.len();
+        } else {
+            unmasked_units.push(unit.text.as_str());
+            unmasked_chars += unit.text.len();
+        }
+    }
+
+    (unmasked_units, unmasked_chars, masked_chars)
+}
+
+fn count_unmasked_unit_chars(units: &[ComparisonUnit], mask: &[bool]) -> usize {
+    units
         .iter()
         .zip(mask.iter())
-        .filter_map(|(&token, &is_masked)| (!is_masked).then_some(token.len()))
+        .filter_map(|(unit, &is_masked)| (!is_masked).then_some(unit.text.len()))
         .sum()
 }
 
@@ -270,15 +320,29 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
     let candidate_tokens = tokenize(candidate);
     let reference_tokens = tokenize(reference);
 
+    let candidate_units = build_comparison_units(&candidate_tokens);
+    let base_units = build_comparison_units(&base_tokens);
+    let reference_units = build_comparison_units(&reference_tokens);
+
+    let candidate_unit_texts: Vec<&str> = candidate_units
+        .iter()
+        .map(|unit| unit.text.as_str())
+        .collect();
+    let base_unit_texts: Vec<&str> = base_units.iter().map(|unit| unit.text.as_str()).collect();
+    let reference_unit_texts: Vec<&str> = reference_units
+        .iter()
+        .map(|unit| unit.text.as_str())
+        .collect();
+
     let (candidate_base_mask, base_candidate_mask) =
-        lcs_keep_masks(&candidate_tokens, &base_tokens);
+        lcs_keep_masks(&candidate_unit_texts, &base_unit_texts);
     let (stripped_candidate, candidate_new_chars, context_chars) =
-        analyze_masked_tokens(&candidate_tokens, &candidate_base_mask);
+        analyze_masked_units(&candidate_units, &candidate_base_mask);
 
     let (reference_base_mask, base_reference_mask) =
-        lcs_keep_masks(&reference_tokens, &base_tokens);
+        lcs_keep_masks(&reference_unit_texts, &base_unit_texts);
     let (stripped_reference, reference_new_chars, _) =
-        analyze_masked_tokens(&reference_tokens, &reference_base_mask);
+        analyze_masked_units(&reference_units, &reference_base_mask);
 
     let keep_mask = lcs_keep_mask(&stripped_candidate, &stripped_reference);
 
@@ -288,13 +352,13 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
         .filter_map(|(&token, &is_kept)| is_kept.then_some(token.len()))
         .sum();
 
-    let candidate_deleted_chars = count_unmasked_chars(&base_tokens, &base_candidate_mask);
-    let reference_deleted_chars = count_unmasked_chars(&base_tokens, &base_reference_mask);
-    let correctly_deleted_chars: usize = base_tokens
+    let candidate_deleted_chars = count_unmasked_unit_chars(&base_units, &base_candidate_mask);
+    let reference_deleted_chars = count_unmasked_unit_chars(&base_units, &base_reference_mask);
+    let correctly_deleted_chars: usize = base_units
         .iter()
         .zip(base_candidate_mask.iter().zip(base_reference_mask.iter()))
-        .filter_map(|(&token, (&in_candidate, &in_reference))| {
-            (!in_candidate && !in_reference).then_some(token.len())
+        .filter_map(|(unit, (&in_candidate, &in_reference))| {
+            (!in_candidate && !in_reference).then_some(unit.text.len())
         })
         .sum();
 
@@ -316,21 +380,27 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
     };
 
     let token_annotations = {
-        let mut token_annotations = Vec::with_capacity(candidate_tokens.len());
+        let mut token_annotations = vec![TokenAnnotation::Context; candidate_tokens.len()];
         let mut new_index = 0;
-        for (token_index, _token) in candidate_tokens.iter().enumerate() {
-            if candidate_base_mask[token_index] {
-                token_annotations.push(TokenAnnotation::Context);
+
+        for (unit_index, unit) in candidate_units.iter().enumerate() {
+            let annotation = if candidate_base_mask[unit_index] {
+                TokenAnnotation::Context
             } else {
                 let annotation = if keep_mask[new_index] {
                     TokenAnnotation::Kept
                 } else {
                     TokenAnnotation::Discarded
                 };
-                token_annotations.push(annotation);
                 new_index += 1;
+                annotation
+            };
+
+            for token_index in unit.token_start..unit.token_end {
+                token_annotations[token_index] = annotation;
             }
         }
+
         token_annotations
     };
 
@@ -580,7 +650,7 @@ mod test_kept_rate {
         assert_eq!(result.token_annotations.len(), tokenize(candidate).len());
 
         for (&token, &annotation) in tokenize(candidate).iter().zip(&result.token_annotations) {
-            if token == "new_name" {
+            if matches!(token, "new" | "_" | "name") {
                 assert_eq!(annotation, TokenAnnotation::Kept);
             } else {
                 assert_eq!(annotation, TokenAnnotation::Context);
