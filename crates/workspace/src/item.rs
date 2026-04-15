@@ -965,6 +965,25 @@ impl<T: Item> ItemHandle for Entity<T> {
                             // palette (such as by opening up the tab switcher from it and then switching tabs that
                             // way).
                             if workspace.is_active_modal_command_palette(cx) {
+                                let item = item.clone();
+                                let project = workspace.project.clone();
+                                cx.defer_in(window, move |workspace, window, cx| {
+                                    if item.workspace_settings(cx).autosave
+                                        != AutosaveSetting::OnFocusChange
+                                    {
+                                        return;
+                                    }
+
+                                    let focus_handle = item.item_focus_handle(cx);
+                                    if focus_handle.contains_focused(window, cx)
+                                        || workspace.is_active_modal_command_palette(cx)
+                                    {
+                                        return;
+                                    }
+
+                                    Pane::autosave_item(&item, project.clone(), window, cx)
+                                        .detach_and_log_err(cx);
+                                });
                                 return;
                             }
                         }

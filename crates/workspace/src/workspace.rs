@@ -11631,6 +11631,104 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_vim_command_palette_focus_transfer_autosaves(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        let other_item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
+        });
+        let pane = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+            workspace.add_item_to_active_pane(Box::new(other_item.clone()), None, true, window, cx);
+            let pane = workspace.active_pane().clone();
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(0, true, true, window, cx);
+            });
+            pane
+        });
+
+        item.update_in(cx, |item, window, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
+                    settings.vim_mode = Some(true);
+                })
+            });
+            item.is_dirty = true;
+            cx.focus_self(window);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 0));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestCommandPaletteModal::new);
+            workspace.toggle_modal(window, cx, TestCommandPaletteModal::new);
+            pane.update(cx, |pane, cx| {
+                pane.activate_item(1, true, true, window, cx);
+            });
+        });
+        cx.executor().run_until_parked();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 1,
+                "Focus transfers through the command palette should autosave once focus lands on another item"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_vim_command_palette_return_does_not_autosave(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        item.update_in(cx, |item, window, cx| {
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
+                    settings.vim_mode = Some(true);
+                })
+            });
+            item.is_dirty = true;
+            cx.focus_self(window);
+        });
+        cx.executor().run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 0));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestCommandPaletteModal::new);
+            workspace.toggle_modal(window, cx, TestCommandPaletteModal::new);
+        });
+        cx.executor().run_until_parked();
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(
+                item.save_count, 0,
+                "Returning focus from the command palette to the same item should not autosave"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_pane_navigation(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
@@ -13122,6 +13220,38 @@ mod tests {
             &mut self,
             _window: &mut Window,
             _cx: &mut Context<TestModal>,
+        ) -> impl IntoElement {
+            div().track_focus(&self.0)
+        }
+    }
+
+    struct TestCommandPaletteModal(FocusHandle);
+
+    impl TestCommandPaletteModal {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+            Self(cx.focus_handle())
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for TestCommandPaletteModal {}
+
+    impl Focusable for TestCommandPaletteModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.0.clone()
+        }
+    }
+
+    impl ModalView for TestCommandPaletteModal {
+        fn is_command_palette(&self) -> bool {
+            true
+        }
+    }
+
+    impl Render for TestCommandPaletteModal {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<TestCommandPaletteModal>,
         ) -> impl IntoElement {
             div().track_focus(&self.0)
         }
