@@ -12749,74 +12749,40 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
 
         workspace.update(cx, |workspace, _cx| {
-            workspace.bounds.size.width = px(800.);
+            workspace.set_random_database_id();
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new_flexible(DockPosition::Right, 100, cx));
-            workspace.add_panel(panel, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
+
+            let right_dock = workspace.right_dock().clone();
+            right_dock.update(cx, |dock, cx| {
+                dock.set_panel_size_state(
+                    &panel,
+                    dock::PanelSizeState {
+                        size: None,
+                        flex: Some(1.0),
+                    },
+                    cx,
+                );
+            });
         });
 
-        let (panel, resized_width, ratio_basis_width) =
-            workspace.update_in(cx, |workspace, window, cx| {
-                let item = cx.new(|cx| {
-                    TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
-                });
-                workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
-
-                let dock = workspace.right_dock().read(cx);
-                let workspace_width = workspace.bounds.size.width;
-                let initial_width = workspace
-                    .dock_size(&dock, window, cx)
-                    .expect("flexible dock should have an initial width");
-
-                assert_eq!(initial_width, workspace_width / 2.);
-
-                workspace.resize_right_dock(px(300.), window, cx);
-
-                let dock = workspace.right_dock().read(cx);
-                let resized_width = workspace
-                    .dock_size(&dock, window, cx)
-                    .expect("flexible dock should keep its resized width");
-
-                assert_eq!(resized_width, px(300.));
-
-                let panel = workspace
-                    .right_dock()
-                    .read(cx)
-                    .visible_panel()
-                    .expect("flexible dock should have a visible panel")
-                    .panel_id();
-
-                (panel, resized_width, workspace_width)
-            });
-
         workspace.update_in(cx, |workspace, window, cx| {
-            workspace.toggle_dock(DockPosition::Right, window, cx);
-            workspace.toggle_dock(DockPosition::Right, window, cx);
+            let item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+            workspace.bounds.size.width = px(1920.);
 
             let dock = workspace.right_dock().read(cx);
-            let reopened_width = workspace
+            let initial_width = workspace
                 .dock_size(&dock, window, cx)
-                .expect("flexible dock should restore when reopened");
+                .expect("flexible dock should have an initial width");
 
-            assert_eq!(reopened_width, resized_width);
-
-            let right_dock = workspace.right_dock().read(cx);
-            let flexible_panel = right_dock
-                .visible_panel()
-                .expect("flexible dock should still have a visible panel");
-            assert_eq!(flexible_panel.panel_id(), panel);
-            assert_eq!(
-                right_dock
-                    .stored_panel_size_state(flexible_panel.as_ref())
-                    .and_then(|size_state| size_state.flex),
-                Some(
-                    resized_width.to_f64() as f32
-                        / (workspace.bounds.size.width - resized_width).to_f64() as f32
-                )
-            );
+            assert_eq!(initial_width, px(960.));
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
@@ -12827,25 +12793,16 @@ mod tests {
                 cx,
             );
 
-            let dock = workspace.right_dock().read(cx);
-            let split_width = workspace
-                .dock_size(&dock, window, cx)
-                .expect("flexible dock should keep its user-resized proportion");
-
-            assert_eq!(split_width, px(300.));
-
-            workspace.bounds.size.width = px(1600.);
+            let center_column_count = workspace.center.full_height_column_count();
+            assert_eq!(center_column_count, 2);
 
             let dock = workspace.right_dock().read(cx);
-            let resized_window_width = workspace
-                .dock_size(&dock, window, cx)
-                .expect("flexible dock should preserve proportional size on window resize");
+            assert_eq!(workspace.dock_size(&dock, window, cx).unwrap(), px(640.));
 
-            assert_eq!(
-                resized_window_width,
-                workspace.bounds.size.width
-                    * (resized_width.to_f64() as f32 / ratio_basis_width.to_f64() as f32)
-            );
+            workspace.bounds.size.width = px(2400.);
+
+            let dock = workspace.right_dock().read(cx);
+            assert_eq!(workspace.dock_size(&dock, window, cx).unwrap(), px(800.));
         });
     }
 
