@@ -3512,7 +3512,10 @@ impl AgentPanel {
                 if !paths_to_open.is_empty() {
                     let open_task = workspace.open_paths(
                         paths_to_open,
-                        workspace::OpenOptions::default(),
+                        workspace::OpenOptions {
+                            focus: Some(false),
+                            ..Default::default()
+                        },
                         None,
                         window,
                         cx,
