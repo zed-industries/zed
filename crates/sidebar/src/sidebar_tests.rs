@@ -5423,12 +5423,10 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
 }
 
 #[gpui::test]
-async fn test_restore_worktree_skips_branch_switch_when_branch_has_moved(cx: &mut TestAppContext) {
-    // When restoring an archived worktree and the branch has moved (its
-    // SHA differs from the original_commit_hash at archive time), the
-    // restore should leave the worktree in detached HEAD — it must NOT
-    // call change_branch, because that would point the worktree at a
-    // commit the user didn't expect.
+async fn test_restore_worktree_when_branch_has_moved(cx: &mut TestAppContext) {
+    // restore_worktree_via_git should succeed when the branch has moved
+    // to a different SHA since archival. The worktree stays in detached
+    // HEAD and the moved branch is left untouched.
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
 
@@ -5447,7 +5445,6 @@ async fn test_restore_worktree_skips_branch_switch_when_branch_has_moved(cx: &mu
         }),
     )
     .await;
-
     fs.insert_tree(
         "/wt-feature-a",
         serde_json::json!({
@@ -5456,7 +5453,6 @@ async fn test_restore_worktree_skips_branch_switch_when_branch_has_moved(cx: &mu
         }),
     )
     .await;
-
     fs.add_linked_worktree_for_repo(
         Path::new("/project/.git"),
         false,
@@ -5468,12 +5464,10 @@ async fn test_restore_worktree_skips_branch_switch_when_branch_has_moved(cx: &mu
         },
     )
     .await;
-
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
     let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
-
     main_project
         .update(cx, |p, cx| p.git_scans_complete(cx))
         .await;
@@ -5487,19 +5481,16 @@ async fn test_restore_worktree_skips_branch_switch_when_branch_has_moved(cx: &mu
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
 
-    // Get the worktree repo entity so we can create a valid archive checkpoint.
     let wt_repo = worktree_project.read_with(cx, |project, cx| {
         project.repositories(cx).values().next().unwrap().clone()
     });
-
     let (staged_hash, unstaged_hash) = cx
         .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
         .await
         .unwrap()
         .unwrap();
 
-    // Simulate the branch having moved: update refs/heads/feature-a to a
-    // different SHA than what was recorded at archive time.
+    // Move the branch to a different SHA.
     fs.with_git_state(Path::new("/project/.git"), false, |state| {
         state
             .refs
@@ -5507,61 +5498,47 @@ async fn test_restore_worktree_skips_branch_switch_when_branch_has_moved(cx: &mu
     })
     .unwrap();
 
-    // Clear current_branch_name so we can detect whether change_branch
-    // was called during restore.
-    fs.with_git_state(Path::new("/project/.git"), false, |state| {
-        state.current_branch_name = None;
-    })
-    .unwrap();
-
     let result = cx
-        .spawn(|mut cx| {
-            let row = agent_ui::thread_metadata_store::ArchivedGitWorktree {
-                id: 1,
-                worktree_path: PathBuf::from("/wt-feature-a"),
-                main_repo_path: PathBuf::from("/project"),
-                branch_name: Some("feature-a".to_string()),
-                staged_commit_hash: staged_hash,
-                unstaged_commit_hash: unstaged_hash,
-                original_commit_hash: "original-sha".to_string(),
-            };
-            async move {
-                agent_ui::thread_worktree_archive::restore_worktree_via_git(&row, &mut cx).await
-            }
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                    id: 1,
+                    worktree_path: PathBuf::from("/wt-feature-a"),
+                    main_repo_path: PathBuf::from("/project"),
+                    branch_name: Some("feature-a".to_string()),
+                    staged_commit_hash: staged_hash,
+                    unstaged_commit_hash: unstaged_hash,
+                    original_commit_hash: "original-sha".to_string(),
+                },
+                &mut cx,
+            )
+            .await
         })
         .await;
 
     assert!(
         result.is_ok(),
-        "restore_worktree_via_git should succeed, got: {:?}",
+        "restore should succeed even when branch has moved: {:?}",
         result.err()
     );
 
-    // Because the branch moved, change_branch should NOT have been called,
-    // so current_branch_name should still be None (detached HEAD).
-    let branch_name = fs
+    // The moved branch ref should be completely untouched.
+    let branch_sha = fs
         .with_git_state(Path::new("/project/.git"), false, |state| {
-            state.current_branch_name.clone()
+            state.refs.get("refs/heads/feature-a").cloned()
         })
         .unwrap();
     assert_eq!(
-        branch_name, None,
-        "worktree should be in detached HEAD when branch has moved"
+        branch_sha.as_deref(),
+        Some("moved-sha"),
+        "the moved branch ref should not be modified by the restore"
     );
 }
 
 #[gpui::test]
-async fn test_restore_worktree_switches_branch_when_not_moved(cx: &mut TestAppContext) {
-    // When restoring an archived worktree and the branch has NOT moved
-    // (its SHA matches the original_commit_hash), the restore should
-    // switch the worktree to that branch via change_branch.
-    //
-    // We can’t directly observe the branch name after
-    // restore_archive_checkpoint because the fake backend’s checkpoint
-    // restore replaces directory entries wholesale (including per-worktree
-    // git state). Instead we verify that the restore succeeds and that the
-    // branch ref is still at its original value (i.e. the code did NOT
-    // take the “branch has moved” detached-HEAD path).
+async fn test_restore_worktree_when_branch_has_not_moved(cx: &mut TestAppContext) {
+    // restore_worktree_via_git should succeed when the branch still
+    // points at the same SHA as at archive time.
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
 
@@ -5580,7 +5557,6 @@ async fn test_restore_worktree_switches_branch_when_not_moved(cx: &mut TestAppCo
         }),
     )
     .await;
-
     fs.insert_tree(
         "/wt-feature-b",
         serde_json::json!({
@@ -5589,7 +5565,6 @@ async fn test_restore_worktree_switches_branch_when_not_moved(cx: &mut TestAppCo
         }),
     )
     .await;
-
     fs.add_linked_worktree_for_repo(
         Path::new("/project/.git"),
         false,
@@ -5601,12 +5576,10 @@ async fn test_restore_worktree_switches_branch_when_not_moved(cx: &mut TestAppCo
         },
     )
     .await;
-
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
     let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-b".as_ref()], cx).await;
-
     main_project
         .update(cx, |p, cx| p.git_scans_complete(cx))
         .await;
@@ -5623,54 +5596,136 @@ async fn test_restore_worktree_switches_branch_when_not_moved(cx: &mut TestAppCo
     let wt_repo = worktree_project.read_with(cx, |project, cx| {
         project.repositories(cx).values().next().unwrap().clone()
     });
-
     let (staged_hash, unstaged_hash) = cx
         .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
         .await
         .unwrap()
         .unwrap();
 
-    // The branch ref still points at original-sha — it has NOT moved.
-    // (add_linked_worktree_for_repo already inserted
-    //  refs/heads/feature-b → "original-sha")
+    // refs/heads/feature-b already points at "original-sha" (set by
+    // add_linked_worktree_for_repo), matching original_commit_hash.
 
     let result = cx
-        .spawn(|mut cx| {
-            let row = agent_ui::thread_metadata_store::ArchivedGitWorktree {
-                id: 1,
-                worktree_path: PathBuf::from("/wt-feature-b"),
-                main_repo_path: PathBuf::from("/project"),
-                branch_name: Some("feature-b".to_string()),
-                staged_commit_hash: staged_hash,
-                unstaged_commit_hash: unstaged_hash,
-                original_commit_hash: "original-sha".to_string(),
-            };
-            async move {
-                agent_ui::thread_worktree_archive::restore_worktree_via_git(&row, &mut cx).await
-            }
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                    id: 1,
+                    worktree_path: PathBuf::from("/wt-feature-b"),
+                    main_repo_path: PathBuf::from("/project"),
+                    branch_name: Some("feature-b".to_string()),
+                    staged_commit_hash: staged_hash,
+                    unstaged_commit_hash: unstaged_hash,
+                    original_commit_hash: "original-sha".to_string(),
+                },
+                &mut cx,
+            )
+            .await
         })
         .await;
 
     assert!(
         result.is_ok(),
-        "restore_worktree_via_git should succeed, got: {:?}",
+        "restore should succeed when branch has not moved: {:?}",
         result.err()
     );
+}
 
-    // Verify the branch ref was NOT deleted or modified — in the
-    // “branch has moved” path the code only logs, it doesn’t alter refs.
-    // Here we confirm the ref is still at the original SHA, proving the
-    // code did not take the detached-HEAD early return and instead
-    // proceeded through the change_branch path.
-    let branch_sha = fs
-        .with_git_state(Path::new("/project/.git"), false, |state| {
-            state.refs.get("refs/heads/feature-b").cloned()
-        })
+#[gpui::test]
+async fn test_restore_worktree_when_branch_does_not_exist(cx: &mut TestAppContext) {
+    // restore_worktree_via_git should succeed when the branch no longer
+    // exists (e.g. it was deleted while the thread was archived). The
+    // code should attempt to recreate the branch.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-d": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-d",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/wt-feature-d",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-d",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-d"),
+            ref_name: Some("refs/heads/feature-d".into()),
+            sha: "original-sha".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-d".as_ref()], cx).await;
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, _cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    multi_workspace.update_in(_cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    let wt_repo = worktree_project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    let (staged_hash, unstaged_hash) = cx
+        .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
+        .await
+        .unwrap()
         .unwrap();
-    assert_eq!(
-        branch_sha.as_deref(),
-        Some("original-sha"),
-        "branch ref should remain at original-sha when branch has not moved"
+
+    // Remove the branch ref so resolve_ref returns None.
+    fs.with_git_state(Path::new("/project/.git"), false, |state| {
+        state.refs.remove("refs/heads/feature-d");
+    })
+    .unwrap();
+
+    let result = cx
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                    id: 1,
+                    worktree_path: PathBuf::from("/wt-feature-d"),
+                    main_repo_path: PathBuf::from("/project"),
+                    branch_name: Some("feature-d".to_string()),
+                    staged_commit_hash: staged_hash,
+                    unstaged_commit_hash: unstaged_hash,
+                    original_commit_hash: "original-sha".to_string(),
+                },
+                &mut cx,
+            )
+            .await
+        })
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "restore should succeed when branch does not exist: {:?}",
+        result.err()
     );
 }
 
