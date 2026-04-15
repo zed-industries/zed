@@ -5699,7 +5699,7 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
     // provisional ProjectGroupKey to find a matching workspace.
     let metadata = cx.update(|_window, cx| store.read(cx).entry(thread_id).unwrap().clone());
     sidebar.update_in(cx, |sidebar, window, cx| {
-        sidebar.activate_archived_thread(metadata, window, cx);
+        sidebar.open_thread_from_archive(metadata, window, cx);
     });
     cx.run_until_parked();
 
