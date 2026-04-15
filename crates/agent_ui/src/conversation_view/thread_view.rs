@@ -206,7 +206,6 @@ impl RenderOnce for GeneratingSpinnerElement {
 }
 
 pub enum AcpThreadViewEvent {
-    FirstSendRequested { content: Vec<acp::ContentBlock> },
     MessageSentOrQueued,
 }
 

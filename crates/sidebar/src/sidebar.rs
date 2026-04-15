@@ -46,8 +46,8 @@ use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
     AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
-    NextProject, NextThread, Open, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
-    ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
+    NextProject, NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey,
+    SaveIntent, ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
     ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
 };
 
@@ -964,6 +964,7 @@ impl Sidebar {
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
                 &[],
                 None,
+                OpenMode::Activate,
                 window,
                 cx,
             )
@@ -1001,6 +1002,7 @@ impl Sidebar {
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
                 &[],
                 None,
+                OpenMode::Activate,
                 window,
                 cx,
             )
@@ -2579,6 +2581,7 @@ impl Sidebar {
                 |options, window, cx| connect_remote(active_workspace, options, window, cx),
                 &[],
                 None,
+                OpenMode::Activate,
                 window,
                 cx,
             )
@@ -3212,6 +3215,7 @@ impl Sidebar {
                             },
                             &excluded,
                             None,
+                            OpenMode::Activate,
                             window,
                             cx,
                         )

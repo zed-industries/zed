@@ -339,23 +339,23 @@ pub enum NewWorktreeBranchTarget {
     },
 }
 
-/// Immediately creates a new git worktree and switches the workspace to it.
+/// Creates a new git worktree and switches the workspace to it.
 /// Dispatched by the unified worktree picker when the user selects a "Create new worktree" entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
-pub struct CreateWorktreeImmediately {
+pub struct CreateWorktree {
     /// When this is None, Zed will randomly generate a worktree name.
     pub worktree_name: Option<String>,
     pub branch_target: NewWorktreeBranchTarget,
 }
 
-/// Immediately switches the workspace to an existing linked worktree.
+/// Switches the workspace to an existing linked worktree.
 /// Dispatched by the unified worktree picker when the user selects an existing worktree.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
-pub struct SwitchToLinkedWorktree {
+pub struct SwitchWorktree {
     pub path: PathBuf,
     pub display_name: String,
 }

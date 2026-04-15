@@ -1010,6 +1010,7 @@ impl MultiWorkspace {
                         Some(neighbor_key.clone()),
                         &excluded_workspaces,
                         None,
+                        OpenMode::Activate,
                         window,
                         cx,
                     );
@@ -1139,6 +1140,7 @@ impl MultiWorkspace {
         + 'static,
         excluding: &[Entity<Workspace>],
         init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1153,6 +1155,7 @@ impl MultiWorkspace {
                 provisional_project_group_key,
                 excluding,
                 init,
+                open_mode,
                 window,
                 cx,
             );
@@ -1216,6 +1219,7 @@ impl MultiWorkspace {
         project_group: Option<ProjectGroupKey>,
         excluding: &[Entity<Workspace>],
         init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1274,16 +1278,6 @@ impl MultiWorkspace {
             {
                 return Ok(workspace);
             }
-
-            // When an `init` callback is provided, the caller intends to
-            // configure the workspace (e.g. restore dock layout) before it
-            // becomes visible. Use `Add` so the workspace is created without
-            // being activated, and let the caller call `activate` when ready.
-            let open_mode = if init.is_some() {
-                OpenMode::Add
-            } else {
-                OpenMode::Activate
-            };
 
             let result = cx
                 .update(|cx| {
@@ -1834,7 +1828,7 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(PathList::new(&paths), None, &[], None, window, cx)
+            self.find_or_create_local_workspace(PathList::new(&paths), None, &[], None, OpenMode::Activate, window, cx)
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {

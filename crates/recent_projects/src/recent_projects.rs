@@ -1141,6 +1141,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     Some(key.clone()),
                                     &[],
                                     None,
+                                    OpenMode::Activate,
                                     window,
                                     cx,
                                 )

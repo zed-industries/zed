@@ -15,7 +15,7 @@ use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, Tooltip, prelude:
 use util::ResultExt as _;
 use util::paths::PathExt;
 
-use crate::{CreateWorktreeImmediately, NewWorktreeBranchTarget, SwitchToLinkedWorktree};
+use crate::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
 pub(crate) struct ThreadWorktreePicker {
     picker: Entity<Picker<ThreadWorktreePickerDelegate>>,
@@ -368,12 +368,11 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
             .collect();
 
         let executor = cx.background_executor().clone();
-        let query_clone = query.clone();
 
         let task = cx.background_executor().spawn(async move {
             fuzzy::match_strings(
                 &candidates,
-                &query_clone,
+                &query,
                 true,
                 true,
                 10000,
@@ -398,24 +397,13 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                         });
                     }
 
-                    // If the typed text doesn't exactly match an existing worktree, offer to create one
-                    let main_worktree_path = repo_worktrees_clone
-                        .iter()
-                        .find(|wt| wt.is_main)
-                        .map(|wt| wt.path.clone());
-                    let has_exact_match = repo_worktrees_clone.iter().any(|worktree| {
-                        worktree.directory_name(main_worktree_path.as_deref()) == query
-                    });
-
-                    if !has_exact_match {
-                        if !new_matches.is_empty() {
-                            new_matches.push(ThreadWorktreeEntry::Separator);
-                        }
-                        new_matches.push(ThreadWorktreeEntry::CreateNamed {
-                            name: normalized_query.clone(),
-                            disabled_reason: create_named_disabled_reason.clone(),
-                        });
+                    if !new_matches.is_empty() {
+                        new_matches.push(ThreadWorktreeEntry::Separator);
                     }
+                    new_matches.push(ThreadWorktreeEntry::CreateNamed {
+                        name: normalized_query.clone(),
+                        disabled_reason: create_named_disabled_reason.clone(),
+                    });
 
                     picker.delegate.matches = new_matches;
                     picker.delegate.sync_selected_index(true);
@@ -436,7 +424,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
 
             ThreadWorktreeEntry::CreateFromCurrentBranch => {
                 window.dispatch_action(
-                    Box::new(CreateWorktreeImmediately {
+                    Box::new(CreateWorktree {
                         worktree_name: None,
                         branch_target: NewWorktreeBranchTarget::CurrentBranch,
                     }),
@@ -448,7 +436,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                 default_branch_name,
             } => {
                 window.dispatch_action(
-                    Box::new(CreateWorktreeImmediately {
+                    Box::new(CreateWorktree {
                         worktree_name: None,
                         branch_target: NewWorktreeBranchTarget::ExistingBranch {
                             name: default_branch_name.clone(),
@@ -470,7 +458,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                         .find(|wt| wt.is_main)
                         .map(|wt| wt.path.as_path());
                     window.dispatch_action(
-                        Box::new(SwitchToLinkedWorktree {
+                        Box::new(SwitchWorktree {
                             path: worktree.path.clone(),
                             display_name: worktree.directory_name(main_worktree_path),
                         }),
@@ -484,7 +472,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                 disabled_reason: None,
             } => {
                 window.dispatch_action(
-                    Box::new(CreateWorktreeImmediately {
+                    Box::new(CreateWorktree {
                         worktree_name: Some(name.clone()),
                         branch_target: NewWorktreeBranchTarget::CurrentBranch,
                     }),
@@ -516,37 +504,42 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         let project = self.project.read(cx);
         let is_create_disabled = project.repositories(cx).is_empty() || project.is_via_collab();
 
-        let create_new_list_item =
-            |id: SharedString, label: SharedString, is_disabled: bool, selected: bool| {
-                ListItem::new(id)
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .toggle_state(selected)
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2p5()
-                            .child(
-                                Icon::new(IconName::Plus)
-                                    .map(|this| {
-                                        if is_disabled {
-                                            this.color(Color::Disabled)
-                                        } else {
-                                            this.color(Color::Muted)
-                                        }
-                                    })
-                                    .size(IconSize::Small),
-                            )
-                            .child(
-                                Label::new(label)
-                                    .when(is_disabled, |this| this.color(Color::Disabled)),
-                            ),
-                    )
-                    .when(is_disabled, |this| {
-                        this.tooltip(Tooltip::text("Requires a Git repository in the project"))
-                    })
-                    .into_any_element()
-            };
+        let no_git_reason: SharedString = "Requires a Git repository in the project".into();
+
+        let create_new_list_item = |id: SharedString,
+                                    label: SharedString,
+                                    disabled_tooltip: Option<SharedString>,
+                                    selected: bool| {
+            let is_disabled = disabled_tooltip.is_some();
+            ListItem::new(id)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_2p5()
+                        .child(
+                            Icon::new(IconName::Plus)
+                                .map(|this| {
+                                    if is_disabled {
+                                        this.color(Color::Disabled)
+                                    } else {
+                                        this.color(Color::Muted)
+                                    }
+                                })
+                                .size(IconSize::Small),
+                        )
+                        .child(
+                            Label::new(label)
+                                .when(is_disabled, |this| this.color(Color::Disabled)),
+                        ),
+                )
+                .when_some(disabled_tooltip, |this, reason| {
+                    this.tooltip(Tooltip::text(reason))
+                })
+                .into_any_element()
+        };
 
         match entry {
             ThreadWorktreeEntry::Separator => Some(
@@ -567,10 +560,13 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
 
                 let label = format!("Create new worktree based on {branch_label}");
 
+                let disabled_tooltip =
+                    is_create_disabled.then(|| no_git_reason.clone());
+
                 let item = create_new_list_item(
                     "create-from-current".to_string().into(),
                     label.into(),
-                    is_create_disabled,
+                    disabled_tooltip,
                     selected,
                 );
 
@@ -582,10 +578,13 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
             } => {
                 let label = format!("Create new worktree based on {default_branch_name}");
 
+                let disabled_tooltip =
+                    is_create_disabled.then(|| no_git_reason.clone());
+
                 let item = create_new_list_item(
                     "create-from-main".to_string().into(),
                     label.into(),
-                    is_create_disabled,
+                    disabled_tooltip,
                     selected,
                 );
 
@@ -697,18 +696,261 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                 name,
                 disabled_reason,
             } => {
-                let is_disabled = disabled_reason.is_some();
                 let label = format!("Create Worktree: \"{name}\"…");
 
                 let item = create_new_list_item(
                     "create-fresh-new".to_string().into(),
                     label.into(),
-                    is_disabled,
+                    disabled_reason.clone().map(SharedString::from),
                     selected,
                 );
 
                 Some(item.into_any_element())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use project::Project;
+    use settings::SettingsStore;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            release_channel::init("0.0.0".parse().unwrap(), cx);
+            crate::agent_panel::init(cx);
+        });
+    }
+
+    fn make_worktree(path: &str, branch: &str, is_main: bool) -> GitWorktree {
+        GitWorktree {
+            path: PathBuf::from(path),
+            ref_name: Some(format!("refs/heads/{branch}").into()),
+            sha: "abc1234".into(),
+            is_main,
+            is_bare: false,
+        }
+    }
+
+    fn build_delegate(
+        project: Entity<Project>,
+        all_worktrees: Vec<GitWorktree>,
+        project_worktree_paths: HashSet<PathBuf>,
+        current_branch_name: Option<String>,
+        default_branch_name: Option<String>,
+        has_multiple_repositories: bool,
+    ) -> ThreadWorktreePickerDelegate {
+        ThreadWorktreePickerDelegate {
+            matches: vec![ThreadWorktreeEntry::CreateFromCurrentBranch],
+            all_worktrees,
+            project_worktree_paths,
+            selected_index: 0,
+            project,
+            current_branch_name,
+            default_branch_name,
+            has_multiple_repositories,
+        }
+    }
+
+    fn entry_names(delegate: &ThreadWorktreePickerDelegate) -> Vec<String> {
+        delegate
+            .matches
+            .iter()
+            .map(|entry| match entry {
+                ThreadWorktreeEntry::CreateFromCurrentBranch => {
+                    "CreateFromCurrentBranch".to_string()
+                }
+                ThreadWorktreeEntry::CreateFromDefaultBranch {
+                    default_branch_name,
+                } => format!("CreateFromDefaultBranch({default_branch_name})"),
+                ThreadWorktreeEntry::Separator => "---".to_string(),
+                ThreadWorktreeEntry::Worktree { worktree, .. } => {
+                    format!("Worktree({})", worktree.path.display())
+                }
+                ThreadWorktreeEntry::CreateNamed {
+                    name,
+                    disabled_reason,
+                } => {
+                    if disabled_reason.is_some() {
+                        format!("CreateNamed({name}, disabled)")
+                    } else {
+                        format!("CreateNamed({name})")
+                    }
+                }
+            })
+            .collect()
+    }
+
+    type PickerWindow = gpui::WindowHandle<Picker<ThreadWorktreePickerDelegate>>;
+
+    async fn make_picker(
+        cx: &mut TestAppContext,
+        all_worktrees: Vec<GitWorktree>,
+        project_worktree_paths: HashSet<PathBuf>,
+        current_branch_name: Option<String>,
+        default_branch_name: Option<String>,
+        has_multiple_repositories: bool,
+    ) -> PickerWindow {
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        cx.add_window(|window, cx| {
+            let delegate = build_delegate(
+                project,
+                all_worktrees,
+                project_worktree_paths,
+                current_branch_name,
+                default_branch_name,
+                has_multiple_repositories,
+            );
+            Picker::list(delegate, window, cx)
+                .list_measure_all()
+                .modal(false)
+        })
+    }
+
+    #[gpui::test]
+    async fn test_empty_query_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // When on `main` with default branch also `main`, only CreateFromCurrentBranch
+        // is shown as a fixed entry. Worktrees are listed with the current one first.
+        let worktrees = vec![
+            make_worktree("/repo", "main", true),
+            make_worktree("/repo-feature", "feature", false),
+            make_worktree("/repo-bugfix", "bugfix", false),
+        ];
+        let project_paths: HashSet<PathBuf> = [PathBuf::from("/repo")].into_iter().collect();
+
+        let picker = make_picker(
+            cx,
+            worktrees,
+            project_paths,
+            Some("main".into()),
+            Some("main".into()),
+            false,
+        )
+        .await;
+
+        picker.update(cx, |picker, window, cx| picker.refresh(window, cx)).unwrap();
+        cx.run_until_parked();
+
+        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+
+        assert_eq!(
+            names,
+            vec![
+                "CreateFromCurrentBranch",
+                "---",
+                "Worktree(/repo)",
+                "Worktree(/repo-bugfix)",
+                "Worktree(/repo-feature)",
+            ]
+        );
+
+        // When current branch differs from default, CreateFromDefaultBranch appears.
+        picker.update(cx, |picker, _window, cx| {
+            picker.delegate.current_branch_name = Some("feature".into());
+            picker.delegate.default_branch_name = Some("main".into());
+            cx.notify();
+        }).unwrap();
+        picker.update(cx, |picker, window, cx| picker.refresh(window, cx)).unwrap();
+        cx.run_until_parked();
+
+        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+
+        assert!(names.contains(&"CreateFromDefaultBranch(main)".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_query_filtering_and_create_entries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let picker = make_picker(
+            cx,
+            vec![
+                make_worktree("/repo", "main", true),
+                make_worktree("/repo-feature", "feature", false),
+                make_worktree("/repo-bugfix", "bugfix", false),
+                make_worktree("/my-worktree", "experiment", false),
+            ],
+            HashSet::default(),
+            Some("main".into()),
+            None,
+            false,
+        )
+        .await;
+
+        // Partial match filters to matching worktrees and offers to create.
+        picker.update(cx, |picker, window, cx| picker.set_query("feat", window, cx)).unwrap();
+        cx.run_until_parked();
+
+        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        assert!(names.contains(&"Worktree(/repo-feature)".to_string()));
+        assert!(names.contains(&"CreateNamed(feat)".to_string()));
+        assert!(!names.contains(&"Worktree(/repo-bugfix)".to_string()));
+
+        // Exact match: the create entry appears but is disabled.
+        picker.update(cx, |picker, window, cx| picker.set_query("repo-feature", window, cx)).unwrap();
+        cx.run_until_parked();
+
+        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        assert!(
+            names.contains(&"CreateNamed(repo-feature, disabled)".to_string()),
+            "exact name match should show a disabled create entry, got: {names:?}"
+        );
+
+        // Spaces are normalized to hyphens: "my worktree" matches "my-worktree".
+        picker.update(cx, |picker, window, cx| picker.set_query("my worktree", window, cx)).unwrap();
+        cx.run_until_parked();
+
+        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        assert!(
+            names.contains(&"CreateNamed(my-worktree, disabled)".to_string()),
+            "spaces should normalize to hyphens and detect existing worktree, got: {names:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_multi_repo_hides_worktrees_and_disables_create_named(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let picker = make_picker(
+            cx,
+            vec![
+                make_worktree("/repo", "main", true),
+                make_worktree("/repo-feature", "feature", false),
+            ],
+            HashSet::default(),
+            Some("main".into()),
+            Some("main".into()),
+            true,
+        )
+        .await;
+
+        picker.update(cx, |picker, window, cx| picker.refresh(window, cx)).unwrap();
+        cx.run_until_parked();
+
+        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        assert_eq!(names, vec!["CreateFromCurrentBranch"]);
+
+        picker.update(cx, |picker, window, cx| picker.set_query("new-thing", window, cx)).unwrap();
+        cx.run_until_parked();
+
+        let names = picker.read_with(cx, |picker, _| entry_names(&picker.delegate)).unwrap();
+        assert!(
+            names.contains(&"CreateNamed(new-thing, disabled)".to_string()),
+            "multi-repo should disable create named, got: {names:?}"
+        );
     }
 }

@@ -436,6 +436,7 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_when_sideba
                 None,
                 &[],
                 None,
+                OpenMode::Activate,
                 window,
                 cx,
             )
@@ -500,6 +501,7 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
                 |_options, _window, _cx| Task::ready(Ok(None)),
                 &[],
                 None,
+                OpenMode::Activate,
                 window,
                 cx,
             )
@@ -566,6 +568,7 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_after_sideb
                 None,
                 &[],
                 None,
+                OpenMode::Activate,
                 window,
                 cx,
             )

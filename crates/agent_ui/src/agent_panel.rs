@@ -33,9 +33,9 @@ use crate::DEFAULT_THREAD_TITLE;
 use crate::thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard,
-    CreateWorktreeImmediately, Follow, InlineAssistant, LoadThreadFromClipboard, NewThread,
+    CreateWorktree, Follow, InlineAssistant, LoadThreadFromClipboard, NewThread,
     NewWorktreeBranchTarget, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory,
-    ResetTrialEndUpsell, ResetTrialUpsell, SwitchToLinkedWorktree, ToggleNavigationMenu,
+    ResetTrialEndUpsell, ResetTrialUpsell, SwitchWorktree, ToggleNavigationMenu,
     ToggleNewThreadMenu, ToggleOptionsMenu, ToggleWorktreeSelector,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
@@ -84,8 +84,8 @@ use ui::{
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    CollaboratorId, DockStructure, DraggedSelection, DraggedTab, PathList, SerializedPathList,
-    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
+    CollaboratorId, DockStructure, DraggedSelection, DraggedTab, OpenMode, PathList,
+    SerializedPathList, ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
@@ -486,12 +486,12 @@ pub fn init(cx: &mut App) {
                     },
                 )
                 .register_action(
-                    |workspace: &mut Workspace, action: &CreateWorktreeImmediately, window, cx| {
+                    |workspace: &mut Workspace, action: &CreateWorktree, window, cx| {
                         let previous_state =
                             AgentPanel::capture_workspace_state(workspace, window, cx);
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                             panel.update(cx, |panel, cx| {
-                                panel.create_worktree_immediately(
+                                panel.create_worktree(
                                     action,
                                     previous_state,
                                     window,
@@ -502,7 +502,7 @@ pub fn init(cx: &mut App) {
                     },
                 )
                 .register_action(
-                    |workspace: &mut Workspace, action: &SwitchToLinkedWorktree, window, cx| {
+                    |workspace: &mut Workspace, action: &SwitchWorktree, window, cx| {
                         let previous_state =
                             AgentPanel::capture_workspace_state(workspace, window, cx);
                         if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -661,7 +661,6 @@ enum WhichFontSize {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub enum WorktreeCreationStatus {
     Creating(SharedString),
     Loading(SharedString),
@@ -756,7 +755,6 @@ pub struct AgentPanel {
     agent_navigation_menu: Option<Entity<ContextMenu>>,
     _extension_subscription: Option<Subscription>,
     _project_subscription: Subscription,
-    _git_store_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
@@ -1072,9 +1070,6 @@ impl AgentPanel {
                 }
                 _ => {}
             });
-        let git_store = project.read(cx).git_store().clone();
-        let _git_store_subscription = cx.subscribe(&git_store, |_this, _, _event, _cx| {});
-
         let mut panel = Self {
             workspace_id,
             base_view,
@@ -1098,7 +1093,6 @@ impl AgentPanel {
             agent_navigation_menu: None,
             _extension_subscription: extension_subscription,
             _project_subscription,
-            _git_store_subscription,
             zoomed: false,
             pending_serialization: None,
             new_user_onboarding: onboarding,
@@ -2300,10 +2294,7 @@ impl AgentPanel {
             cx.subscribe_in(
                 &tv,
                 window,
-                |this, view, event: &AcpThreadViewEvent, window, cx| match event {
-                    AcpThreadViewEvent::FirstSendRequested { content } => {
-                        this.handle_first_send_requested(view.clone(), content.clone(), window, cx);
-                    }
+                |this, _view, event: &AcpThreadViewEvent, _window, cx| match event {
                     AcpThreadViewEvent::MessageSentOrQueued => {
                         let Some(thread_id) = this.active_thread_id(cx) else {
                             return;
@@ -2601,21 +2592,6 @@ impl AgentPanel {
 
     pub fn active_thread_is_draft(&self, cx: &App) -> bool {
         self.active_conversation_view().is_some() && !self.active_thread_has_messages(cx)
-    }
-
-    fn handle_first_send_requested(
-        &mut self,
-        thread_view: Entity<ThreadView>,
-        _content: Vec<acp::ContentBlock>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        cx.defer_in(window, move |_this, window, cx| {
-            thread_view.update(cx, |thread_view, cx| {
-                let editor = thread_view.message_editor.clone();
-                thread_view.send_impl(editor, window, cx);
-            });
-        });
     }
 
     // TODO: The mapping from workspace root paths to git repositories needs a
@@ -2970,19 +2946,19 @@ impl AgentPanel {
         }
     }
 
-    fn create_worktree_immediately(
+    fn create_worktree(
         &mut self,
-        action: &CreateWorktreeImmediately,
+        action: &CreateWorktree,
         previous_workspace_state: PreviousWorkspaceState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if !self.project_has_git_repository(cx) {
-            log::error!("create_worktree_immediately: no git repository in the project");
+            log::error!("create_worktree: no git repository in the project");
             return;
         }
         if self.project.read(cx).is_via_collab() {
-            log::error!("create_worktree_immediately: not supported in collab projects");
+            log::error!("create_worktree: not supported in collab projects");
             return;
         }
         if matches!(
@@ -3015,7 +2991,7 @@ impl AgentPanel {
 
     fn switch_to_worktree(
         &mut self,
-        action: &SwitchToLinkedWorktree,
+        action: &SwitchWorktree,
         previous_workspace_state: PreviousWorkspaceState,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3381,6 +3357,7 @@ impl AgentPanel {
                     },
                     &[],
                     Some(init),
+                    OpenMode::Add,
                     window,
                     cx,
                 );
