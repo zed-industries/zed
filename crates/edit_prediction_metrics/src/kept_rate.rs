@@ -272,27 +272,13 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
 
     let (candidate_base_mask, base_candidate_mask) =
         lcs_keep_masks(&candidate_tokens, &base_tokens);
-    let (candidate_reference_mask, reference_candidate_mask) =
-        lcs_keep_masks(&candidate_tokens, &reference_tokens);
-    let context_mask: Vec<bool> = candidate_base_mask
-        .iter()
-        .zip(candidate_reference_mask.iter())
-        .map(|(&in_base, &in_reference)| in_base && in_reference)
-        .collect();
-
     let (stripped_candidate, candidate_new_chars, context_chars) =
-        analyze_masked_tokens(&candidate_tokens, &context_mask);
+        analyze_masked_tokens(&candidate_tokens, &candidate_base_mask);
 
     let (reference_base_mask, base_reference_mask) =
         lcs_keep_masks(&reference_tokens, &base_tokens);
-    let reference_context_mask: Vec<bool> = reference_base_mask
-        .iter()
-        .zip(reference_candidate_mask.iter())
-        .map(|(&in_base, &in_candidate)| in_base && in_candidate)
-        .collect();
-
     let (stripped_reference, reference_new_chars, _) =
-        analyze_masked_tokens(&reference_tokens, &reference_context_mask);
+        analyze_masked_tokens(&reference_tokens, &reference_base_mask);
 
     let keep_mask = lcs_keep_mask(&stripped_candidate, &stripped_reference);
 
@@ -333,7 +319,7 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
         let mut token_annotations = Vec::with_capacity(candidate_tokens.len());
         let mut new_index = 0;
         for (token_index, _token) in candidate_tokens.iter().enumerate() {
-            if context_mask[token_index] {
+            if candidate_base_mask[token_index] {
                 token_annotations.push(TokenAnnotation::Context);
             } else {
                 let annotation = if keep_mask[new_index] {
@@ -382,6 +368,7 @@ pub fn annotate_kept_rate_tokens(
 #[cfg(test)]
 mod test_kept_rate {
     use super::*;
+    use indoc::indoc;
 
     #[test]
     fn test_lcs_keep_masks() {
@@ -455,16 +442,24 @@ mod test_kept_rate {
 
     #[test]
     fn test_missing_deletion() {
-        let base = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\n";
-        let candidate = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\neprintln!(\"\");\n";
-        let reference = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
+        let base = indoc! {"
+            fn example() {
+                epr
+        "};
+        let candidate = indoc! {r#"
+            fn example() {
+                epr
+            eprintln!("");
+        "#};
+        let reference = indoc! {r#"
+            fn example() {
+            eprintln!("");
+        "#};
+
         let result = compute_kept_rate(base, candidate, reference);
-        assert!(
-            result.kept_rate < 0.85,
-            "expected kept_rate < 0.85, got {}",
-            result.kept_rate
-        );
-        assert!(result.discarded_chars > 0);
+        assert!((result.kept_rate - (14.0 / 15.0)).abs() < 1e-6);
+        assert_eq!(result.kept_chars, 14);
+        assert_eq!(result.discarded_chars, 1);
     }
 
     #[test]
@@ -488,8 +483,17 @@ mod test_kept_rate {
 
     #[test]
     fn test_bails_for_dirty_final() {
-        let base = "fn example() {\n    work();\n}\n";
-        let candidate = "fn example() {\n    work();\n    predicted();\n}\n";
+        let base = indoc! {"
+            fn example() {
+                work();
+            }
+        "};
+        let candidate = indoc! {"
+            fn example() {
+                work();
+                predicted();
+            }
+        "};
         let reference = format!(
             "fn example() {{\n    work();\n    {}\n}}\n",
             "settled();\n    ".repeat(MAX_DIRTY_LENGTH_DELTA_CHARS / 8 + 64)
@@ -504,15 +508,61 @@ mod test_kept_rate {
 
     #[test]
     fn test_eprintln_token_alignment() {
-        let base = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\n";
-        let candidate = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"hello world!\");\n";
-        let reference = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
+        let base = indoc! {"
+            fn example() {
+                epr
+        "};
+        let candidate = indoc! {r#"
+            fn example() {
+                eprintln!("hello world!");
+        "#};
+        let reference = indoc! {r#"
+            fn example() {
+                eprintln!("");
+        "#};
+
         let result = compute_kept_rate(base, candidate, reference);
         assert!(result.discarded_chars > 0);
         assert!(result.kept_chars > 0);
         assert!(result.kept_rate > 0.0 && result.kept_rate < 1.0);
         assert_eq!(result.kept_chars, 14);
         assert_eq!(result.discarded_chars, 12);
+    }
+
+    #[test]
+    fn test_kept_rate_treats_unchanged_stale_text_as_context() {
+        let base = indoc! {"
+            a=fomr
+            b=old
+        "};
+        let candidate = indoc! {"
+            a=formula;
+            b=old
+        "};
+        let reference = indoc! {"
+            a=formula;
+            b=new
+        "};
+
+        let result = compute_kept_rate(base, candidate, reference);
+        let candidate_tokens = tokenize(candidate);
+
+        assert_eq!(result.candidate_new_chars, "formula".len() + ";".len());
+        assert_eq!(result.kept_chars, "formula".len() + ";".len());
+        assert_eq!(result.discarded_chars, 0);
+        assert_eq!(result.candidate_deleted_chars, "fomr".len());
+        assert_eq!(result.correctly_deleted_chars, "fomr".len());
+        assert!((result.kept_rate - 1.0).abs() < 1e-6);
+        assert!((result.recall_rate - (2.0 / 3.0)).abs() < 1e-6);
+
+        let old_index = candidate_tokens
+            .iter()
+            .position(|&token| token == "old")
+            .expect("old token not found");
+        assert_eq!(
+            result.token_annotations[old_index],
+            TokenAnnotation::Context
+        );
     }
 
     #[test]
@@ -540,9 +590,18 @@ mod test_kept_rate {
 
     #[test]
     fn test_annotations_eprintln_coloring() {
-        let base = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        epr\n";
-        let candidate = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"hello world!\");\n";
-        let reference = "    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut Context<Self>) {\n        eprintln!(\"\");\n";
+        let base = indoc! {"
+            fn example() {
+                epr
+        "};
+        let candidate = indoc! {r#"
+            fn example() {
+                eprintln!("hello world!");
+        "#};
+        let reference = indoc! {r#"
+            fn example() {
+                eprintln!("");
+        "#};
         let result = compute_kept_rate(base, candidate, reference);
         let candidate_tokens = tokenize(candidate);
 
