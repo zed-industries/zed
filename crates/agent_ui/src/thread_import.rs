@@ -63,7 +63,9 @@ impl Dismissable for CrossChannelImportOnboarding {
 /// at least one thread in their database.  The result is suitable for
 /// building a user-facing message ("from Zed Preview and Nightly").
 pub fn channels_with_threads(cx: &App) -> Vec<ReleaseChannel> {
-    let current_channel = ReleaseChannel::global(cx);
+    let Some(current_channel) = ReleaseChannel::try_global(cx) else {
+        return Vec::new();
+    };
     let database_dir = paths::database_dir();
 
     ReleaseChannel::ALL
@@ -896,13 +898,14 @@ mod tests {
         archived: bool,
     ) {
         let thread_id = uuid::Uuid::new_v4();
+        let session_id = uuid::Uuid::new_v4().to_string();
         connection
-            .exec_bound::<(uuid::Uuid, &str, &str, bool)>(
+            .exec_bound::<(uuid::Uuid, &str, &str, &str, bool)>(
                 "INSERT INTO sidebar_threads \
-                 (thread_id, title, updated_at, archived) \
-                 VALUES (?1, ?2, ?3, ?4)",
+                 (thread_id, session_id, title, updated_at, archived) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
             )
-            .unwrap()((thread_id, title, updated_at, archived))
+            .unwrap()((thread_id, session_id.as_str(), title, updated_at, archived))
         .unwrap();
     }
 
