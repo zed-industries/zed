@@ -524,23 +524,19 @@ pub struct Runnable {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<lsp::LocationLink>,
-    pub kind: RunnableKind,
+    #[serde(flatten)]
     pub args: RunnableArgs,
 }
 
+/// The `kind` field in the JSON determines which variant is deserialized:
+/// `"cargo"` maps to [`CargoRunnableArgs`], `"shell"` maps to
+/// [`ShellRunnableArgs`].
 #[derive(Deserialize, Serialize, Debug, Clone)]
-#[serde(rename_all = "camelCase")]
-#[serde(untagged)]
+#[serde(tag = "kind", content = "args")]
+#[serde(rename_all = "lowercase")]
 pub enum RunnableArgs {
     Cargo(CargoRunnableArgs),
     Shell(ShellRunnableArgs),
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum RunnableKind {
-    Cargo,
-    Shell,
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -790,4 +786,62 @@ pub struct RunFlycheckParams {
 impl lsp::notification::Notification for LspExtClearFlycheck {
     type Params = ();
     const METHOD: &'static str = "rust-analyzer/clearFlycheck";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_runnable_deserializes_as_shell() {
+        // rust-analyzer sends this when `runnables.test.overrideCommand` is
+        // configured (e.g. for nextest).
+        let json = serde_json::json!({
+            "label": "test my_test",
+            "kind": "shell",
+            "args": {
+                "environment": {"RUSTC_TOOLCHAIN": "/path/to/toolchain"},
+                "cwd": "/project",
+                "program": "cargo",
+                "args": ["nextest", "run", "--package", "my-crate", "--lib", "--", "my_test", "--exact", "--include-ignored"]
+            }
+        });
+
+        let runnable: Runnable =
+            serde_json::from_value(json).expect("shell runnable should deserialize");
+        let RunnableArgs::Shell(shell) = &runnable.args else {
+            panic!("expected Shell variant, got {:?}", runnable.args);
+        };
+        assert_eq!(shell.program, "cargo");
+        assert_eq!(shell.args[0], "nextest");
+        assert_eq!(shell.args[1], "run");
+    }
+
+    #[test]
+    fn cargo_runnable_deserializes_as_cargo() {
+        // Standard cargo runnable from rust-analyzer.
+        let json = serde_json::json!({
+            "label": "cargo test -p my-crate",
+            "kind": "cargo",
+            "args": {
+                "environment": {},
+                "cwd": "/project",
+                "overrideCargo": null,
+                "workspaceRoot": "/project",
+                "cargoArgs": ["test", "--package", "my-crate", "--lib"],
+                "executableArgs": ["my_test", "--exact"]
+            }
+        });
+
+        let runnable: Runnable =
+            serde_json::from_value(json).expect("cargo runnable should deserialize");
+        let RunnableArgs::Cargo(cargo) = &runnable.args else {
+            panic!("expected Cargo variant, got {:?}", runnable.args);
+        };
+        assert_eq!(
+            cargo.cargo_args,
+            vec!["test", "--package", "my-crate", "--lib"]
+        );
+        assert_eq!(cargo.executable_args, vec!["my_test", "--exact"]);
+    }
 }
