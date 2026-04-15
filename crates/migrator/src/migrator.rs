@@ -232,7 +232,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_12_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_12_15,
         ),
-        MigrationType::Json(migrations::m_2026_01_30::remove_settings_from_http_context_servers),
+        MigrationType::Json(migrations::m_2026_04_15::remove_settings_from_http_context_servers),
     ];
     run_migrations(text, migrations)
 }
