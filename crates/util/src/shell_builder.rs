@@ -130,52 +130,6 @@ impl ShellBuilder {
         (self.program, self.args)
     }
 
-    // This should not exist, but our task infra is broken beyond repair right now
-    #[doc(hidden)]
-    pub fn build_no_quote(
-        mut self,
-        task_command: Option<String>,
-        task_args: &[String],
-    ) -> (String, Vec<String>) {
-        if let Some(task_command) = task_command {
-            let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
-                command.push(' ');
-                command.push_str(&self.kind.to_shell_variable(arg));
-                command
-            });
-            if self.redirect_stdin {
-                match self.kind {
-                    ShellKind::Fish => {
-                        combined_command.insert_str(0, "begin; ");
-                        combined_command.push_str("; end </dev/null");
-                    }
-                    ShellKind::Posix
-                    | ShellKind::Nushell
-                    | ShellKind::Csh
-                    | ShellKind::Tcsh
-                    | ShellKind::Rc
-                    | ShellKind::Xonsh
-                    | ShellKind::Elvish => {
-                        combined_command.insert(0, '(');
-                        combined_command.push_str(") </dev/null");
-                    }
-                    ShellKind::PowerShell | ShellKind::Pwsh => {
-                        combined_command.insert_str(0, "$null | & {");
-                        combined_command.push_str("}");
-                    }
-                    ShellKind::Cmd => {
-                        combined_command.push_str("< NUL");
-                    }
-                }
-            }
-
-            self.args
-                .extend(self.kind.args_for_shell(self.interactive, combined_command));
-        }
-
-        (self.program, self.args)
-    }
-
     /// Builds a `smol::process::Command` with the given task command and arguments.
     ///
     /// Prefer this over manually constructing a command with the output of `Self::build`,

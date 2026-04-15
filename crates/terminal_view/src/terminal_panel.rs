@@ -1184,7 +1184,7 @@ pub fn prepare_task_for_spawn(
 ) -> SpawnInTerminal {
     let builder = ShellBuilder::new(shell, is_windows);
     let command_label = builder.command_label(task.command.as_deref().unwrap_or(""));
-    let (command, args) = builder.build_no_quote(task.command.clone(), &task.args);
+    let (command, args) = builder.build(task.command.clone(), &task.args);
 
     SpawnInTerminal {
         command_label,
@@ -1829,6 +1829,29 @@ mod tests {
                 interactive = if cfg!(windows) { "" } else { "-i " }
             ),
             "We want to show to the user the entire command spawned"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_prepare_task_with_spaces_quotes_args() {
+        let input = SpawnInTerminal {
+            command: Some("echo".to_string()),
+            args: vec!["/tmp/folder with spaces/file.txt".to_string()],
+            ..SpawnInTerminal::default()
+        };
+        let shell = Shell::Program("zsh".to_owned());
+
+        let result = prepare_task_for_spawn(&input, &shell, false);
+
+        assert_eq!(result.command, Some("zsh".to_string()));
+        assert_eq!(
+            result.args,
+            vec![
+                "-i".to_string(),
+                "-c".to_string(),
+                "echo '/tmp/folder with spaces/file.txt'".to_string(),
+            ]
         );
     }
 
