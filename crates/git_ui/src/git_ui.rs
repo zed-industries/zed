@@ -1,9 +1,7 @@
-use std::any::Any;
-
 use anyhow::anyhow;
-use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, actions::DiffClipboardWithSelectionData};
+
 use project::ProjectPath;
 use ui::{
     Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
@@ -18,11 +16,9 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use gpui::{
-    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
-    Window, actions,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString, Window,
 };
 use menu::{Cancel, Confirm};
-use onboarding::GitOnboardingModal;
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
@@ -42,7 +38,7 @@ pub mod file_history_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;
-pub mod onboarding;
+pub mod multi_diff_view;
 pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
@@ -51,18 +47,11 @@ pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_picker;
 
-actions!(
-    git,
-    [
-        /// Resets the git onboarding state to show the tutorial again.
-        ResetOnboarding
-    ]
-);
+pub use conflict_view::MergeConflictIndicator;
 
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
     commit_view::init(cx);
-    file_history_view::init(cx);
 
     cx.observe_new(|editor: &mut Editor, _, cx| {
         conflict_view::register_editor(editor, editor.buffer().clone(), cx);
@@ -194,21 +183,6 @@ pub fn init(cx: &mut App) {
             panel.update(cx, |panel, cx| {
                 panel.uncommit(window, cx);
             })
-        });
-        CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            filter.hide_action_types(&[
-                zed_actions::OpenGitIntegrationOnboarding.type_id(),
-                // ResetOnboarding.type_id(),
-            ]);
-        });
-        workspace.register_action(
-            move |workspace, _: &zed_actions::OpenGitIntegrationOnboarding, window, cx| {
-                GitOnboardingModal::toggle(workspace, window, cx)
-            },
-        );
-        workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
-            window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
-            window.refresh();
         });
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
@@ -873,8 +847,7 @@ impl Render for GitCloneModal {
                     .child(
                         Button::new("learn-more", "Learn More")
                             .label_size(LabelSize::Small)
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .end_icon(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall))
                             .on_click(|_, _, cx| {
                                 cx.open_url("https://github.com/git-guides/git-clone");
                             }),

@@ -1,11 +1,11 @@
 use crate::{BufferDiagnosticsEditor, ProjectDiagnosticsEditor, ToggleDiagnosticsRefresh};
 use gpui::{Context, EventEmitter, ParentElement, Render, Window};
 use language::DiagnosticEntry;
-use search::buffer_search;
 use text::{Anchor, BufferId};
 use ui::{Tooltip, prelude::*};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, item::ItemHandle};
 use zed_actions::assistant::InlineAssist;
+use zed_actions::buffer_search;
 
 pub struct ToolbarControls {
     editor: Option<Box<dyn DiagnosticsToolbarEditor>>,
@@ -83,7 +83,7 @@ impl Render for ToolbarControls {
                             .icon_color(Color::Error)
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::for_action_title(
-                                "Stop Siagnostics Update",
+                                "Stop Diagnostics Update",
                                 &ToggleDiagnosticsRefresh,
                             ))
                             .on_click(cx.listener(move |toolbar_controls, _, _, cx| {

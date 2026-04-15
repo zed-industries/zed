@@ -1,4 +1,5 @@
 use crate::PredictionProvider;
+use crate::metrics::ClassificationMetrics;
 use crate::paths::WORKTREES_DIR;
 use crate::qa::QaResult;
 use anyhow::{Context as _, Result};
@@ -15,9 +16,8 @@ use std::{
     collections::VecDeque,
     io::Read,
     path::{Path, PathBuf},
-    sync::Arc,
 };
-use zeta_prompt::RelatedFile;
+use zeta_prompt::ZetaPromptInput;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
@@ -27,7 +27,7 @@ pub struct Example {
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_inputs: Option<ExamplePromptInputs>,
+    pub prompt_inputs: Option<ZetaPromptInput>,
 
     /// The input and expected output from the edit prediction model.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -46,6 +46,9 @@ pub struct Example {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub qa: Vec<Option<QaResult>>,
 
+    /// The Zed version used to generate this example.
+    pub zed_version: Option<String>,
+
     /// The application state used to process this example.
     #[serde(skip)]
     pub state: Option<ExampleState>,
@@ -60,20 +63,13 @@ pub struct ExampleState {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExamplePromptInputs {
-    pub content: String,
-    pub cursor_row: u32,
-    pub cursor_column: u32,
-    pub cursor_offset: usize,
-    pub edit_history: Vec<Arc<zeta_prompt::Event>>,
-    pub related_files: Option<Vec<RelatedFile>>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExamplePrompt {
     pub input: String,
-    pub expected_output: String,
+    #[serde(default)]
+    pub expected_output: Option<String>,
     pub rejected_output: Option<String>, // For DPO
+    #[serde(default)]
+    pub prefill: Option<String>,
     pub provider: PredictionProvider,
 }
 
@@ -84,8 +80,65 @@ pub struct ExamplePrediction {
     #[serde(deserialize_with = "deserialize_null_as_empty_string")]
     pub actual_output: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_cursor: Option<ActualCursor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub provider: PredictionProvider,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cumulative_logprob: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_logprob: Option<f64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ActualCursor {
+    pub path: String,
+    pub row: u32,
+    pub column: u32,
+    pub offset: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editable_region_offset: Option<usize>,
+}
+
+impl ActualCursor {
+    /// Construct an `ActualCursor` from a cursor offset within the new editable region.
+    ///
+    /// - `path`: file path the cursor is in
+    /// - `editable_region_cursor_offset`: byte offset of the cursor within the new editable region text
+    /// - `new_editable_region`: the full new editable region text (after marker removal)
+    /// - `content`: the full file content (before the edit)
+    /// - `editable_region_byte_offset`: byte offset where the editable region starts in `content`
+    /// - `editable_region_start_line`: 0-based line number where the editable region starts in `content`
+    pub fn from_editable_region(
+        path: &std::path::Path,
+        editable_region_cursor_offset: usize,
+        new_editable_region: &str,
+        content: &str,
+        editable_region_byte_offset: usize,
+        editable_region_start_line: usize,
+    ) -> Self {
+        let global_offset = editable_region_byte_offset + editable_region_cursor_offset;
+        let new_region_prefix = &new_editable_region[..editable_region_cursor_offset];
+        let row = (editable_region_start_line + new_region_prefix.matches('\n').count()) as u32;
+        let column = match new_region_prefix.rfind('\n') {
+            Some(pos) => (editable_region_cursor_offset - pos - 1) as u32,
+            None => {
+                let content_prefix = &content[..editable_region_byte_offset];
+                let content_column = match content_prefix.rfind('\n') {
+                    Some(pos) => editable_region_byte_offset - pos - 1,
+                    None => editable_region_byte_offset,
+                };
+                (content_column + editable_region_cursor_offset) as u32
+            }
+        };
+        ActualCursor {
+            path: path.to_string_lossy().to_string(),
+            row,
+            column,
+            offset: global_offset,
+            editable_region_offset: Some(editable_region_cursor_offset),
+        }
+    }
 }
 
 fn deserialize_null_as_empty_string<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -99,6 +152,18 @@ where
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExampleScore {
     pub delta_chr_f: f32,
+    #[serde(default)]
+    pub delta_chr_f_true_positives: usize,
+    #[serde(default)]
+    pub delta_chr_f_false_positives: usize,
+    #[serde(default)]
+    pub delta_chr_f_false_negatives: usize,
+    #[serde(default)]
+    pub delta_chr_f_precision: f64,
+    #[serde(default)]
+    pub delta_chr_f_recall: f64,
+    #[serde(default)]
+    pub delta_chr_f_beta: f64,
     pub braces_disbalance: usize,
     #[serde(default)]
     pub exact_lines_tp: usize,
@@ -108,6 +173,49 @@ pub struct ExampleScore {
     pub exact_lines_fn: usize,
     #[serde(default)]
     pub reversal_ratio: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_distance: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_exact_match: Option<bool>,
+    pub wrong_editable_region: Option<bool>,
+    #[serde(default)]
+    pub has_isolated_whitespace_changes: bool,
+    #[serde(default)]
+    pub inserted_tokens: usize,
+    #[serde(default)]
+    pub deleted_tokens: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recall_rate: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correctly_deleted_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discarded_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cumulative_logprob: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avg_logprob: Option<f64>,
+}
+
+impl ExampleScore {
+    pub fn delta_chr_f_counts(&self) -> ClassificationMetrics {
+        ClassificationMetrics {
+            true_positives: self.delta_chr_f_true_positives,
+            false_positives: self.delta_chr_f_false_positives,
+            false_negatives: self.delta_chr_f_false_negatives,
+        }
+    }
+
+    pub fn exact_lines_counts(&self) -> ClassificationMetrics {
+        ClassificationMetrics {
+            true_positives: self.exact_lines_tp,
+            false_positives: self.exact_lines_fp,
+            false_negatives: self.exact_lines_fn,
+        }
+    }
 }
 
 impl Example {
@@ -243,14 +351,23 @@ pub fn sort_examples_by_repo_and_rev(examples: &mut [Example]) {
 }
 
 pub fn group_examples_by_repo(examples: Vec<Example>) -> VecDeque<Vec<Example>> {
-    let mut examples_by_repo = HashMap::default();
+    let mut examples_by_repo: HashMap<String, Vec<Example>> = HashMap::default();
+    let mut ungrouped = Vec::new();
     for example in examples {
-        examples_by_repo
-            .entry(example.spec.repository_url.clone())
-            .or_insert_with(Vec::new)
-            .push(example);
+        if example.spec.repository_url.is_empty() {
+            ungrouped.push(example);
+        } else {
+            examples_by_repo
+                .entry(example.spec.repository_url.clone())
+                .or_insert_with(Vec::new)
+                .push(example);
+        }
     }
-    examples_by_repo.into_values().collect()
+    let mut result: VecDeque<Vec<Example>> = examples_by_repo.into_values().collect();
+    for example in ungrouped {
+        result.push_back(vec![example]);
+    }
+    result
 }
 
 fn parse_markdown_example(input: &str) -> Result<Example> {
@@ -263,5 +380,6 @@ fn parse_markdown_example(input: &str) -> Result<Example> {
         score: Vec::new(),
         qa: Vec::new(),
         state: None,
+        zed_version: None,
     })
 }

@@ -1,4 +1,4 @@
-use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
+use crate::{FontId, Pixels, SharedString, TextRun, TextSystem, px};
 use collections::HashMap;
 use std::{borrow::Cow, iter, sync::Arc};
 
@@ -13,7 +13,7 @@ pub enum TruncateFrom {
 
 /// The GPUI line wrapper, used to wrap lines of text to a given width.
 pub struct LineWrapper {
-    platform_text_system: Arc<dyn PlatformTextSystem>,
+    text_system: Arc<TextSystem>,
     pub(crate) font_id: FontId,
     pub(crate) font_size: Pixels,
     cached_ascii_char_widths: [Option<Pixels>; 128],
@@ -24,13 +24,9 @@ impl LineWrapper {
     /// The maximum indent that can be applied to a line.
     pub const MAX_INDENT: u32 = 256;
 
-    pub(crate) fn new(
-        font_id: FontId,
-        font_size: Pixels,
-        text_system: Arc<dyn PlatformTextSystem>,
-    ) -> Self {
+    pub(crate) fn new(font_id: FontId, font_size: Pixels, text_system: Arc<TextSystem>) -> Self {
         Self {
-            platform_text_system: text_system,
+            text_system,
             font_id,
             font_size,
             cached_ascii_char_widths: [None; 128],
@@ -240,10 +236,13 @@ impl LineWrapper {
         matches!(c, '\u{1E00}'..='\u{1EFF}') || // Latin Extended Additional
         matches!(c, '\u{0300}'..='\u{036F}') || // Combining Diacritical Marks
 
+        // Bengali (https://en.wikipedia.org/wiki/Bengali_(Unicode_block))
+        matches!(c, '\u{0980}'..='\u{09FF}') ||
+
         // Some other known special characters that should be treated as word characters,
-        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
+        // e.g. `a-b`, `var_name`, `I'm`/`won’t`, '@mention`, `#hashtag`, `100%`, `3.1415`,
         // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
-        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
+        matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -254,32 +253,21 @@ impl LineWrapper {
             if let Some(cached_width) = self.cached_ascii_char_widths[c as usize] {
                 cached_width
             } else {
-                let width = self.compute_width_for_char(c);
+                let width = self
+                    .text_system
+                    .layout_width(self.font_id, self.font_size, c);
                 self.cached_ascii_char_widths[c as usize] = Some(width);
                 width
             }
         } else if let Some(cached_width) = self.cached_other_char_widths.get(&c) {
             *cached_width
         } else {
-            let width = self.compute_width_for_char(c);
+            let width = self
+                .text_system
+                .layout_width(self.font_id, self.font_size, c);
             self.cached_other_char_widths.insert(c, width);
             width
         }
-    }
-
-    fn compute_width_for_char(&self, c: char) -> Pixels {
-        let mut buffer = [0; 4];
-        let buffer = c.encode_utf8(&mut buffer);
-        self.platform_text_system
-            .layout_line(
-                buffer,
-                self.font_size,
-                &[FontRun {
-                    len: buffer.len(),
-                    font_id: self.font_id,
-                }],
-            )
-            .width
     }
 }
 
@@ -401,7 +389,7 @@ mod tests {
         let dispatcher = TestDispatcher::new(0);
         let cx = TestAppContext::build(dispatcher, None);
         let id = cx.text_system().resolve_font(&font(".ZedMono"));
-        LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
+        LineWrapper::new(id, px(16.), cx.text_system().clone())
     }
 
     fn generate_test_runs(input_run_len: &[usize]) -> Vec<TextRun> {
@@ -850,6 +838,8 @@ mod tests {
         assert_word("a=1");
         assert_word("Self::is_word_char");
         assert_word("more⋯");
+        assert_word("won’t");
+        assert_word("‘twas");
 
         // Space
         assert_not_word("foo bar");
@@ -871,6 +861,10 @@ mod tests {
         assert_word("АБВГДЕЖЗИЙКЛМНОП");
         // Vietnamese (https://github.com/zed-industries/zed/issues/23245)
         assert_word("ThậmchíđếnkhithuachạychúngcònnhẫntâmgiếtnốtsốđôngtùchínhtrịởYênBáivàCaoBằng");
+        // Bengali
+        assert_word("গিয়েছিলেন");
+        assert_word("ছেলে");
+        assert_word("হচ্ছিল");
 
         // non-word characters
         assert_not_word("你好");

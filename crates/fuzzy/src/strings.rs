@@ -1,5 +1,6 @@
 use crate::{
     CharBag,
+    char_bag::simple_lowercase,
     matcher::{MatchCandidate, Matcher},
 };
 use gpui::BackgroundExecutor;
@@ -141,7 +142,7 @@ where
             .collect();
     }
 
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+    let lowercase_query = query.chars().map(simple_lowercase).collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
 
     let lowercase_query = &lowercase_query;

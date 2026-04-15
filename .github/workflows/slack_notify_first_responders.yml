@@ -9,16 +9,17 @@ env:
 
 jobs:
   notify-slack:
-    if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    if: github.repository_owner == 'zed-industries' && github.event.issue.state == 'open'
+    runs-on: namespace-profile-2x4-ubuntu-2404
 
     steps:
       - name: Check if label requires first responder notification
         id: check-label
         env:
           LABEL_NAME: ${{ github.event.label.name }}
+          FIRST_RESPONDER_LABELS: ${{ env.FIRST_RESPONDER_LABELS }}
         run: |
-          if echo '${{ env.FIRST_RESPONDER_LABELS }}' | jq -e --arg label "$LABEL_NAME" 'index($label) != null' > /dev/null; then
+          if echo "$FIRST_RESPONDER_LABELS" | jq -e --arg label "$LABEL_NAME" 'index($label) != null' > /dev/null; then
             echo "should_notify=true" >> "$GITHUB_OUTPUT"
             echo "Label '$LABEL_NAME' requires first responder notification"
           else

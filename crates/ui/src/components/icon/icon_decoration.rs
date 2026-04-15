@@ -18,6 +18,8 @@ pub enum KnockoutIconName {
     DotBg,
     TriangleFg,
     TriangleBg,
+    ArchiveFg,
+    ArchiveBg,
 }
 
 impl KnockoutIconName {
@@ -33,6 +35,7 @@ pub enum IconDecorationKind {
     X,
     Dot,
     Triangle,
+    Archive,
 }
 
 impl IconDecorationKind {
@@ -41,6 +44,7 @@ impl IconDecorationKind {
             Self::X => KnockoutIconName::XFg,
             Self::Dot => KnockoutIconName::DotFg,
             Self::Triangle => KnockoutIconName::TriangleFg,
+            Self::Archive => KnockoutIconName::ArchiveFg,
         }
     }
 
@@ -49,6 +53,7 @@ impl IconDecorationKind {
             Self::X => KnockoutIconName::XBg,
             Self::Dot => KnockoutIconName::DotBg,
             Self::Triangle => KnockoutIconName::TriangleBg,
+            Self::Archive => KnockoutIconName::ArchiveBg,
         }
     }
 }
@@ -63,6 +68,7 @@ pub struct IconDecoration {
     color: Hsla,
     knockout_color: Hsla,
     knockout_hover_color: Hsla,
+    size: Pixels,
     position: Point<Pixels>,
     group_name: Option<SharedString>,
 }
@@ -78,6 +84,7 @@ impl IconDecoration {
             color,
             knockout_color,
             knockout_hover_color: knockout_color,
+            size: ICON_DECORATION_SIZE,
             position,
             group_name: None,
         }
@@ -116,6 +123,12 @@ impl IconDecoration {
         self
     }
 
+    /// Sets the size of the decoration.
+    pub fn size(mut self, size: Pixels) -> Self {
+        self.size = size;
+        self
+    }
+
     /// Sets the name of the group the decoration belongs to
     pub fn group_name(mut self, name: Option<SharedString>) -> Self {
         self.group_name = name;
@@ -125,11 +138,13 @@ impl IconDecoration {
 
 impl RenderOnce for IconDecoration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let size = self.size;
+
         let foreground = svg()
             .absolute()
             .bottom_0()
             .right_0()
-            .size(ICON_DECORATION_SIZE)
+            .size(size)
             .path(self.kind.fg().path())
             .text_color(self.color);
 
@@ -137,7 +152,7 @@ impl RenderOnce for IconDecoration {
             .absolute()
             .bottom_0()
             .right_0()
-            .size(ICON_DECORATION_SIZE)
+            .size(size)
             .path(self.kind.bg().path())
             .text_color(self.knockout_color)
             .map(|this| match self.group_name {
@@ -148,12 +163,12 @@ impl RenderOnce for IconDecoration {
             });
 
         div()
-            .size(ICON_DECORATION_SIZE)
+            .size(size)
             .flex_none()
             .absolute()
             .bottom(self.position.y)
             .right(self.position.x)
-            .child(foreground)
             .child(background)
+            .child(foreground)
     }
 }

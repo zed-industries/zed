@@ -26,9 +26,9 @@ pub const RULES_FILE_NAMES: &[&str] = &[
     ".windsurfrules",
     ".clinerules",
     ".github/copilot-instructions.md",
-    "CLAUDE.md",
     "AGENT.md",
     "AGENTS.md",
+    "CLAUDE.md",
     "GEMINI.md",
 ];
 
@@ -57,12 +57,8 @@ impl ProjectContext {
             user_rules: default_user_rules,
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            shell: ShellKind::new_with_fallback(
-                &get_default_system_shell_preferring_bash(),
-                cfg!(windows),
-            )
-            .name()
-            .to_string(),
+            shell: ShellKind::new(&get_default_system_shell_preferring_bash(), cfg!(windows))
+                .to_string(),
         }
     }
 }

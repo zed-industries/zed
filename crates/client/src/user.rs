@@ -2,11 +2,15 @@ use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
-use cloud_api_client::{GetAuthenticatedUserResponse, Plan, PlanInfo};
+use cloud_api_client::{
+    GetAuthenticatedUserResponse, KnownOrUnknown, Organization, OrganizationId, Plan, PlanInfo,
+};
+use cloud_api_types::OrganizationConfiguration;
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
+use db::kvp::KeyValueStore;
 use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
@@ -22,6 +26,8 @@ use std::{
 };
 use text::ReplicaId;
 use util::{ResultExt, TryFutureExt as _};
+
+const CURRENT_ORGANIZATION_ID_KEY: &str = "current_organization_id";
 
 pub type UserId = u64;
 
@@ -109,6 +115,10 @@ pub struct UserStore {
     edit_prediction_usage: Option<EditPredictionUsage>,
     plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
+    current_organization: Option<Arc<Organization>>,
+    organizations: Vec<Arc<Organization>>,
+    plans_by_organization: HashMap<OrganizationId, Plan>,
+    configuration_by_organization: HashMap<OrganizationId, OrganizationConfiguration>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -116,6 +126,7 @@ pub struct UserStore {
     client: Weak<Client>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<Result<()>>,
+    _handle_sign_out: Task<()>,
     weak_self: WeakEntity<Self>,
 }
 
@@ -134,6 +145,7 @@ pub enum Event {
     ParticipantIndicesChanged,
     PrivateUserInfoUpdated,
     PlanUpdated,
+    OrganizationChanged,
 }
 
 #[derive(Clone, Copy)]
@@ -163,12 +175,14 @@ pub struct RequestUsage {
 impl UserStore {
     pub fn new(client: Arc<Client>, cx: &Context<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
+        let (sign_out_tx, mut sign_out_rx) = mpsc::unbounded();
         let (update_contacts_tx, mut update_contacts_rx) = mpsc::unbounded();
         let rpc_subscriptions = vec![
             client.add_message_handler(cx.weak_entity(), Self::handle_update_contacts),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
         ];
 
+        client.sign_out_tx.lock().replace(sign_out_tx);
         client.add_message_to_client_handler({
             let this = cx.weak_entity();
             move |message, cx| Self::handle_message_to_client(this.clone(), message, cx)
@@ -178,6 +192,10 @@ impl UserStore {
             users: Default::default(),
             by_github_login: Default::default(),
             current_user: current_user_rx,
+            current_organization: None,
+            organizations: Vec::new(),
+            plans_by_organization: HashMap::default(),
+            configuration_by_organization: HashMap::default(),
             plan_info: None,
             edit_prediction_usage: None,
             contacts: Default::default(),
@@ -257,6 +275,7 @@ impl UserStore {
                         Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                             this.update(cx, |this, cx| {
+                                this.clear_organizations();
                                 this.clear_plan_and_usage();
                                 cx.emit(Event::PrivateUserInfoUpdated);
                                 cx.notify();
@@ -275,6 +294,19 @@ impl UserStore {
                     }
                 }
                 Ok(())
+            }),
+            _handle_sign_out: cx.spawn(async move |this, cx| {
+                while let Some(()) = sign_out_rx.next().await {
+                    let Some(client) = this
+                        .read_with(cx, |this, _cx| this.client.upgrade())
+                        .ok()
+                        .flatten()
+                    else {
+                        break;
+                    };
+
+                    client.sign_out(cx).await;
+                }
             }),
             pending_contact_requests: Default::default(),
             weak_self: cx.weak_entity(),
@@ -665,6 +697,49 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
+    pub fn current_organization(&self) -> Option<Arc<Organization>> {
+        self.current_organization.clone()
+    }
+
+    pub fn set_current_organization(
+        &mut self,
+        organization: Arc<Organization>,
+        cx: &mut Context<Self>,
+    ) {
+        let is_same_organization = self
+            .current_organization
+            .as_ref()
+            .is_some_and(|current| current.id == organization.id);
+
+        if !is_same_organization {
+            let organization_id = organization.id.0.to_string();
+            self.current_organization.replace(organization);
+            cx.emit(Event::OrganizationChanged);
+            cx.notify();
+
+            let kvp = KeyValueStore::global(cx);
+            db::write_and_log(cx, move || async move {
+                kvp.write_kvp(CURRENT_ORGANIZATION_ID_KEY.into(), organization_id)
+                    .await
+            });
+        }
+    }
+
+    pub fn organizations(&self) -> &Vec<Arc<Organization>> {
+        &self.organizations
+    }
+
+    pub fn plan_for_organization(&self, organization_id: &OrganizationId) -> Option<Plan> {
+        self.plans_by_organization.get(organization_id).copied()
+    }
+
+    pub fn current_organization_configuration(&self) -> Option<&OrganizationConfiguration> {
+        let current_organization = self.current_organization.as_ref()?;
+
+        self.configuration_by_organization
+            .get(&current_organization.id)
+    }
+
     pub fn plan(&self) -> Option<Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
@@ -678,6 +753,10 @@ impl UserStore {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
             };
+        }
+
+        if let Some(organization) = &self.current_organization {
+            return self.plan_for_organization(&organization.id);
         }
 
         self.plan_info.as_ref().map(|info| info.plan())
@@ -731,6 +810,11 @@ impl UserStore {
         cx.notify();
     }
 
+    pub fn clear_organizations(&mut self) {
+        self.organizations.clear();
+        self.current_organization = None;
+    }
+
     pub fn clear_plan_and_usage(&mut self) {
         self.plan_info = None;
         self.edit_prediction_usage = None;
@@ -748,6 +832,49 @@ impl UserStore {
                 .telemetry
                 .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
         }
+
+        self.organizations = response.organizations.into_iter().map(Arc::new).collect();
+        let persisted_org_id = KeyValueStore::global(cx)
+            .read_kvp(CURRENT_ORGANIZATION_ID_KEY)
+            .log_err()
+            .flatten()
+            .map(|id| OrganizationId(Arc::from(id)));
+
+        self.current_organization = persisted_org_id
+            .and_then(|persisted_id| {
+                self.organizations
+                    .iter()
+                    .find(|org| org.id == persisted_id)
+                    .cloned()
+            })
+            .or_else(|| {
+                response
+                    .default_organization_id
+                    .and_then(|default_organization_id| {
+                        self.organizations
+                            .iter()
+                            .find(|organization| organization.id == default_organization_id)
+                            .cloned()
+                    })
+            })
+            .or_else(|| self.organizations.first().cloned());
+        self.plans_by_organization = response
+            .plans_by_organization
+            .into_iter()
+            .map(|(organization_id, plan)| {
+                let plan = match plan {
+                    KnownOrUnknown::Known(plan) => plan,
+                    KnownOrUnknown::Unknown(_) => {
+                        // If we get a plan that we don't recognize, fall back to the Free plan.
+                        Plan::ZedFree
+                    }
+                };
+
+                (organization_id, plan)
+            })
+            .collect();
+        self.configuration_by_organization =
+            response.configuration_by_organization.into_iter().collect();
 
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,

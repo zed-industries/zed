@@ -1,6 +1,18 @@
 use crate::PredictEditsRequestTrigger;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::ops::Range;
+use strum::{AsRefStr, EnumString};
+
+pub const PREDICT_EDITS_MODE_HEADER_NAME: &str = "X-Zed-Predict-Edits-Mode";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, AsRefStr, EnumString)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum PredictEditsMode {
+    Eager,
+    Subtle,
+}
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RawCompletionRequest {
@@ -11,16 +23,14 @@ pub struct RawCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     pub stop: Vec<Cow<'static, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PredictEditsV3Request {
     #[serde(flatten)]
     pub input: zeta_prompt::ZetaPromptInput,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub prompt_version: zeta_prompt::ZetaVersion,
     #[serde(default)]
     pub trigger: PredictEditsRequestTrigger,
 }
@@ -29,6 +39,13 @@ pub struct PredictEditsV3Request {
 pub struct PredictEditsV3Response {
     pub request_id: String,
     pub output: String,
+    /// The editable region byte range within `cursor_excerpt` that the
+    /// server used for this request. When present, the client should use
+    /// this range to extract the old text from its local excerpt for
+    /// diffing, rather than relying on its own format-derived range.
+    pub editable_range: Range<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

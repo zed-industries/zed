@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 publish = false
 license = "Apache-2.0"
-description = "Standard collection type re-exports used by Zed and GPUI"
+description = "Standard collection types used by Zed and GPUI"
 
 [lints]
 workspace = true
