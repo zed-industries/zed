@@ -508,7 +508,7 @@ impl Vim {
                     search.await?;
                     vim.update(cx, |vim, cx| {
                         vim.reset_cmd_f_search(window, cx);
-                    })?;
+                    });
                     search_bar.update_in(cx, |search_bar, window, cx| {
                         search_bar.select_match(direction, count, window, cx);
 
