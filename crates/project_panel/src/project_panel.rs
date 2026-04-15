@@ -2077,13 +2077,15 @@ impl ProjectPanel {
 
         let directory_id;
         let new_entry_id = self.resolve_entry(entry_id);
-        if let Some((worktree, expanded_dir_ids)) = self
-            .project
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)
-            .zip(self.state.expanded_dir_ids.get_mut(&worktree_id))
-        {
+        if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
             let worktree = worktree.read(cx);
+            let root_entry_id = worktree.root_entry().map(|entry| entry.id);
+            let expanded_dir_ids = self
+                .state
+                .expanded_dir_ids
+                .entry(worktree_id)
+                .or_insert_with(|| root_entry_id.into_iter().collect());
+
             if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
                 loop {
                     if entry.is_dir() {
