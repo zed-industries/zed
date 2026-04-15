@@ -2302,18 +2302,19 @@ impl Workspace {
                 return None;
             }
             let flex = flex.max(0.001);
+            let center_column_count = self.center_full_height_column_count();
             let opposite = self.opposite_dock_panel_and_size_state(position, window, cx);
             if let Some(opposite_flex) = opposite.as_ref().and_then(|(_, s)| s.flex) {
-                // Both docks are flex items sharing the full workspace width.
-                let total_flex = flex + 1.0 + opposite_flex;
+                let total_flex = flex + center_column_count + opposite_flex;
                 return Some((flex / total_flex * workspace_width).max(RESIZE_HANDLE_SIZE));
             } else {
-                // Opposite dock is fixed-width; flex items share (W - fixed).
                 let opposite_fixed = opposite
                     .map(|(panel, s)| s.size.unwrap_or_else(|| panel.default_size(window, cx)))
                     .unwrap_or_default();
                 let available = (workspace_width - opposite_fixed).max(RESIZE_HANDLE_SIZE);
-                return Some((flex / (flex + 1.0) * available).max(RESIZE_HANDLE_SIZE));
+                return Some(
+                    (flex / (flex + center_column_count) * available).max(RESIZE_HANDLE_SIZE),
+                );
             }
         }
 
@@ -2340,17 +2341,18 @@ impl Workspace {
             return None;
         }
 
+        let center_column_count = self.center_full_height_column_count();
         let opposite = self.opposite_dock_panel_and_size_state(position, window, cx);
         if let Some(opposite_flex) = opposite.as_ref().and_then(|(_, s)| s.flex) {
             let size = size.clamp(px(0.), workspace_width - px(1.));
-            Some((size * (1.0 + opposite_flex) / (workspace_width - size)).max(0.0))
+            Some((size * (center_column_count + opposite_flex) / (workspace_width - size)).max(0.0))
         } else {
             let opposite_width = opposite
                 .map(|(panel, s)| s.size.unwrap_or_else(|| panel.default_size(window, cx)))
                 .unwrap_or_default();
             let available = (workspace_width - opposite_width).max(RESIZE_HANDLE_SIZE);
             let remaining = (available - size).max(px(1.));
-            Some((size / remaining).max(0.0))
+            Some((size * center_column_count / remaining).max(0.0))
         }
     }
 
@@ -2377,13 +2379,16 @@ impl Workspace {
         Some((panel.clone(), size_state))
     }
 
+    fn center_full_height_column_count(&self) -> f32 {
+        self.center.full_height_column_count().max(1) as f32
+    }
+
     pub fn default_dock_flex(&self, position: DockPosition) -> Option<f32> {
         if position.axis() != Axis::Horizontal {
             return None;
         }
 
-        let pane = self.last_active_center_pane.clone()?.upgrade()?;
-        Some(self.center.width_fraction_for_pane(&pane).unwrap_or(1.0))
+        Some(1.0)
     }
 
     pub fn is_edited(&self) -> bool {
@@ -7484,7 +7489,7 @@ impl Workspace {
                     None
                 };
                 if let Some(grow) = flex_grow {
-                    let grow = grow.max(0.001);
+                    let grow = (grow / self.center_full_height_column_count()).max(0.001);
                     let style = container.style();
                     style.flex_grow = Some(grow);
                     style.flex_shrink = Some(1.0);
@@ -13012,9 +13017,31 @@ mod tests {
             );
         });
 
-        // Step 2: Split the center pane vertically (top/bottom). Vertical splits do not
-        // change horizontal width fractions, so the flexible panel stays at the same
-        // width as each half of the split.
+        // Step 2: Split the center pane left/right. The flexible panel is treated as one
+        // average center column, so with two center columns it should take one third of
+        // the workspace width.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+
+            let left_dock = workspace.left_dock().read(cx);
+            let left_width = workspace
+                .dock_size(&left_dock, window, cx)
+                .expect("left dock should still have an active panel after horizontal split");
+
+            assert_eq!(
+                left_width,
+                workspace.bounds.size.width / 3.,
+                "flexible left panel width should match the average center column width"
+            );
+        });
+
+        // Step 3: Split the active center pane vertically (top/bottom). Vertical splits do
+        // not change the number of center columns, so the flexible panel width stays the same.
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.split_pane(
                 workspace.active_pane().clone(),
@@ -13030,14 +13057,14 @@ mod tests {
 
             assert_eq!(
                 left_width,
-                workspace.bounds.size.width / 2.,
-                "flexible left panel width should match each vertically-split pane"
+                workspace.bounds.size.width / 3.,
+                "flexible left panel width should still match the average center column width"
             );
         });
 
-        // Step 3: Open a fixed-width panel in the right dock. The right dock's default
-        // size reduces the available width, so the flexible left panel and the center
-        // panes all shrink proportionally to accommodate it.
+        // Step 4: Open a fixed-width panel in the right dock. The right dock's default
+        // size reduces the available width, so the flexible left panel keeps matching one
+        // average center column within the remaining space.
         workspace.update_in(cx, |workspace, window, cx| {
             let panel = cx.new(|cx| TestPanel::new(DockPosition::Right, 200, cx));
             workspace.add_panel(panel, window, cx);
@@ -13056,14 +13083,14 @@ mod tests {
             let available_width = workspace.bounds.size.width - right_width;
             assert_eq!(
                 left_width,
-                available_width / 2.,
-                "flexible left panel should shrink proportionally as the right dock takes space"
+                available_width / 3.,
+                "flexible left panel should keep matching one average center column"
             );
         });
 
-        // Step 4: Toggle the right dock's panel to flexible. Now both docks use
-        // flex sizing and the workspace width is divided among left-flex, center
-        // (implicit flex 1.0), and right-flex.
+        // Step 5: Toggle the right dock's panel to flexible. Now both docks use
+        // column-equivalent flex sizing and the workspace width is divided among
+        // left-flex, two center columns, and right-flex.
         workspace.update_in(cx, |workspace, window, cx| {
             let right_dock = workspace.right_dock().clone();
             let right_panel = right_dock
@@ -13105,8 +13132,9 @@ mod tests {
             let left_flex = workspace
                 .default_dock_flex(DockPosition::Left)
                 .expect("left dock should have a default flex");
+            let center_column_count = workspace.center.full_height_column_count() as f32;
 
-            let total_flex = left_flex + 1.0 + right_flex;
+            let total_flex = left_flex + center_column_count + right_flex;
             let expected_left = left_flex / total_flex * workspace.bounds.size.width;
             let expected_right = right_flex / total_flex * workspace.bounds.size.width;
             assert_eq!(
