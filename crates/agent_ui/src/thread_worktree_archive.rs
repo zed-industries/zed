@@ -10,6 +10,7 @@ use project::{
     git_store::{Repository, resolve_git_worktree_to_main_repo, worktrees_directory_for_repo},
     project_settings::ProjectSettings,
 };
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use settings::Settings;
 use util::ResultExt;
 use workspace::{AppState, MultiWorkspace, Workspace};
@@ -47,6 +48,10 @@ pub struct RootPlan {
     /// The branch the worktree was on, so it can be restored later.
     /// `None` if the worktree was in detached HEAD state.
     pub branch_name: Option<String>,
+    /// Remote connection options for the project that owns this worktree,
+    /// used to create temporary remote projects when the main repo isn't
+    /// loaded in any open workspace.
+    pub remote_connection: Option<RemoteConnectionOptions>,
 }
 
 /// A `Project` that references a worktree being archived, paired with the
@@ -157,12 +162,17 @@ pub fn build_root_plan(
         .branch
         .as_ref()
         .map(|branch| branch.name().to_string());
+    let remote_connection = affected_projects
+        .first()
+        .and_then(|affected| affected.project.read(cx).remote_connection_options(cx));
+
     Some(RootPlan {
         root_path: path,
         main_repo_path,
         affected_projects,
         worktree_repo: repo,
         branch_name,
+        remote_connection,
     })
 }
 
@@ -232,7 +242,9 @@ async fn remove_root_after_worktree_removal(
             )
         })?;
 
-    let (repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx).await?;
+    let (repo, _temp_project) =
+        find_or_create_repository(&root.main_repo_path, root.remote_connection.as_ref(), cx)
+            .await?;
     let receiver = repo.update(cx, |repo: &mut Repository, _cx| {
         repo.remove_worktree(root.root_path.clone(), true)
     });
@@ -326,26 +338,38 @@ fn remove_empty_ancestors(child_path: &Path, base_path: &Path) {
 /// temporary-project workaround.
 async fn find_or_create_repository(
     repo_path: &Path,
+    remote_connection: Option<&RemoteConnectionOptions>,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Repository>, Option<Entity<Project>>)> {
     let repo_path_owned = repo_path.to_path_buf();
+    let remote_connection_owned = remote_connection.cloned();
+
+    // First, try to find a live repository in any open workspace whose
+    // remote connection matches (so a local `/project` and a remote
+    // `/project` are not confused).
     let live_repo = cx.update(|cx| {
         all_open_workspaces(cx)
             .into_iter()
-            .flat_map(|workspace| {
-                workspace
-                    .read(cx)
-                    .project()
+            .filter_map(|workspace| {
+                let project = workspace.read(cx).project().clone();
+                let project_connection = project.read(cx).remote_connection_options(cx);
+                if !same_remote_connection_identity(
+                    project_connection.as_ref(),
+                    remote_connection_owned.as_ref(),
+                ) {
+                    return None;
+                }
+                project
                     .read(cx)
                     .repositories(cx)
                     .values()
+                    .find(|repo| {
+                        repo.read(cx).snapshot().work_directory_abs_path.as_ref()
+                            == repo_path_owned.as_path()
+                    })
                     .cloned()
-                    .collect::<Vec<_>>()
             })
-            .find(|repo| {
-                repo.read(cx).snapshot().work_directory_abs_path.as_ref()
-                    == repo_path_owned.as_path()
-            })
+            .next()
     });
 
     if let Some(repo) = live_repo {
@@ -354,18 +378,48 @@ async fn find_or_create_repository(
 
     let app_state =
         current_app_state(cx).context("no app state available for temporary project")?;
-    let temp_project = cx.update(|cx| {
-        Project::local(
-            app_state.client.clone(),
-            app_state.node_runtime.clone(),
-            app_state.user_store.clone(),
-            app_state.languages.clone(),
-            app_state.fs.clone(),
-            None,
-            LocalProjectFlags::default(),
-            cx,
-        )
-    });
+
+    // For remote paths, create a fresh RemoteClient through the connection
+    // pool (reusing the existing SSH transport) and build a temporary
+    // remote project. Each RemoteClient gets its own server-side headless
+    // project, so there are no RPC routing conflicts with other projects.
+    let temp_project = if let Some(connection) = remote_connection_owned {
+        let remote_client = cx
+            .update(|cx| {
+                if !remote::has_active_connection(&connection, cx) {
+                    anyhow::bail!("cannot open repository on disconnected remote machine");
+                }
+                Ok(remote_connection::connect_reusing_pool(connection, cx))
+            })?
+            .await?
+            .context("remote connection was canceled")?;
+
+        cx.update(|cx| {
+            Project::remote(
+                remote_client,
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                false,
+                cx,
+            )
+        })
+    } else {
+        cx.update(|cx| {
+            Project::local(
+                app_state.client.clone(),
+                app_state.node_runtime.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                None,
+                LocalProjectFlags::default(),
+                cx,
+            )
+        })
+    };
 
     let repo_path_for_worktree = repo_path.to_path_buf();
     let create_worktree = temp_project.update(cx, |project, cx| {
@@ -514,9 +568,10 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
     // This is fatal: without the ref, git gc will eventually collect the
     // WIP commits and a later restore will silently fail.
     let ref_name = archived_worktree_ref_name(archived_worktree_id);
-    let (main_repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx)
-        .await
-        .context("could not open main repo to create archive ref")?;
+    let (main_repo, _temp_project) =
+        find_or_create_repository(&root.main_repo_path, root.remote_connection.as_ref(), cx)
+            .await
+            .context("could not open main repo to create archive ref")?;
     let rx = main_repo.update(cx, |repo, _cx| {
         repo.update_ref(ref_name.clone(), unstaged_commit_hash.clone())
     });
@@ -536,7 +591,7 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
 pub async fn rollback_persist(archived_worktree_id: i64, root: &RootPlan, cx: &mut AsyncApp) {
     // Delete the git ref on main repo
     if let Ok((main_repo, _temp_project)) =
-        find_or_create_repository(&root.main_repo_path, cx).await
+        find_or_create_repository(&root.main_repo_path, root.remote_connection.as_ref(), cx).await
     {
         let ref_name = archived_worktree_ref_name(archived_worktree_id);
         let rx = main_repo.update(cx, |repo, _cx| repo.delete_ref(ref_name));
@@ -564,9 +619,11 @@ pub async fn rollback_persist(archived_worktree_id: i64, root: &RootPlan, cx: &m
 /// unstaged state from the WIP commit trees.
 pub async fn restore_worktree_via_git(
     row: &ArchivedGitWorktree,
+    remote_connection: Option<&RemoteConnectionOptions>,
     cx: &mut AsyncApp,
 ) -> Result<PathBuf> {
-    let (main_repo, _temp_project) = find_or_create_repository(&row.main_repo_path, cx).await?;
+    let (main_repo, _temp_project) =
+        find_or_create_repository(&row.main_repo_path, remote_connection, cx).await?;
 
     let worktree_path = &row.worktree_path;
     let app_state = current_app_state(cx).context("no app state available")?;
@@ -597,13 +654,15 @@ pub async fn restore_worktree_via_git(
         true
     };
 
-    let (wt_repo, _temp_wt_project) = match find_or_create_repository(worktree_path, cx).await {
-        Ok(result) => result,
-        Err(error) => {
-            remove_new_worktree_on_error(created_new_worktree, &main_repo, worktree_path, cx).await;
-            return Err(error);
-        }
-    };
+    let (wt_repo, _temp_wt_project) =
+        match find_or_create_repository(worktree_path, remote_connection, cx).await {
+            Ok(result) => result,
+            Err(error) => {
+                remove_new_worktree_on_error(created_new_worktree, &main_repo, worktree_path, cx)
+                    .await;
+                return Err(error);
+            }
+        };
 
     if let Some(branch_name) = &row.branch_name {
         // Attempt to check out the branch the worktree was previously on.
@@ -724,9 +783,14 @@ async fn remove_new_worktree_on_error(
 
 /// Deletes the git ref and DB records for a single archived worktree.
 /// Used when an archived worktree is no longer referenced by any thread.
-pub async fn cleanup_archived_worktree_record(row: &ArchivedGitWorktree, cx: &mut AsyncApp) {
+pub async fn cleanup_archived_worktree_record(
+    row: &ArchivedGitWorktree,
+    remote_connection: Option<&RemoteConnectionOptions>,
+    cx: &mut AsyncApp,
+) {
     // Delete the git ref from the main repo
-    if let Ok((main_repo, _temp_project)) = find_or_create_repository(&row.main_repo_path, cx).await
+    if let Ok((main_repo, _temp_project)) =
+        find_or_create_repository(&row.main_repo_path, remote_connection, cx).await
     {
         let ref_name = archived_worktree_ref_name(row.id);
         let rx = main_repo.update(cx, |repo, _cx| repo.delete_ref(ref_name));
@@ -754,6 +818,11 @@ pub async fn cleanup_archived_worktree_record(row: &ArchivedGitWorktree, cx: &mu
 /// deletes the git ref and DB records.
 pub async fn cleanup_thread_archived_worktrees(thread_id: ThreadId, cx: &mut AsyncApp) {
     let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+    let remote_connection = store.read_with(cx, |store, _cx| {
+        store
+            .entry(thread_id)
+            .and_then(|t| t.remote_connection.clone())
+    });
 
     let archived_worktrees = store
         .read_with(cx, |store, cx| {
@@ -791,7 +860,7 @@ pub async fn cleanup_thread_archived_worktrees(thread_id: ThreadId, cx: &mut Asy
         match still_referenced {
             Ok(true) => {}
             Ok(false) => {
-                cleanup_archived_worktree_record(row, cx).await;
+                cleanup_archived_worktree_record(row, remote_connection.as_ref(), cx).await;
             }
             Err(error) => {
                 log::error!(

@@ -2472,10 +2472,18 @@ impl Sidebar {
 
                 let mut path_replacements: Vec<(PathBuf, PathBuf)> = Vec::new();
                 for row in &archived_worktrees {
-                    match thread_worktree_archive::restore_worktree_via_git(row, &mut *cx).await {
+                    match thread_worktree_archive::restore_worktree_via_git(
+                        row,
+                        metadata.remote_connection.as_ref(),
+                        &mut *cx,
+                    )
+                    .await
+                    {
                         Ok(restored_path) => {
                             thread_worktree_archive::cleanup_archived_worktree_record(
-                                row, &mut *cx,
+                                row,
+                                metadata.remote_connection.as_ref(),
+                                &mut *cx,
                             )
                             .await;
                             path_replacements.push((row.worktree_path.clone(), restored_path));
