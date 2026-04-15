@@ -147,28 +147,6 @@ pub fn build_root_plan(
     })
 }
 
-/// Returns `true` if any unarchived thread other than `current_session_id`
-/// references `path` in its folder paths. Used to determine whether a
-/// worktree can safely be removed from disk.
-pub fn path_is_referenced_by_other_unarchived_threads(
-    current_thread_id: ThreadId,
-    path: &Path,
-    cx: &App,
-) -> bool {
-    ThreadMetadataStore::global(cx)
-        .read(cx)
-        .entries()
-        .filter(|thread| thread.thread_id != current_thread_id)
-        .filter(|thread| !thread.archived)
-        .any(|thread| {
-            thread
-                .folder_paths()
-                .paths()
-                .iter()
-                .any(|other_path| other_path.as_path() == path)
-        })
-}
-
 /// Removes a worktree from all affected projects and deletes it from disk
 /// via `git worktree remove`.
 ///

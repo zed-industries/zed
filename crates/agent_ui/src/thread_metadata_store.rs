@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use agent::{ThreadStore, ZED_AGENT_ID};
 use agent_client_protocol as acp;
@@ -20,7 +23,7 @@ use futures::{FutureExt, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
 use project::AgentId;
 pub use project::WorktreePaths;
-use remote::RemoteConnectionOptions;
+use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString};
 use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
@@ -482,32 +485,50 @@ impl ThreadMetadataStore {
         self.entries().filter(|t| t.archived)
     }
 
-    /// Returns all threads for the given path list, excluding archived threads.
-    pub fn entries_for_path(
-        &self,
+    /// Returns all threads for the given path list and remote connection,
+    /// excluding archived threads.
+    ///
+    /// When `remote_connection` is `Some`, only threads whose persisted
+    /// `remote_connection` matches by normalized identity are returned.
+    /// When `None`, only local (non-remote) threads are returned.
+    pub fn entries_for_path<'a>(
+        &'a self,
         path_list: &PathList,
-    ) -> impl Iterator<Item = &ThreadMetadata> + '_ {
+        remote_connection: Option<&'a RemoteConnectionOptions>,
+    ) -> impl Iterator<Item = &'a ThreadMetadata> + 'a {
         self.threads_by_paths
             .get(path_list)
             .into_iter()
             .flatten()
             .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
+            .filter(move |s| {
+                same_remote_connection_identity(s.remote_connection.as_ref(), remote_connection)
+            })
     }
 
-    /// Returns threads whose `main_worktree_paths` matches the given path list,
-    /// excluding archived threads. This finds threads that were opened in a
-    /// linked worktree but are associated with the given main worktree.
-    pub fn entries_for_main_worktree_path(
-        &self,
+    /// Returns threads whose `main_worktree_paths` matches the given path list
+    /// and remote connection, excluding archived threads. This finds threads
+    /// that were opened in a linked worktree but are associated with the given
+    /// main worktree.
+    ///
+    /// When `remote_connection` is `Some`, only threads whose persisted
+    /// `remote_connection` matches by normalized identity are returned.
+    /// When `None`, only local (non-remote) threads are returned.
+    pub fn entries_for_main_worktree_path<'a>(
+        &'a self,
         path_list: &PathList,
-    ) -> impl Iterator<Item = &ThreadMetadata> + '_ {
+        remote_connection: Option<&'a RemoteConnectionOptions>,
+    ) -> impl Iterator<Item = &'a ThreadMetadata> + 'a {
         self.threads_by_main_paths
             .get(path_list)
             .into_iter()
             .flatten()
             .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
+            .filter(move |s| {
+                same_remote_connection_identity(s.remote_connection.as_ref(), remote_connection)
+            })
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
@@ -617,6 +638,10 @@ impl ThreadMetadataStore {
         cx: &mut Context<Self>,
     ) {
         if let Some(thread) = self.threads.get(&thread_id) {
+            debug_assert!(
+                !thread.archived,
+                "update_working_directories called on archived thread"
+            );
             self.save_internal(ThreadMetadata {
                 worktree_paths: WorktreePaths::from_path_lists(
                     thread.main_worktree_paths().clone(),
@@ -641,6 +666,12 @@ impl ThreadMetadataStore {
                 continue;
             };
             if thread.worktree_paths == worktree_paths {
+                continue;
+            }
+            // Don't overwrite paths for archived threads — the
+            // project may no longer include the worktree that was
+            // removed during the archive flow.
+            if thread.archived {
                 continue;
             }
             self.save_internal(ThreadMetadata {
@@ -675,6 +706,30 @@ impl ThreadMetadataStore {
 
     pub fn cleanup_completed_archive(&mut self, thread_id: ThreadId) {
         self.in_flight_archives.remove(&thread_id);
+    }
+
+    /// Returns `true` if any unarchived thread other than `current_session_id`
+    /// references `path` in its folder paths. Used to determine whether a
+    /// worktree can safely be removed from disk.
+    pub fn path_is_referenced_by_other_unarchived_threads(
+        &self,
+        thread_id: ThreadId,
+        path: &Path,
+        remote_connection: Option<&RemoteConnectionOptions>,
+    ) -> bool {
+        self.entries().any(|thread| {
+            thread.thread_id != thread_id
+                && !thread.archived
+                && same_remote_connection_identity(
+                    thread.remote_connection.as_ref(),
+                    remote_connection,
+                )
+                && thread
+                    .folder_paths()
+                    .paths()
+                    .iter()
+                    .any(|other_path| other_path.as_path() == path)
+        })
     }
 
     /// Updates a thread's `folder_paths` after an archived worktree has been
@@ -752,12 +807,12 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                remote_connection.is_none()
-                    || self
-                        .threads
+                same_remote_connection_identity(
+                    self.threads
                         .get(id)
-                        .and_then(|t| t.remote_connection.as_ref())
-                        == remote_connection
+                        .and_then(|t| t.remote_connection.as_ref()),
+                    remote_connection,
+                )
             })
             .copied()
             .collect();
@@ -784,12 +839,12 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                remote_connection.is_none()
-                    || self
-                        .threads
+                same_remote_connection_identity(
+                    self.threads
                         .get(id)
-                        .and_then(|t| t.remote_connection.as_ref())
-                        == remote_connection
+                        .and_then(|t| t.remote_connection.as_ref()),
+                    remote_connection,
+                )
             })
             .copied()
             .collect();
@@ -1057,10 +1112,24 @@ impl ThreadMetadataStore {
 
         let agent_id = thread_ref.connection().agent_id();
 
-        let project = thread_ref.project().read(cx);
-        let worktree_paths = project.worktree_paths(cx);
-
-        let remote_connection = project.remote_connection_options(cx);
+        // Preserve project-dependent fields for archived threads.
+        // The worktree may already have been removed from the
+        // project as part of the archive flow, so re-evaluating
+        // these from the current project state would yield
+        // empty/incorrect results.
+        let (worktree_paths, remote_connection) =
+            if let Some(existing) = existing_thread.filter(|t| t.archived) {
+                (
+                    existing.worktree_paths.clone(),
+                    existing.remote_connection.clone(),
+                )
+            } else {
+                let project = thread_ref.project().read(cx);
+                (
+                    project.worktree_paths(cx),
+                    project.remote_connection_options(cx),
+                )
+            };
 
         // Threads without a folder path (e.g. started in an empty
         // window) are archived by default so they don't get lost,
@@ -1639,13 +1708,13 @@ mod tests {
             );
 
             let first_path_entries: Vec<_> = store
-                .entries_for_path(&first_paths)
+                .entries_for_path(&first_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(first_path_entries, vec!["session-1"]);
 
             let second_path_entries: Vec<_> = store
-                .entries_for_path(&second_paths)
+                .entries_for_path(&second_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(second_path_entries, vec!["session-2"]);
@@ -1692,13 +1761,13 @@ mod tests {
             let store = store.read(cx);
 
             let first_path_entries: Vec<_> = store
-                .entries_for_path(&first_paths)
+                .entries_for_path(&first_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(first_path_entries, vec!["session-1"]);
 
             let second_path_entries: Vec<_> = store
-                .entries_for_path(&second_paths)
+                .entries_for_path(&second_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(second_path_entries, vec!["session-2"]);
@@ -1742,13 +1811,13 @@ mod tests {
             );
 
             let first_path_entries: Vec<_> = store
-                .entries_for_path(&first_paths)
+                .entries_for_path(&first_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert!(first_path_entries.is_empty());
 
             let second_path_entries: Vec<_> = store
-                .entries_for_path(&second_paths)
+                .entries_for_path(&second_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(second_path_entries.len(), 2);
@@ -1772,7 +1841,7 @@ mod tests {
             assert_eq!(store.entry_ids().count(), 1);
 
             let second_path_entries: Vec<_> = store
-                .entries_for_path(&second_paths)
+                .entries_for_path(&second_paths, None)
                 .filter_map(|entry| entry.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(second_path_entries, vec!["session-1"]);
@@ -2434,7 +2503,7 @@ mod tests {
             let store = store.read(cx);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(path_entries, vec!["session-1"]);
@@ -2457,7 +2526,7 @@ mod tests {
             let store = store.read(cx);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert!(path_entries.is_empty());
@@ -2485,7 +2554,7 @@ mod tests {
             let store = store.read(cx);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(path_entries, vec!["session-1"]);
@@ -2534,7 +2603,7 @@ mod tests {
             let store = store.read(cx);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(path_entries, vec!["session-1"]);
@@ -2546,6 +2615,116 @@ mod tests {
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert_eq!(archived, vec!["session-2"]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_entries_filter_by_remote_connection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let main_paths = PathList::new(&[Path::new("/project-a")]);
+        let linked_paths = PathList::new(&[Path::new("/wt-feature")]);
+        let now = Utc::now();
+
+        let remote_a = RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 1 });
+        let remote_b = RemoteConnectionOptions::Mock(remote::MockConnectionOptions { id: 2 });
+
+        // Three threads at the same folder_paths but different hosts.
+        let local_thread = make_metadata("local-session", "Local Thread", now, main_paths.clone());
+
+        let mut remote_a_thread = make_metadata(
+            "remote-a-session",
+            "Remote A Thread",
+            now - chrono::Duration::seconds(1),
+            main_paths.clone(),
+        );
+        remote_a_thread.remote_connection = Some(remote_a.clone());
+
+        let mut remote_b_thread = make_metadata(
+            "remote-b-session",
+            "Remote B Thread",
+            now - chrono::Duration::seconds(2),
+            main_paths.clone(),
+        );
+        remote_b_thread.remote_connection = Some(remote_b.clone());
+
+        let linked_worktree_paths =
+            WorktreePaths::from_path_lists(main_paths.clone(), linked_paths).unwrap();
+
+        let local_linked_thread = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            archived: false,
+            session_id: Some(acp::SessionId::new("local-linked")),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Local Linked".into()),
+            updated_at: now,
+            created_at: Some(now),
+            worktree_paths: linked_worktree_paths.clone(),
+            remote_connection: None,
+        };
+
+        let remote_linked_thread = ThreadMetadata {
+            thread_id: ThreadId::new(),
+            archived: false,
+            session_id: Some(acp::SessionId::new("remote-linked")),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Remote Linked".into()),
+            updated_at: now - chrono::Duration::seconds(1),
+            created_at: Some(now - chrono::Duration::seconds(1)),
+            worktree_paths: linked_worktree_paths,
+            remote_connection: Some(remote_a.clone()),
+        };
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(local_thread, cx);
+                store.save(remote_a_thread, cx);
+                store.save(remote_b_thread, cx);
+                store.save(local_linked_thread, cx);
+                store.save(remote_linked_thread, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let store = store.read(cx);
+
+            let local_entries: Vec<_> = store
+                .entries_for_path(&main_paths, None)
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            assert_eq!(local_entries, vec!["local-session"]);
+
+            let remote_a_entries: Vec<_> = store
+                .entries_for_path(&main_paths, Some(&remote_a))
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            assert_eq!(remote_a_entries, vec!["remote-a-session"]);
+
+            let remote_b_entries: Vec<_> = store
+                .entries_for_path(&main_paths, Some(&remote_b))
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            assert_eq!(remote_b_entries, vec!["remote-b-session"]);
+
+            let mut local_main_entries: Vec<_> = store
+                .entries_for_main_worktree_path(&main_paths, None)
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            local_main_entries.sort();
+            assert_eq!(local_main_entries, vec!["local-linked", "local-session"]);
+
+            let mut remote_main_entries: Vec<_> = store
+                .entries_for_main_worktree_path(&main_paths, Some(&remote_a))
+                .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
+                .collect();
+            remote_main_entries.sort();
+            assert_eq!(
+                remote_main_entries,
+                vec!["remote-a-session", "remote-linked"]
+            );
         });
     }
 
@@ -2650,7 +2829,7 @@ mod tests {
             assert!(thread.archived);
 
             let path_entries: Vec<_> = store
-                .entries_for_path(&paths)
+                .entries_for_path(&paths, None)
                 .filter_map(|e| e.session_id.as_ref().map(|s| s.0.to_string()))
                 .collect();
             assert!(path_entries.is_empty());
@@ -3387,5 +3566,106 @@ mod tests {
 
         let result = WorktreePaths::from_path_lists(main, folder);
         assert!(result.is_err());
+    }
+
+    /// Regression test: archiving a thread created in a git worktree must
+    /// preserve the thread's folder paths so that restoring it later does
+    /// not prompt the user to re-associate a project.
+    #[gpui::test]
+    async fn test_archived_thread_retains_paths_after_worktree_removal(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/worktrees/feature",
+            serde_json::json!({ "src": { "main.rs": "" } }),
+        )
+        .await;
+        let project = Project::test(fs, [Path::new("/worktrees/feature")], cx).await;
+        let connection = StubAgentConnection::new();
+
+        let (panel, mut vcx) = setup_panel_with_project(project.clone(), cx);
+        crate::test_support::open_thread_with_connection(&panel, connection, &mut vcx);
+
+        let thread = panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        let thread_id = crate::test_support::active_thread_id(&panel, &vcx);
+
+        // Push content so the event handler saves metadata with the
+        // project's worktree paths.
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "Hello".into(), cx);
+        });
+        vcx.run_until_parked();
+
+        // Verify paths were saved correctly.
+        let (folder_paths_before, main_paths_before) = cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            let entry = store.entry(thread_id).unwrap();
+            assert!(
+                !entry.folder_paths().is_empty(),
+                "thread should have folder paths before archiving"
+            );
+            (
+                entry.folder_paths().clone(),
+                entry.main_worktree_paths().clone(),
+            )
+        });
+
+        // Archive the thread.
+        cx.update(|cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.archive(thread_id, None, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        // Remove the worktree from the project, simulating what the
+        // archive flow does for linked git worktrees.
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .id()
+        });
+        project.update(cx, |project, cx| {
+            project.remove_worktree(worktree_id, cx);
+        });
+        cx.run_until_parked();
+
+        // Trigger a thread event after archiving + worktree removal.
+        // In production this happens when an async title-generation task
+        // completes after the thread was archived.
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.set_title("Generated title".into(), cx).detach();
+        });
+        vcx.run_until_parked();
+
+        // The archived thread must still have its original folder paths.
+        cx.read(|cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            let entry = store.entry(thread_id).unwrap();
+            assert!(entry.archived, "thread should still be archived");
+            assert_eq!(
+                entry.display_title().as_ref(),
+                "Generated title",
+                "title should still be updated for archived threads"
+            );
+            assert_eq!(
+                entry.folder_paths(),
+                &folder_paths_before,
+                "archived thread must retain its folder paths after worktree \
+                 removal + subsequent thread event, otherwise restoring it \
+                 will prompt the user to re-associate a project"
+            );
+            assert_eq!(
+                entry.main_worktree_paths(),
+                &main_paths_before,
+                "archived thread must retain its main worktree paths after \
+                 worktree removal + subsequent thread event"
+            );
+        });
     }
 }
