@@ -421,12 +421,9 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
-        if cfg!(test) || cfg!(feature = "test-support") {
-            return true;
-        }
-
-        !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
-            && !DisableAiSettings::get_global(cx).disable_ai
+        let feature_released = (cfg!(test) || cfg!(feature = "test-support"))
+            || !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable));
+        feature_released && !DisableAiSettings::get_global(cx).disable_ai
     }
 
     pub fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
