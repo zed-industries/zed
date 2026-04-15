@@ -1213,16 +1213,16 @@ mod tests {
         project::DisableAiSettings::register(cx);
         AgentSettings::register(cx);
 
-        // Should be Agent with an empty user layout (user hasn't customized).
+        // Should be Editor with an empty user layout (user hasn't customized).
         let layout = AgentSettings::get_layout(cx);
-        let WindowLayout::Agent(Some(user_layout)) = layout else {
-            panic!("expected Agent(Some), got {:?}", layout);
+        let WindowLayout::Editor(Some(user_layout)) = layout else {
+            panic!("expected Editor(Some), got {:?}", layout);
         };
         assert_eq!(user_layout, PanelLayout::default());
 
-        // User explicitly sets agent dock to left (matching the default).
-        // The merged result is still agent, but the user layout captures
-        // only what the user wrote.
+        // User explicitly sets agent dock to left. Combined with defaults
+        // (agent=right, others=left), merged becomes {agent=left, others=left}
+        // which matches neither preset.
         SettingsStore::update_global(cx, |store, cx| {
             store
                 .set_user_settings(r#"{ "agent": { "dock": "left" } }"#, cx)
@@ -1230,8 +1230,8 @@ mod tests {
         });
 
         let layout = AgentSettings::get_layout(cx);
-        let WindowLayout::Agent(Some(user_layout)) = layout else {
-            panic!("expected Agent(Some), got {:?}", layout);
+        let WindowLayout::Custom(user_layout) = layout else {
+            panic!("expected Custom, got {:?}", layout);
         };
         assert_eq!(user_layout.agent_dock, Some(DockPosition::Left));
         assert_eq!(user_layout.project_panel_dock, None);
@@ -1384,8 +1384,15 @@ mod tests {
 
             assert_eq!(user_layout.agent_dock, Some(DockPosition::Left));
             assert_eq!(user_layout.project_panel_dock, Some(DockSide::Right));
-            // Other fields weren't in user settings and didn't need changing.
-            assert_eq!(user_layout.outline_panel_dock, None);
+            // With defaults having these panels on the left, the diff to
+            // the agent preset also writes outline, collaboration, and git
+            // panel positions into user settings.
+            assert_eq!(user_layout.outline_panel_dock, Some(DockSide::Right));
+            assert_eq!(
+                user_layout.collaboration_panel_dock,
+                Some(DockPosition::Right)
+            );
+            assert_eq!(user_layout.git_panel_dock, Some(DockPosition::Right));
 
             // And the merged result should now match agent.
             let layout = AgentSettings::get_layout(cx);

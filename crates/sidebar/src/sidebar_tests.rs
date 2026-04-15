@@ -2383,7 +2383,7 @@ async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
             workspace.panel::<AgentPanel>(cx).is_some(),
             "Agent panel should exist"
         );
-        let dock = workspace.left_dock().read(cx);
+        let dock = workspace.right_dock().read(cx);
         assert!(
             dock.is_open(),
             "Clicking a thread should open the agent panel dock"
