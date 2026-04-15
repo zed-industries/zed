@@ -68,7 +68,7 @@ gpui::actions!(
         /// Creates a new thread in the currently selected or active project group.
         NewThreadInGroup,
         /// Toggles between the thread list and the archive view.
-        ToggleArchive,
+        ViewAllThreads,
     ]
 );
 
@@ -4585,10 +4585,10 @@ impl Sidebar {
                     .icon_size(IconSize::Small)
                     .toggle_state(is_archive)
                     .tooltip(move |_, cx| {
-                        Tooltip::for_action("Toggle Archived Threads", &ToggleArchive, cx)
+                        Tooltip::for_action("View All Threads", &ViewAllThreads, cx)
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_archive(&ToggleArchive, window, cx);
+                        this.toggle_archive(&ViewAllThreads, window, cx);
                     })),
             )
             .child(self.render_recent_projects_button(cx));
@@ -4706,7 +4706,7 @@ impl Sidebar {
             )
     }
 
-    fn toggle_archive(&mut self, _: &ToggleArchive, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_archive(&mut self, _: &ViewAllThreads, window: &mut Window, cx: &mut Context<Self>) {
         match &self.view {
             SidebarView::ThreadList => self.show_archive(window, cx),
             SidebarView::Archive(_) => self.show_thread_list(window, cx),
