@@ -3,12 +3,18 @@ use serde::Serialize;
 
 const MAX_DIRTY_LENGTH_DELTA_CHARS: usize = 512;
 
-#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TokenAnnotation {
     Context,
     Kept,
     Discarded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AnnotatedToken {
+    pub token: String,
+    pub annotation: TokenAnnotation,
 }
 
 #[allow(dead_code)]
@@ -40,8 +46,7 @@ pub struct KeptRateResult {
     /// This includes both kept newly introduced characters and correctly
     /// deleted base characters.
     pub recall_rate: f64,
-    /// Per-token classification for candidate tokens used by tests.
-    #[cfg(test)]
+    /// Per-token classification for candidate tokens.
     pub token_annotations: Vec<TokenAnnotation>,
 }
 
@@ -239,7 +244,6 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
             context_chars,
             kept_rate: 1.0,
             recall_rate: 1.0,
-            #[cfg(test)]
             token_annotations: vec![TokenAnnotation::Context; candidate_tokens.len()],
         };
     }
@@ -258,7 +262,6 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
             context_chars: 0,
             kept_rate: 0.0,
             recall_rate: 0.0,
-            #[cfg(test)]
             token_annotations: vec![TokenAnnotation::Discarded; tokenize(candidate).len()],
         };
     }
@@ -326,7 +329,6 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
         matched_edit_chars as f64 / reference_edit_chars as f64
     };
 
-    #[cfg(test)]
     let token_annotations = {
         let mut token_annotations = Vec::with_capacity(candidate_tokens.len());
         let mut new_index = 0;
@@ -339,7 +341,6 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
                 } else {
                     TokenAnnotation::Discarded
                 };
-                #[cfg(test)]
                 token_annotations.push(annotation);
                 new_index += 1;
             }
@@ -358,9 +359,24 @@ pub fn compute_kept_rate(base: &str, candidate: &str, reference: &str) -> KeptRa
         context_chars,
         kept_rate,
         recall_rate,
-        #[cfg(test)]
         token_annotations,
     }
+}
+
+pub fn annotate_kept_rate_tokens(
+    base: &str,
+    candidate: &str,
+    reference: &str,
+) -> Vec<AnnotatedToken> {
+    let result = compute_kept_rate(base, candidate, reference);
+    tokenize(candidate)
+        .into_iter()
+        .zip(result.token_annotations)
+        .map(|(token, annotation)| AnnotatedToken {
+            token: token.to_string(),
+            annotation,
+        })
+        .collect()
 }
 
 #[cfg(test)]

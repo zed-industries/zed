@@ -4,9 +4,10 @@ mod reversal;
 mod tokenize;
 mod tree_sitter;
 
+pub use kept_rate::AnnotatedToken;
 pub use kept_rate::KeptRateResult;
-#[cfg(test)]
 pub use kept_rate::TokenAnnotation;
+pub use kept_rate::annotate_kept_rate_tokens;
 pub use kept_rate::compute_kept_rate;
 pub use patch_metrics::ClassificationMetrics;
 pub use patch_metrics::Counts;
