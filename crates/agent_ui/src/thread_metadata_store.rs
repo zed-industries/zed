@@ -1486,20 +1486,19 @@ impl ThreadMetadataDb {
         &self,
     ) -> anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, String>>> {
         self.write(|conn| {
-            let rows = conn.select::<(ThreadId, String, Option<String>)>(
+            let rows = conn.select::<(ThreadId, String, String)>(
                 "SELECT t.thread_id, a.worktree_path, a.branch_name \
                  FROM thread_archived_worktrees t \
-                 JOIN archived_git_worktrees a ON a.id = t.archived_worktree_id",
+                 JOIN archived_git_worktrees a ON a.id = t.archived_worktree_id \
+                 WHERE a.branch_name IS NOT NULL",
             )?()?;
 
             let mut result: HashMap<ThreadId, HashMap<PathBuf, String>> = HashMap::default();
             for (thread_id, worktree_path, branch_name) in rows {
-                if let Some(branch_name) = branch_name {
-                    result
-                        .entry(thread_id)
-                        .or_default()
-                        .insert(PathBuf::from(worktree_path), branch_name);
-                }
+                result
+                    .entry(thread_id)
+                    .or_default()
+                    .insert(PathBuf::from(worktree_path), branch_name);
             }
             Ok(result)
         })

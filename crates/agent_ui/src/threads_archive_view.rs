@@ -137,6 +137,7 @@ pub struct ThreadsArchiveView {
     agent_connection_store: WeakEntity<AgentConnectionStore>,
     agent_server_store: WeakEntity<AgentServerStore>,
     restoring: HashSet<ThreadId>,
+    archived_thread_ids: HashSet<ThreadId>,
     archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
     _load_branch_names_task: Task<()>,
 }
@@ -181,7 +182,7 @@ impl ThreadsArchiveView {
             &ThreadMetadataStore::global(cx),
             |this: &mut Self, _, cx| {
                 this.update_items(cx);
-                this.load_archived_branch_names(cx);
+                this.reload_branch_names_if_threads_changed(cx);
             },
         );
 
@@ -209,12 +210,13 @@ impl ThreadsArchiveView {
             agent_connection_store,
             agent_server_store,
             restoring: HashSet::default(),
+            archived_thread_ids: HashSet::default(),
             archived_branch_names: HashMap::default(),
             _load_branch_names_task: Task::ready(()),
         };
 
         this.update_items(cx);
-        this.load_archived_branch_names(cx);
+        this.reload_branch_names_if_threads_changed(cx);
         this
     }
 
@@ -341,12 +343,28 @@ impl ThreadsArchiveView {
         cx.notify();
     }
 
+    fn reload_branch_names_if_threads_changed(&mut self, cx: &mut Context<Self>) {
+        let current_ids: HashSet<ThreadId> = self
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ArchiveListItem::Entry { thread, .. } => Some(thread.thread_id),
+                _ => None,
+            })
+            .collect();
+
+        if current_ids != self.archived_thread_ids {
+            self.archived_thread_ids = current_ids;
+            self.load_archived_branch_names(cx);
+        }
+    }
+
     fn load_archived_branch_names(&mut self, cx: &mut Context<Self>) {
         let task = ThreadMetadataStore::global(cx)
             .read(cx)
             .get_all_archived_branch_names(cx);
         self._load_branch_names_task = cx.spawn(async move |this, cx| {
-            if let Ok(branch_names) = task.await {
+            if let Some(branch_names) = task.await.log_err() {
                 this.update(cx, |this, cx| {
                     this.archived_branch_names = branch_names;
                     cx.notify();

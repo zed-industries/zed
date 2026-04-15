@@ -378,7 +378,21 @@ impl RenderOnce for ThreadItem {
         let has_timestamp = !self.timestamp.is_empty();
         let timestamp = self.timestamp;
 
-        let worktree_tooltip_title = match (self.is_remote, self.worktrees.len() > 1) {
+        let visible_worktree_count = {
+            let mut seen: Vec<&SharedString> = Vec::new();
+            self.worktrees
+                .iter()
+                .filter(|wt| {
+                    if seen.contains(&&wt.full_path) {
+                        return false;
+                    }
+                    seen.push(&wt.full_path);
+                    !(wt.kind == WorktreeKind::Main && wt.branch_name.is_none())
+                })
+                .count()
+        };
+
+        let worktree_tooltip_title = match (self.is_remote, visible_worktree_count > 1) {
             (true, true) => "Thread Running in Remote Git Worktrees",
             (true, false) => "Thread Running in a Remote Git Worktree",
             (false, true) => "Thread Running in Local Git Worktrees",
@@ -389,27 +403,25 @@ impl RenderOnce for ThreadItem {
         let mut worktree_labels: Vec<AnyElement> = Vec::new();
 
         let slash_color = Color::Custom(cx.theme().colors().text_muted.opacity(0.4));
-        let worktree_count = self.worktrees.len();
 
         for wt in self.worktrees {
             if seen_paths.contains(&wt.full_path) {
                 continue;
             }
 
-            let chip_index = seen_paths.len();
-            seen_paths.push(wt.full_path.clone());
-
-            let tooltip_title = worktree_tooltip_title;
-            let full_path = wt.full_path.clone();
-
             match (wt.kind, wt.branch_name) {
                 (WorktreeKind::Main, None) => continue,
                 (WorktreeKind::Main, Some(branch)) => {
+                    let chip_index = seen_paths.len();
+                    seen_paths.push(wt.full_path.clone());
+                    let tooltip_title = worktree_tooltip_title;
+                    let full_path = wt.full_path.clone();
+
                     worktree_labels.push(
                         h_flex()
                             .id(format!("{}-worktree-{chip_index}", self.id.clone()))
                             .min_w_0()
-                            .when(worktree_count > 1, |this| {
+                            .when(visible_worktree_count > 1, |this| {
                                 this.child(
                                     Label::new(wt.name)
                                         .size(LabelSize::Small)
@@ -427,7 +439,7 @@ impl RenderOnce for ThreadItem {
                                 Label::new(branch)
                                     .size(LabelSize::Small)
                                     .color(Color::Muted)
-                                    .flex_shrink_0(),
+                                    .truncate(),
                             )
                             .tooltip(move |_, cx| {
                                 Tooltip::with_meta(tooltip_title, None, full_path.clone(), cx)
@@ -436,6 +448,11 @@ impl RenderOnce for ThreadItem {
                     );
                 }
                 (WorktreeKind::Linked, branch) => {
+                    let chip_index = seen_paths.len();
+                    seen_paths.push(wt.full_path.clone());
+                    let tooltip_title = worktree_tooltip_title;
+                    let full_path = wt.full_path.clone();
+
                     let label = if wt.highlight_positions.is_empty() {
                         Label::new(wt.name)
                             .size(LabelSize::Small)
@@ -472,7 +489,7 @@ impl RenderOnce for ThreadItem {
                                     Label::new(branch)
                                         .size(LabelSize::Small)
                                         .color(Color::Muted)
-                                        .flex_shrink_0(),
+                                        .truncate(),
                                 )
                             })
                             .tooltip(move |_, cx| {
