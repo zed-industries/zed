@@ -36,6 +36,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
@@ -1014,14 +1015,14 @@ impl Sidebar {
                 if let Some(branch) = &snapshot.branch {
                     branch_by_path.insert(
                         snapshot.work_directory_abs_path.to_path_buf(),
-                        SharedString::from(branch.name().to_string()),
+                        SharedString::from(Arc::<str>::from(branch.name())),
                     );
                 }
                 for linked_wt in snapshot.linked_worktrees() {
                     if let Some(branch) = linked_wt.branch_name() {
                         branch_by_path.insert(
                             linked_wt.path.clone(),
-                            SharedString::from(branch.to_string()),
+                            SharedString::from(Arc::<str>::from(branch)),
                         );
                     }
                 }
