@@ -1193,6 +1193,7 @@ impl NativeAgentConnection {
                 .get_mut(&session_id)
                 .map(|s| (s.thread.clone(), s.acp_thread.clone()))
         }) else {
+            log::error!("Session not found in run_turn: {}", session_id);
             return Task::ready(Err(anyhow!("Session not found")));
         };
         log::debug!("Found session for: {}", session_id);
@@ -1517,6 +1518,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         log::debug!("Prompt blocks count: {}", params.prompt.len());
 
         let Some(project_state) = self.0.read(cx).session_project_state(&session_id) else {
+            log::error!("Session not found in prompt: {}", session_id);
+            if self.0.read(cx).sessions.get(&session_id).is_some() {
+                log::error!(
+                    "Session found in sessions map, but not in project state: {}",
+                    session_id
+                );
+            }
             return Task::ready(Err(anyhow::anyhow!("Session not found")));
         };
 
