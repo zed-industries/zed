@@ -969,7 +969,7 @@ impl PickerDelegate for WorktreeListDelegate {
                             }
                         })),
                 )
-                .when(!entry.is_new, |this| {
+                .when(!entry.is_new && !is_current, |this| {
                     let focus_handle = self.focus_handle.clone();
                     let open_in_new_window_button =
                         IconButton::new(("open-new-window", ix), IconName::ArrowUpRight)
