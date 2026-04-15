@@ -421,6 +421,10 @@ impl MultiWorkspace {
     }
 
     pub fn multi_workspace_enabled(&self, cx: &App) -> bool {
+        if cfg!(test) || cfg!(feature = "test-support") {
+            return true;
+        }
+
         !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
             && !DisableAiSettings::get_global(cx).disable_ai
     }
