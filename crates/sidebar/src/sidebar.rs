@@ -473,6 +473,7 @@ impl Sidebar {
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
                     this.sync_active_entry_from_active_workspace(cx);
+                    this.replace_archived_panel_thread(window, cx);
                     this.observe_draft_editors(cx);
                     this.update_entries(cx);
                 }
@@ -753,6 +754,29 @@ impl Sidebar {
         }
     }
 
+    /// When switching workspaces, the active panel may still be showing
+    /// a thread that was archived from a different workspace. In that
+    /// case, create a fresh draft so the panel has valid content and
+    /// `active_entry` can point at it.
+    fn replace_archived_panel_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.active_workspace(cx) else {
+            return;
+        };
+        let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+            return;
+        };
+        let Some(thread_id) = panel.read(cx).active_thread_id(cx) else {
+            return;
+        };
+        let is_archived = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .is_some_and(|m| m.archived);
+        if is_archived {
+            self.create_new_thread(&workspace, window, cx);
+        }
+    }
+
     /// Syncs `active_entry` from the agent panel's current state.
     /// Called from `ActiveViewChanged` — the panel has settled into its
     /// new view, so we can safely read it without race conditions.
@@ -797,14 +821,20 @@ impl Sidebar {
         }
 
         if let Some(thread_id) = panel.active_thread_id(cx) {
-            let session_id = panel
-                .active_agent_thread(cx)
-                .map(|thread| thread.read(cx).session_id().clone());
-            self.active_entry = Some(ActiveEntry {
-                thread_id,
-                session_id,
-                workspace: active_workspace,
-            });
+            let is_archived = ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(thread_id)
+                .is_some_and(|m| m.archived);
+            if !is_archived {
+                let session_id = panel
+                    .active_agent_thread(cx)
+                    .map(|thread| thread.read(cx).session_id().clone());
+                self.active_entry = Some(ActiveEntry {
+                    thread_id,
+                    session_id,
+                    workspace: active_workspace,
+                });
+            }
         }
 
         false
