@@ -21,10 +21,10 @@ use db::{
 use fs::Fs;
 use futures::{FutureExt, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Subscription, Task};
-use project::AgentId;
 pub use project::WorktreePaths;
+use project::{AgentId, linked_worktree_short_name};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
-use ui::{App, Context, SharedString};
+use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
 use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
 
@@ -312,6 +312,73 @@ impl ThreadMetadata {
     pub fn main_worktree_paths(&self) -> &PathList {
         self.worktree_paths.main_worktree_path_list()
     }
+}
+
+/// Derives worktree display info from a thread's stored path list.
+///
+/// For each path in the thread's `folder_paths`, produces a
+/// [`ThreadItemWorktreeInfo`] with a short display name, full path, and whether
+/// the worktree is the main checkout or a linked git worktree. When
+/// multiple main paths exist and a linked worktree's short name alone
+/// wouldn't identify which main project it belongs to, the main project
+/// name is prefixed for disambiguation (e.g. `project:feature`).
+pub fn worktree_info_from_thread_paths<S: std::hash::BuildHasher>(
+    worktree_paths: &WorktreePaths,
+    branch_names: &std::collections::HashMap<PathBuf, SharedString, S>,
+) -> Vec<ThreadItemWorktreeInfo> {
+    let mut infos: Vec<ThreadItemWorktreeInfo> = Vec::new();
+    let mut linked_short_names: Vec<(SharedString, SharedString)> = Vec::new();
+    let mut unique_main_count = HashSet::default();
+
+    for (main_path, folder_path) in worktree_paths.ordered_pairs() {
+        unique_main_count.insert(main_path.clone());
+        let is_linked = main_path != folder_path;
+
+        if is_linked {
+            let short_name = linked_worktree_short_name(main_path, folder_path).unwrap_or_default();
+            let project_name = main_path
+                .file_name()
+                .map(|n| SharedString::from(n.to_string_lossy().to_string()))
+                .unwrap_or_default();
+            linked_short_names.push((short_name.clone(), project_name));
+            infos.push(ThreadItemWorktreeInfo {
+                name: short_name,
+                full_path: SharedString::from(folder_path.display().to_string()),
+                highlight_positions: Vec::new(),
+                kind: WorktreeKind::Linked,
+                branch_name: branch_names.get(folder_path).cloned(),
+            });
+        } else {
+            let Some(name) = folder_path.file_name() else {
+                continue;
+            };
+            infos.push(ThreadItemWorktreeInfo {
+                name: SharedString::from(name.to_string_lossy().to_string()),
+                full_path: SharedString::from(folder_path.display().to_string()),
+                highlight_positions: Vec::new(),
+                kind: WorktreeKind::Main,
+                branch_name: branch_names.get(folder_path).cloned(),
+            });
+        }
+    }
+
+    // When the group has multiple main worktree paths and the thread's
+    // folder paths don't all share the same short name, prefix each
+    // linked worktree chip with its main project name so the user knows
+    // which project it belongs to.
+    let all_same_name = infos.len() > 1 && infos.iter().all(|i| i.name == infos[0].name);
+
+    if unique_main_count.len() > 1 && !all_same_name {
+        for (info, (_short_name, project_name)) in infos
+            .iter_mut()
+            .filter(|i| i.kind == WorktreeKind::Linked)
+            .zip(linked_short_names.iter())
+        {
+            info.name = SharedString::from(format!("{}:{}", project_name, info.name));
+        }
+    }
+
+    infos
 }
 
 impl From<&ThreadMetadata> for acp_thread::AgentSessionInfo {
@@ -807,44 +874,13 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                same_remote_connection_identity(
-                    self.threads
-                        .get(id)
-                        .and_then(|t| t.remote_connection.as_ref()),
-                    remote_connection,
-                )
-            })
-            .copied()
-            .collect();
-
-        self.mutate_thread_paths(&thread_ids, mutate, cx);
-    }
-
-    /// Like `change_worktree_paths`, but looks up threads by their
-    /// `main_worktree_paths` instead of `folder_paths`. Used when
-    /// migrating threads for project group key changes where the
-    /// lookup key is the group key's main paths.
-    /// When `remote_connection` is provided, only threads with a matching
-    /// remote connection are affected.
-    pub fn change_worktree_paths_by_main(
-        &mut self,
-        current_main_paths: &PathList,
-        remote_connection: Option<&RemoteConnectionOptions>,
-        mutate: impl Fn(&mut WorktreePaths),
-        cx: &mut Context<Self>,
-    ) {
-        let thread_ids: Vec<_> = self
-            .threads_by_main_paths
-            .get(current_main_paths)
-            .into_iter()
-            .flatten()
-            .filter(|id| {
-                same_remote_connection_identity(
-                    self.threads
-                        .get(id)
-                        .and_then(|t| t.remote_connection.as_ref()),
-                    remote_connection,
-                )
+                self.threads.get(id).is_some_and(|t| {
+                    !t.archived
+                        && same_remote_connection_identity(
+                            t.remote_connection.as_ref(),
+                            remote_connection,
+                        )
+                })
             })
             .copied()
             .collect();
@@ -967,6 +1003,14 @@ impl ThreadMetadataStore {
             db.is_archived_worktree_referenced(archived_worktree_id)
                 .await
         })
+    }
+
+    pub fn get_all_archived_branch_names(
+        &self,
+        cx: &App,
+    ) -> Task<anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, String>>>> {
+        let db = self.db.clone();
+        cx.background_spawn(async move { db.get_all_archived_branch_names() })
     }
 
     fn update_archived(&mut self, thread_id: ThreadId, archived: bool, cx: &mut Context<Self>) {
@@ -1125,10 +1169,10 @@ impl ThreadMetadataStore {
                 )
             } else {
                 let project = thread_ref.project().read(cx);
-                (
-                    project.worktree_paths(cx),
-                    project.remote_connection_options(cx),
-                )
+                let worktree_paths = project.worktree_paths(cx);
+                let remote_connection = project.remote_connection_options(cx);
+
+                (worktree_paths, remote_connection)
             };
 
         // Threads without a folder path (e.g. started in an empty
@@ -1436,6 +1480,27 @@ impl ThreadMetadataDb {
             "SELECT COUNT(*) FROM thread_archived_worktrees WHERE archived_worktree_id = ?1",
         )?(archived_worktree_id)
         .map(|count| count.unwrap_or(0) > 0)
+    }
+
+    pub fn get_all_archived_branch_names(
+        &self,
+    ) -> anyhow::Result<HashMap<ThreadId, HashMap<PathBuf, String>>> {
+        let rows = self.select::<(ThreadId, String, String)>(
+            "SELECT t.thread_id, a.worktree_path, a.branch_name \
+             FROM thread_archived_worktrees t \
+             JOIN archived_git_worktrees a ON a.id = t.archived_worktree_id \
+             WHERE a.branch_name IS NOT NULL \
+             ORDER BY a.id ASC",
+        )?()?;
+
+        let mut result: HashMap<ThreadId, HashMap<PathBuf, String>> = HashMap::default();
+        for (thread_id, worktree_path, branch_name) in rows {
+            result
+                .entry(thread_id)
+                .or_default()
+                .insert(PathBuf::from(worktree_path), branch_name);
+        }
+        Ok(result)
     }
 }
 

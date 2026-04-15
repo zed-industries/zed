@@ -586,6 +586,7 @@ message Worktree {
   string ref_name = 2;
   string sha = 3;
   bool is_main = 4;
+  bool is_bare = 5;
 }
 
 message GitCreateWorktree {

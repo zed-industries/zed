@@ -9,7 +9,6 @@ use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCo
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
 
-use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
 
 use gpui::{Corner, List};
@@ -207,7 +206,6 @@ impl RenderOnce for GeneratingSpinnerElement {
 }
 
 pub enum AcpThreadViewEvent {
-    FirstSendRequested { content: Vec<acp::ContentBlock> },
     MessageSentOrQueued,
 }
 
@@ -908,49 +906,6 @@ impl ThreadView {
         }
 
         let message_editor = self.message_editor.clone();
-
-        // Intercept the first send so the agent panel can capture the full
-        // content blocks — needed for "Start thread in New Worktree",
-        // which must create a workspace before sending the message there.
-        let intercept_first_send = self.thread.read(cx).entries().is_empty()
-            && !message_editor.read(cx).is_empty(cx)
-            && self
-                .workspace
-                .upgrade()
-                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
-                .is_some_and(|panel| {
-                    !matches!(
-                        panel.read(cx).start_thread_in(),
-                        StartThreadIn::LocalProject
-                    )
-                });
-
-        if intercept_first_send {
-            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
-            let content_task = self.resolve_message_contents(&message_editor, cx);
-
-            cx.spawn(async move |this, cx| match content_task.await {
-                Ok((content, _tracked_buffers)) => {
-                    if content.is_empty() {
-                        return;
-                    }
-
-                    this.update(cx, |_, cx| {
-                        cx.emit(AcpThreadViewEvent::FirstSendRequested { content });
-                    })
-                    .ok();
-                }
-                Err(error) => {
-                    this.update(cx, |this, cx| {
-                        this.handle_thread_error(error, cx);
-                    })
-                    .ok();
-                }
-            })
-            .detach();
-
-            return;
-        }
 
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;

@@ -6,7 +6,7 @@ use clap::Parser;
 use compliance::{
     checks::Reporter,
     git::{CommitsFromVersionToVersion, GetVersionTags, GitCommand, VersionTag},
-    github::{GitHubClient, Repository},
+    github::{GithubClient, Repository},
     report::ReportReviewSummary,
 };
 
@@ -69,7 +69,7 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     println!("Checking commit range {range}, {} total", commits.len());
 
-    let client = GitHubClient::for_app_in_repo(
+    let client = GithubClient::for_app_in_repo(
         app_id.parse().context("Failed to parse app ID as int")?,
         key.as_ref(),
         Repository::ZED.owner(),
