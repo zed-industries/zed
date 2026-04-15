@@ -30,7 +30,7 @@ use picker::{
 use project::{AgentId, AgentServerStore};
 use settings::Settings as _;
 use theme::ActiveTheme;
-use ui::{AgentThreadStatus, ThreadItem};
+use ui::{AgentThreadStatus, IconDecoration, IconDecorationKind, Tab, ThreadItem};
 use ui::{
     Divider, KeyBinding, ListItem, ListItemSpacing, ListSubHeader, Tooltip, WithScrollbar,
     prelude::*, utils::platform_title_bar_height,
@@ -140,6 +140,7 @@ pub struct ThreadsArchiveView {
     archived_thread_ids: HashSet<ThreadId>,
     archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
     _load_branch_names_task: Task<()>,
+    show_archived_only: bool,
 }
 
 impl ThreadsArchiveView {
@@ -213,6 +214,7 @@ impl ThreadsArchiveView {
             archived_thread_ids: HashSet::default(),
             archived_branch_names: HashMap::default(),
             _load_branch_names_task: Task::ready(()),
+            show_archived_only: false,
         };
 
         this.update_items(cx);
@@ -251,9 +253,11 @@ impl ThreadsArchiveView {
     }
 
     fn update_items(&mut self, cx: &mut Context<Self>) {
+        let show_archived_only = self.show_archived_only;
         let sessions = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
+            .filter(|t| !show_archived_only || t.archived)
             .sorted_by_cached_key(|t| t.created_at.unwrap_or(t.updated_at))
             .rev()
             .cloned()
@@ -378,6 +382,11 @@ impl ThreadsArchiveView {
         self.filter_editor.update(cx, |editor, cx| {
             editor.set_text("", window, cx);
         });
+    }
+
+    fn archive_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.preserve_selection_on_next_update = true;
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| store.archive(thread_id, None, cx));
     }
 
     fn unarchive_thread(
@@ -580,10 +589,7 @@ impl ThreadsArchiveView {
 
                 let is_restoring = self.restoring.contains(&thread.thread_id);
 
-                let mut title = thread.display_title();
-                if thread.archived {
-                    title = format!("{} (archived)", title).into();
-                }
+                let is_archived = thread.archived;
 
                 let branch_names_for_thread: HashMap<PathBuf, SharedString> = self
                     .archived_branch_names
@@ -594,13 +600,33 @@ impl ThreadsArchiveView {
                             .collect()
                     })
                     .unwrap_or_default();
+
                 let worktrees = worktree_info_from_thread_paths(
                     &thread.worktree_paths,
                     &branch_names_for_thread,
                 );
 
-                let base = ThreadItem::new(id, title)
+                let color = cx.theme().colors();
+                let knockout_color = color
+                    .title_bar_background
+                    .blend(color.panel_background.opacity(0.25));
+                let archived_decoration =
+                    IconDecoration::new(IconDecorationKind::Dot, knockout_color, cx)
+                        .color(cx.theme().status().info)
+                        .position(gpui::Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        });
+
+                let base = ThreadItem::new(id, thread.display_title())
                     .icon(icon)
+                    .when(is_archived, |this| {
+                        this.icon_color(Color::Muted)
+                            .title_label_color(Color::Muted)
+                    })
+                    .when(!is_archived, |this| {
+                        this.icon_decoration(archived_decoration)
+                    })
                     .when_some(icon_from_external_svg, |this, svg| {
                         this.custom_icon_from_external_svg(svg)
                     })
@@ -638,7 +664,7 @@ impl ThreadsArchiveView {
                         )
                         .tooltip(Tooltip::text("Restoring…"))
                         .into_any_element()
-                } else {
+                } else if is_archived {
                     base.action_slot(
                         IconButton::new("delete-thread", IconName::Trash)
                             .icon_size(IconSize::Small)
@@ -669,7 +695,29 @@ impl ThreadsArchiveView {
                                 })
                             }),
                     )
-                    .tooltip(move |_, cx| Tooltip::for_action("Restore Thread", &menu::Confirm, cx))
+                    .tooltip(move |_, cx| Tooltip::for_action("Open Thread", &menu::Confirm, cx))
+                    .on_click({
+                        let thread = thread.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.unarchive_thread(thread.clone(), window, cx);
+                        })
+                    })
+                    .into_any_element()
+                } else {
+                    base.action_slot(
+                        IconButton::new("archive-thread", IconName::Archive)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Archive Thread"))
+                            .on_click({
+                                let thread_id = thread.thread_id;
+                                cx.listener(move |this, _, _, cx| {
+                                    this.archive_thread(thread_id, cx);
+                                    cx.stop_propagation();
+                                })
+                            }),
+                    )
+                    .tooltip(move |_, cx| Tooltip::for_action("Open Thread", &menu::Confirm, cx))
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
@@ -803,6 +851,54 @@ impl ThreadsArchiveView {
                 )
             })
     }
+
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let entry_count = self
+            .items
+            .iter()
+            .filter(|item| matches!(item, ArchiveListItem::Entry { .. }))
+            .count();
+
+        let count_label = if entry_count == 1 {
+            if self.show_archived_only {
+                "1 archived thread".to_string()
+            } else {
+                "1 thread".to_string()
+            }
+        } else if self.show_archived_only {
+            format!("{} archived threads", entry_count)
+        } else {
+            format!("{} threads", entry_count)
+        };
+
+        h_flex()
+            .mt_px()
+            .pl_2p5()
+            .pr_1p5()
+            .h(Tab::content_height(cx))
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Label::new(count_label)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                IconButton::new("toggle-archived-only", IconName::ListFilter)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(self.show_archived_only)
+                    .tooltip(Tooltip::text(if self.show_archived_only {
+                        "Show All Threads"
+                    } else {
+                        "Show Archived Only"
+                    }))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.show_archived_only = !this.show_archived_only;
+                        this.update_items(cx);
+                    })),
+            )
+    }
 }
 
 pub fn format_history_entry_timestamp(entry_time: DateTime<Utc>) -> String {
@@ -885,6 +981,7 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::remove_selected_thread))
             .size_full()
             .child(self.render_header(window, cx))
+            .when(!has_query, |this| this.child(self.render_toolbar(cx)))
             .child(content)
     }
 }
