@@ -3122,29 +3122,34 @@ impl AgentPanel {
         }
     }
 
-    fn should_propagate_worktree_trust(&self, cx: &App) -> bool {
-        if ProjectSettings::get_global(cx).session.trust_all_worktrees {
-            return false;
-        }
-        let Some(trusted_store) = TrustedWorktrees::try_get_global(cx) else {
-            return false;
-        };
-        let worktree_store = self.project.read(cx).worktree_store();
-        !trusted_store
-            .read(cx)
-            .has_restricted_worktrees(&worktree_store, cx)
-    }
-
-    fn trust_worktree_paths(
+    fn maybe_propagate_worktree_trust(
+        this: &WeakEntity<Self>,
         new_workspace: &Entity<workspace::Workspace>,
         paths: &[PathBuf],
         cx: &mut AsyncWindowContext,
     ) {
         cx.update(|_, cx| {
+            if ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                return;
+            }
             let Some(trusted_store) = TrustedWorktrees::try_get_global(cx) else {
                 return;
             };
+
+            let source_is_trusted = this
+                .upgrade()
+                .map(|panel| {
+                    let source_worktree_store = panel.read(cx).project.read(cx).worktree_store();
+                    !trusted_store
+                        .read(cx)
+                        .has_restricted_worktrees(&source_worktree_store, cx)
+                })
+                .unwrap_or(false);
             
+            if !source_is_trusted {
+                return;
+            }
+
             let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store();
             let paths_to_trust: HashSet<_> = paths
                 .iter()
@@ -3153,7 +3158,7 @@ impl AgentPanel {
                     Some(PathTrust::Worktree(worktree.read(cx).id()))
                 })
                 .collect();
-            
+
             if !paths_to_trust.is_empty() {
                 trusted_store.update(cx, |store, cx| {
                     store.trust(&worktree_store, paths_to_trust, cx);
@@ -3439,7 +3444,6 @@ impl AgentPanel {
             .downcast::<workspace::MultiWorkspace>();
 
         let selected_agent = self.selected_agent();
-        let propagate_trust = self.should_propagate_worktree_trust(cx);
 
         let task = cx.spawn_in(window, async move |this, cx| {
             let (all_paths, path_remapping, has_non_git) = match args {
@@ -3585,7 +3589,6 @@ impl AgentPanel {
                 content,
                 selected_agent,
                 remote_connection_options,
-                propagate_trust,
                 cx,
             )
             .await
@@ -3619,7 +3622,6 @@ impl AgentPanel {
         content: Vec<acp::ContentBlock>,
         selected_agent: Option<Agent>,
         remote_connection_options: Option<RemoteConnectionOptions>,
-        propagate_trust: bool,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         let window_handle = window_handle
@@ -3682,9 +3684,7 @@ impl AgentPanel {
             })
             .await;
 
-        if propagate_trust {
-            Self::trust_worktree_paths(&new_workspace, &all_paths, cx);
-        }
+        Self::maybe_propagate_worktree_trust(&this, &new_workspace, &all_paths, cx);
 
         let initial_content = AgentInitialContent::ContentBlock {
             blocks: content,
