@@ -1,15 +1,19 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::agent_connection_store::AgentConnectionStore;
 
-use crate::thread_metadata_store::{ThreadId, ThreadMetadata, ThreadMetadataStore};
+use crate::thread_metadata_store::{
+    ThreadId, ThreadMetadata, ThreadMetadataStore, worktree_info_from_thread_paths,
+};
 use crate::{Agent, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
+use collections::HashMap;
 use editor::Editor;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -133,6 +137,9 @@ pub struct ThreadsArchiveView {
     agent_connection_store: WeakEntity<AgentConnectionStore>,
     agent_server_store: WeakEntity<AgentServerStore>,
     restoring: HashSet<ThreadId>,
+    archived_thread_ids: HashSet<ThreadId>,
+    archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
+    _load_branch_names_task: Task<()>,
 }
 
 impl ThreadsArchiveView {
@@ -175,6 +182,7 @@ impl ThreadsArchiveView {
             &ThreadMetadataStore::global(cx),
             |this: &mut Self, _, cx| {
                 this.update_items(cx);
+                this.reload_branch_names_if_threads_changed(cx);
             },
         );
 
@@ -202,9 +210,13 @@ impl ThreadsArchiveView {
             agent_connection_store,
             agent_server_store,
             restoring: HashSet::default(),
+            archived_thread_ids: HashSet::default(),
+            archived_branch_names: HashMap::default(),
+            _load_branch_names_task: Task::ready(()),
         };
 
         this.update_items(cx);
+        this.reload_branch_names_if_threads_changed(cx);
         this
     }
 
@@ -329,6 +341,37 @@ impl ThreadsArchiveView {
         }
 
         cx.notify();
+    }
+
+    fn reload_branch_names_if_threads_changed(&mut self, cx: &mut Context<Self>) {
+        let current_ids: HashSet<ThreadId> = self
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ArchiveListItem::Entry { thread, .. } => Some(thread.thread_id),
+                _ => None,
+            })
+            .collect();
+
+        if current_ids != self.archived_thread_ids {
+            self.archived_thread_ids = current_ids;
+            self.load_archived_branch_names(cx);
+        }
+    }
+
+    fn load_archived_branch_names(&mut self, cx: &mut Context<Self>) {
+        let task = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .get_all_archived_branch_names(cx);
+        self._load_branch_names_task = cx.spawn(async move |this, cx| {
+            if let Some(branch_names) = task.await.log_err() {
+                this.update(cx, |this, cx| {
+                    this.archived_branch_names = branch_names;
+                    cx.notify();
+                })
+                .log_err();
+            }
+        });
     }
 
     fn reset_filter_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -537,6 +580,20 @@ impl ThreadsArchiveView {
 
                 let is_restoring = self.restoring.contains(&thread.thread_id);
 
+                let branch_names_for_thread: HashMap<PathBuf, SharedString> = self
+                    .archived_branch_names
+                    .get(&thread.thread_id)
+                    .map(|map| {
+                        map.iter()
+                            .map(|(k, v)| (k.clone(), SharedString::from(v.clone())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let worktrees = worktree_info_from_thread_paths(
+                    &thread.worktree_paths,
+                    &branch_names_for_thread,
+                );
+
                 let base = ThreadItem::new(id, thread.display_title())
                     .icon(icon)
                     .when_some(icon_from_external_svg, |this, svg| {
@@ -544,7 +601,7 @@ impl ThreadsArchiveView {
                     })
                     .timestamp(timestamp)
                     .highlight_positions(highlight_positions.clone())
-                    .project_paths(thread.folder_paths().paths_owned())
+                    .worktrees(worktrees)
                     .focused(is_focused)
                     .hovered(is_hovered)
                     .on_hover(cx.listener(move |this, is_hovered, _window, cx| {

@@ -1,20 +1,19 @@
 use anyhow::Result;
 use fs::Fs;
 
-use gpui::PathPromptOptions;
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
     actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
-use project::{DirectoryLister, DisableAiSettings, Project};
+use project::{DisableAiSettings, Project};
 use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
 use std::future::Future;
-use std::path::Path;
+
 use std::path::PathBuf;
 use ui::prelude::*;
 use util::ResultExt;
@@ -111,10 +110,6 @@ pub enum MultiWorkspaceEvent {
     ActiveWorkspaceChanged,
     WorkspaceAdded(Entity<Workspace>),
     WorkspaceRemoved(EntityId),
-    ProjectGroupKeyUpdated {
-        old_key: ProjectGroupKey,
-        new_key: ProjectGroupKey,
-    },
 }
 
 pub enum SidebarEvent {
@@ -609,8 +604,7 @@ impl MultiWorkspace {
             return;
         }
 
-        // Re-key the group without emitting ProjectGroupKeyUpdated —
-        // the Project already emitted WorktreePathsChanged which the
+        // The Project already emitted WorktreePathsChanged which the
         // sidebar handles for thread migration.
         self.rekey_project_group(old_key, &new_key, cx);
         self.serialize(cx);
@@ -710,25 +704,6 @@ impl MultiWorkspace {
         }
     }
 
-    /// Re-keys a project group and emits `ProjectGroupKeyUpdated` so
-    /// the sidebar can migrate thread metadata. Used for direct group
-    /// manipulation (add/remove folder) where no Project event fires.
-    fn update_project_group_key(
-        &mut self,
-        old_key: &ProjectGroupKey,
-        new_key: &ProjectGroupKey,
-        cx: &mut Context<Self>,
-    ) {
-        self.rekey_project_group(old_key, new_key, cx);
-
-        if old_key != new_key && !new_key.path_list().paths().is_empty() {
-            cx.emit(MultiWorkspaceEvent::ProjectGroupKeyUpdated {
-                old_key: old_key.clone(),
-                new_key: new_key.clone(),
-            });
-        }
-    }
-
     pub(crate) fn retain_workspace(
         &mut self,
         workspace: Entity<Workspace>,
@@ -751,10 +726,19 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) {
         Self::subscribe_to_workspace(workspace, window, cx);
-        self.sync_sidebar_to_workspace(workspace, cx);
         let weak_self = cx.weak_entity();
         workspace.update(cx, |workspace, cx| {
             workspace.set_multi_workspace(weak_self, cx);
+        });
+
+        let entity = cx.entity();
+        cx.defer({
+            let workspace = workspace.clone();
+            move |cx| {
+                entity.update(cx, |this, cx| {
+                    this.sync_sidebar_to_workspace(&workspace, cx);
+                })
+            }
         });
     }
 
@@ -871,126 +855,6 @@ impl MultiWorkspace {
         })
     }
 
-    pub fn remove_folder_from_project_group(
-        &mut self,
-        group_key: &ProjectGroupKey,
-        path: &Path,
-        cx: &mut Context<Self>,
-    ) {
-        let workspaces = self
-            .workspaces_for_project_group(group_key, cx)
-            .unwrap_or_default();
-
-        let Some(group) = self
-            .project_groups
-            .iter()
-            .find(|group| group.key == *group_key)
-        else {
-            return;
-        };
-
-        let new_path_list = group.key.path_list().without_path(path);
-        if new_path_list.is_empty() {
-            return;
-        }
-
-        let new_key = ProjectGroupKey::new(group.key.host(), new_path_list);
-        self.update_project_group_key(group_key, &new_key, cx);
-
-        for workspace in workspaces {
-            let project = workspace.read(cx).project().clone();
-            project.update(cx, |project, cx| {
-                project.remove_worktree_for_main_worktree_path(path, cx);
-            });
-        }
-
-        self.serialize(cx);
-        cx.notify();
-    }
-
-    pub fn prompt_to_add_folders_to_project_group(
-        &mut self,
-        group_key: ProjectGroupKey,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let paths = self.workspace().update(cx, |workspace, cx| {
-            workspace.prompt_for_open_path(
-                PathPromptOptions {
-                    files: false,
-                    directories: true,
-                    multiple: true,
-                    prompt: None,
-                },
-                DirectoryLister::Project(workspace.project().clone()),
-                window,
-                cx,
-            )
-        });
-
-        cx.spawn_in(window, async move |this, cx| {
-            if let Some(new_paths) = paths.await.ok().flatten() {
-                if !new_paths.is_empty() {
-                    this.update(cx, |multi_workspace, cx| {
-                        multi_workspace.add_folders_to_project_group(&group_key, new_paths, cx);
-                    })?;
-                }
-            }
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    pub fn add_folders_to_project_group(
-        &mut self,
-        group_key: &ProjectGroupKey,
-        new_paths: Vec<PathBuf>,
-        cx: &mut Context<Self>,
-    ) {
-        let workspaces = self
-            .workspaces_for_project_group(group_key, cx)
-            .unwrap_or_default();
-
-        let Some(group) = self
-            .project_groups
-            .iter()
-            .find(|group| group.key == *group_key)
-        else {
-            return;
-        };
-
-        let existing_paths = group.key.path_list().paths();
-        let new_paths: Vec<PathBuf> = new_paths
-            .into_iter()
-            .filter(|p| !existing_paths.contains(p))
-            .collect();
-
-        if new_paths.is_empty() {
-            return;
-        }
-
-        let mut all_paths: Vec<PathBuf> = existing_paths.to_vec();
-        all_paths.extend(new_paths.iter().cloned());
-        let new_path_list = PathList::new(&all_paths);
-        let new_key = ProjectGroupKey::new(group.key.host(), new_path_list);
-
-        self.update_project_group_key(group_key, &new_key, cx);
-
-        for workspace in workspaces {
-            let project = workspace.read(cx).project().clone();
-            for path in &new_paths {
-                project
-                    .update(cx, |project, cx| {
-                        project.find_or_create_worktree(path, true, cx)
-                    })
-                    .detach_and_log_err(cx);
-            }
-        }
-
-        self.serialize(cx);
-        cx.notify();
-    }
-
     pub fn remove_project_group(
         &mut self,
         group_key: &ProjectGroupKey,
@@ -1025,6 +889,8 @@ impl MultiWorkspace {
                         neighbor_key.path_list().clone(),
                         Some(neighbor_key.clone()),
                         &excluded_workspaces,
+                        None,
+                        OpenMode::Activate,
                         window,
                         cx,
                     );
@@ -1152,6 +1018,9 @@ impl MultiWorkspace {
             &mut Context<Self>,
         ) -> Task<Result<Option<Entity<remote::RemoteClient>>>>
         + 'static,
+        excluding: &[Entity<Workspace>],
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1164,7 +1033,9 @@ impl MultiWorkspace {
             return self.find_or_create_local_workspace(
                 paths,
                 provisional_project_group_key,
-                &[],
+                excluding,
+                init,
+                open_mode,
                 window,
                 cx,
             );
@@ -1227,6 +1098,8 @@ impl MultiWorkspace {
         path_list: PathList,
         project_group: Option<ProjectGroupKey>,
         excluding: &[Entity<Workspace>],
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1293,8 +1166,8 @@ impl MultiWorkspace {
                         app_state,
                         requesting_window,
                         None,
-                        None,
-                        OpenMode::Activate,
+                        init,
+                        open_mode,
                         cx,
                     )
                 })
@@ -1839,7 +1712,15 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(PathList::new(&paths), None, &[], window, cx)
+            self.find_or_create_local_workspace(
+                PathList::new(&paths),
+                None,
+                &[],
+                None,
+                OpenMode::Activate,
+                window,
+                cx,
+            )
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {

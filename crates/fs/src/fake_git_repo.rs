@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
@@ -105,6 +107,28 @@ impl FakeGitRepository {
             fs.with_git_state(&dot_git_path, write, f)?
         }
         .boxed()
+    }
+
+    /// Scans `.git/worktrees/*/gitdir` to find the admin entry directory for a
+    /// worktree at the given checkout path. Used when the working tree directory
+    /// has already been deleted and we can't read its `.git` pointer file.
+    async fn find_worktree_entry_dir_by_path(&self, path: &Path) -> Option<PathBuf> {
+        use futures::StreamExt;
+
+        let worktrees_dir = self.common_dir_path.join("worktrees");
+        let mut entries = self.fs.read_dir(&worktrees_dir).await.ok()?;
+        while let Some(Ok(entry_path)) = entries.next().await {
+            if let Ok(gitdir_content) = self.fs.load(&entry_path.join("gitdir")).await {
+                let worktree_path = PathBuf::from(gitdir_content.trim())
+                    .parent()
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
+                if worktree_path == path {
+                    return Some(entry_path);
+                }
+            }
+        }
+        None
     }
 }
 
@@ -494,6 +518,7 @@ impl GitRepository for FakeGitRepository {
                     ref_name: Some(branch_ref.into()),
                     sha: head_sha.into(),
                     is_main: true,
+                    is_bare: false,
                 };
                 (main_wt, state.refs.clone())
             })?;
@@ -532,6 +557,7 @@ impl GitRepository for FakeGitRepository {
                         ref_name: ref_name.map(Into::into),
                         sha: sha.into(),
                         is_main: false,
+                        is_bare: false,
                     });
                 }
             }
@@ -686,24 +712,30 @@ impl GitRepository for FakeGitRepository {
         async move {
             executor.simulate_random_delay().await;
 
-            // Read the worktree's .git file to find its entry directory.
+            // Try to read the worktree's .git file to find its entry
+            // directory. If the working tree is already gone (e.g. the
+            // caller deleted it before asking git to clean up), fall back
+            // to scanning `.git/worktrees/*/gitdir` for a matching path,
+            // mirroring real git's behavior with `--force`.
             let dot_git_file = path.join(".git");
-            let content = fs
-                .load(&dot_git_file)
-                .await
-                .with_context(|| format!("no worktree found at path: {}", path.display()))?;
-            let gitdir = content
-                .strip_prefix("gitdir:")
-                .context("invalid .git file in worktree")?
-                .trim();
-            let worktree_entry_dir = PathBuf::from(gitdir);
+            let worktree_entry_dir = if let Ok(content) = fs.load(&dot_git_file).await {
+                let gitdir = content
+                    .strip_prefix("gitdir:")
+                    .context("invalid .git file in worktree")?
+                    .trim();
+                PathBuf::from(gitdir)
+            } else {
+                self.find_worktree_entry_dir_by_path(&path)
+                    .await
+                    .with_context(|| format!("no worktree found at path: {}", path.display()))?
+            };
 
-            // Remove the worktree checkout directory.
+            // Remove the worktree checkout directory if it still exists.
             fs.remove_dir(
                 &path,
                 RemoveOptions {
                     recursive: true,
-                    ignore_if_not_exists: false,
+                    ignore_if_not_exists: true,
                 },
             )
             .await?;

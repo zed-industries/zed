@@ -38,6 +38,9 @@ pub use multi_workspace::{
     ToggleWorkspaceSidebar, sidebar_side_context_menu,
 };
 pub use path_list::{PathList, SerializedPathList};
+pub use remote::{
+    RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
+};
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -86,7 +89,7 @@ use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     WorkspaceDb, delete_unloaded_items,
     model::{
-        DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
+        DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces, resolve_worktree_workspaces,
@@ -159,7 +162,7 @@ use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::Notificat
 use crate::{
     persistence::{
         SerializedAxis,
-        model::{DockData, SerializedItem, SerializedPane, SerializedPaneGroup},
+        model::{SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
 };
@@ -6494,10 +6497,12 @@ impl Workspace {
         if let Some(focus_on) = focus_on {
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
         } else if self.active_pane() == pane {
-            self.panes
-                .last()
-                .unwrap()
-                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
+            let fallback_pane = self.panes.last().unwrap().clone();
+            if self.has_active_modal(window, cx) {
+                self.set_active_pane(&fallback_pane, window, cx);
+            } else {
+                fallback_pane.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
+            }
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
@@ -9256,35 +9261,31 @@ pub async fn find_existing_workspace(
     let mut open_visible = OpenVisible::All;
     let mut best_match = None;
 
-    cx.update(|cx| {
-        for window in workspace_windows_for_location(location, cx) {
-            if let Ok(multi_workspace) = window.read(cx) {
-                for workspace in multi_workspace.workspaces() {
-                    let project = workspace.read(cx).project.read(cx);
-                    let m = project.visibility_for_paths(
-                        abs_paths,
-                        open_options.open_new_workspace == None,
-                        cx,
-                    );
-                    if m > best_match {
-                        existing = Some((window, workspace.clone()));
-                        best_match = m;
-                    } else if best_match.is_none() && open_options.open_new_workspace == Some(false)
-                    {
-                        existing = Some((window, workspace.clone()))
+    if open_options.workspace_matching != WorkspaceMatching::None {
+        cx.update(|cx| {
+            for window in workspace_windows_for_location(location, cx) {
+                if let Ok(multi_workspace) = window.read(cx) {
+                    for workspace in multi_workspace.workspaces() {
+                        let project = workspace.read(cx).project.read(cx);
+                        let m = project.visibility_for_paths(
+                            abs_paths,
+                            open_options.workspace_matching != WorkspaceMatching::MatchSubdirectory,
+                            cx,
+                        );
+                        if m > best_match {
+                            existing = Some((window, workspace.clone()));
+                            best_match = m;
+                        } else if best_match.is_none()
+                            && open_options.workspace_matching
+                                == WorkspaceMatching::MatchSubdirectory
+                        {
+                            existing = Some((window, workspace.clone()))
+                        }
                     }
                 }
             }
-        }
-    });
+        });
 
-    // With -n, only reuse a window if the path is genuinely contained
-    // within an existing worktree (don't fall back to any arbitrary window).
-    if open_options.open_new_workspace == Some(true) && best_match.is_none() {
-        existing = None;
-    }
-
-    if open_options.open_new_workspace != Some(true) {
         let all_paths_are_files = existing
             .as_ref()
             .and_then(|(_, target_workspace)| {
@@ -9307,11 +9308,7 @@ pub async fn find_existing_workspace(
             })
             .unwrap_or(false);
 
-        if open_options.open_new_workspace.is_none()
-            && existing.is_some()
-            && open_options.wait
-            && all_paths_are_files
-        {
+        if open_options.wait && existing.is_some() && all_paths_are_files {
             cx.update(|cx| {
                 let windows = workspace_windows_for_location(location, cx);
                 let window = cx
@@ -9332,12 +9329,32 @@ pub async fn find_existing_workspace(
     (existing, open_visible)
 }
 
-#[derive(Default, Clone)]
+/// Controls whether to reuse an existing workspace whose worktrees contain the
+/// given paths, and how broadly to match.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum WorkspaceMatching {
+    /// Always open a new workspace. No matching against existing worktrees.
+    None,
+    /// Match paths against existing worktree roots and files within them.
+    #[default]
+    MatchExact,
+    /// Match paths against existing worktrees including subdirectories, and
+    /// fall back to any existing window if no worktree matched.
+    ///
+    /// For example, `zed -a foo/bar` will activate the `bar` workspace if it
+    /// exists, otherwise it will open a new window with `foo/bar` as the root.
+    MatchSubdirectory,
+}
+
+#[derive(Clone)]
 pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
-    pub open_new_workspace: Option<bool>,
-    pub force_existing_window: bool,
+    pub workspace_matching: WorkspaceMatching,
+    /// Whether to add unmatched directories to the existing window's sidebar
+    /// rather than opening a new window. Defaults to true, matching the default
+    /// `cli_default_open_behavior` setting.
+    pub add_dirs_to_sidebar: bool,
     pub wait: bool,
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
     pub open_mode: OpenMode,
@@ -9345,9 +9362,25 @@ pub struct OpenOptions {
     pub open_in_dev_container: bool,
 }
 
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self {
+            visible: None,
+            focus: None,
+            workspace_matching: WorkspaceMatching::default(),
+            add_dirs_to_sidebar: true,
+            wait: false,
+            requesting_window: None,
+            open_mode: OpenMode::default(),
+            env: None,
+            open_in_dev_container: false,
+        }
+    }
+}
+
 impl OpenOptions {
     fn should_reuse_existing_window(&self) -> bool {
-        self.open_new_workspace.is_none() && self.open_mode != OpenMode::NewWindow
+        self.workspace_matching != WorkspaceMatching::None && self.open_mode != OpenMode::NewWindow
     }
 }
 
@@ -9538,11 +9571,7 @@ pub fn open_paths(
             && existing.is_none()
             && open_options.requesting_window.is_none()
         {
-            let use_existing_window = open_options.force_existing_window
-                || cx.update(|cx| {
-                    WorkspaceSettings::get_global(cx).cli_default_open_behavior
-                        == settings::CliDefaultOpenBehavior::ExistingWindow
-                });
+            let use_existing_window = open_options.add_dirs_to_sidebar;
 
             if use_existing_window {
                 let target_window = cx.update(|cx| {

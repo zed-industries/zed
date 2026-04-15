@@ -349,7 +349,7 @@ impl NativeAgent {
                 prompt_capabilities_rx,
                 cx,
             );
-            acp_thread.set_draft_prompt(draft_prompt);
+            acp_thread.set_draft_prompt(draft_prompt, cx);
             acp_thread.set_ui_scroll_position(scroll_position);
             acp_thread.update_token_usage(token_usage, cx);
             acp_thread
@@ -2851,8 +2851,8 @@ mod internal_tests {
             acp::ContentBlock::ResourceLink(acp::ResourceLink::new("b.md", uri.to_string())),
             acp::ContentBlock::Text(acp::TextContent::new(" please")),
         ];
-        acp_thread.update(cx, |thread, _cx| {
-            thread.set_draft_prompt(Some(draft_blocks.clone()));
+        acp_thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(Some(draft_blocks.clone()), cx);
         });
         thread.update(cx, |thread, _cx| {
             thread.set_ui_scroll_position(Some(gpui::ListOffset {
@@ -2980,8 +2980,8 @@ mod internal_tests {
         let draft_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
             "unsaved draft",
         ))];
-        acp_thread.update(cx, |thread, _cx| {
-            thread.set_draft_prompt(Some(draft_blocks.clone()));
+        acp_thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(Some(draft_blocks.clone()), cx);
         });
 
         // Close the session immediately — no run_until_parked in between.
