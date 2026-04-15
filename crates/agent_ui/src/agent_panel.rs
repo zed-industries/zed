@@ -4410,11 +4410,14 @@ impl AgentPanel {
     }
 
     fn should_render_agent_layout_onboarding(&self, cx: &mut Context<Self>) -> bool {
+        if !agent_v2_enabled(cx) {
+            return false;
+        }
+
         // We only want to show this for existing users: those who
         // have used the agent panel before the sidebar was introduced.
         // We can infer that state by users having seen the onboarding
         // at one point, but not the agent layout onboarding.
-
         let has_messages = self.active_thread_has_messages(cx);
         let is_dismissed = self
             .agent_layout_onboarding_dismissed
