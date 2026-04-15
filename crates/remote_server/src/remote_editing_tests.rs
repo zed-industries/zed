@@ -1622,6 +1622,123 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
 }
 
 #[gpui::test]
+async fn test_remote_archive_git_operations_are_supported(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/project",
+        json!({
+            ".git": {},
+            "file.txt": "content",
+        }),
+    )
+    .await;
+    fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    fs.set_head_for_repo(
+        Path::new("/project/.git"),
+        &[("file.txt", "content".into())],
+        "head-sha",
+    );
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(Path::new("/project"), true, cx)
+        })
+        .await
+        .expect("should open remote worktree");
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("remote project should have an active repository")
+    });
+
+    let head_sha = cx
+        .update(|cx| repository.update(cx, |repository, _| repository.head_sha()))
+        .await
+        .expect("head_sha request should complete")
+        .expect("head_sha should succeed")
+        .expect("HEAD should exist");
+
+    let update_ref_result = cx
+        .update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.update_ref("refs/zed-tests/archive-checkpoint".to_string(), head_sha)
+            })
+        })
+        .await
+        .expect("update_ref request should complete");
+
+    let delete_ref_result = cx
+        .update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.delete_ref("refs/zed-tests/archive-checkpoint".to_string())
+            })
+        })
+        .await
+        .expect("delete_ref request should complete");
+
+    let repair_worktrees_result = cx
+        .update(|cx| repository.update(cx, |repository, _| repository.repair_worktrees()))
+        .await
+        .expect("repair_worktrees request should complete");
+
+    let archive_checkpoint_result = cx
+        .update(|cx| repository.update(cx, |repository, _| repository.create_archive_checkpoint()))
+        .await
+        .expect("create_archive_checkpoint request should complete");
+
+    let restore_archive_checkpoint_result = cx
+        .update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.restore_archive_checkpoint(
+                    "staged-placeholder".to_string(),
+                    "unstaged-placeholder".to_string(),
+                )
+            })
+        })
+        .await
+        .expect("restore_archive_checkpoint request should complete");
+
+    let mut errors = Vec::new();
+    if let Err(error) = update_ref_result {
+        errors.push(format!(
+            "update_ref failed for remote repository: {error:#}"
+        ));
+    }
+    if let Err(error) = delete_ref_result {
+        errors.push(format!(
+            "delete_ref failed for remote repository: {error:#}"
+        ));
+    }
+    if let Err(error) = repair_worktrees_result {
+        errors.push(format!(
+            "repair_worktrees failed for remote repository: {error:#}"
+        ));
+    }
+    if let Err(error) = archive_checkpoint_result {
+        errors.push(format!(
+            "create_archive_checkpoint failed for remote repository: {error:#}"
+        ));
+    }
+    if let Err(error) = restore_archive_checkpoint_result {
+        errors.push(format!(
+            "restore_archive_checkpoint failed for remote repository: {error:#}"
+        ));
+    }
+
+    assert!(
+        errors.is_empty(),
+        "remote archive git operations should all succeed:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[gpui::test]
 async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let text_2 = "
         fn one() -> usize {
