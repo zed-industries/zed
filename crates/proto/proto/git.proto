@@ -618,10 +618,27 @@ message GitCreateCheckpointResponse {
   bytes commit_sha = 1;
 }
 
+message GitCreateArchiveCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message GitCreateArchiveCheckpointResponse {
+  string staged_commit_sha = 1;
+  string unstaged_commit_sha = 2;
+}
+
 message GitRestoreCheckpoint {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   bytes commit_sha = 3;
+}
+
+message GitRestoreArchiveCheckpoint {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string staged_commit_sha = 3;
+  string unstaged_commit_sha = 4;
 }
 
 message GitCompareCheckpoints {

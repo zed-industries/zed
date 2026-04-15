@@ -563,7 +563,9 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
         client.add_entity_request_handler(Self::handle_create_checkpoint);
+        client.add_entity_request_handler(Self::handle_create_archive_checkpoint);
         client.add_entity_request_handler(Self::handle_restore_checkpoint);
+        client.add_entity_request_handler(Self::handle_restore_archive_checkpoint);
         client.add_entity_request_handler(Self::handle_compare_checkpoints);
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
@@ -2741,6 +2743,26 @@ impl GitStore {
         })
     }
 
+    async fn handle_create_archive_checkpoint(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateArchiveCheckpoint>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitCreateArchiveCheckpointResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let (staged_commit_sha, unstaged_commit_sha) = repository_handle
+            .update(&mut cx, |repository, _| {
+                repository.create_archive_checkpoint()
+            })
+            .await??;
+
+        Ok(proto::GitCreateArchiveCheckpointResponse {
+            staged_commit_sha,
+            unstaged_commit_sha,
+        })
+    }
+
     async fn handle_restore_checkpoint(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitRestoreCheckpoint>,
@@ -2756,6 +2778,25 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository, _| {
                 repository.restore_checkpoint(checkpoint)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_restore_archive_checkpoint(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRestoreArchiveCheckpoint>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let staged_commit_sha = envelope.payload.staged_commit_sha;
+        let unstaged_commit_sha = envelope.payload.unstaged_commit_sha;
+
+        repository_handle
+            .update(&mut cx, |repository, _| {
+                repository.restore_archive_checkpoint(staged_commit_sha, unstaged_commit_sha)
             })
             .await??;
 
@@ -6217,15 +6258,20 @@ impl Repository {
     }
 
     pub fn create_archive_checkpoint(&mut self) -> oneshot::Receiver<Result<(String, String)>> {
+        let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
                     backend.create_archive_checkpoint().await
                 }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!(
-                        "create_archive_checkpoint is not supported for remote repositories"
-                    )
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    let response = client
+                        .request(proto::GitCreateArchiveCheckpoint {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+                    Ok((response.staged_commit_sha, response.unstaged_commit_sha))
                 }
             }
         })
@@ -6236,6 +6282,7 @@ impl Repository {
         staged_sha: String,
         unstaged_sha: String,
     ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
@@ -6243,10 +6290,16 @@ impl Repository {
                         .restore_archive_checkpoint(staged_sha, unstaged_sha)
                         .await
                 }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!(
-                        "restore_archive_checkpoint is not supported for remote repositories"
-                    )
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitRestoreArchiveCheckpoint {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            staged_commit_sha: staged_sha,
+                            unstaged_commit_sha: unstaged_sha,
+                        })
+                        .await?;
+                    Ok(())
                 }
             }
         })

@@ -1692,17 +1692,22 @@ async fn test_remote_archive_git_operations_are_supported(
         .await
         .expect("create_archive_checkpoint request should complete");
 
-    let restore_archive_checkpoint_result = cx
-        .update(|cx| {
-            repository.update(cx, |repository, _| {
-                repository.restore_archive_checkpoint(
-                    "staged-placeholder".to_string(),
-                    "unstaged-placeholder".to_string(),
-                )
+    let restore_archive_checkpoint_result = match &archive_checkpoint_result {
+        Ok((staged_commit_sha, unstaged_commit_sha)) => {
+            let staged_commit_sha = staged_commit_sha.clone();
+            let unstaged_commit_sha = unstaged_commit_sha.clone();
+            cx.update(|cx| {
+                repository.update(cx, |repository, _| {
+                    repository.restore_archive_checkpoint(staged_commit_sha, unstaged_commit_sha)
+                })
             })
-        })
-        .await
-        .expect("restore_archive_checkpoint request should complete");
+            .await
+            .expect("restore_archive_checkpoint request should complete")
+        }
+        Err(error) => Err(anyhow::anyhow!(
+            "create_archive_checkpoint failed before restore: {error:#}"
+        )),
+    };
 
     let mut errors = Vec::new();
     if let Err(error) = update_ref_result {
