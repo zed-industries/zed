@@ -1125,6 +1125,39 @@ pub(crate) struct DiffReviewOverlay {
     _subscription: Subscription,
 }
 
+enum AvailableCodeActions {
+    None,
+    Fetching {
+        previous_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
+        task: Task<Result<()>>,
+    },
+    Ready {
+        location: Location,
+        actions: Rc<[AvailableCodeAction]>,
+    },
+}
+
+impl AvailableCodeActions {
+    fn take_task(&mut self) -> Option<Task<Result<()>>> {
+        match std::mem::replace(self, AvailableCodeActions::None) {
+            AvailableCodeActions::Fetching {
+                previous_actions,
+                task,
+            } => {
+                *self = AvailableCodeActions::Fetching {
+                    previous_actions,
+                    task: Task::ready(Ok(())),
+                };
+                Some(task)
+            }
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1210,8 +1243,8 @@ pub struct Editor {
     auto_signature_help: Option<bool>,
     find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
-    available_code_actions: Option<(Location, Rc<[AvailableCodeAction]>)>,
-    code_actions_task: Option<Task<Result<()>>>,
+    available_code_actions: AvailableCodeActions,
+    code_actions_generation: usize,
     quick_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_task: Option<(Range<Anchor>, Task<()>)>,
     debounced_selection_highlight_complete: bool,
@@ -2448,8 +2481,8 @@ impl Editor {
             next_completion_id: 0,
             next_inlay_id: 0,
             code_action_providers,
-            available_code_actions: None,
-            code_actions_task: None,
+            available_code_actions: AvailableCodeActions::None,
+            code_actions_generation: 0,
             quick_selection_highlight_task: None,
             debounced_selection_highlight_task: None,
             debounced_selection_highlight_complete: false,
@@ -7049,30 +7082,37 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Rc<[AvailableCodeAction]>>> {
-        let mut task = self.code_actions_task.take();
+        let task = self.available_code_actions.take_task();
+
         cx.spawn_in(window, async move |editor, cx| {
-            while let Some(prev_task) = task {
-                prev_task.await.log_err();
-                task = editor
-                    .update(cx, |this, _| this.code_actions_task.take())
+            if let Some(task) = task {
+                task.await.log_err();
+            }
+
+            // Drain any chained fetches that started while we waited.
+            loop {
+                let next = editor
+                    .update(cx, |this, _| this.available_code_actions.take_task())
                     .ok()?;
+                match next {
+                    Some(task) => task.await.log_err(),
+                    None => break,
+                };
             }
 
             editor
-                .update(cx, |editor, cx| {
-                    editor
-                        .available_code_actions
-                        .clone()
-                        .and_then(|(location, code_actions)| {
-                            let snapshot = location.buffer.read(cx).snapshot();
-                            let point_range = location.range.to_point(&snapshot);
-                            let point_range = point_range.start.row..=point_range.end.row;
-                            if point_range.contains(&buffer_row) {
-                                Some(code_actions)
-                            } else {
-                                None
-                            }
-                        })
+                .update(cx, |editor, cx| match &editor.available_code_actions {
+                    AvailableCodeActions::Ready { location, actions } => {
+                        let snapshot = location.buffer.read(cx).snapshot();
+                        let point_range = location.range.to_point(&snapshot);
+                        let point_range = point_range.start.row..=point_range.end.row;
+                        if point_range.contains(&buffer_row) {
+                            Some(actions.clone())
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
                 })
                 .ok()
                 .flatten()
@@ -7290,7 +7330,7 @@ impl Editor {
 
     pub fn clear_code_action_providers(&mut self) {
         self.code_action_providers.clear();
-        self.available_code_actions.take();
+        self.available_code_actions = AvailableCodeActions::None;
     }
 
     pub fn add_code_action_provider(
@@ -7328,9 +7368,15 @@ impl Editor {
     }
 
     pub fn has_available_code_actions(&self) -> bool {
-        self.available_code_actions
-            .as_ref()
-            .is_some_and(|(_, actions)| !actions.is_empty())
+        match &self.available_code_actions {
+            AvailableCodeActions::Ready { actions, .. } => !actions.is_empty(),
+            AvailableCodeActions::Fetching {
+                previous_actions, ..
+            } => previous_actions
+                .as_ref()
+                .is_some_and(|(_, actions)| !actions.is_empty()),
+            AvailableCodeActions::None => false,
+        }
     }
 
     fn render_inline_code_actions(
@@ -7383,7 +7429,21 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.code_actions_task = Some(cx.spawn_in(window, async move |this, cx| {
+        let previous_actions = match std::mem::replace(
+            &mut self.available_code_actions,
+            AvailableCodeActions::None,
+        ) {
+            AvailableCodeActions::Ready { location, actions } => Some((location, actions)),
+            AvailableCodeActions::Fetching {
+                previous_actions, ..
+            } => previous_actions,
+            AvailableCodeActions::None => None,
+        };
+
+        self.code_actions_generation += 1;
+        let generation = self.code_actions_generation;
+
+        let task = cx.spawn_in(window, async move |this, cx| {
             cx.background_executor()
                 .timer(CODE_ACTIONS_DEBOUNCE_TIMEOUT)
                 .await;
@@ -7435,20 +7495,29 @@ impl Editor {
             }
 
             this.update(cx, |this, cx| {
+                if this.code_actions_generation != generation {
+                    return Ok(());
+                }
                 this.available_code_actions = if actions.is_empty() {
-                    None
+                    AvailableCodeActions::None
                 } else {
-                    Some((
-                        Location {
+                    AvailableCodeActions::Ready {
+                        location: Location {
                             buffer: start_buffer,
                             range: start..end,
                         },
-                        actions.into(),
-                    ))
+                        actions: actions.into(),
+                    }
                 };
                 cx.notify();
-            })
-        }));
+                Ok(())
+            })?
+        });
+
+        self.available_code_actions = AvailableCodeActions::Fetching {
+            previous_actions,
+            task,
+        };
     }
 
     fn start_inline_blame_timer(&mut self, window: &mut Window, cx: &mut Context<Self>) {

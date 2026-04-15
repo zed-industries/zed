@@ -2554,7 +2554,9 @@ impl EditorElement {
 
         let icon_size = ui::IconSize::XSmall;
         let mut button = self.editor.update(cx, |editor, cx| {
-            editor.available_code_actions.as_ref()?;
+            if !editor.has_available_code_actions() {
+                return None;
+            }
             let active = editor
                 .context_menu
                 .borrow()
