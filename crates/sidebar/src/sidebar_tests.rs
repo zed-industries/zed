@@ -5397,6 +5397,29 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         !entries.iter().any(|e| e.contains("Worktree Thread")),
         "archived worktree thread should not be visible: {entries:?}"
     );
+
+    // The archived thread must retain its folder_paths so it can be
+    // restored to the correct workspace later.
+    let wt_thread_id = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&wt_thread_id)
+            .unwrap()
+            .thread_id
+    });
+    let archived_paths = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(wt_thread_id)
+            .unwrap()
+            .folder_paths()
+            .clone()
+    });
+    assert_eq!(
+        archived_paths.paths(),
+        &[PathBuf::from("/wt-feature-a")],
+        "archived thread must retain its folder_paths for restore"
+    );
 }
 
 #[gpui::test]
