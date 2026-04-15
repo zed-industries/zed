@@ -9236,35 +9236,27 @@ pub async fn find_existing_workspace(
     let mut open_visible = OpenVisible::All;
     let mut best_match = None;
 
-    cx.update(|cx| {
-        for window in workspace_windows_for_location(location, cx) {
-            if let Ok(multi_workspace) = window.read(cx) {
-                for workspace in multi_workspace.workspaces() {
-                    let project = workspace.read(cx).project.read(cx);
-                    let m = project.visibility_for_paths(
-                        abs_paths,
-                        open_options.open_new_workspace == None,
-                        cx,
-                    );
-                    if m > best_match {
-                        existing = Some((window, workspace.clone()));
-                        best_match = m;
-                    } else if best_match.is_none() && open_options.open_new_workspace == Some(false)
-                    {
-                        existing = Some((window, workspace.clone()))
+    if open_options.workspace_matching != WorkspaceMatching::None {
+        let match_subdirectory =
+            open_options.workspace_matching == WorkspaceMatching::MatchSubdirectory;
+
+        cx.update(|cx| {
+            for window in workspace_windows_for_location(location, cx) {
+                if let Ok(multi_workspace) = window.read(cx) {
+                    for workspace in multi_workspace.workspaces() {
+                        let project = workspace.read(cx).project.read(cx);
+                        let m = project.visibility_for_paths(abs_paths, !match_subdirectory, cx);
+                        if m > best_match {
+                            existing = Some((window, workspace.clone()));
+                            best_match = m;
+                        } else if best_match.is_none() && match_subdirectory {
+                            existing = Some((window, workspace.clone()))
+                        }
                     }
                 }
             }
-        }
-    });
+        });
 
-    // With -n, only reuse a window if the path is genuinely contained
-    // within an existing worktree (don't fall back to any arbitrary window).
-    if open_options.open_new_workspace == Some(true) && best_match.is_none() {
-        existing = None;
-    }
-
-    if open_options.open_new_workspace != Some(true) {
         let all_paths_are_files = existing
             .as_ref()
             .and_then(|(_, target_workspace)| {
@@ -9287,11 +9279,7 @@ pub async fn find_existing_workspace(
             })
             .unwrap_or(false);
 
-        if open_options.open_new_workspace.is_none()
-            && existing.is_some()
-            && open_options.wait
-            && all_paths_are_files
-        {
+        if open_options.wait && existing.is_some() && all_paths_are_files {
             cx.update(|cx| {
                 let windows = workspace_windows_for_location(location, cx);
                 let window = cx
@@ -9312,12 +9300,29 @@ pub async fn find_existing_workspace(
     (existing, open_visible)
 }
 
-#[derive(Default, Clone)]
+/// Controls whether to reuse an existing workspace whose worktrees contain the
+/// given paths, and how broadly to match.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum WorkspaceMatching {
+    /// Always open a new workspace. No matching against existing worktrees.
+    None,
+    /// Match paths against existing worktree roots and files within them.
+    #[default]
+    MatchExact,
+    /// Match paths against existing worktrees including subdirectories, and
+    /// fall back to any existing window if no worktree matched.
+    MatchSubdirectory,
+}
+
+#[derive(Clone)]
 pub struct OpenOptions {
     pub visible: Option<OpenVisible>,
     pub focus: Option<bool>,
-    pub open_new_workspace: Option<bool>,
-    pub force_existing_window: bool,
+    pub workspace_matching: WorkspaceMatching,
+    /// Whether to add unmatched directories to the existing window's sidebar
+    /// rather than opening a new window. Defaults to true, matching the default
+    /// `cli_default_open_behavior` setting.
+    pub add_dirs_to_sidebar: bool,
     pub wait: bool,
     pub requesting_window: Option<WindowHandle<MultiWorkspace>>,
     pub open_mode: OpenMode,
@@ -9325,9 +9330,25 @@ pub struct OpenOptions {
     pub open_in_dev_container: bool,
 }
 
+impl Default for OpenOptions {
+    fn default() -> Self {
+        Self {
+            visible: None,
+            focus: None,
+            workspace_matching: WorkspaceMatching::default(),
+            add_dirs_to_sidebar: true,
+            wait: false,
+            requesting_window: None,
+            open_mode: OpenMode::default(),
+            env: None,
+            open_in_dev_container: false,
+        }
+    }
+}
+
 impl OpenOptions {
     fn should_reuse_existing_window(&self) -> bool {
-        self.open_new_workspace.is_none() && self.open_mode != OpenMode::NewWindow
+        self.workspace_matching != WorkspaceMatching::None && self.open_mode != OpenMode::NewWindow
     }
 }
 
@@ -9511,18 +9532,12 @@ pub fn open_paths(
         // workspace matched, check the user's setting to decide whether to add
         // the directory as a new workspace in the active window's MultiWorkspace
         // or open a new window.
-        // Skip when requesting_window is already set: the caller (e.g.
-        // open_workspace_for_paths reusing an empty window) already chose the
-        // target window, so we must not open the sidebar as a side-effect.
+
         if open_options.should_reuse_existing_window()
             && existing.is_none()
             && open_options.requesting_window.is_none()
         {
-            let use_existing_window = open_options.force_existing_window
-                || cx.update(|cx| {
-                    WorkspaceSettings::get_global(cx).cli_default_open_behavior
-                        == settings::CliDefaultOpenBehavior::ExistingWindow
-                });
+            let use_existing_window = open_options.add_dirs_to_sidebar;
 
             if use_existing_window {
                 let target_window = cx.update(|cx| {
