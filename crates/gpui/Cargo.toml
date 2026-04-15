@@ -131,6 +131,9 @@ mach2.workspace = true
 #TODO: replace with "objc2"
 metal.workspace = true
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+image = { workspace = true, features = ["avif-native"] }
+
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
 

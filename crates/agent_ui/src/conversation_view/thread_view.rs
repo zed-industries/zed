@@ -7641,6 +7641,7 @@ impl ThreadView {
                 gpui::ImageFormat::Bmp => "BMP",
                 gpui::ImageFormat::Tiff => "TIFF",
                 gpui::ImageFormat::Ico => "ICO",
+                gpui::ImageFormat::Avif => "AVIF",
             };
             let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
                 .with_guessed_format()

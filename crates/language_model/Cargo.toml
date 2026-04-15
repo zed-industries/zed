@@ -34,5 +34,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 util.workspace = true
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+image = { workspace = true, features = ["avif-native"] }
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

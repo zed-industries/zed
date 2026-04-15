@@ -105,6 +105,9 @@ zlog.workspace = true
 ztracing.workspace = true
 tracing.workspace = true
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+image = { workspace = true, features = ["avif-native"] }
+
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 encoding_rs.workspace = true

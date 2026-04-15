@@ -902,8 +902,43 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
             image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+            image::ImageFormat::Avif => gpui::ImageFormat::Avif,
             format => anyhow::bail!("Image format {format:?} not supported"),
         },
         content,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{DynamicImage, ImageBuffer, Rgba};
+    use std::io::Cursor;
+
+    fn encode_test_avif() -> Vec<u8> {
+        let image_buffer = ImageBuffer::from_pixel(1, 1, Rgba([0x12, 0x34, 0x56, 0xFF]));
+        let image = DynamicImage::ImageRgba8(image_buffer);
+        let mut bytes = Vec::new();
+        let mut cursor = Cursor::new(&mut bytes);
+        image
+            .write_to(&mut cursor, image::ImageFormat::Avif)
+            .expect("should encode AVIF test image");
+        bytes
+    }
+
+    #[test]
+    fn test_create_gpui_image_supports_avif() {
+        let image = create_gpui_image(encode_test_avif()).expect("should create AVIF image");
+        assert_eq!(image.format(), gpui::ImageFormat::Avif);
+    }
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    #[test]
+    fn test_compute_metadata_from_bytes_supports_avif() {
+        let metadata = ImageItem::compute_metadata_from_bytes(&encode_test_avif())
+            .expect("should decode AVIF");
+        assert_eq!(metadata.width, 1);
+        assert_eq!(metadata.height, 1);
+        assert_eq!(metadata.format, image::ImageFormat::Avif);
+    }
 }

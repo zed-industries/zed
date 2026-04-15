@@ -1981,6 +1981,8 @@ pub enum ImageFormat {
     Tiff,
     /// .ico
     Ico,
+    /// .avif
+    Avif,
 }
 
 impl ImageFormat {
@@ -1995,6 +1997,7 @@ impl ImageFormat {
             ImageFormat::Bmp => "image/bmp",
             ImageFormat::Tiff => "image/tiff",
             ImageFormat::Ico => "image/ico",
+            ImageFormat::Avif => "image/avif",
         }
     }
 
@@ -2009,6 +2012,7 @@ impl ImageFormat {
             "image/bmp" => Some(Self::Bmp),
             "image/tiff" | "image/tif" => Some(Self::Tiff),
             "image/ico" => Some(Self::Ico),
+            "image/avif" => Some(Self::Avif),
             _ => None,
         }
     }
@@ -2116,6 +2120,7 @@ impl Image {
             ImageFormat::Bmp => frames_for_image(&self.bytes, image::ImageFormat::Bmp)?,
             ImageFormat::Tiff => frames_for_image(&self.bytes, image::ImageFormat::Tiff)?,
             ImageFormat::Ico => frames_for_image(&self.bytes, image::ImageFormat::Ico)?,
+            ImageFormat::Avif => frames_for_image(&self.bytes, image::ImageFormat::Avif)?,
             ImageFormat::Svg => {
                 return svg_renderer
                     .render_single_frame(&self.bytes, 1.0)
@@ -2204,6 +2209,15 @@ impl From<String> for ClipboardString {
 mod image_tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn test_avif_mime_type() {
+        assert_eq!(ImageFormat::Avif.mime_type(), "image/avif");
+        assert_eq!(
+            ImageFormat::from_mime_type("image/avif"),
+            Some(ImageFormat::Avif)
+        );
+    }
 
     #[test]
     fn test_svg_image_to_image_data_converts_to_bgra() {

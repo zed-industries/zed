@@ -61,6 +61,9 @@ workspace.workspace = true
 picker.workspace = true
 zed_actions.workspace = true
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+image = { workspace = true, features = ["avif-native"] }
+
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
