@@ -138,12 +138,6 @@ impl Project {
                     let Some(toolchain) = toolchain.await else {
                         continue;
                     };
-                    if should_skip_toolchain_activation_for_task(
-                        &toolchain,
-                        spawn_task.command.as_deref(),
-                    ) {
-                        return Some(Vec::new());
-                    }
                     let language = lang_registry
                         .language_for_name(&toolchain.language_name.0)
                         .await
@@ -160,21 +154,8 @@ impl Project {
 
             let builder = project
                 .update(cx, move |_, cx| {
-                    let format_to_run = || {
-                        if let Some(command) = &spawn_task.command {
-                            let command = shell_kind.prepend_command_prefix(command);
-                            let command = shell_kind.try_quote_prefix_aware(&command);
-                            let args = spawn_task
-                                .args
-                                .iter()
-                                .filter_map(|arg| shell_kind.try_quote(&arg));
-
-                            command.into_iter().chain(args).join(" ")
-                        } else {
-                            // todo: this breaks for remotes to windows
-                            format!("exec {shell} -l")
-                        }
-                    };
+                    let format_to_run =
+                        format_task_for_shell(&spawn_task, shell.as_str(), shell_kind);
 
                     let (shell, env) = {
                         env.extend(spawn_task.env);
@@ -645,81 +626,96 @@ fn create_remote_shell(
     ))
 }
 
-fn should_skip_toolchain_activation_for_task(
-    toolchain: &language::Toolchain,
-    command: Option<&str>,
-) -> bool {
-    command.is_some_and(|command| {
-        toolchain.language_name.0 == "Python"
-            && toolchain.path.as_ref() == command
-            && toolchain
-                .as_json
-                .get("activation_scripts")
-                .and_then(serde_json::Value::as_object)
-                .is_some_and(|activation_scripts| !activation_scripts.is_empty())
-    })
+fn format_task_for_shell(
+    spawn_task: &SpawnInTerminal,
+    shell: &str,
+    shell_kind: ShellKind,
+) -> String {
+    if let Some(command) = spawn_task.command.as_deref() {
+        if command == shell
+            && let Some(command) = extract_shell_command_argument(&spawn_task.args, shell_kind)
+        {
+            return command.to_string();
+        }
+
+        let command = shell_kind.prepend_command_prefix(command);
+        let command = shell_kind.try_quote_prefix_aware(&command);
+        let args = spawn_task
+            .args
+            .iter()
+            .filter_map(|arg| shell_kind.try_quote(arg));
+
+        command.into_iter().chain(args).join(" ")
+    } else {
+        // todo: this breaks for remotes to windows
+        format!("exec {shell} -l")
+    }
+}
+
+fn extract_shell_command_argument<'a>(
+    args: &'a [String],
+    shell_kind: ShellKind,
+) -> Option<&'a str> {
+    match shell_kind {
+        ShellKind::PowerShell | ShellKind::Pwsh => args
+            .iter()
+            .rposition(|arg| arg == "-C")
+            .and_then(|index| args.get(index + 1))
+            .map(String::as_str),
+        ShellKind::Cmd => args
+            .iter()
+            .rposition(|arg| arg == "/C")
+            .and_then(|index| args.get(index + 1))
+            .map(String::as_str),
+        ShellKind::Posix
+        | ShellKind::Nushell
+        | ShellKind::Fish
+        | ShellKind::Csh
+        | ShellKind::Tcsh
+        | ShellKind::Rc
+        | ShellKind::Xonsh
+        | ShellKind::Elvish => args
+            .iter()
+            .rposition(|arg| arg == "-c")
+            .and_then(|index| args.get(index + 1))
+            .map(String::as_str),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui::SharedString;
-    use language::{LanguageName, Toolchain};
-    use serde_json::json;
-
-    use super::should_skip_toolchain_activation_for_task;
+    use super::format_task_for_shell;
+    use task::{ShellKind, SpawnInTerminal};
 
     #[test]
-    fn skips_python_venv_activation_when_task_uses_the_same_interpreter() {
-        let toolchain = Toolchain {
-            name: SharedString::from("Python"),
-            path: SharedString::from("/tmp/folder with spaces/.venv/bin/python"),
-            language_name: LanguageName::new_static("Python"),
-            as_json: json!({
-                "activation_scripts": {
-                    "posix": "/tmp/folder with spaces/.venv/bin/activate",
-                }
-            }),
+    fn reuses_prepared_shell_command_without_requoting() {
+        let spawn_task = SpawnInTerminal {
+            command: Some("zsh".to_string()),
+            args: vec![
+                "-i".to_string(),
+                "-c".to_string(),
+                "echo '/tmp/folder with spaces/$project_id/example.py'".to_string(),
+            ],
+            ..Default::default()
         };
 
-        assert!(should_skip_toolchain_activation_for_task(
-            &toolchain,
-            Some("/tmp/folder with spaces/.venv/bin/python"),
-        ));
+        assert_eq!(
+            format_task_for_shell(&spawn_task, "zsh", ShellKind::Posix),
+            "echo '/tmp/folder with spaces/$project_id/example.py'"
+        );
     }
 
     #[test]
-    fn keeps_activation_for_python_toolchains_without_venv_scripts() {
-        let toolchain = Toolchain {
-            name: SharedString::from("Python"),
-            path: SharedString::from("/tmp/conda/bin/python"),
-            language_name: LanguageName::new_static("Python"),
-            as_json: json!({
-                "activation_scripts": {}
-            }),
+    fn quotes_unprepared_task_arguments_once() {
+        let spawn_task = SpawnInTerminal {
+            command: Some("python".to_string()),
+            args: vec!["/tmp/folder with spaces/$project_id/example.py".to_string()],
+            ..Default::default()
         };
 
-        assert!(!should_skip_toolchain_activation_for_task(
-            &toolchain,
-            Some("/tmp/conda/bin/python"),
-        ));
-    }
-
-    #[test]
-    fn keeps_activation_when_task_uses_a_different_command() {
-        let toolchain = Toolchain {
-            name: SharedString::from("Python"),
-            path: SharedString::from("/tmp/project/.venv/bin/python"),
-            language_name: LanguageName::new_static("Python"),
-            as_json: json!({
-                "activation_scripts": {
-                    "posix": "/tmp/project/.venv/bin/activate",
-                }
-            }),
-        };
-
-        assert!(!should_skip_toolchain_activation_for_task(
-            &toolchain,
-            Some("python3"),
-        ));
+        assert_eq!(
+            format_task_for_shell(&spawn_task, "zsh", ShellKind::Posix),
+            "python '/tmp/folder with spaces/$project_id/example.py'"
+        );
     }
 }
