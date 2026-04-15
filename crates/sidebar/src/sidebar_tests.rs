@@ -5653,10 +5653,11 @@ async fn test_restore_worktree_switches_branch_when_not_moved(cx: &mut TestAppCo
 
 #[gpui::test]
 async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut TestAppContext) {
-    // Regression test: when building a ProjectGroupKey for a linked
-    // worktree thread, the key must use the main repo paths, not the
-    // linked worktree paths. Using folder_paths directly produces the
-    // wrong key, causing the thread to lose its project association.
+    // Activating an archived linked worktree thread whose directory has
+    // been deleted should reuse the existing main repo workspace, not
+    // create a new one. The provisional ProjectGroupKey must be derived
+    // from main_worktree_paths so that find_or_create_local_workspace
+    // matches the main repo workspace when the worktree path is absent.
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
 
@@ -5699,59 +5700,102 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
 
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
     let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-c".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
     worktree_project
         .update(cx, |p, cx| p.git_scans_complete(cx))
         .await;
 
-    // The worktree project should have main_worktree_paths pointing to
-    // the main repo and folder_paths pointing to the linked worktree.
-    let worktree_paths = worktree_project.read_with(cx, |project, cx| project.worktree_paths(cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
 
-    assert_eq!(
-        worktree_paths.main_worktree_path_list().paths(),
-        &[PathBuf::from("/project")],
-        "main_worktree_paths should point to the main repo"
+    let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    // Save thread metadata for the linked worktree.
+    let wt_session_id = acp::SessionId::new(Arc::from("wt-thread-c"));
+    save_thread_metadata(
+        wt_session_id.clone(),
+        Some("Worktree Thread C".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &worktree_project,
+        cx,
     );
+    cx.run_until_parked();
+
+    let thread_id = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&wt_session_id)
+            .unwrap()
+            .thread_id
+    });
+
+    // Archive the thread without creating ArchivedGitWorktree records.
+    let store = cx.update(|_window, cx| ThreadMetadataStore::global(cx));
+    cx.update(|_window, cx| {
+        store.update(cx, |store, cx| store.archive(thread_id, None, cx));
+    });
+    cx.run_until_parked();
+
+    // Remove the worktree workspace and delete the worktree from disk.
+    let main_workspace =
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
+    let remove_task = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.remove(
+            vec![worktree_workspace],
+            move |_this, _window, _cx| Task::ready(Ok(main_workspace.clone())),
+            window,
+            cx,
+        )
+    });
+    remove_task.await.ok();
+    cx.run_until_parked();
+    cx.run_until_parked();
+    fs.remove_dir(
+        Path::new("/wt-feature-c"),
+        fs::RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    let workspace_count_before = multi_workspace.read_with(cx, |mw, _| mw.workspaces().count());
     assert_eq!(
-        worktree_paths.folder_path_list().paths(),
-        &[PathBuf::from("/wt-feature-c")],
-        "folder_paths should point to the linked worktree"
+        workspace_count_before, 1,
+        "should have only the main workspace"
     );
 
-    // The correct key (from_worktree_paths) should use the main repo path.
-    let correct_key = ProjectGroupKey::from_worktree_paths(&worktree_paths, None);
-    assert_eq!(
-        correct_key.path_list().paths(),
-        &[PathBuf::from("/project")],
-        "ProjectGroupKey::from_worktree_paths should use the main repo path"
-    );
+    // Activate the archived thread. The worktree path is missing from
+    // disk, so find_or_create_local_workspace falls back to the
+    // provisional ProjectGroupKey to find a matching workspace.
+    let metadata = cx.update(|_window, cx| store.read(cx).entry(thread_id).unwrap().clone());
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+    for _ in 0..10 {
+        cx.run_until_parked();
+    }
 
-    // The buggy key (new with folder_paths) would use the worktree path.
-    let buggy_key = ProjectGroupKey::new(None, worktree_paths.folder_path_list().clone());
+    // The provisional key should use [/project] (the main repo),
+    // which matches the existing main workspace. If it incorrectly
+    // used [/wt-feature-c] (the linked worktree path), no workspace
+    // would match and a spurious new one would be created.
+    let workspace_count_after = multi_workspace.read_with(cx, |mw, _| mw.workspaces().count());
     assert_eq!(
-        buggy_key.path_list().paths(),
-        &[PathBuf::from("/wt-feature-c")],
-        "ProjectGroupKey::new with folder_paths uses the linked worktree path (wrong)"
-    );
-
-    // The two keys must be different — this is the essence of the bug.
-    assert_ne!(
-        correct_key.path_list().paths(),
-        buggy_key.path_list().paths(),
-        "for a linked worktree, from_worktree_paths and new-with-folder_paths must differ"
-    );
-
-    // Verify that activate_archived_thread uses from_worktree_paths.
-    // We do this by constructing ThreadMetadata the same way the
-    // production code does and checking the key it would produce.
-    let metadata_worktree_paths = worktree_paths.clone();
-    let key_from_metadata = ProjectGroupKey::from_worktree_paths(&metadata_worktree_paths, None);
-    assert_eq!(
-        key_from_metadata.path_list().paths(),
-        &[PathBuf::from("/project")],
-        "the key derived from thread metadata must use the main repo path, \
-         not the linked worktree path"
+        workspace_count_after, 1,
+        "restoring a linked worktree thread should reuse the main repo workspace, \
+         not create a new one (workspace count went from {workspace_count_before} to \
+         {workspace_count_after})"
     );
 }
 
