@@ -4980,4 +4980,49 @@ mod tests {
             ),
         );
     }
+
+    #[test]
+    fn test_mcp_settings_migration_does_not_add_empty_settings_to_http_servers() {
+        assert_migrate_with_migrations(
+            &[MigrationType::TreeSitter(
+                migrations::m_2025_06_16::SETTINGS_PATTERNS,
+                &SETTINGS_QUERY_2025_06_16,
+            )],
+            r#"{
+    "context_servers": {
+        "http_server": {
+            "url": "https://example.com/mcp"
+        },
+        "http_server_with_headers": {
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
+            }
+        },
+        "extension_server": {}
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "http_server": {
+            "source": "extension",
+            "url": "https://example.com/mcp"
+        },
+        "http_server_with_headers": {
+            "source": "extension",
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
+            }
+        },
+        "extension_server": {
+            "source": "extension",
+            "settings": {}
+        }
+    }
+}"#,
+            ),
+        );
+    }
 }
