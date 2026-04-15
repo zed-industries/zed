@@ -1939,7 +1939,7 @@ fn open_local_project(
             PathPromptOptions {
                 files: true,
                 directories: true,
-                multiple: false,
+                multiple: true,
                 prompt: None,
             },
             DirectoryLister::Local(
