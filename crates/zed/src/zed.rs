@@ -324,6 +324,21 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
 
     let use_system_window_tabs = WorkspaceSettings::get_global(cx).use_system_window_tabs;
 
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    static APP_ICON: std::sync::LazyLock<Option<std::sync::Arc<image::RgbaImage>>> =
+        std::sync::LazyLock::new(|| {
+            // this shouldn't fail since decode is checked in build.rs
+            const BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/app_icon.png"));
+            util::maybe!({
+                let image = image::ImageReader::new(std::io::Cursor::new(BYTES))
+                    .with_guessed_format()?
+                    .decode()?
+                    .into();
+                anyhow::Ok(Arc::new(image))
+            })
+            .log_err()
+        });
+
     WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: None,
@@ -338,6 +353,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        icon: APP_ICON.as_ref().cloned(),
         window_decorations: Some(window_decorations),
         window_min_size: Some(gpui::Size {
             width: px(360.0),
@@ -2005,7 +2022,7 @@ pub fn open_new_ssh_project_from_project(
             paths,
             app_state,
             workspace::OpenOptions {
-                open_new_workspace: Some(true),
+                workspace_matching: workspace::WorkspaceMatching::None,
                 ..Default::default()
             },
             cx,
@@ -2566,13 +2583,13 @@ mod tests {
             })
             .unwrap();
 
-        // Opening with -n (open_new_workspace: Some(true)) still creates a new window.
+        // Opening with -n (reuse_worktrees: false) still creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/e"))],
                 app_state,
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2613,7 +2630,7 @@ mod tests {
                 &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(false),
+                    workspace_matching: workspace::WorkspaceMatching::MatchSubdirectory,
                     ..Default::default()
                 },
                 cx,
@@ -2623,29 +2640,13 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        // Opening a file inside the existing worktree with -n reuses the window.
+        // Opening a file inside the existing worktree with -n creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir/c"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
-                    ..Default::default()
-                },
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-
-        // Opening a path NOT in any existing worktree with -n creates a new window.
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from(path!("/root/b"))],
-                app_state.clone(),
-                workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2654,6 +2655,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+
+        // Opening a path NOT in any existing worktree with -n creates a new window.
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/root/b"))],
+                app_state.clone(),
+                workspace::OpenOptions {
+                    workspace_matching: workspace::WorkspaceMatching::None,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
     }
 
     #[gpui::test]
@@ -2706,29 +2723,13 @@ mod tests {
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
 
-        // Opening a directory already in a worktree with -n reuses the window.
+        // Opening a directory already in a worktree with -n creates a new window.
         cx.update(|cx| {
             open_paths(
                 &[PathBuf::from(path!("/root/dir2"))],
                 app_state.clone(),
                 workspace::OpenOptions {
-                    open_new_workspace: Some(true),
-                    ..Default::default()
-                },
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
-
-        // Opening a directory NOT in any worktree with -n creates a new window.
-        cx.update(|cx| {
-            open_paths(
-                &[PathBuf::from(path!("/root"))],
-                app_state.clone(),
-                workspace::OpenOptions {
-                    open_new_workspace: Some(true),
+                    workspace_matching: workspace::WorkspaceMatching::None,
                     ..Default::default()
                 },
                 cx,
@@ -2737,6 +2738,22 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
+
+        // Opening a directory NOT in any worktree with -n creates a new window.
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/root"))],
+                app_state.clone(),
+                workspace::OpenOptions {
+                    workspace_matching: workspace::WorkspaceMatching::None,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(cx.update(|cx| cx.windows().len()), 3);
     }
 
     #[gpui::test]
@@ -4283,6 +4300,7 @@ mod tests {
                     editor.save(
                         SaveOptions {
                             format: true,
+                            force_format: false,
                             autosave: false,
                         },
                         project.clone(),

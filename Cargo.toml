@@ -57,6 +57,7 @@ members = [
     "crates/edit_prediction",
     "crates/edit_prediction_cli",
     "crates/edit_prediction_context",
+    "crates/edit_prediction_metrics",
     "crates/edit_prediction_types",
     "crates/edit_prediction_ui",
     "crates/editor",
@@ -480,6 +481,7 @@ zed_actions = { path = "crates/zed_actions" }
 zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
 edit_prediction = { path = "crates/edit_prediction" }
+edit_prediction_metrics = { path = "crates/edit_prediction_metrics" }
 zeta_prompt = { path = "crates/zeta_prompt" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }

@@ -196,59 +196,60 @@ impl Dismissable for ParallelAgentAnnouncement {
 }
 
 fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementContent> {
-    match (version.major, version.minor, version.patch) {
-        (0, _, _) => {
-            if ParallelAgentAnnouncement::dismissed(cx) {
-                None
-            } else {
-                let fs = <dyn Fs>::global(cx);
-                Some(AnnouncementContent {
-                    heading: "Introducing Parallel Agents".into(),
-                    description: "Run multiple agent threads simultaneously across projects."
-                        .into(),
-                    bullet_items: vec![
-                        "Use your favorite agents in parallel".into(),
-                        "Optionally isolate agents using worktrees".into(),
-                        "Combine multiple projects in one window".into(),
-                    ],
-                    primary_action_label: "Try Now".into(),
-                    primary_action_url: None,
-                    primary_action_callback: Some(Arc::new(move |window, cx| {
-                        let already_agent_layout =
-                            matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
+    let version_with_parallel_agents = match ReleaseChannel::global(cx) {
+        ReleaseChannel::Stable => Version::new(0, 233, 0),
+        ReleaseChannel::Dev | ReleaseChannel::Nightly | ReleaseChannel::Preview => {
+            Version::new(0, 232, 0)
+        }
+    };
 
-                        let update;
-                        if !already_agent_layout {
-                            update = Some(AgentSettings::set_layout(
-                                WindowLayout::Agent(None),
-                                fs.clone(),
-                                cx,
-                            ));
-                        } else {
-                            update = None;
+    if *version >= version_with_parallel_agents && !ParallelAgentAnnouncement::dismissed(cx) {
+        let fs = <dyn Fs>::global(cx);
+        Some(AnnouncementContent {
+            heading: "Introducing Parallel Agents".into(),
+            description: "Run multiple agent threads simultaneously across projects.".into(),
+            bullet_items: vec![
+                "Use your favorite agents in parallel".into(),
+                "Optionally isolate agents using worktrees".into(),
+                "Combine multiple projects in one window".into(),
+            ],
+            primary_action_label: "Try Now".into(),
+            primary_action_url: None,
+            primary_action_callback: Some(Arc::new(move |window, cx| {
+                let already_agent_layout =
+                    matches!(AgentSettings::get_layout(cx), WindowLayout::Agent(_));
+
+                let update;
+                if !already_agent_layout {
+                    update = Some(AgentSettings::set_layout(
+                        WindowLayout::Agent(None),
+                        fs.clone(),
+                        cx,
+                    ));
+                } else {
+                    update = None;
+                }
+
+                window
+                    .spawn(cx, async move |cx| {
+                        if let Some(update) = update {
+                            update.await.ok();
                         }
 
-                        window
-                            .spawn(cx, async move |cx| {
-                                if let Some(update) = update {
-                                    update.await.ok();
-                                }
-
-                                cx.update(|window, cx| {
-                                    window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
-                                    window.dispatch_action(Box::new(FocusAgent), cx);
-                                })
-                            })
-                            .detach();
-                    })),
-                    on_dismiss: Some(Arc::new(|cx| {
-                        ParallelAgentAnnouncement::set_dismissed(true, cx)
-                    })),
-                    secondary_action_url: Some("https://zed.dev/blog/".into()),
-                })
-            }
-        }
-        _ => None,
+                        cx.update(|window, cx| {
+                            window.dispatch_action(Box::new(FocusWorkspaceSidebar), cx);
+                            window.dispatch_action(Box::new(FocusAgent), cx);
+                        })
+                    })
+                    .detach();
+            })),
+            on_dismiss: Some(Arc::new(|cx| {
+                ParallelAgentAnnouncement::set_dismissed(true, cx)
+            })),
+            secondary_action_url: Some("https://zed.dev/blog/".into()),
+        })
+    } else {
+        None
     }
 }
 

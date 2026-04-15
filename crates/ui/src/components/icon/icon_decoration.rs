@@ -18,6 +18,8 @@ pub enum KnockoutIconName {
     DotBg,
     TriangleFg,
     TriangleBg,
+    ArchiveFg,
+    ArchiveBg,
 }
 
 impl KnockoutIconName {
@@ -33,6 +35,7 @@ pub enum IconDecorationKind {
     X,
     Dot,
     Triangle,
+    Archive,
 }
 
 impl IconDecorationKind {
@@ -41,6 +44,7 @@ impl IconDecorationKind {
             Self::X => KnockoutIconName::XFg,
             Self::Dot => KnockoutIconName::DotFg,
             Self::Triangle => KnockoutIconName::TriangleFg,
+            Self::Archive => KnockoutIconName::ArchiveFg,
         }
     }
 
@@ -49,6 +53,7 @@ impl IconDecorationKind {
             Self::X => KnockoutIconName::XBg,
             Self::Dot => KnockoutIconName::DotBg,
             Self::Triangle => KnockoutIconName::TriangleBg,
+            Self::Archive => KnockoutIconName::ArchiveBg,
         }
     }
 }
@@ -163,7 +168,7 @@ impl RenderOnce for IconDecoration {
             .absolute()
             .bottom(self.position.y)
             .right(self.position.x)
-            .child(foreground)
             .child(background)
+            .child(foreground)
     }
 }

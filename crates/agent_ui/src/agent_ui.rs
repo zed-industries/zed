@@ -4,7 +4,6 @@ mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod agent_registry_ui;
-mod branch_names;
 mod buffer_codegen;
 mod completion_provider;
 mod config_options;
@@ -28,7 +27,6 @@ mod terminal_codegen;
 mod terminal_inline_assistant;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
-mod thread_branch_picker;
 mod thread_history;
 mod thread_history_view;
 mod thread_import;
@@ -37,6 +35,7 @@ pub mod thread_worktree_archive;
 mod thread_worktree_picker;
 pub mod threads_archive_view;
 mod ui;
+mod worktree_names;
 
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -48,7 +47,7 @@ use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
+use gpui::{Action, App, Context, Entity, SharedString, UpdateGlobal as _, Window, actions};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -58,9 +57,10 @@ use language_model::{
 };
 use project::{AgentId, DisableAiSettings};
 use prompt_store::PromptBuilder;
+use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{DockPosition, DockSide, LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 use workspace::Workspace;
 
@@ -89,8 +89,8 @@ actions!(
     [
         /// Toggles the menu to create new agent threads.
         ToggleNewThreadMenu,
-        /// Cycles through the options for where new threads start (current project or new worktree).
-        CycleStartThreadIn,
+        /// Toggles the worktree selector popover for choosing which worktree to use.
+        ToggleWorktreeSelector,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
@@ -259,6 +259,7 @@ pub struct NewNativeAgentThreadFromSummary {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Agent {
     #[default]
     #[serde(alias = "NativeAgent", alias = "TextThread")]
@@ -268,6 +269,8 @@ pub enum Agent {
         #[serde(rename = "name")]
         id: AgentId,
     },
+    #[cfg(any(test, feature = "test-support"))]
+    Stub,
 }
 
 impl From<AgentId> for Agent {
@@ -285,6 +288,8 @@ impl Agent {
         match self {
             Self::NativeAgent => agent::ZED_AGENT_ID.clone(),
             Self::Custom { id } => id.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Stub => "stub".into(),
         }
     }
 
@@ -296,6 +301,8 @@ impl Agent {
         match self {
             Self::NativeAgent => "Zed Agent".into(),
             Self::Custom { id, .. } => id.0.clone(),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Stub => "Stub Agent".into(),
         }
     }
 
@@ -303,6 +310,8 @@ impl Agent {
         match self {
             Self::NativeAgent => None,
             Self::Custom { .. } => Some(IconName::Sparkle),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Stub => None,
         }
     }
 
@@ -316,6 +325,8 @@ impl Agent {
             Self::Custom { id: name } => {
                 Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
             }
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Stub => Rc::new(crate::test_support::StubAgentServer::default_response()),
         }
     }
 }
@@ -339,23 +350,25 @@ pub enum NewWorktreeBranchTarget {
     },
 }
 
-/// Sets where new threads will run.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
+/// Creates a new git worktree and switches the workspace to it.
+/// Dispatched by the unified worktree picker when the user selects a "Create new worktree" entry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum StartThreadIn {
-    #[default]
-    LocalProject,
-    NewWorktree {
-        /// When this is None, Zed will randomly generate a worktree name
-        /// otherwise, the provided name will be used.
-        #[serde(default)]
-        worktree_name: Option<String>,
-        #[serde(default)]
-        branch_target: NewWorktreeBranchTarget,
-    },
-    /// A linked worktree that already exists on disk.
-    LinkedWorktree { path: PathBuf, display_name: String },
+#[serde(deny_unknown_fields)]
+pub struct CreateWorktree {
+    /// When this is None, Zed will randomly generate a worktree name.
+    pub worktree_name: Option<String>,
+    pub branch_target: NewWorktreeBranchTarget,
+}
+
+/// Switches the workspace to an existing linked worktree.
+/// Dispatched by the unified worktree picker when the user selects an existing worktree.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchWorktree {
+    pub path: PathBuf,
+    pub display_name: String,
 }
 
 /// Content to initialize new external agent with.
@@ -514,7 +527,34 @@ pub fn init(
     })
     .detach();
 
-    maybe_backfill_editor_layout(fs, is_new_install, cx);
+    let agent_v2_enabled = agent_v2_enabled(cx);
+    if agent_v2_enabled {
+        maybe_backfill_editor_layout(fs, is_new_install, cx);
+    }
+
+    SettingsStore::update_global(cx, |store, cx| {
+        store.update_default_settings(cx, |defaults| {
+            if agent_v2_enabled {
+                defaults.agent.get_or_insert_default().dock = Some(DockPosition::Left);
+                defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Right);
+                defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Right);
+                defaults.collaboration_panel.get_or_insert_default().dock =
+                    Some(DockPosition::Right);
+                defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Right);
+            } else {
+                defaults.agent.get_or_insert_default().dock = Some(DockPosition::Right);
+                defaults.project_panel.get_or_insert_default().dock = Some(DockSide::Left);
+                defaults.outline_panel.get_or_insert_default().dock = Some(DockSide::Left);
+                defaults.collaboration_panel.get_or_insert_default().dock =
+                    Some(DockPosition::Left);
+                defaults.git_panel.get_or_insert_default().dock = Some(DockPosition::Left);
+            }
+        });
+    });
+}
+
+fn agent_v2_enabled(cx: &App) -> bool {
+    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
@@ -542,6 +582,7 @@ fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let agent_v2_enabled = agent_v2_enabled(cx);
 
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
@@ -611,7 +652,11 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
 
-        filter.show_namespace("multi_workspace");
+        if agent_v2_enabled {
+            filter.show_namespace("multi_workspace");
+        } else {
+            filter.hide_namespace("multi_workspace");
+        }
     });
 }
 

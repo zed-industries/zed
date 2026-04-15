@@ -1754,11 +1754,36 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
             command.arg("--privileged");
         }
 
-        if &docker_cli == "podman" {
-            command.args(&["--security-opt", "label=disable", "--userns=keep-id"]);
+        let run_args = match &self.dev_container().run_args {
+            Some(run_args) => run_args,
+            None => &Vec::new(),
+        };
+
+        for arg in run_args {
+            command.arg(arg);
         }
 
-        command.arg("--sig-proxy=false");
+        let run_if_missing = {
+            |arg_name: &str, arg: &str, command: &mut Command| {
+                if !run_args
+                    .iter()
+                    .any(|arg| arg.strip_prefix(arg_name).is_some())
+                {
+                    command.arg(arg);
+                }
+            }
+        };
+
+        if &docker_cli == "podman" {
+            run_if_missing(
+                "--security-opt",
+                "--security-opt=label=disable",
+                &mut command,
+            );
+            run_if_missing("--userns", "--userns=keep-id", &mut command);
+        }
+
+        run_if_missing("--sig-proxy", "--sig-proxy=false", &mut command);
         command.arg("-d");
         command.arg("--mount");
         command.arg(remote_workspace_mount.to_string());
@@ -2661,8 +2686,14 @@ mod test {
             serde_json_lenient::Value::String("vsCode".to_string()),
         );
 
-        let (_, devcontainer_manifest) =
-            init_default_devcontainer_manifest(cx, "{}").await.unwrap();
+        let (_, devcontainer_manifest) = init_default_devcontainer_manifest(
+            cx,
+            r#"{
+                    "name": "TODO"
+                }"#,
+        )
+        .await
+        .unwrap();
         let build_resources = DockerBuildResources {
             image: DockerInspect {
                 id: "mcr.microsoft.com/devcontainers/base:ubuntu".to_string(),
@@ -3011,6 +3042,11 @@ mod test {
                 "source=dev-containers-cli-bashhistory,target=/home/node/commandhistory",
               ],
 
+              "runArgs": [
+                "--cap-add=SYS_PTRACE",
+                "--sig-proxy=true",
+              ],
+
               "forwardPorts": [
                 8082,
                 8083,
@@ -3303,7 +3339,8 @@ chmod +x ./install.sh
             vec![
                 "run".to_string(),
                 "--privileged".to_string(),
-                "--sig-proxy=false".to_string(),
+                "--cap-add=SYS_PTRACE".to_string(),
+                "--sig-proxy=true".to_string(),
                 "-d".to_string(),
                 "--mount".to_string(),
                 "type=bind,source=/path/to/local/project,target=/workspace2,consistency=cached".to_string(),

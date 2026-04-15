@@ -46,7 +46,10 @@ use prompt_store::{PromptId, PromptStore};
 use crate::DEFAULT_THREAD_TITLE;
 use crate::message_editor::SessionCapabilities;
 use rope::Point;
-use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
+use settings::{
+    NewThreadLocation, NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide,
+    ThinkingBlockDisplay,
+};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -285,7 +288,8 @@ impl Conversation {
                     | AcpThreadEvent::AvailableCommandsUpdated(_)
                     | AcpThreadEvent::ModeUpdated(_)
                     | AcpThreadEvent::ConfigOptionsUpdated(_)
-                    | AcpThreadEvent::WorkingDirectoriesUpdated => {}
+                    | AcpThreadEvent::WorkingDirectoriesUpdated
+                    | AcpThreadEvent::PromptUpdated => {}
                 }
             }
         });
@@ -408,7 +412,8 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::AvailableCommandsUpdated(_)
         | AcpThreadEvent::ModeUpdated(_)
         | AcpThreadEvent::ConfigOptionsUpdated(_)
-        | AcpThreadEvent::SubagentSpawned(_) => false,
+        | AcpThreadEvent::SubagentSpawned(_)
+        | AcpThreadEvent::PromptUpdated => false,
     }
 }
 
@@ -435,9 +440,6 @@ pub struct ConversationView {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
-    /// True when this conversation was created as a new draft (no resume
-    /// session). False when resuming an existing session from history.
-    is_new_draft: bool,
 }
 
 impl ConversationView {
@@ -445,10 +447,6 @@ impl ConversationView {
         self.as_connected().map_or(false, |connected| {
             !connected.connection.auth_methods().is_empty()
         })
-    }
-
-    pub fn is_new_draft(&self) -> bool {
-        self.is_new_draft
     }
 
     pub fn active_thread(&self) -> Option<&Entity<ThreadView>> {
@@ -664,6 +662,7 @@ impl ConversationView {
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -692,7 +691,6 @@ impl ConversationView {
         })
         .detach();
 
-        let is_new_draft = resume_session_id.is_none();
         let thread_id = thread_id.unwrap_or_else(ThreadId::new);
 
         Self {
@@ -715,6 +713,7 @@ impl ConversationView {
                 title,
                 project,
                 initial_content,
+                source,
                 window,
                 cx,
             ),
@@ -723,7 +722,6 @@ impl ConversationView {
             auth_task: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
-            is_new_draft,
         }
     }
 
@@ -760,6 +758,7 @@ impl ConversationView {
             title,
             self.project.clone(),
             None,
+            "agent_panel",
             window,
             cx,
         );
@@ -784,6 +783,7 @@ impl ConversationView {
         title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -816,6 +816,15 @@ impl ConversationView {
 
         let connect_result = connection_entry.read(cx).wait_for_connection();
 
+        let side = match AgentSettings::get_global(cx).sidebar_side() {
+            SidebarSide::Left => "left",
+            SidebarSide::Right => "right",
+        };
+        let thread_location = match AgentSettings::get_global(cx).new_thread_location {
+            NewThreadLocation::LocalProject => "current_worktree",
+            NewThreadLocation::NewWorktree => "new_worktree",
+        };
+
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let (connection, history) = match connect_result.await {
                 Ok(AgentConnectedState {
@@ -832,7 +841,13 @@ impl ConversationView {
                 }
             };
 
-            telemetry::event!("Agent Thread Started", agent = connection.telemetry_id());
+            telemetry::event!(
+                "Agent Thread Started",
+                agent = connection.telemetry_id(),
+                source = source,
+                side = side,
+                thread_location = thread_location
+            );
 
             let mut resumed_without_history = false;
             let result = if let Some(session_id) = resume_session_id.clone() {
@@ -1631,6 +1646,9 @@ impl ConversationView {
             AcpThreadEvent::WorkingDirectoriesUpdated => {
                 cx.notify();
             }
+            AcpThreadEvent::PromptUpdated => {
+                cx.notify();
+            }
         }
         cx.notify();
     }
@@ -1972,12 +1990,7 @@ impl ConversationView {
                 .read(cx)
                 .entries()
                 .iter()
-                .any(|entry| {
-                    matches!(
-                        entry,
-                        AgentThreadEntry::UserMessage(user_message) if user_message.id.is_some()
-                    )
-                })
+                .any(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
         })
     }
 
@@ -2469,17 +2482,18 @@ impl ConversationView {
             return false;
         };
 
-        multi_workspace.read(cx).workspace() == &workspace
-            && AgentPanel::is_visible(&workspace, cx)
-            && multi_workspace
-                .read(cx)
-                .workspace()
-                .read(cx)
-                .panel::<AgentPanel>(cx)
-                .map_or(false, |p| {
-                    p.read(cx).active_conversation_view().map(|c| c.entity_id())
-                        == Some(cx.entity_id())
-                })
+        multi_workspace.read(cx).sidebar_open()
+            || multi_workspace.read(cx).workspace() == &workspace
+                && AgentPanel::is_visible(&workspace, cx)
+                && multi_workspace
+                    .read(cx)
+                    .workspace()
+                    .read(cx)
+                    .panel::<AgentPanel>(cx)
+                    .map_or(false, |p| {
+                        p.read(cx).active_conversation_view().map(|c| c.entity_id())
+                            == Some(cx.entity_id())
+                    })
     }
 
     fn agent_status_visible(&self, window: &Window, cx: &Context<Self>) -> bool {
@@ -2650,6 +2664,7 @@ impl ConversationView {
                                                             root_work_dirs.clone(),
                                                             root_title.clone(),
                                                             true,
+                                                            "agent_panel",
                                                             window,
                                                             cx,
                                                         );
@@ -3159,6 +3174,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3252,7 +3268,7 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
+            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -3295,6 +3311,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3376,6 +3393,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3698,6 +3716,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -3731,6 +3750,94 @@ pub(crate) mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some()),
             "Expected notification when a different conversation is active in the visible panel"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_no_notification_when_sidebar_open_but_different_thread_focused(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+
+        // Open the sidebar so that sidebar_open() returns true.
+        multi_workspace_handle
+            .update(cx, |mw, _window, cx| {
+                mw.open_sidebar(cx);
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert!(
+            multi_workspace_handle
+                .read_with(cx, |mw, _cx| mw.sidebar_open())
+                .unwrap(),
+            "Sidebar should be open"
+        );
+
+        // Create a conversation view that is NOT the active one in the panel.
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store),
+                    None,
+                    "agent_panel",
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        assert!(
+            !cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected no notification when the sidebar is open, even if focused on another thread"
         );
     }
 
@@ -3810,6 +3917,7 @@ pub(crate) mod tests {
                     project1.clone(),
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -4057,6 +4165,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -4314,7 +4423,7 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
+            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<anyhow::Result<acp::PromptResponse>> {
@@ -4387,7 +4496,7 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
+            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -4486,7 +4595,7 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
+            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -4555,7 +4664,7 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
+            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -4625,7 +4734,7 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
+            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -4741,7 +4850,7 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
+            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -4827,6 +4936,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store.clone()),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -7159,6 +7269,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
+                    "agent_panel",
                     window,
                     cx,
                 )
@@ -7343,7 +7454,7 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: Option<acp_thread::UserMessageId>,
+            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {

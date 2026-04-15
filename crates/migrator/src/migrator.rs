@@ -4980,4 +4980,50 @@ mod tests {
             ),
         );
     }
+
+    #[test]
+    fn test_mcp_settings_migration_adds_settings_to_extension_servers() {
+        assert_migrate_settings(
+            r#"{
+    "context_servers": {
+        "extension_server": {},
+        "stdio_server": {
+            "command": "npx",
+            "args": ["-y", "some-server"]
+        },
+        "http_server": {
+            "url": "https://example.com/mcp"
+        },
+        "http_server_with_headers": {
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
+            }
+        }
+    }
+}"#,
+            Some(
+                r#"{
+    "context_servers": {
+        "extension_server": {
+            "settings": {}
+        },
+        "stdio_server": {
+            "command": "npx",
+            "args": ["-y", "some-server"]
+        },
+        "http_server": {
+            "url": "https://example.com/mcp"
+        },
+        "http_server_with_headers": {
+            "url": "https://example.com/mcp",
+            "headers": {
+                "Authorization": "Bearer token"
+            }
+        }
+    }
+}"#,
+            ),
+        );
+    }
 }

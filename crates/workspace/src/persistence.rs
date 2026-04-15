@@ -27,7 +27,8 @@ use project::{
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use remote::{
-    DockerConnectionOptions, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    DockerConnectionOptions, RemoteConnectionIdentity, RemoteConnectionOptions,
+    SshConnectionOptions, WslConnectionOptions, remote_connection_identity,
 };
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -1500,6 +1501,7 @@ impl WorkspaceDb {
         this: &Connection,
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
+        let identity = remote_connection_identity(&options);
         let kind;
         let user: Option<String>;
         let mut host = None;
@@ -1509,33 +1511,49 @@ impl WorkspaceDb {
         let mut container_id = None;
         let mut use_podman = None;
         let mut remote_env = None;
-        match options {
-            RemoteConnectionOptions::Ssh(options) => {
+
+        match identity {
+            RemoteConnectionIdentity::Ssh {
+                host: identity_host,
+                username,
+                port: identity_port,
+            } => {
                 kind = RemoteConnectionKind::Ssh;
-                host = Some(options.host.to_string());
-                port = options.port;
-                user = options.username;
+                host = Some(identity_host);
+                port = identity_port;
+                user = username;
             }
-            RemoteConnectionOptions::Wsl(options) => {
+            RemoteConnectionIdentity::Wsl {
+                distro_name,
+                user: identity_user,
+            } => {
                 kind = RemoteConnectionKind::Wsl;
-                distro = Some(options.distro_name);
-                user = options.user;
+                distro = Some(distro_name);
+                user = identity_user;
             }
-            RemoteConnectionOptions::Docker(options) => {
+            RemoteConnectionIdentity::Docker {
+                container_id: identity_container_id,
+                name: identity_name,
+                remote_user,
+            } => {
                 kind = RemoteConnectionKind::Docker;
-                container_id = Some(options.container_id);
-                name = Some(options.name);
-                use_podman = Some(options.use_podman);
-                user = Some(options.remote_user);
-                remote_env = serde_json::to_string(&options.remote_env).ok();
+                container_id = Some(identity_container_id);
+                name = Some(identity_name);
+                user = Some(remote_user);
             }
             #[cfg(any(test, feature = "test-support"))]
-            RemoteConnectionOptions::Mock(options) => {
+            RemoteConnectionIdentity::Mock { id } => {
                 kind = RemoteConnectionKind::Ssh;
-                host = Some(format!("mock-{}", options.id));
-                user = Some(format!("mock-user-{}", options.id));
+                host = Some(format!("mock-{}", id));
+                user = Some(format!("mock-user-{}", id));
             }
         }
+
+        if let RemoteConnectionOptions::Docker(options) = options {
+            use_podman = Some(options.use_podman);
+            remote_env = serde_json::to_string(&options.remote_env).ok();
+        }
+
         Self::get_or_create_remote_connection_query(
             this,
             kind,
@@ -2495,6 +2513,7 @@ pub fn delete_unloaded_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OpenMode;
     use crate::PathList;
     use crate::ProjectGroupKey;
     use crate::{
@@ -2507,7 +2526,7 @@ mod tests {
             read_multi_workspace_state,
         },
     };
-    use feature_flags::FeatureFlagAppExt;
+
     use gpui::AppContext as _;
     use pretty_assertions::assert_eq;
     use project::Project;
@@ -2526,10 +2545,6 @@ mod tests {
     #[gpui::test]
     async fn test_multi_workspace_serializes_on_add_and_remove(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let project1 = Project::test(fs.clone(), [], cx).await;
@@ -4088,10 +4103,6 @@ mod tests {
     async fn test_flush_serialization_completes_before_quit(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
@@ -4131,10 +4142,6 @@ mod tests {
     #[gpui::test]
     async fn test_create_workspace_serialization(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
@@ -4187,10 +4194,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_workspace_clears_session_binding(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir = unique_test_dir(&fs, "remove").await;
@@ -4278,10 +4281,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_workspace_not_restored_as_zombie(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir1 = tempfile::TempDir::with_prefix("zombie_test1").unwrap();
@@ -4385,10 +4384,6 @@ mod tests {
     async fn test_pending_removal_tasks_drained_on_flush(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let dir = unique_test_dir(&fs, "pending-removal").await;
         let project1 = Project::test(fs.clone(), [], cx).await;
@@ -4489,10 +4484,6 @@ mod tests {
     async fn test_create_workspace_bounds_observer_uses_fresh_id(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
-
         let fs = fs::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
@@ -4544,10 +4535,6 @@ mod tests {
     #[gpui::test]
     async fn test_flush_serialization_writes_bounds(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir = tempfile::TempDir::with_prefix("flush_bounds_test").unwrap();
@@ -4699,14 +4686,55 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_resolve_worktree_workspaces_bare_repo(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+
+        // Bare repo at /foo/.bare (commondir doesn't end with .git)
+        fs.insert_tree(
+            "/foo/.bare",
+            json!({
+                "worktrees": {
+                    "my-feature": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/my-feature"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        // Linked worktree whose commondir resolves to a bare repo (/foo/.bare)
+        fs.insert_tree(
+            "/foo/my-feature",
+            json!({
+                ".git": "gitdir: /foo/.bare/worktrees/my-feature",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let t0 = Utc::now();
+
+        let workspaces = vec![(
+            WorkspaceId(1),
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&["/foo/my-feature"]),
+            t0,
+        )];
+
+        let result = resolve_worktree_workspaces(workspaces, fs.as_ref()).await;
+
+        // The worktree path must be preserved unchanged — /foo/.bare is a bare repo
+        // and cannot serve as a working-tree root, so resolution must return None.
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].2.paths(), &[PathBuf::from("/foo/my-feature")]);
+    }
+
+    #[gpui::test]
     async fn test_restore_window_with_linked_worktree_and_multiple_project_groups(
         cx: &mut gpui::TestAppContext,
     ) {
         crate::tests::init_test(cx);
-
-        cx.update(|cx| {
-            cx.set_staff(true);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
 
@@ -4887,10 +4915,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_project_group_falls_back_to_neighbor(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-        cx.update(|cx| {
-            cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir_a = unique_test_dir(&fs, "group-a").await;
@@ -5002,10 +5026,6 @@ mod tests {
     #[gpui::test]
     async fn test_remove_fallback_skips_excluded_workspaces(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
-        cx.update(|cx| {
-            cx.set_staff(true);
-            cx.update_flags(true, vec!["agent-v2".to_string()]);
-        });
 
         let fs = fs::FakeFs::new(cx.executor());
         let dir = unique_test_dir(&fs, "shared").await;
@@ -5047,7 +5067,15 @@ mod tests {
             mw.remove(
                 vec![workspace_a.clone()],
                 move |this, window, cx| {
-                    this.find_or_create_local_workspace(path_list, &excluded, window, cx)
+                    this.find_or_create_local_workspace(
+                        path_list,
+                        None,
+                        &excluded,
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
                 },
                 window,
                 cx,
