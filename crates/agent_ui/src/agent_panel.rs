@@ -3145,7 +3145,7 @@ impl AgentPanel {
                         .has_restricted_worktrees(&source_worktree_store, cx)
                 })
                 .unwrap_or(false);
-            
+
             if !source_is_trusted {
                 return;
             }
