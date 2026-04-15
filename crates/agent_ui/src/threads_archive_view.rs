@@ -649,7 +649,6 @@ impl ThreadsArchiveView {
                                     })
                                 }),
                         )
-                        .tooltip(Tooltip::text("Restoring…"))
                         .into_any_element()
                 } else if is_archived {
                     base.action_slot(
@@ -682,9 +681,6 @@ impl ThreadsArchiveView {
                                 })
                             }),
                     )
-                    .tooltip(move |_, cx| {
-                        Tooltip::for_action("Open Archived Thread", &menu::Confirm, cx)
-                    })
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
@@ -706,7 +702,6 @@ impl ThreadsArchiveView {
                                 })
                             }),
                     )
-                    .tooltip(move |_, cx| Tooltip::for_action("Open Thread", &menu::Confirm, cx))
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
