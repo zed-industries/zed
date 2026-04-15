@@ -4777,6 +4777,7 @@ async fn test_restore_worktree_when_branch_has_moved(cx: &mut TestAppContext) {
                     unstaged_commit_hash: unstaged_hash,
                     original_commit_hash: "original-sha".to_string(),
                 },
+                None,
                 &mut cx,
             )
             .await
@@ -4885,6 +4886,7 @@ async fn test_restore_worktree_when_branch_has_not_moved(cx: &mut TestAppContext
                     unstaged_commit_hash: unstaged_hash,
                     original_commit_hash: "original-sha".to_string(),
                 },
+                None,
                 &mut cx,
             )
             .await
@@ -4985,6 +4987,7 @@ async fn test_restore_worktree_when_branch_does_not_exist(cx: &mut TestAppContex
                     unstaged_commit_hash: unstaged_hash,
                     original_commit_hash: "original-sha".to_string(),
                 },
+                None,
                 &mut cx,
             )
             .await
