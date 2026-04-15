@@ -5,7 +5,7 @@ use itertools::Itertools as _;
 use crate::{
     git::{CommitDetails, CommitList},
     github::{
-        CommitAuthor, GitHubClient, GithubLogin, PullRequestComment, PullRequestData,
+        CommitAuthor, GithubClient, GithubLogin, PullRequestComment, PullRequestData,
         PullRequestReview, Repository, ReviewState,
     },
     report::Report,
