@@ -864,6 +864,8 @@ impl MultiWorkspace {
                         neighbor_key.path_list().clone(),
                         Some(neighbor_key.clone()),
                         &excluded_workspaces,
+                        None,
+                        OpenMode::Activate,
                         window,
                         cx,
                     );
@@ -992,6 +994,8 @@ impl MultiWorkspace {
         ) -> Task<Result<Option<Entity<remote::RemoteClient>>>>
         + 'static,
         excluding: &[Entity<Workspace>],
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1005,6 +1009,8 @@ impl MultiWorkspace {
                 paths,
                 provisional_project_group_key,
                 excluding,
+                init,
+                open_mode,
                 window,
                 cx,
             );
@@ -1067,6 +1073,8 @@ impl MultiWorkspace {
         path_list: PathList,
         project_group: Option<ProjectGroupKey>,
         excluding: &[Entity<Workspace>],
+        init: Option<Box<dyn FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send>>,
+        open_mode: OpenMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
@@ -1133,8 +1141,8 @@ impl MultiWorkspace {
                         app_state,
                         requesting_window,
                         None,
-                        None,
-                        OpenMode::Activate,
+                        init,
+                        open_mode,
                         cx,
                     )
                 })
@@ -1675,7 +1683,15 @@ impl MultiWorkspace {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
         if self.multi_workspace_enabled(cx) {
-            self.find_or_create_local_workspace(PathList::new(&paths), None, &[], window, cx)
+            self.find_or_create_local_workspace(
+                PathList::new(&paths),
+                None,
+                &[],
+                None,
+                OpenMode::Activate,
+                window,
+                cx,
+            )
         } else {
             let workspace = self.workspace().clone();
             cx.spawn_in(window, async move |_this, cx| {

@@ -981,6 +981,7 @@ mod tests {
                 ref_name: Some("refs/heads/feature".into()),
                 sha: "abc123".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;

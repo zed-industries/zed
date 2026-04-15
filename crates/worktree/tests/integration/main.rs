@@ -2769,6 +2769,7 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
             ref_name: Some("refs/heads/feature".into()),
             sha: "abc123".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -2871,6 +2872,7 @@ async fn test_linked_worktree_git_file_event_does_not_panic(
             ref_name: Some("refs/heads/feature".into()),
             sha: "abc123".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;

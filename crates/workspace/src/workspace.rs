@@ -89,7 +89,7 @@ use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 pub use persistence::{
     WorkspaceDb, delete_unloaded_items,
     model::{
-        DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
+        DockData, DockStructure, ItemId, MultiWorkspaceState, SerializedMultiWorkspace,
         SerializedProjectGroup, SerializedWorkspaceLocation, SessionWorkspace,
     },
     read_serialized_multi_workspaces, resolve_worktree_workspaces,
@@ -162,7 +162,7 @@ use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::Notificat
 use crate::{
     persistence::{
         SerializedAxis,
-        model::{DockData, SerializedItem, SerializedPane, SerializedPaneGroup},
+        model::{SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
 };

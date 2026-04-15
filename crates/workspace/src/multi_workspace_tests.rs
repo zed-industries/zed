@@ -368,6 +368,8 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_when_sideba
                 PathList::new(&[PathBuf::from("/root_a")]),
                 None,
                 &[],
+                None,
+                OpenMode::Activate,
                 window,
                 cx,
             )
@@ -431,6 +433,8 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
                 Some(project_group_key.clone()),
                 |_options, _window, _cx| Task::ready(Ok(None)),
                 &[],
+                None,
+                OpenMode::Activate,
                 window,
                 cx,
             )
@@ -496,6 +500,8 @@ async fn test_find_or_create_local_workspace_reuses_active_workspace_after_sideb
                 PathList::new(&[PathBuf::from("/root_a")]),
                 None,
                 &[],
+                None,
+                OpenMode::Activate,
                 window,
                 cx,
             )

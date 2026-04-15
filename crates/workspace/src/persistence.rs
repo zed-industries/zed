@@ -2513,6 +2513,7 @@ pub fn delete_unloaded_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OpenMode;
     use crate::PathList;
     use crate::ProjectGroupKey;
     use crate::{
@@ -5066,7 +5067,15 @@ mod tests {
             mw.remove(
                 vec![workspace_a.clone()],
                 move |this, window, cx| {
-                    this.find_or_create_local_workspace(path_list, None, &excluded, window, cx)
+                    this.find_or_create_local_workspace(
+                        path_list,
+                        None,
+                        &excluded,
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
                 },
                 window,
                 cx,
