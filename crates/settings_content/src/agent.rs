@@ -33,7 +33,7 @@ pub enum NewThreadLocation {
     NewWorktree,
 }
 
-/// Where to position the sidebar.
+/// Where to position the threads sidebar.
 #[derive(
     Clone,
     Copy,
@@ -114,7 +114,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub flexible: Option<bool>,
-    /// Where to position the sidebar.
+    /// Where to position the threads sidebar.
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
@@ -256,6 +256,7 @@ impl AgentSettingsContent {
             model,
             enable_thinking: false,
             effort: None,
+            speed: None,
         });
     }
 
@@ -397,6 +398,7 @@ pub struct LanguageModelSelection {
     #[serde(default)]
     pub enable_thinking: bool,
     pub effort: Option<String>,
+    pub speed: Option<language_model_core::Speed>,
 }
 
 #[with_fallible_options]

@@ -146,7 +146,6 @@ pub enum IconName {
     GenericMinimize,
     GenericRestore,
     GitBranch,
-    GitBranchAlt,
     GitBranchPlus,
     GitCommit,
     GitGraph,

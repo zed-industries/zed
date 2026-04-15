@@ -448,7 +448,7 @@ Here's a template with useful vim mode contexts to help you customize your vim m
 
 By default, you can navigate between the different files open in the editor with shortcuts like `ctrl+w` followed by one of `hjkl` to move to the left, down, up, or right, respectively.
 
-But you cannot use the same shortcuts to move between all the editor docks (the terminal, project panel, assistant panel, ...). If you want to use the same shortcuts to navigate to the docks, you can add the following key bindings to your user keymap.
+But you cannot use the same shortcuts to move between all the editor docks (the terminal, project panel, agent panel, ...). If you want to use the same shortcuts to navigate to the docks, you can add the following key bindings to your user keymap.
 
 ```json [keymap]
 {

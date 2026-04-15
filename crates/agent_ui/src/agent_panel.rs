@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         Arc,
@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 
-use acp_thread::{AcpThread, MentionUri, ThreadStatus};
+use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
@@ -19,22 +19,27 @@ use project::AgentId;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 
-use zed_actions::agent::{
-    AddSelectionToThread, ConflictContent, ReauthenticateAgent, ResolveConflictedFilesWithAgent,
-    ResolveConflictsWithAgent, ReviewBranchDiff,
+use zed_actions::{
+    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
+    agent::{
+        AddSelectionToThread, ConflictContent, OpenSettings, ReauthenticateAgent, ResetAgentZoom,
+        ResetOnboarding, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
+        ReviewBranchDiff,
+    },
+    assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
 };
 
 use crate::DEFAULT_THREAD_TITLE;
-use crate::thread_metadata_store::ThreadMetadataStore;
 use crate::ui::{AcpOnboardingModal, HoldForDefault};
+use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
 use crate::{
-    AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CycleStartThreadIn,
+    AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, CreateWorktree,
     Follow, InlineAssistant, LoadThreadFromClipboard, NewThread, NewWorktreeBranchTarget,
     OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell,
-    StartThreadIn, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    SwitchWorktree, ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
+    ToggleWorktreeSelector,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
     conversation_view::{AcpThreadViewEvent, ThreadView},
-    thread_branch_picker::ThreadBranchPicker,
     thread_worktree_picker::ThreadWorktreePicker,
     ui::EndTrialUpsell,
 };
@@ -58,15 +63,18 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem, Corner,
-    DismissEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
-    Subscription, Task, UpdateGlobal, WeakEntity, prelude::*, pulsating_between,
+    DismissEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    KeyContext, Pixels, Subscription, Task, UpdateGlobal, WeakEntity, prelude::*,
+    pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
-use project::git_store::{GitStoreEvent, RepositoryEvent};
 use project::project_settings::ProjectSettings;
+use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
 use project::{Project, ProjectPath, Worktree, linked_worktree_short_name};
 use prompt_store::{PromptStore, UserPromptId};
+use release_channel::ReleaseChannel;
+use remote::RemoteConnectionOptions;
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
 use settings::{Settings, update_settings_file};
@@ -74,24 +82,34 @@ use terminal::terminal_settings::TerminalSettings;
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, ButtonLike, Callout, CommonAnimationExt, ContextMenu, ContextMenuEntry, PopoverMenu,
-    PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, Callout, ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tab, Tooltip,
+    prelude::*, utils::WithRemSize,
 };
 use util::{ResultExt as _, debug_panic};
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, OpenMode, OpenResult, PathList,
+    CollaboratorId, DockStructure, DraggedSelection, DraggedTab, OpenMode, PathList,
     SerializedPathList, ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
 };
-use zed_actions::{
-    DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenAcpOnboardingModal, OpenSettings, ResetAgentZoom, ResetOnboarding},
-    assistant::{OpenRulesLibrary, Toggle, ToggleFocus},
-};
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
+const MIN_PANEL_WIDTH: Pixels = px(300.);
 const RECENTLY_UPDATED_MENU_LIMIT: usize = 6;
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
+
+fn agent_v2_enabled(cx: &App) -> bool {
+    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
+}
+/// Maximum number of idle threads kept in the agent panel's retained list.
+/// Set as a GPUI global to override; otherwise defaults to 5.
+pub struct MaxIdleRetainedThreads(pub usize);
+impl gpui::Global for MaxIdleRetainedThreads {}
+
+impl MaxIdleRetainedThreads {
+    pub fn global(cx: &App) -> usize {
+        cx.try_global::<Self>().map_or(5, |g| g.0)
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 struct LastUsedAgent {
@@ -154,13 +172,12 @@ struct SerializedAgentPanel {
     selected_agent: Option<Agent>,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
-    #[serde(default)]
-    start_thread_in: Option<StartThreadIn>,
+    draft_thread_prompt: Option<Vec<acp::ContentBlock>>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SerializedActiveThread {
-    session_id: String,
+    session_id: Option<String>,
     agent_type: Agent,
     title: Option<String>,
     work_dirs: Option<SerializedPathList>,
@@ -204,21 +221,12 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
                     }
                 })
-                .register_action(|workspace, action: &NewExternalAgentThread, window, cx| {
+                .register_action(|workspace, _action: &NewExternalAgentThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            let initial_content = panel.take_active_draft_initial_content(cx);
-                            panel.external_thread(
-                                action.agent.clone(),
-                                None,
-                                None,
-                                None,
-                                initial_content,
-                                true,
-                                window,
-                                cx,
-                            )
+                            let id = panel.create_thread("agent_panel", window, cx);
+                            panel.activate_retained_thread(id, true, window, cx);
                         });
                     }
                 })
@@ -272,8 +280,13 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
-                .register_action(|workspace, _: &OpenAcpOnboardingModal, window, cx| {
-                    AcpOnboardingModal::toggle(workspace, window, cx)
+                .register_action(|workspace, _: &ToggleWorktreeSelector, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_worktree_selector(&ToggleWorktreeSelector, window, cx);
+                        });
+                    }
                 })
                 .register_action(|_workspace, _: &ResetOnboarding, window, cx| {
                     window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
@@ -353,6 +366,7 @@ pub fn init(cx: &mut App) {
                                 auto_submit: true,
                             }),
                             true,
+                            "agent_panel",
                             window,
                             cx,
                         );
@@ -379,6 +393,7 @@ pub fn init(cx: &mut App) {
                                     auto_submit: true,
                                 }),
                                 true,
+                                "agent_panel",
                                 window,
                                 cx,
                             );
@@ -407,26 +422,13 @@ pub fn init(cx: &mut App) {
                                     auto_submit: true,
                                 }),
                                 true,
+                                "agent_panel",
                                 window,
                                 cx,
                             );
                         });
                     },
                 )
-                .register_action(|workspace, action: &StartThreadIn, window, cx| {
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |panel, cx| {
-                            panel.set_start_thread_in(action, window, cx);
-                        });
-                    }
-                })
-                .register_action(|workspace, _: &CycleStartThreadIn, window, cx| {
-                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                        panel.update(cx, |panel, cx| {
-                            panel.cycle_start_thread_in(window, cx);
-                        });
-                    }
-                })
                 .register_action(
                     |workspace: &mut Workspace, _: &AddSelectionToThread, window, cx| {
                         let active_editor = workspace
@@ -488,6 +490,28 @@ pub fn init(cx: &mut App) {
                                 }
                             });
                         });
+                    },
+                )
+                .register_action(
+                    |workspace: &mut Workspace, action: &CreateWorktree, window, cx| {
+                        let previous_state =
+                            AgentPanel::capture_workspace_state(workspace, window, cx);
+                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.create_worktree(action, previous_state, window, cx);
+                            });
+                        }
+                    },
+                )
+                .register_action(
+                    |workspace: &mut Workspace, action: &SwitchWorktree, window, cx| {
+                        let previous_state =
+                            AgentPanel::capture_workspace_state(workspace, window, cx);
+                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            panel.update(cx, |panel, cx| {
+                                panel.switch_to_worktree(action, previous_state, window, cx);
+                            });
+                        }
                     },
                 );
         },
@@ -602,15 +626,35 @@ fn build_conflicted_files_resolution_prompt(
     content
 }
 
-enum ActiveView {
+pub(crate) struct AgentThread {
+    conversation_view: Entity<ConversationView>,
+}
+
+enum BaseView {
     Uninitialized,
     AgentThread {
         conversation_view: Entity<ConversationView>,
     },
-    History {
-        view: Entity<ThreadHistoryView>,
-    },
+}
+
+impl From<AgentThread> for BaseView {
+    fn from(thread: AgentThread) -> Self {
+        BaseView::AgentThread {
+            conversation_view: thread.conversation_view,
+        }
+    }
+}
+
+enum OverlayView {
+    History { view: Entity<ThreadHistoryView> },
     Configuration,
+}
+
+enum VisibleSurface<'a> {
+    Uninitialized,
+    AgentThread(&'a Entity<ConversationView>),
+    History(&'a Entity<ThreadHistoryView>),
+    Configuration(Option<&'a Entity<AgentConfiguration>>),
 }
 
 enum WhichFontSize {
@@ -618,148 +662,10 @@ enum WhichFontSize {
     None,
 }
 
-struct StartThreadInLabel {
-    prefix: Option<SharedString>,
-    label: SharedString,
-    suffix: Option<SharedString>,
-}
-
-impl StartThreadIn {
-    fn trigger_label(&self, project: &Project, cx: &App) -> StartThreadInLabel {
-        match self {
-            Self::LocalProject => {
-                let suffix = project.active_repository(cx).and_then(|repo| {
-                    let repo = repo.read(cx);
-                    let work_dir = &repo.original_repo_abs_path;
-                    let visible_paths: Vec<_> = project
-                        .visible_worktrees(cx)
-                        .map(|wt| wt.read(cx).abs_path().to_path_buf())
-                        .collect();
-
-                    for linked in repo.linked_worktrees() {
-                        if visible_paths.contains(&linked.path) {
-                            return Some(SharedString::from(format!(
-                                "({})",
-                                linked.display_name()
-                            )));
-                        }
-                    }
-
-                    if let Some(name) = linked_worktree_short_name(
-                        repo.original_repo_abs_path.as_ref(),
-                        repo.work_directory_abs_path.as_ref(),
-                    ) {
-                        if visible_paths
-                            .iter()
-                            .any(|p| p.as_path() == repo.work_directory_abs_path.as_ref())
-                        {
-                            return Some(SharedString::from(format!("({})", name)));
-                        }
-                    }
-
-                    if visible_paths
-                        .iter()
-                        .any(|p| p.as_path() == work_dir.as_ref())
-                    {
-                        return Some("(main)".into());
-                    }
-
-                    None
-                });
-
-                StartThreadInLabel {
-                    prefix: None,
-                    label: "Current Worktree".into(),
-                    suffix,
-                }
-            }
-            Self::NewWorktree {
-                worktree_name: Some(worktree_name),
-                ..
-            } => StartThreadInLabel {
-                prefix: Some("New:".into()),
-                label: worktree_name.clone().into(),
-                suffix: None,
-            },
-            Self::NewWorktree { .. } => StartThreadInLabel {
-                prefix: None,
-                label: "New Git Worktree".into(),
-                suffix: None,
-            },
-            Self::LinkedWorktree { display_name, .. } => StartThreadInLabel {
-                prefix: Some("From:".into()),
-                label: display_name.clone().into(),
-                suffix: None,
-            },
-        }
-    }
-
-    fn branch_trigger_label(&self, project: &Project, cx: &App) -> Option<StartThreadInLabel> {
-        match self {
-            Self::NewWorktree { branch_target, .. } => {
-                let (branch_name, is_occupied) = match branch_target {
-                    NewWorktreeBranchTarget::CurrentBranch => {
-                        let name: SharedString = if project.repositories(cx).len() > 1 {
-                            "current branches".into()
-                        } else {
-                            project
-                                .active_repository(cx)
-                                .and_then(|repo| {
-                                    repo.read(cx)
-                                        .branch
-                                        .as_ref()
-                                        .map(|branch| SharedString::from(branch.name().to_string()))
-                                })
-                                .unwrap_or_else(|| "HEAD".into())
-                        };
-                        (name, false)
-                    }
-                    NewWorktreeBranchTarget::ExistingBranch { name } => {
-                        let occupied = Self::is_branch_occupied(name, project, cx);
-                        (name.clone().into(), occupied)
-                    }
-                    NewWorktreeBranchTarget::CreateBranch {
-                        from_ref: Some(from_ref),
-                        ..
-                    } => {
-                        let occupied = Self::is_branch_occupied(from_ref, project, cx);
-                        (from_ref.clone().into(), occupied)
-                    }
-                    NewWorktreeBranchTarget::CreateBranch { name, .. } => {
-                        (name.clone().into(), false)
-                    }
-                };
-
-                let prefix = if is_occupied {
-                    Some("New From:".into())
-                } else {
-                    None
-                };
-
-                Some(StartThreadInLabel {
-                    prefix,
-                    label: branch_name,
-                    suffix: None,
-                })
-            }
-            _ => None,
-        }
-    }
-
-    fn is_branch_occupied(branch_name: &str, project: &Project, cx: &App) -> bool {
-        project.repositories(cx).values().any(|repo| {
-            repo.read(cx)
-                .linked_worktrees
-                .iter()
-                .any(|wt| wt.branch_name() == Some(branch_name))
-        })
-    }
-}
-
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub enum WorktreeCreationStatus {
-    Creating,
+    Creating(SharedString),
+    Loading(SharedString),
     Error(SharedString),
 }
 
@@ -771,16 +677,57 @@ enum WorktreeCreationArgs {
     },
     Linked {
         worktree_path: PathBuf,
+        display_name: String,
     },
 }
 
-impl ActiveView {
+struct PreviousWorkspaceState {
+    dock_structure: DockStructure,
+    open_file_paths: Vec<PathBuf>,
+    active_file_path: Option<PathBuf>,
+}
+
+#[cfg(test)]
+impl PreviousWorkspaceState {
+    /// An empty state with all docks hidden and no open files.
+    fn empty() -> Self {
+        use workspace::DockData;
+
+        Self {
+            dock_structure: DockStructure {
+                left: DockData {
+                    visible: false,
+                    active_panel: None,
+                    zoom: false,
+                },
+                right: DockData {
+                    visible: false,
+                    active_panel: None,
+                    zoom: false,
+                },
+                bottom: DockData {
+                    visible: false,
+                    active_panel: None,
+                    zoom: false,
+                },
+            },
+            open_file_paths: Vec::new(),
+            active_file_path: None,
+        }
+    }
+}
+
+impl BaseView {
+    pub fn which_font_size_used(&self) -> WhichFontSize {
+        WhichFontSize::AgentFont
+    }
+}
+
+impl OverlayView {
     pub fn which_font_size_used(&self) -> WhichFontSize {
         match self {
-            ActiveView::Uninitialized
-            | ActiveView::AgentThread { .. }
-            | ActiveView::History { .. } => WhichFontSize::AgentFont,
-            ActiveView::Configuration => WhichFontSize::None,
+            OverlayView::History { .. } => WhichFontSize::AgentFont,
+            OverlayView::Configuration => WhichFontSize::None,
         }
     }
 }
@@ -800,18 +747,17 @@ pub struct AgentPanel {
     configuration: Option<Entity<AgentConfiguration>>,
     configuration_subscription: Option<Subscription>,
     focus_handle: FocusHandle,
-    active_view: ActiveView,
-    previous_view: Option<ActiveView>,
-    background_threads: HashMap<acp::SessionId, Entity<ConversationView>>,
+    base_view: BaseView,
+    overlay_view: Option<OverlayView>,
+    draft_thread: Option<Entity<ConversationView>>,
+    retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     start_thread_in_menu_handle: PopoverMenuHandle<ThreadWorktreePicker>,
-    thread_branch_menu_handle: PopoverMenuHandle<ThreadBranchPicker>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu: Option<Entity<ContextMenu>>,
     _extension_subscription: Option<Subscription>,
     _project_subscription: Subscription,
-    _git_store_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
@@ -819,13 +765,14 @@ pub struct AgentPanel {
     agent_layout_onboarding: Entity<ai_onboarding::AgentLayoutOnboarding>,
     agent_layout_onboarding_dismissed: AtomicBool,
     selected_agent: Agent,
-    start_thread_in: StartThreadIn,
-    worktree_creation_status: Option<WorktreeCreationStatus>,
+    pending_thread_loads: usize,
+    worktree_creation_status: Option<(EntityId, WorktreeCreationStatus)>,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
     _worktree_creation_task: Option<Task<()>>,
     show_trust_workspace_message: bool,
-    _active_view_observation: Option<Subscription>,
+    _base_view_observation: Option<Subscription>,
+    _draft_editor_observation: Option<Subscription>,
 }
 
 impl AgentPanel {
@@ -835,14 +782,15 @@ impl AgentPanel {
         };
 
         let selected_agent = self.selected_agent.clone();
-        let start_thread_in = Some(self.start_thread_in.clone());
 
+        let is_draft_active = self.active_thread_is_draft(cx);
         let last_active_thread = self.active_agent_thread(cx).map(|thread| {
             let thread = thread.read(cx);
+
             let title = thread.title();
             let work_dirs = thread.work_dirs().cloned();
             SerializedActiveThread {
-                session_id: thread.session_id().0.to_string(),
+                session_id: (!is_draft_active).then(|| thread.session_id().0.to_string()),
                 agent_type: self.selected_agent.clone(),
                 title: title.map(|t| t.to_string()),
                 work_dirs: work_dirs.map(|dirs| dirs.serialize()),
@@ -850,13 +798,25 @@ impl AgentPanel {
         });
 
         let kvp = KeyValueStore::global(cx);
+        let draft_thread_prompt = self.draft_thread.as_ref().and_then(|conversation| {
+            Some(
+                conversation
+                    .read(cx)
+                    .root_thread(cx)?
+                    .read(cx)
+                    .thread
+                    .read(cx)
+                    .draft_prompt()?
+                    .to_vec(),
+            )
+        });
         self.pending_serialization = Some(cx.background_spawn(async move {
             save_serialized_panel(
                 workspace_id,
                 SerializedAgentPanel {
                     selected_agent: Some(selected_agent),
                     last_active_thread,
-                    start_thread_in,
+                    draft_thread_prompt,
                 },
                 kvp,
             )
@@ -896,33 +856,45 @@ impl AgentPanel {
                 })
                 .await;
 
+            let was_draft_active = serialized_panel
+                .as_ref()
+                .and_then(|p| p.last_active_thread.as_ref())
+                .is_some_and(|t| t.session_id.is_none());
+
             let last_active_thread = if let Some(thread_info) = serialized_panel
                 .as_ref()
                 .and_then(|p| p.last_active_thread.as_ref())
             {
-                let session_id = acp::SessionId::new(thread_info.session_id.clone());
-                let has_metadata = cx
-                    .update(|_window, cx| {
-                        let store = ThreadMetadataStore::global(cx);
-                        store.read(cx).entry(&session_id).is_some()
-                    })
-                    .unwrap_or(false);
-                if has_metadata {
-                    Some(thread_info)
-                } else {
-                    log::warn!(
-                        "last active thread {} has no metadata, skipping restoration",
-                        thread_info.session_id
-                    );
-                    None
+                match &thread_info.session_id {
+                    Some(session_id_str) => {
+                        let session_id = acp::SessionId::new(session_id_str.clone());
+                        let is_restorable = cx
+                            .update(|_window, cx| {
+                                let store = ThreadMetadataStore::global(cx);
+                                store
+                                    .read(cx)
+                                    .entry_by_session(&session_id)
+                                    .is_some_and(|entry| !entry.archived)
+                            })
+                            .unwrap_or(false);
+                        if is_restorable {
+                            Some(thread_info)
+                        } else {
+                            log::info!(
+                                "last active thread {} is archived or missing, skipping restoration",
+                                session_id_str
+                            );
+                            None
+                        }
+                    }
+                    None => None,
                 }
             } else {
                 None
             };
 
             let panel = workspace.update_in(cx, |workspace, window, cx| {
-                let panel =
-                    cx.new(|cx| Self::new(workspace, prompt_store, window, cx));
+                let panel = cx.new(|cx| Self::new(workspace, prompt_store, window, cx));
 
                 panel.update(cx, |panel, cx| {
                     let is_via_collab = panel.project.read(cx).is_via_collab();
@@ -931,34 +903,14 @@ impl AgentPanel {
                     // Collab workspaces only support NativeAgent, so inheriting a
                     // custom agent would cause set_active → new_agent_thread_inner
                     // to bypass the collab guard in external_thread.
-                    let global_fallback = global_last_used_agent
-                        .filter(|agent| !is_via_collab || agent.is_native());
+                    let global_fallback =
+                        global_last_used_agent.filter(|agent| !is_via_collab || agent.is_native());
 
                     if let Some(serialized_panel) = &serialized_panel {
                         if let Some(selected_agent) = serialized_panel.selected_agent.clone() {
                             panel.selected_agent = selected_agent;
                         } else if let Some(agent) = global_fallback {
                             panel.selected_agent = agent;
-                        }
-                        if let Some(ref start_thread_in) = serialized_panel.start_thread_in {
-                            let is_valid = match &start_thread_in {
-                                StartThreadIn::LocalProject => true,
-                                StartThreadIn::NewWorktree { .. } => {
-                                    let project = panel.project.read(cx);
-                                    !project.is_via_collab()
-                                }
-                                StartThreadIn::LinkedWorktree { path, .. } => {
-                                    path.exists()
-                                }
-                            };
-                            if is_valid {
-                                panel.start_thread_in = start_thread_in.clone();
-                            } else {
-                                log::info!(
-                                    "deserialized start_thread_in {:?} is no longer valid, falling back to LocalProject",
-                                    start_thread_in,
-                                );
-                            }
                         }
                     } else if let Some(agent) = global_fallback {
                         panel.selected_agent = agent;
@@ -967,20 +919,68 @@ impl AgentPanel {
                 });
 
                 if let Some(thread_info) = last_active_thread {
-                    let agent = thread_info.agent_type.clone();
+                    if let Some(session_id_str) = &thread_info.session_id {
+                        let agent = thread_info.agent_type.clone();
+                        let session_id: acp::SessionId = session_id_str.clone().into();
+                        panel.update(cx, |panel, cx| {
+                            panel.selected_agent = agent.clone();
+                            panel.load_agent_thread(
+                                agent,
+                                session_id,
+                                thread_info.work_dirs.as_ref().map(|dirs| PathList::deserialize(dirs)),
+                                thread_info.title.as_ref().map(|t| t.clone().into()),
+                                false,
+                                "agent_panel",
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                }
+
+                let draft_prompt = serialized_panel
+                    .as_ref()
+                    .and_then(|p| p.draft_thread_prompt.clone());
+
+                if draft_prompt.is_some() || was_draft_active {
                     panel.update(cx, |panel, cx| {
-                        panel.selected_agent = agent.clone();
-                        panel.load_agent_thread(
+                        let agent = if panel.project.read(cx).is_via_collab() {
+                            Agent::NativeAgent
+                        } else {
+                            panel.selected_agent.clone()
+                        };
+                        let initial_content = draft_prompt.map(|blocks| {
+                            AgentInitialContent::ContentBlock {
+                                blocks,
+                                auto_submit: false,
+                            }
+                        });
+                        let thread = panel.create_agent_thread(
                             agent,
-                            thread_info.session_id.clone().into(),
-                            thread_info.work_dirs.as_ref().map(|dirs| PathList::deserialize(dirs)),
-                            thread_info.title.as_ref().map(|t| t.clone().into()),
-                            false,
+                            None,
+                            None,
+                            None,
+                            initial_content,
+                            "agent_panel",
                             window,
                             cx,
                         );
+                        panel.draft_thread = Some(thread.conversation_view.clone());
+                        panel.observe_draft_editor(&thread.conversation_view, cx);
+
+                        if was_draft_active && last_active_thread.is_none() {
+                            panel.set_base_view(
+                                BaseView::AgentThread {
+                                    conversation_view: thread.conversation_view,
+                                },
+                                false,
+                                window,
+                                cx,
+                            );
+                        }
                     });
                 }
+
                 panel
             })?;
 
@@ -1007,7 +1007,7 @@ impl AgentPanel {
 
         let thread_store = ThreadStore::global(cx);
 
-        let active_view = ActiveView::Uninitialized;
+        let base_view = BaseView::Uninitialized;
 
         let weak_panel = cx.entity().downgrade();
 
@@ -1077,7 +1077,7 @@ impl AgentPanel {
                 let fs = fs.clone();
                 let weak_panel = weak_panel.clone();
                 move |_window, cx| {
-                    AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
+                    let _ = AgentSettings::set_layout(WindowLayout::Agent(None), fs.clone(), cx);
                     weak_panel
                         .update(cx, |panel, cx| {
                             panel.dismiss_agent_layout_onboarding(cx);
@@ -1089,7 +1089,7 @@ impl AgentPanel {
                 let fs = fs.clone();
                 let weak_panel = weak_panel.clone();
                 move |_window, cx| {
-                    AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
+                    let _ = AgentSettings::set_layout(WindowLayout::Editor(None), fs.clone(), cx);
                     weak_panel
                         .update(cx, |panel, cx| {
                             panel.dismiss_agent_layout_onboarding(cx);
@@ -1144,30 +1144,10 @@ impl AgentPanel {
                 }
                 _ => {}
             });
-        let git_store = project.read(cx).git_store().clone();
-        let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
-            let should_sync = matches!(
-                event,
-                GitStoreEvent::ActiveRepositoryChanged(_)
-                    | GitStoreEvent::RepositoryAdded
-                    | GitStoreEvent::RepositoryRemoved(_)
-                    | GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::HeadChanged
-                            | RepositoryEvent::BranchListChanged
-                            | RepositoryEvent::GitWorktreeListChanged,
-                        _,
-                    )
-            );
-
-            if should_sync {
-                this.sync_start_thread_in_with_git_state(cx);
-            }
-        });
-
         let mut panel = Self {
             workspace_id,
-            active_view,
+            base_view,
+            overlay_view: None,
             workspace,
             user_store,
             project: project.clone(),
@@ -1179,24 +1159,22 @@ impl AgentPanel {
             configuration_subscription: None,
             focus_handle: cx.focus_handle(),
             context_server_registry,
-            previous_view: None,
-            background_threads: HashMap::default(),
+            draft_thread: None,
+            retained_threads: HashMap::default(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             start_thread_in_menu_handle: PopoverMenuHandle::default(),
-            thread_branch_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu: None,
             _extension_subscription: extension_subscription,
             _project_subscription,
-            _git_store_subscription,
             zoomed: false,
             pending_serialization: None,
             new_user_onboarding: onboarding,
             agent_layout_onboarding,
             thread_store,
             selected_agent: Agent::default(),
-            start_thread_in: StartThreadIn::default(),
+            pending_thread_loads: 0,
             worktree_creation_status: None,
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
@@ -1206,7 +1184,8 @@ impl AgentPanel {
             agent_layout_onboarding_dismissed: AtomicBool::new(AgentLayoutOnboarding::dismissed(
                 cx,
             )),
-            _active_view_observation: None,
+            _base_view_observation: None,
+            _draft_editor_observation: None,
         };
 
         // Initial sync of agent servers from extensions
@@ -1225,6 +1204,20 @@ impl AgentPanel {
             .is_some_and(|panel| panel.read(cx).enabled(cx))
         {
             workspace.toggle_panel_focus::<Self>(window, cx);
+        }
+    }
+
+    pub fn focus(
+        workspace: &mut Workspace,
+        _: &FocusAgent,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        if workspace
+            .panel::<Self>(cx)
+            .is_some_and(|panel| panel.read(cx).enabled(cx))
+        {
+            workspace.focus_panel::<Self>(window, cx);
         }
     }
 
@@ -1264,13 +1257,13 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.external_thread(
-            Some(crate::Agent::NativeAgent),
-            Some(session_id),
+        self.load_agent_thread(
+            crate::Agent::NativeAgent,
+            session_id,
             work_dirs,
             title,
-            None,
             true,
+            "agent_panel",
             window,
             cx,
         );
@@ -1297,21 +1290,198 @@ impl AgentPanel {
             .unwrap_or(false)
     }
 
-    /// Reset the panel to the uninitialized state, clearing any active
-    /// thread without creating a new draft. Running threads are retained
-    /// in the background. The sidebar suppresses the uninitialized state
-    /// so no "Draft" entry appears.
-    pub fn clear_active_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_active_view(ActiveView::Uninitialized, false, window, cx);
+    /// Clear the active view, retaining any running thread in the background.
+    pub fn clear_base_view(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let old_view = std::mem::replace(&mut self.base_view, BaseView::Uninitialized);
+        self.retain_running_thread(old_view, cx);
+        self.clear_overlay_state();
+        self.activate_draft(false, window, cx);
+        self.serialize(cx);
+        cx.emit(AgentPanelEvent::ActiveViewChanged);
+        cx.notify();
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        self.reset_start_thread_in_to_default(cx);
-        let initial_content = self.take_active_draft_initial_content(cx);
-        self.external_thread(None, None, None, None, initial_content, true, window, cx);
+        self.activate_draft(true, window, cx);
     }
 
-    fn take_active_draft_initial_content(
+    pub fn activate_draft(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let draft = self.ensure_draft(window, cx);
+        if let BaseView::AgentThread { conversation_view } = &self.base_view {
+            if conversation_view.entity_id() == draft.entity_id() {
+                if focus {
+                    self.focus_handle(cx).focus(window, cx);
+                }
+                return;
+            }
+        }
+        self.set_base_view(
+            BaseView::AgentThread {
+                conversation_view: draft,
+            },
+            focus,
+            window,
+            cx,
+        );
+    }
+
+    fn ensure_draft(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ConversationView> {
+        if let Some(draft) = &self.draft_thread {
+            return draft.clone();
+        }
+        let agent = if self.project.read(cx).is_via_collab() {
+            Agent::NativeAgent
+        } else {
+            self.selected_agent.clone()
+        };
+        let thread =
+            self.create_agent_thread(agent, None, None, None, None, "agent_panel", window, cx);
+        self.draft_thread = Some(thread.conversation_view.clone());
+        self.observe_draft_editor(&thread.conversation_view, cx);
+        thread.conversation_view
+    }
+
+    fn observe_draft_editor(
+        &mut self,
+        conversation_view: &Entity<ConversationView>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(acp_thread) = conversation_view.read(cx).root_acp_thread(cx) {
+            self._draft_editor_observation = Some(cx.subscribe(
+                &acp_thread,
+                |this, _, e: &AcpThreadEvent, cx| {
+                    if let AcpThreadEvent::PromptUpdated = e {
+                        this.serialize(cx);
+                    }
+                },
+            ));
+        } else {
+            let cv = conversation_view.clone();
+            self._draft_editor_observation = Some(cx.observe(&cv, |this, cv, cx| {
+                if cv.read(cx).root_acp_thread(cx).is_some() {
+                    this.observe_draft_editor(&cv, cx);
+                }
+            }));
+        }
+    }
+
+    pub fn create_thread(
+        &mut self,
+        source: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ThreadId {
+        let agent = if self.project.read(cx).is_via_collab() {
+            Agent::NativeAgent
+        } else {
+            self.selected_agent.clone()
+        };
+        let thread = self.create_agent_thread(agent, None, None, None, None, source, window, cx);
+        let thread_id = thread.conversation_view.read(cx).thread_id;
+        self.retained_threads
+            .insert(thread_id, thread.conversation_view);
+        thread_id
+    }
+
+    pub fn activate_retained_thread(
+        &mut self,
+        id: ThreadId,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(conversation_view) = self.retained_threads.remove(&id) else {
+            return;
+        };
+        self.set_base_view(
+            BaseView::AgentThread { conversation_view },
+            focus,
+            window,
+            cx,
+        );
+    }
+
+    pub fn remove_thread(&mut self, id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
+        self.retained_threads.remove(&id);
+        ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+            store.delete(id, cx);
+        });
+
+        if self
+            .draft_thread
+            .as_ref()
+            .is_some_and(|d| d.read(cx).thread_id == id)
+        {
+            self.draft_thread = None;
+            self._draft_editor_observation = None;
+        }
+
+        if self.active_thread_id(cx) == Some(id) {
+            self.clear_overlay_state();
+            self.activate_draft(false, window, cx);
+            self.serialize(cx);
+            cx.emit(AgentPanelEvent::ActiveViewChanged);
+            cx.notify();
+        }
+    }
+
+    pub fn active_thread_id(&self, cx: &App) -> Option<ThreadId> {
+        match &self.base_view {
+            BaseView::AgentThread { conversation_view } => {
+                Some(conversation_view.read(cx).thread_id)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn editor_text(&self, id: ThreadId, cx: &App) -> Option<String> {
+        let cv = self
+            .retained_threads
+            .get(&id)
+            .or_else(|| match &self.base_view {
+                BaseView::AgentThread { conversation_view }
+                    if conversation_view.read(cx).thread_id == id =>
+                {
+                    Some(conversation_view)
+                }
+                _ => None,
+            })?;
+        let tv = cv.read(cx).active_thread()?;
+        let text = tv.read(cx).message_editor.read(cx).text(cx);
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+
+    pub fn clear_editor(&self, id: ThreadId, window: &mut Window, cx: &mut Context<Self>) {
+        let cv = self
+            .retained_threads
+            .get(&id)
+            .or_else(|| match &self.base_view {
+                BaseView::AgentThread { conversation_view }
+                    if conversation_view.read(cx).thread_id == id =>
+                {
+                    Some(conversation_view)
+                }
+                _ => None,
+            });
+        let Some(cv) = cv else { return };
+        let Some(tv) = cv.read(cx).active_thread() else {
+            return;
+        };
+        let editor = tv.read(cx).message_editor.clone();
+        editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+        });
+    }
+
+    fn take_active_initial_content(
         &mut self,
         cx: &mut Context<Self>,
     ) -> Option<AgentInitialContent> {
@@ -1376,6 +1546,7 @@ impl AgentPanel {
                         title: thread.title,
                     }),
                     true,
+                    "agent_panel",
                     window,
                     cx,
                 );
@@ -1393,14 +1564,10 @@ impl AgentPanel {
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
         focus: bool,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let workspace = self.workspace.clone();
-        let project = self.project.clone();
-        let fs = self.fs.clone();
-        let thread_store = self.thread_store.clone();
-
         let agent = agent_choice.unwrap_or_else(|| {
             if self.project.read(cx).is_via_collab() {
                 Agent::NativeAgent
@@ -1408,21 +1575,17 @@ impl AgentPanel {
                 self.selected_agent.clone()
             }
         });
-
-        let server = agent.server(fs, thread_store);
-        self.create_agent_thread(
-            server,
+        let thread = self.create_agent_thread(
+            agent,
             resume_session_id,
             work_dirs,
             title,
             initial_content,
-            workspace,
-            project,
-            agent,
-            focus,
+            source,
             window,
             cx,
         );
+        self.set_base_view(thread.into(), focus, window, cx);
     }
 
     fn deploy_rules_library(
@@ -1465,6 +1628,8 @@ impl AgentPanel {
                 .read(cx)
                 .entry(&self.selected_agent)
                 .map_or(false, |entry| entry.read(cx).history().is_some()),
+            #[cfg(any(test, feature = "test-support"))]
+            Agent::Stub => false,
         }
     }
 
@@ -1503,6 +1668,7 @@ impl AgentPanel {
                         thread.work_dirs.clone(),
                         thread.title.clone(),
                         true,
+                        "agent_panel",
                         window,
                         cx,
                     );
@@ -1514,32 +1680,23 @@ impl AgentPanel {
     }
 
     fn open_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.overlay_view, Some(OverlayView::History { .. })) {
+            self.clear_overlay(true, window, cx);
+            return;
+        }
+
         let Some(view) = self.history_for_selected_agent(window, cx) else {
             return;
         };
 
-        if let ActiveView::History { view: active_view } = &self.active_view {
-            if active_view == &view {
-                if let Some(previous_view) = self.previous_view.take() {
-                    self.set_active_view(previous_view, true, window, cx);
-                }
-                return;
-            }
-        }
-
-        self.set_active_view(ActiveView::History { view }, true, window, cx);
+        self.set_overlay(OverlayView::History { view }, true, window, cx);
         cx.notify();
     }
 
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
-        match self.active_view {
-            ActiveView::Configuration | ActiveView::History { .. } => {
-                if let Some(previous_view) = self.previous_view.take() {
-                    self.set_active_view(previous_view, true, window, cx);
-                }
-                cx.notify();
-            }
-            _ => {}
+        if self.overlay_view.is_some() {
+            self.clear_overlay(true, window, cx);
+            cx.notify();
         }
     }
 
@@ -1573,6 +1730,15 @@ impl AgentPanel {
         self.new_thread_menu_handle.toggle(window, cx);
     }
 
+    pub fn toggle_worktree_selector(
+        &mut self,
+        _: &ToggleWorktreeSelector,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.start_thread_in_menu_handle.toggle(window, cx);
+    }
+
     pub fn increase_font_size(
         &mut self,
         action: &IncreaseBufferFontSize,
@@ -1592,7 +1758,7 @@ impl AgentPanel {
     }
 
     fn handle_font_size_action(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
-        match self.active_view.which_font_size_used() {
+        match self.visible_font_size() {
             WhichFontSize::AgentFont => {
                 if persist {
                     update_settings_file(self.fs.clone(), cx, move |settings, cx| {
@@ -1652,11 +1818,15 @@ impl AgentPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.overlay_view, Some(OverlayView::Configuration)) {
+            self.clear_overlay(true, window, cx);
+            return;
+        }
+
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let context_server_store = self.project.read(cx).context_server_store();
         let fs = self.fs.clone();
 
-        self.set_active_view(ActiveView::Configuration, true, window, cx);
         self.configuration = Some(cx.new(|cx| {
             AgentConfiguration::new(
                 fs,
@@ -1677,7 +1847,11 @@ impl AgentPanel {
                 window,
                 Self::handle_agent_configuration_event,
             ));
+        }
 
+        self.set_overlay(OverlayView::Configuration, true, window, cx);
+
+        if let Some(configuration) = self.configuration.as_ref() {
             configuration.focus_handle(cx).focus(window, cx);
         }
     }
@@ -1863,6 +2037,7 @@ impl AgentPanel {
                                 model,
                                 enable_thinking,
                                 effort,
+                                speed: None,
                             })
                     });
                 }
@@ -1884,15 +2059,23 @@ impl AgentPanel {
         self.workspace_id
     }
 
-    pub fn background_threads(&self) -> &HashMap<acp::SessionId, Entity<ConversationView>> {
-        &self.background_threads
+    pub fn retained_threads(&self) -> &HashMap<ThreadId, Entity<ConversationView>> {
+        &self.retained_threads
     }
 
     pub fn active_conversation_view(&self) -> Option<&Entity<ConversationView>> {
-        match &self.active_view {
-            ActiveView::AgentThread { conversation_view } => Some(conversation_view),
+        match &self.base_view {
+            BaseView::AgentThread { conversation_view } => Some(conversation_view),
             _ => None,
         }
+    }
+
+    pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
+        self.active_conversation_view()
+            .into_iter()
+            .cloned()
+            .chain(self.retained_threads.values().cloned())
+            .collect()
     }
 
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
@@ -1901,10 +2084,8 @@ impl AgentPanel {
     }
 
     pub fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
-        match &self.active_view {
-            ActiveView::AgentThread {
-                conversation_view, ..
-            } => conversation_view
+        match &self.base_view {
+            BaseView::AgentThread { conversation_view } => conversation_view
                 .read(cx)
                 .active_thread()
                 .map(|r| r.read(cx).thread.clone()),
@@ -1912,21 +2093,22 @@ impl AgentPanel {
         }
     }
 
-    /// Returns the primary thread views for all retained connections: the
-    pub fn is_background_thread(&self, session_id: &acp::SessionId) -> bool {
-        self.background_threads.contains_key(session_id)
+    pub fn is_retained_thread(&self, id: &ThreadId) -> bool {
+        self.retained_threads.contains_key(id)
     }
 
-    pub fn cancel_thread(&self, session_id: &acp::SessionId, cx: &mut Context<Self>) -> bool {
+    pub fn cancel_thread(&self, thread_id: &ThreadId, cx: &mut Context<Self>) -> bool {
         let conversation_views = self
             .active_conversation_view()
             .into_iter()
-            .chain(self.background_threads.values());
+            .chain(self.retained_threads.values());
 
         for conversation_view in conversation_views {
-            if let Some(thread_view) = conversation_view.read(cx).thread_view(session_id) {
-                thread_view.update(cx, |view, cx| view.cancel_generation(cx));
-                return true;
+            if *thread_id == conversation_view.read(cx).thread_id {
+                if let Some(thread_view) = conversation_view.read(cx).root_thread_view(cx) {
+                    thread_view.update(cx, |view, cx| view.cancel_generation(cx));
+                    return true;
+                }
             }
         }
         false
@@ -1943,7 +2125,7 @@ impl AgentPanel {
             }
         }
 
-        for server_view in self.background_threads.values() {
+        for server_view in self.retained_threads.values() {
             if let Some(thread_view) = server_view.read(cx).root_thread(cx) {
                 views.push(thread_view);
             }
@@ -1954,6 +2136,7 @@ impl AgentPanel {
 
     fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
         let new_work_dirs = self.project.read(cx).default_path_list(cx);
+        let new_worktree_paths = self.project.read(cx).worktree_paths(cx);
 
         if let Some(conversation_view) = self.active_conversation_view() {
             conversation_view.update(cx, |conversation_view, cx| {
@@ -1961,38 +2144,53 @@ impl AgentPanel {
             });
         }
 
-        for conversation_view in self.background_threads.values() {
+        for conversation_view in self.retained_threads.values() {
             conversation_view.update(cx, |conversation_view, cx| {
                 conversation_view.set_work_dirs(new_work_dirs.clone(), cx);
             });
         }
+
+        // Update metadata store so threads' path lists stay in sync with
+        // the project's current worktrees. Without this, threads saved
+        // before a worktree was added would have stale paths and not
+        // appear under the correct sidebar group.
+        let mut thread_ids: Vec<ThreadId> = self.retained_threads.keys().copied().collect();
+        if let Some(active_id) = self.active_thread_id(cx) {
+            thread_ids.push(active_id);
+        }
+        if !thread_ids.is_empty() {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.update_worktree_paths(&thread_ids, new_worktree_paths, cx);
+            });
+        }
     }
 
-    fn retain_running_thread(&mut self, old_view: ActiveView, cx: &mut Context<Self>) {
-        let ActiveView::AgentThread { conversation_view } = old_view else {
+    fn retain_running_thread(&mut self, old_view: BaseView, cx: &mut Context<Self>) {
+        let BaseView::AgentThread { conversation_view } = old_view else {
             return;
         };
 
-        let Some(thread_view) = conversation_view.read(cx).root_thread(cx) else {
-            return;
-        };
-
-        if thread_view.read(cx).thread.read(cx).entries().is_empty() {
+        if self
+            .draft_thread
+            .as_ref()
+            .is_some_and(|d| d.entity_id() == conversation_view.entity_id())
+        {
             return;
         }
 
-        self.background_threads
-            .insert(thread_view.read(cx).id.clone(), conversation_view);
-        self.cleanup_background_threads(cx);
+        let thread_id = conversation_view.read(cx).thread_id;
+
+        if self.retained_threads.contains_key(&thread_id) {
+            return;
+        }
+
+        self.retained_threads.insert(thread_id, conversation_view);
+        self.cleanup_retained_threads(cx);
     }
 
-    /// We keep threads that are:
-    /// - Still running
-    /// - Do not support reloading the full session
-    /// - Have had the most recent events (up to 5 idle threads)
-    fn cleanup_background_threads(&mut self, cx: &App) {
+    fn cleanup_retained_threads(&mut self, cx: &App) {
         let mut potential_removals = self
-            .background_threads
+            .retained_threads
             .iter()
             .filter(|(_id, view)| {
                 let Some(thread_view) = view.read(cx).root_thread(cx) else {
@@ -2003,69 +2201,100 @@ impl AgentPanel {
             })
             .collect::<Vec<_>>();
 
-        const MAX_IDLE_BACKGROUND_THREADS: usize = 5;
+        let max_idle = MaxIdleRetainedThreads::global(cx);
 
         potential_removals.sort_unstable_by_key(|(_, view)| view.read(cx).updated_at(cx));
-        let n = potential_removals
-            .len()
-            .saturating_sub(MAX_IDLE_BACKGROUND_THREADS);
+        let n = potential_removals.len().saturating_sub(max_idle);
         let to_remove = potential_removals
             .into_iter()
-            .map(|(id, _)| id.clone())
+            .map(|(id, _)| *id)
             .take(n)
             .collect::<Vec<_>>();
         for id in to_remove {
-            self.background_threads.remove(&id);
+            self.retained_threads.remove(&id);
         }
     }
 
     pub(crate) fn active_native_agent_thread(&self, cx: &App) -> Option<Entity<agent::Thread>> {
-        match &self.active_view {
-            ActiveView::AgentThread {
-                conversation_view, ..
-            } => conversation_view.read(cx).as_native_thread(cx),
+        match &self.base_view {
+            BaseView::AgentThread { conversation_view } => {
+                conversation_view.read(cx).as_native_thread(cx)
+            }
             _ => None,
         }
     }
 
-    fn set_active_view(
+    fn set_base_view(
         &mut self,
-        new_view: ActiveView,
+        new_view: BaseView,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let was_in_agent_history = matches!(self.active_view, ActiveView::History { .. });
-        let current_is_uninitialized = matches!(self.active_view, ActiveView::Uninitialized);
-        let current_is_history = matches!(self.active_view, ActiveView::History { .. });
-        let new_is_history = matches!(new_view, ActiveView::History { .. });
+        self.clear_overlay_state();
 
-        let current_is_config = matches!(self.active_view, ActiveView::Configuration);
-        let new_is_config = matches!(new_view, ActiveView::Configuration);
+        let old_view = std::mem::replace(&mut self.base_view, new_view);
+        self.retain_running_thread(old_view, cx);
 
-        let current_is_overlay = current_is_history || current_is_config;
-        let new_is_overlay = new_is_history || new_is_config;
-
-        if current_is_uninitialized || (current_is_overlay && !new_is_overlay) {
-            self.active_view = new_view;
-        } else if !current_is_overlay && new_is_overlay {
-            self.previous_view = Some(std::mem::replace(&mut self.active_view, new_view));
-        } else {
-            let old_view = std::mem::replace(&mut self.active_view, new_view);
-            if !new_is_overlay {
-                if let Some(previous) = self.previous_view.take() {
-                    self.retain_running_thread(previous, cx);
-                }
+        if let BaseView::AgentThread { conversation_view } = &self.base_view {
+            let thread_agent = conversation_view.read(cx).agent_key().clone();
+            if self.selected_agent != thread_agent {
+                self.selected_agent = thread_agent;
+                self.serialize(cx);
             }
-            self.retain_running_thread(old_view, cx);
         }
 
-        // Subscribe to the active ThreadView's events (e.g. FirstSendRequested)
-        // so the panel can intercept the first send for worktree creation.
-        // Re-subscribe whenever the ConnectionView changes, since the inner
-        // ThreadView may have been replaced (e.g. navigating between threads).
-        self._active_view_observation = match &self.active_view {
-            ActiveView::AgentThread { conversation_view } => {
+        self.refresh_base_view_subscriptions(window, cx);
+
+        if focus {
+            self.focus_handle(cx).focus(window, cx);
+        }
+        cx.emit(AgentPanelEvent::ActiveViewChanged);
+    }
+
+    fn set_overlay(
+        &mut self,
+        overlay: OverlayView,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let was_in_history = matches!(self.overlay_view, Some(OverlayView::History { .. }));
+        self.overlay_view = Some(overlay);
+
+        if let Some(OverlayView::History { view }) = &self.overlay_view
+            && !was_in_history
+        {
+            view.update(cx, |view, cx| {
+                view.history()
+                    .update(cx, |history, cx| history.refresh_full_history(cx))
+            });
+        }
+
+        if focus {
+            self.focus_handle(cx).focus(window, cx);
+        }
+        cx.emit(AgentPanelEvent::ActiveViewChanged);
+    }
+
+    fn clear_overlay(&mut self, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_overlay_state();
+
+        if focus {
+            self.focus_handle(cx).focus(window, cx);
+        }
+        cx.emit(AgentPanelEvent::ActiveViewChanged);
+    }
+
+    fn clear_overlay_state(&mut self) {
+        self.overlay_view = None;
+        self.configuration_subscription = None;
+        self.configuration = None;
+    }
+
+    fn refresh_base_view_subscriptions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self._base_view_observation = match &self.base_view {
+            BaseView::AgentThread { conversation_view } => {
                 self._thread_view_subscription =
                     Self::subscribe_to_active_thread_view(conversation_view, window, cx);
                 let focus_handle = conversation_view.focus_handle(cx);
@@ -2086,26 +2315,46 @@ impl AgentPanel {
                     },
                 ))
             }
-            _ => {
+            BaseView::Uninitialized => {
                 self._thread_view_subscription = None;
                 self._active_thread_focus_subscription = None;
                 None
             }
         };
+        self.serialize(cx);
+    }
 
-        if let ActiveView::History { view } = &self.active_view {
-            if !was_in_agent_history {
-                view.update(cx, |view, cx| {
-                    view.history()
-                        .update(cx, |history, cx| history.refresh_full_history(cx))
-                });
+    fn visible_surface(&self) -> VisibleSurface<'_> {
+        if let Some(overlay_view) = &self.overlay_view {
+            return match overlay_view {
+                OverlayView::History { view } => VisibleSurface::History(view),
+                OverlayView::Configuration => {
+                    VisibleSurface::Configuration(self.configuration.as_ref())
+                }
+            };
+        }
+
+        match &self.base_view {
+            BaseView::Uninitialized => VisibleSurface::Uninitialized,
+            BaseView::AgentThread { conversation_view } => {
+                VisibleSurface::AgentThread(conversation_view)
             }
         }
+    }
 
-        if focus {
-            self.focus_handle(cx).focus(window, cx);
-        }
-        cx.emit(AgentPanelEvent::ActiveViewChanged);
+    fn is_overlay_open(&self) -> bool {
+        self.overlay_view.is_some()
+    }
+
+    fn is_history_or_configuration_visible(&self) -> bool {
+        self.is_overlay_open()
+    }
+
+    fn visible_font_size(&self) -> WhichFontSize {
+        self.overlay_view.as_ref().map_or_else(
+            || self.base_view.which_font_size_used(),
+            OverlayView::which_font_size_used,
+        )
     }
 
     fn populate_recently_updated_menu_section(
@@ -2152,6 +2401,7 @@ impl AgentPanel {
                                     entry.work_dirs.clone(),
                                     entry.title.clone(),
                                     true,
+                                    "agent_panel",
                                     window,
                                     cx,
                                 );
@@ -2174,206 +2424,24 @@ impl AgentPanel {
             cx.subscribe_in(
                 &tv,
                 window,
-                |this, view, event: &AcpThreadViewEvent, window, cx| match event {
-                    AcpThreadViewEvent::FirstSendRequested { content } => {
-                        this.handle_first_send_requested(view.clone(), content.clone(), window, cx);
-                    }
+                |this, _view, event: &AcpThreadViewEvent, _window, cx| match event {
                     AcpThreadViewEvent::MessageSentOrQueued => {
-                        let session_id = view.read(cx).thread.read(cx).session_id().clone();
-                        cx.emit(AgentPanelEvent::MessageSentOrQueued { session_id });
+                        let Some(thread_id) = this.active_thread_id(cx) else {
+                            return;
+                        };
+                        if this.draft_thread.as_ref().is_some_and(|d| {
+                            this.active_conversation_view()
+                                .is_some_and(|active| active.entity_id() == d.entity_id())
+                        }) {
+                            this.draft_thread = None;
+                            this._draft_editor_observation = None;
+                        }
+                        this.retained_threads.remove(&thread_id);
+                        cx.emit(AgentPanelEvent::MessageSentOrQueued { thread_id });
                     }
                 },
             )
         })
-    }
-
-    pub fn start_thread_in(&self) -> &StartThreadIn {
-        &self.start_thread_in
-    }
-
-    fn set_start_thread_in(
-        &mut self,
-        action: &StartThreadIn,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let new_target = match action {
-            StartThreadIn::LocalProject => StartThreadIn::LocalProject,
-            StartThreadIn::NewWorktree { .. } => {
-                if !self.project_has_git_repository(cx) {
-                    log::error!(
-                        "set_start_thread_in: cannot use worktree mode without a git repository"
-                    );
-                    return;
-                }
-                if self.project.read(cx).is_via_collab() {
-                    log::error!(
-                        "set_start_thread_in: cannot use worktree mode in a collab project"
-                    );
-                    return;
-                }
-                action.clone()
-            }
-            StartThreadIn::LinkedWorktree { .. } => {
-                if !self.project_has_git_repository(cx) {
-                    log::error!(
-                        "set_start_thread_in: cannot use LinkedWorktree without a git repository"
-                    );
-                    return;
-                }
-                if self.project.read(cx).is_via_collab() {
-                    log::error!(
-                        "set_start_thread_in: cannot use LinkedWorktree in a collab project"
-                    );
-                    return;
-                }
-                action.clone()
-            }
-        };
-        self.start_thread_in = new_target;
-        if let Some(thread) = self.active_thread_view(cx) {
-            thread.update(cx, |thread, cx| thread.focus_handle(cx).focus(window, cx));
-        }
-        self.serialize(cx);
-        cx.notify();
-    }
-
-    fn cycle_start_thread_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let next = match &self.start_thread_in {
-            StartThreadIn::LocalProject => StartThreadIn::NewWorktree {
-                worktree_name: None,
-                branch_target: NewWorktreeBranchTarget::default(),
-            },
-            StartThreadIn::NewWorktree { .. } | StartThreadIn::LinkedWorktree { .. } => {
-                StartThreadIn::LocalProject
-            }
-        };
-        self.set_start_thread_in(&next, window, cx);
-    }
-
-    fn reset_start_thread_in_to_default(&mut self, cx: &mut Context<Self>) {
-        use settings::{NewThreadLocation, Settings};
-        let default = AgentSettings::get_global(cx).new_thread_location;
-        let start_thread_in = match default {
-            NewThreadLocation::LocalProject => StartThreadIn::LocalProject,
-            NewThreadLocation::NewWorktree => {
-                if self.project_has_git_repository(cx) {
-                    StartThreadIn::NewWorktree {
-                        worktree_name: None,
-                        branch_target: NewWorktreeBranchTarget::default(),
-                    }
-                } else {
-                    StartThreadIn::LocalProject
-                }
-            }
-        };
-        if self.start_thread_in != start_thread_in {
-            self.start_thread_in = start_thread_in;
-            self.serialize(cx);
-            cx.notify();
-        }
-    }
-
-    fn sync_start_thread_in_with_git_state(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.start_thread_in, StartThreadIn::LocalProject) {
-            return;
-        }
-
-        let visible_worktree_paths: Vec<_> = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-            .collect();
-        let repositories = self.project.read(cx).repositories(cx);
-        let linked_worktrees = if repositories.len() > 1 {
-            Vec::new()
-        } else {
-            repositories
-                .values()
-                .flat_map(|repo| repo.read(cx).linked_worktrees().iter().cloned())
-                .filter(|worktree| !visible_worktree_paths.contains(&worktree.path))
-                .collect::<Vec<_>>()
-        };
-
-        let updated_start_thread_in = match &self.start_thread_in {
-            StartThreadIn::NewWorktree {
-                worktree_name: Some(worktree_name),
-                branch_target,
-            } => {
-                let normalized_worktree_name = worktree_name.replace(' ', "-");
-                linked_worktrees
-                    .iter()
-                    .find(|worktree| {
-                        worktree.display_name() == normalized_worktree_name
-                            && self.linked_worktree_matches_branch_target(
-                                worktree,
-                                branch_target,
-                                cx,
-                            )
-                    })
-                    .map(|worktree| StartThreadIn::LinkedWorktree {
-                        path: worktree.path.clone(),
-                        display_name: worktree.display_name().to_string(),
-                    })
-            }
-            StartThreadIn::LinkedWorktree { path, .. } => linked_worktrees
-                .iter()
-                .find(|worktree| worktree.path == *path)
-                .map(|worktree| StartThreadIn::LinkedWorktree {
-                    path: worktree.path.clone(),
-                    display_name: worktree.display_name().to_string(),
-                })
-                .or(Some(StartThreadIn::LocalProject)),
-            _ => None,
-        };
-
-        if let Some(updated_start_thread_in) = updated_start_thread_in {
-            if self.start_thread_in != updated_start_thread_in {
-                self.start_thread_in = updated_start_thread_in;
-                self.serialize(cx);
-            }
-            cx.notify();
-        }
-    }
-
-    fn linked_worktree_matches_branch_target(
-        &self,
-        worktree: &git::repository::Worktree,
-        branch_target: &NewWorktreeBranchTarget,
-        cx: &App,
-    ) -> bool {
-        let active_repository = self.project.read(cx).active_repository(cx);
-        let current_branch_name = active_repository.as_ref().and_then(|repo| {
-            repo.read(cx)
-                .branch
-                .as_ref()
-                .map(|branch| branch.name().to_string())
-        });
-        let existing_branch_names = active_repository
-            .as_ref()
-            .map(|repo| {
-                repo.read(cx)
-                    .branch_list
-                    .iter()
-                    .map(|branch| branch.name().to_string())
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
-
-        match branch_target {
-            NewWorktreeBranchTarget::CurrentBranch => {
-                current_branch_name.as_deref() == worktree.branch_name()
-            }
-            NewWorktreeBranchTarget::ExistingBranch { name } => {
-                existing_branch_names.contains(name)
-                    && worktree.branch_name() == Some(name.as_str())
-            }
-            NewWorktreeBranchTarget::CreateBranch { name, .. } => {
-                !existing_branch_names.contains(name)
-                    && worktree.branch_name() == Some(name.as_str())
-            }
-        }
     }
 
     pub(crate) fn selected_agent(&self) -> Option<Agent> {
@@ -2418,13 +2486,13 @@ impl AgentPanel {
             None,
             external_source_prompt.map(AgentInitialContent::from),
             true,
+            "agent_panel",
             window,
             cx,
         );
     }
 
     pub fn new_agent_thread(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
-        self.reset_start_thread_in_to_default(cx);
         self.new_agent_thread_inner(agent, true, window, cx);
     }
 
@@ -2435,7 +2503,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let initial_content = self.take_active_draft_initial_content(cx);
+        let initial_content = self.take_active_initial_content(cx);
         self.external_thread(
             Some(agent),
             None,
@@ -2443,9 +2511,14 @@ impl AgentPanel {
             None,
             initial_content,
             focus,
+            "agent_panel",
             window,
             cx,
         );
+    }
+
+    pub fn begin_loading_thread(&mut self) {
+        self.pending_thread_loads += 1;
     }
 
     pub fn load_agent_thread(
@@ -2455,44 +2528,52 @@ impl AgentPanel {
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
         focus: bool,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.pending_thread_loads = self.pending_thread_loads.saturating_sub(1);
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
-            store.update(cx, |store, cx| store.unarchive(&session_id, cx));
-        }
-
-        if let Some(conversation_view) = self.background_threads.remove(&session_id) {
-            self.set_active_view(
-                ActiveView::AgentThread { conversation_view },
-                focus,
-                window,
-                cx,
-            );
-            return;
-        }
-
-        if let ActiveView::AgentThread { conversation_view } = &self.active_view {
-            if conversation_view
+            let thread_id = store
                 .read(cx)
+                .entry_by_session(&session_id)
+                .map(|t| t.thread_id);
+            if let Some(thread_id) = thread_id {
+                store.update(cx, |store, cx| {
+                    store.unarchive(thread_id, cx);
+                });
+            }
+        }
+
+        let has_session = |cv: &Entity<ConversationView>| -> bool {
+            cv.read(cx)
                 .active_thread()
-                .map(|t| t.read(cx).id.clone())
-                == Some(session_id.clone())
-            {
+                .is_some_and(|tv| tv.read(cx).thread.read(cx).session_id() == &session_id)
+        };
+
+        // Check if the active view already has this session.
+        if let BaseView::AgentThread { conversation_view } = &self.base_view {
+            if has_session(conversation_view) {
+                self.clear_overlay_state();
                 cx.emit(AgentPanelEvent::ActiveViewChanged);
                 return;
             }
         }
 
-        if let Some(ActiveView::AgentThread { conversation_view }) = &self.previous_view {
-            if conversation_view
-                .read(cx)
-                .active_thread()
-                .map(|t| t.read(cx).id.clone())
-                == Some(session_id.clone())
-            {
-                let view = self.previous_view.take().unwrap();
-                self.set_active_view(view, focus, window, cx);
+        // Check if a retained thread has this session — promote it.
+        let retained_key = self
+            .retained_threads
+            .iter()
+            .find(|(_, cv)| has_session(cv))
+            .map(|(id, _)| *id);
+        if let Some(thread_id) = retained_key {
+            if let Some(conversation_view) = self.retained_threads.remove(&thread_id) {
+                self.set_base_view(
+                    BaseView::AgentThread { conversation_view },
+                    focus,
+                    window,
+                    cx,
+                );
                 return;
             }
         }
@@ -2504,6 +2585,7 @@ impl AgentPanel {
             title,
             None,
             focus,
+            source,
             window,
             cx,
         );
@@ -2511,18 +2593,51 @@ impl AgentPanel {
 
     pub(crate) fn create_agent_thread(
         &mut self,
-        server: Rc<dyn AgentServer>,
+        agent: Agent,
         resume_session_id: Option<acp::SessionId>,
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
-        workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
-        agent: Agent,
-        focus: bool,
+        source: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> AgentThread {
+        self.create_agent_thread_with_server(
+            agent,
+            None,
+            resume_session_id,
+            work_dirs,
+            title,
+            initial_content,
+            source,
+            window,
+            cx,
+        )
+    }
+
+    fn create_agent_thread_with_server(
+        &mut self,
+        agent: Agent,
+        server_override: Option<Rc<dyn AgentServer>>,
+        resume_session_id: Option<acp::SessionId>,
+        work_dirs: Option<PathList>,
+        title: Option<SharedString>,
+        initial_content: Option<AgentInitialContent>,
+        source: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AgentThread {
+        let existing_metadata = resume_session_id.as_ref().and_then(|sid| {
+            ThreadMetadataStore::try_global(cx)
+                .and_then(|store| store.read(cx).entry_by_session(sid).cloned())
+        });
+        let thread_id = existing_metadata
+            .as_ref()
+            .map(|m| m.thread_id)
+            .unwrap_or_else(ThreadId::new);
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+
         if self.selected_agent != agent {
             self.selected_agent = agent.clone();
             self.serialize(cx);
@@ -2537,6 +2652,8 @@ impl AgentPanel {
         })
         .detach();
 
+        let server = server_override
+            .unwrap_or_else(|| agent.server(self.fs.clone(), self.thread_store.clone()));
         let thread_store = server
             .clone()
             .downcast::<agent::NativeAgentServer>()
@@ -2551,6 +2668,7 @@ impl AgentPanel {
                 connection_store,
                 agent,
                 resume_session_id,
+                Some(thread_id),
                 work_dirs,
                 title,
                 initial_content,
@@ -2558,6 +2676,7 @@ impl AgentPanel {
                 project,
                 thread_store,
                 self.prompt_store.clone(),
+                source,
                 window,
                 cx,
             )
@@ -2571,18 +2690,13 @@ impl AgentPanel {
                 cx.emit(AgentPanelEvent::ActiveViewChanged);
                 this.serialize(cx);
             } else {
-                cx.emit(AgentPanelEvent::BackgroundThreadChanged);
+                cx.emit(AgentPanelEvent::RetainedThreadChanged);
             }
             cx.notify();
         })
         .detach();
 
-        self.set_active_view(
-            ActiveView::AgentThread { conversation_view },
-            focus,
-            window,
-            cx,
-        );
+        AgentThread { conversation_view }
     }
 
     fn active_thread_has_messages(&self, cx: &App) -> bool {
@@ -2590,51 +2704,11 @@ impl AgentPanel {
             .is_some_and(|thread| !thread.read(cx).entries().is_empty())
     }
 
-    pub fn active_thread_is_draft(&self, cx: &App) -> bool {
-        self.active_conversation_view().is_some() && !self.active_thread_has_messages(cx)
-    }
-
-    fn handle_first_send_requested(
-        &mut self,
-        thread_view: Entity<ThreadView>,
-        content: Vec<acp::ContentBlock>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match &self.start_thread_in {
-            StartThreadIn::NewWorktree {
-                worktree_name,
-                branch_target,
-            } => {
-                self.handle_worktree_requested(
-                    content,
-                    WorktreeCreationArgs::New {
-                        worktree_name: worktree_name.clone(),
-                        branch_target: branch_target.clone(),
-                    },
-                    window,
-                    cx,
-                );
-            }
-            StartThreadIn::LinkedWorktree { path, .. } => {
-                self.handle_worktree_requested(
-                    content,
-                    WorktreeCreationArgs::Linked {
-                        worktree_path: path.clone(),
-                    },
-                    window,
-                    cx,
-                );
-            }
-            StartThreadIn::LocalProject => {
-                cx.defer_in(window, move |_this, window, cx| {
-                    thread_view.update(cx, |thread_view, cx| {
-                        let editor = thread_view.message_editor.clone();
-                        thread_view.send_impl(editor, window, cx);
-                    });
-                });
-            }
-        }
+    pub fn active_thread_is_draft(&self, _cx: &App) -> bool {
+        self.draft_thread.as_ref().is_some_and(|draft| {
+            self.active_conversation_view()
+                .is_some_and(|active| active.entity_id() == draft.entity_id())
+        })
     }
 
     // TODO: The mapping from workspace root paths to git repositories needs a
@@ -2667,9 +2741,7 @@ impl AgentPanel {
                 .iter()
                 .filter_map(|(id, repo)| {
                     let work_dir = repo.read(cx).work_directory_abs_path.clone();
-                    if wt_path.starts_with(work_dir.as_ref())
-                        || work_dir.starts_with(wt_path.as_ref())
-                    {
+                    if wt_path.starts_with(work_dir.as_ref()) {
                         Some((*id, repo.clone(), work_dir.as_ref().components().count()))
                     } else {
                         None
@@ -2697,29 +2769,62 @@ impl AgentPanel {
 
     fn resolve_worktree_branch_target(
         branch_target: &NewWorktreeBranchTarget,
-        existing_branches: &HashSet<String>,
-        occupied_branches: &HashSet<String>,
-    ) -> Result<(String, bool, Option<String>)> {
-        let generate_branch_name = || -> Result<String> {
-            let refs: Vec<&str> = existing_branches.iter().map(|s| s.as_str()).collect();
-            let mut rng = rand::rng();
-            crate::branch_names::generate_branch_name(&refs, &mut rng)
-                .ok_or_else(|| anyhow!("Failed to generate a unique branch name"))
-        };
-
+    ) -> (Option<String>, Option<String>) {
         match branch_target {
-            NewWorktreeBranchTarget::CreateBranch { name, from_ref } => {
-                Ok((name.clone(), false, from_ref.clone()))
-            }
+            NewWorktreeBranchTarget::CurrentBranch => (None, None),
             NewWorktreeBranchTarget::ExistingBranch { name } => {
-                if occupied_branches.contains(name) {
-                    Ok((generate_branch_name()?, false, Some(name.clone())))
-                } else {
-                    Ok((name.clone(), true, None))
-                }
+                (Some(name.clone()), Some(name.clone()))
             }
-            NewWorktreeBranchTarget::CurrentBranch => Ok((generate_branch_name()?, false, None)),
+            NewWorktreeBranchTarget::CreateBranch { name, from_ref } => {
+                (Some(name.clone()), from_ref.clone())
+            }
         }
+    }
+
+    fn maybe_propagate_worktree_trust(
+        this: &WeakEntity<Self>,
+        new_workspace: &Entity<workspace::Workspace>,
+        paths: &[PathBuf],
+        cx: &mut AsyncWindowContext,
+    ) {
+        cx.update(|_, cx| {
+            if ProjectSettings::get_global(cx).session.trust_all_worktrees {
+                return;
+            }
+            let Some(trusted_store) = TrustedWorktrees::try_get_global(cx) else {
+                return;
+            };
+
+            let source_is_trusted = this
+                .upgrade()
+                .map(|panel| {
+                    let source_worktree_store = panel.read(cx).project.read(cx).worktree_store();
+                    !trusted_store
+                        .read(cx)
+                        .has_restricted_worktrees(&source_worktree_store, cx)
+                })
+                .unwrap_or(false);
+
+            if !source_is_trusted {
+                return;
+            }
+
+            let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store();
+            let paths_to_trust: HashSet<_> = paths
+                .iter()
+                .filter_map(|path| {
+                    let (worktree, _) = worktree_store.read(cx).find_worktree(path, cx)?;
+                    Some(PathTrust::Worktree(worktree.read(cx).id()))
+                })
+                .collect();
+
+            if !paths_to_trust.is_empty() {
+                trusted_store.update(cx, |store, cx| {
+                    store.trust(&worktree_store, paths_to_trust, cx);
+                });
+            }
+        })
+        .ok();
     }
 
     /// Kicks off an async git-worktree creation for each repository. Returns:
@@ -2731,10 +2836,11 @@ impl AgentPanel {
     fn start_worktree_creations(
         git_repos: &[Entity<project::git_store::Repository>],
         worktree_name: Option<String>,
-        branch_name: &str,
-        use_existing_branch: bool,
-        start_point: Option<String>,
+        existing_worktree_names: &[String],
+        existing_worktree_paths: &HashSet<PathBuf>,
+        base_ref: Option<String>,
         worktree_directory_setting: &str,
+        rng: &mut impl rand::Rng,
         cx: &mut Context<Self>,
     ) -> Result<(
         Vec<(
@@ -2747,25 +2853,22 @@ impl AgentPanel {
         let mut creation_infos = Vec::new();
         let mut path_remapping = Vec::new();
 
-        let worktree_name = worktree_name.unwrap_or_else(|| branch_name.to_string());
+        let worktree_name = worktree_name.unwrap_or_else(|| {
+            let existing_refs: Vec<&str> =
+                existing_worktree_names.iter().map(|s| s.as_str()).collect();
+            crate::worktree_names::generate_worktree_name(&existing_refs, rng)
+                .unwrap_or_else(|| "worktree".to_string())
+        });
 
         for repo in git_repos {
             let (work_dir, new_path, receiver) = repo.update(cx, |repo, _cx| {
                 let new_path =
                     repo.path_for_new_linked_worktree(&worktree_name, worktree_directory_setting)?;
-                let target = if use_existing_branch {
-                    debug_assert!(
-                        git_repos.len() == 1,
-                        "use_existing_branch should only be true for a single repo"
-                    );
-                    git::repository::CreateWorktreeTarget::ExistingBranch {
-                        branch_name: branch_name.to_string(),
-                    }
-                } else {
-                    git::repository::CreateWorktreeTarget::NewBranch {
-                        branch_name: branch_name.to_string(),
-                        base_sha: start_point.clone(),
-                    }
+                if existing_worktree_paths.contains(&new_path) {
+                    anyhow::bail!("A worktree already exists at {}", new_path.display());
+                }
+                let target = git::repository::CreateWorktreeTarget::Detached {
+                    base_sha: base_ref.clone(),
                 };
                 let receiver = repo.create_worktree(target, new_path.clone());
                 let work_dir = repo.work_directory_abs_path.clone();
@@ -2787,6 +2890,7 @@ impl AgentPanel {
             PathBuf,
             futures::channel::oneshot::Receiver<Result<()>>,
         )>,
+        fs: Arc<dyn Fs>,
         cx: &mut AsyncWindowContext,
     ) -> Result<Vec<PathBuf>> {
         let mut created_paths: Vec<PathBuf> = Vec::new();
@@ -2795,10 +2899,10 @@ impl AgentPanel {
         let mut first_error: Option<anyhow::Error> = None;
 
         for (repo, new_path, receiver) in creation_infos {
+            repos_and_paths.push((repo.clone(), new_path.clone()));
             match receiver.await {
                 Ok(Ok(())) => {
-                    created_paths.push(new_path.clone());
-                    repos_and_paths.push((repo, new_path));
+                    created_paths.push(new_path);
                 }
                 Ok(Err(err)) => {
                     if first_error.is_none() {
@@ -2817,34 +2921,67 @@ impl AgentPanel {
             return Ok(created_paths);
         };
 
-        // Rollback all successfully created worktrees
-        let mut rollback_receivers = Vec::new();
+        // Rollback all attempted worktrees (both successful and failed,
+        // since a failed creation may have left an orphan directory).
+        let mut rollback_futures = Vec::new();
         for (rollback_repo, rollback_path) in &repos_and_paths {
-            if let Ok(receiver) = cx.update(|_, cx| {
-                rollback_repo.update(cx, |repo, _cx| {
-                    repo.remove_worktree(rollback_path.clone(), true)
+            let receiver = cx
+                .update(|_, cx| {
+                    rollback_repo.update(cx, |repo, _cx| {
+                        repo.remove_worktree(rollback_path.clone(), true)
+                    })
                 })
-            }) {
-                rollback_receivers.push((rollback_path.clone(), receiver));
-            }
+                .ok();
+
+            rollback_futures.push((rollback_path.clone(), receiver));
         }
+
         let mut rollback_failures: Vec<String> = Vec::new();
-        for (path, receiver) in rollback_receivers {
-            match receiver.await {
-                Ok(Ok(())) => {}
-                Ok(Err(rollback_err)) => {
-                    log::error!(
-                        "failed to rollback worktree at {}: {rollback_err}",
-                        path.display()
-                    );
-                    rollback_failures.push(format!("{}: {rollback_err}", path.display()));
+        for (path, receiver_opt) in rollback_futures {
+            let mut git_remove_failed = false;
+
+            if let Some(receiver) = receiver_opt {
+                match receiver.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(rollback_err)) => {
+                        log::error!(
+                            "git worktree remove failed for {}: {rollback_err}",
+                            path.display()
+                        );
+                        git_remove_failed = true;
+                    }
+                    Err(canceled) => {
+                        log::error!(
+                            "git worktree remove failed for {}: {canceled}",
+                            path.display()
+                        );
+                        git_remove_failed = true;
+                    }
                 }
-                Err(rollback_err) => {
-                    log::error!(
-                        "failed to rollback worktree at {}: {rollback_err}",
-                        path.display()
-                    );
-                    rollback_failures.push(format!("{}: {rollback_err}", path.display()));
+            } else {
+                log::error!(
+                    "failed to dispatch git worktree remove for {}",
+                    path.display()
+                );
+                git_remove_failed = true;
+            }
+
+            // `git worktree remove` normally removes this directory, but since
+            // `git worktree remove` failed (or wasn't dispatched), manually rm the directory.
+            if git_remove_failed {
+                if let Err(fs_err) = fs
+                    .remove_dir(
+                        &path,
+                        fs::RemoveOptions {
+                            recursive: true,
+                            ignore_if_not_exists: true,
+                        },
+                    )
+                    .await
+                {
+                    let msg = format!("{}: failed to remove directory: {fs_err}", path.display());
+                    log::error!("{}", msg);
+                    rollback_failures.push(msg);
                 }
             }
         }
@@ -2856,14 +2993,218 @@ impl AgentPanel {
         Err(anyhow!(error_message))
     }
 
+    /// Attempts to check out a branch in a newly created worktree.
+    /// First tries checking out an existing branch, then tries creating a new
+    /// branch. If both fail, the worktree stays in detached HEAD state.
+    async fn try_checkout_branch_in_worktree(
+        repo: &Entity<project::git_store::Repository>,
+        branch_name: &str,
+        worktree_path: &Path,
+        cx: &mut AsyncWindowContext,
+    ) {
+        // First, try checking out the branch (it may already exist).
+        let Ok(receiver) = cx.update(|_, cx| {
+            repo.update(cx, |repo, _cx| {
+                repo.checkout_branch_in_worktree(
+                    branch_name.to_string(),
+                    worktree_path.to_path_buf(),
+                    false,
+                )
+            })
+        }) else {
+            log::warn!(
+                "Failed to check out branch {branch_name} for worktree at {}. \
+                 Staying in detached HEAD state.",
+                worktree_path.display(),
+            );
+
+            return;
+        };
+
+        let Ok(result) = receiver.await else {
+            log::warn!(
+                "Branch checkout was canceled for worktree at {}. \
+                 Staying in detached HEAD state.",
+                worktree_path.display()
+            );
+
+            return;
+        };
+
+        if let Err(err) = result {
+            log::info!(
+                "Failed to check out branch '{branch_name}' in worktree at {}, \
+                         will try creating it: {err}",
+                worktree_path.display()
+            );
+        } else {
+            log::info!(
+                "Checked out branch '{branch_name}' in worktree at {}",
+                worktree_path.display()
+            );
+
+            return;
+        }
+
+        // Checkout failed, so try creating the branch.
+        let create_result = cx.update(|_, cx| {
+            repo.update(cx, |repo, _cx| {
+                repo.checkout_branch_in_worktree(
+                    branch_name.to_string(),
+                    worktree_path.to_path_buf(),
+                    true,
+                )
+            })
+        });
+
+        match create_result {
+            Ok(receiver) => match receiver.await {
+                Ok(Ok(())) => {
+                    log::info!(
+                        "Created and checked out branch '{branch_name}' in worktree at {}",
+                        worktree_path.display()
+                    );
+                }
+                Ok(Err(err)) => {
+                    log::warn!(
+                        "Failed to create branch '{branch_name}' in worktree at {}: {err}. \
+                         Staying in detached HEAD state.",
+                        worktree_path.display()
+                    );
+                }
+                Err(_) => {
+                    log::warn!(
+                        "Branch creation was canceled for worktree at {}. \
+                         Staying in detached HEAD state.",
+                        worktree_path.display()
+                    );
+                }
+            },
+            Err(err) => {
+                log::warn!(
+                    "Failed to dispatch branch creation for worktree at {}: {err}. \
+                     Staying in detached HEAD state.",
+                    worktree_path.display(),
+                );
+            }
+        }
+    }
+
+    fn capture_workspace_state(
+        workspace: &Workspace,
+        window: &Window,
+        cx: &App,
+    ) -> PreviousWorkspaceState {
+        let dock_structure = workspace.capture_dock_state(window, cx);
+        let open_file_paths = workspace.open_item_abs_paths(cx);
+        let active_file_path = workspace
+            .active_item(cx)
+            .and_then(|item| item.project_path(cx))
+            .and_then(|pp| workspace.project().read(cx).absolute_path(&pp, cx));
+
+        PreviousWorkspaceState {
+            dock_structure,
+            open_file_paths,
+            active_file_path,
+        }
+    }
+
+    fn create_worktree(
+        &mut self,
+        action: &CreateWorktree,
+        previous_workspace_state: PreviousWorkspaceState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.project_has_git_repository(cx) {
+            log::error!("create_worktree: no git repository in the project");
+            return;
+        }
+        if self.project.read(cx).is_via_collab() {
+            log::error!("create_worktree: not supported in collab projects");
+            return;
+        }
+        if matches!(
+            self.worktree_creation_status,
+            Some((
+                _,
+                WorktreeCreationStatus::Creating(_) | WorktreeCreationStatus::Loading(_)
+            ))
+        ) {
+            return;
+        }
+
+        let content = self.take_active_initial_content(cx);
+        let content_blocks = match content {
+            Some(AgentInitialContent::ContentBlock { blocks, .. }) => blocks,
+            _ => Vec::new(),
+        };
+
+        self.handle_worktree_requested(
+            content_blocks,
+            WorktreeCreationArgs::New {
+                worktree_name: action.worktree_name.clone(),
+                branch_target: action.branch_target.clone(),
+            },
+            previous_workspace_state,
+            window,
+            cx,
+        );
+    }
+
+    fn switch_to_worktree(
+        &mut self,
+        action: &SwitchWorktree,
+        previous_workspace_state: PreviousWorkspaceState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.project_has_git_repository(cx) {
+            log::error!("switch_to_worktree: no git repository in the project");
+            return;
+        }
+        if self.project.read(cx).is_via_collab() {
+            log::error!("switch_to_worktree: not supported in collab projects");
+            return;
+        }
+        if matches!(
+            self.worktree_creation_status,
+            Some((
+                _,
+                WorktreeCreationStatus::Creating(_) | WorktreeCreationStatus::Loading(_)
+            ))
+        ) {
+            return;
+        }
+
+        let content = self.take_active_initial_content(cx);
+        let content_blocks = match content {
+            Some(AgentInitialContent::ContentBlock { blocks, .. }) => blocks,
+            _ => Vec::new(),
+        };
+
+        self.handle_worktree_requested(
+            content_blocks,
+            WorktreeCreationArgs::Linked {
+                worktree_path: action.path.clone(),
+                display_name: action.display_name.clone(),
+            },
+            previous_workspace_state,
+            window,
+            cx,
+        );
+    }
+
     fn set_worktree_creation_error(
         &mut self,
         message: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.worktree_creation_status = Some(WorktreeCreationStatus::Error(message));
-        if matches!(self.active_view, ActiveView::Uninitialized) {
+        if let Some((_, status)) = &mut self.worktree_creation_status {
+            *status = WorktreeCreationStatus::Error(message);
+        }
+        if matches!(self.base_view, BaseView::Uninitialized) {
             let selected_agent = self.selected_agent.clone();
             self.new_agent_thread(selected_agent, window, cx);
         }
@@ -2874,17 +3215,38 @@ impl AgentPanel {
         &mut self,
         content: Vec<acp::ContentBlock>,
         args: WorktreeCreationArgs,
+        previous_workspace_state: PreviousWorkspaceState,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if matches!(
             self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
+            Some((
+                _,
+                WorktreeCreationStatus::Creating(_) | WorktreeCreationStatus::Loading(_)
+            ))
         ) {
             return;
         }
 
-        self.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
+        let conversation_view_id = self
+            .active_conversation_view()
+            .map(|v| v.entity_id())
+            .unwrap_or_else(|| EntityId::from(0u64));
+        let display_name: SharedString = match &args {
+            WorktreeCreationArgs::New {
+                worktree_name: Some(name),
+                ..
+            } => name.clone().into(),
+            WorktreeCreationArgs::New { .. } => "worktree".into(),
+            WorktreeCreationArgs::Linked { display_name, .. } => display_name.clone().into(),
+        };
+        let status = if matches!(args, WorktreeCreationArgs::Linked { .. }) {
+            WorktreeCreationStatus::Loading(display_name)
+        } else {
+            WorktreeCreationStatus::Creating(display_name)
+        };
+        self.worktree_creation_status = Some((conversation_view_id, status));
         cx.notify();
 
         let (git_repos, non_git_paths) = self.classify_worktrees(cx);
@@ -2898,15 +3260,9 @@ impl AgentPanel {
             return;
         }
 
-        let (branch_receivers, worktree_receivers, worktree_directory_setting) =
+        let (worktree_receivers, worktree_directory_setting) =
             if matches!(args, WorktreeCreationArgs::New { .. }) {
                 (
-                    Some(
-                        git_repos
-                            .iter()
-                            .map(|repo| repo.update(cx, |repo, _cx| repo.branches()))
-                            .collect::<Vec<_>>(),
-                    ),
                     Some(
                         git_repos
                             .iter()
@@ -2921,18 +3277,26 @@ impl AgentPanel {
                     ),
                 )
             } else {
-                (None, None, None)
+                (None, None)
             };
 
-        let active_file_path = self.workspace.upgrade().and_then(|workspace| {
-            let workspace = workspace.read(cx);
-            let active_item = workspace.active_item(cx)?;
-            let project_path = active_item.project_path(cx)?;
-            workspace
-                .project()
+        let remote_connection_options = self.project.read(cx).remote_connection_options(cx);
+
+        if remote_connection_options.is_some() {
+            let is_disconnected = self
+                .project
                 .read(cx)
-                .absolute_path(&project_path, cx)
-        });
+                .remote_client()
+                .is_some_and(|client| client.read(cx).is_disconnected());
+            if is_disconnected {
+                self.set_worktree_creation_error(
+                    "Cannot create worktree: remote connection is not active".into(),
+                    window,
+                    cx,
+                );
+                return;
+            }
+        }
 
         let workspace = self.workspace.clone();
         let window_handle = window
@@ -2941,42 +3305,37 @@ impl AgentPanel {
 
         let selected_agent = self.selected_agent();
 
+        let git_repo_work_dirs: Vec<PathBuf> = git_repos
+            .iter()
+            .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
+            .collect();
+
         let task = cx.spawn_in(window, async move |this, cx| {
             let (all_paths, path_remapping, has_non_git) = match args {
                 WorktreeCreationArgs::New {
                     worktree_name,
                     branch_target,
                 } => {
-                    let branch_receivers = branch_receivers
-                        .expect("branch receivers must be prepared for new worktree creation");
                     let worktree_receivers = worktree_receivers
                         .expect("worktree receivers must be prepared for new worktree creation");
                     let worktree_directory_setting = worktree_directory_setting
                         .expect("worktree directory must be prepared for new worktree creation");
 
-                    let mut existing_branches = HashSet::default();
-                    for result in futures::future::join_all(branch_receivers).await {
-                        match result {
-                            Ok(Ok(branches)) => {
-                                for branch in branches {
-                                    existing_branches.insert(branch.name().to_string());
-                                }
-                            }
-                            Ok(Err(err)) => {
-                                Err::<(), _>(err).log_err();
-                            }
-                            Err(_) => {}
-                        }
-                    }
-
-                    let mut occupied_branches = HashSet::default();
+                    let mut existing_worktree_names = Vec::new();
+                    let mut existing_worktree_paths = HashSet::default();
                     for result in futures::future::join_all(worktree_receivers).await {
                         match result {
                             Ok(Ok(worktrees)) => {
                                 for worktree in worktrees {
-                                    if let Some(branch_name) = worktree.branch_name() {
-                                        occupied_branches.insert(branch_name.to_string());
+                                    if let Some(name) = worktree
+                                        .path
+                                        .parent()
+                                        .and_then(|p| p.file_name())
+                                        .and_then(|n| n.to_str())
+                                    {
+                                        existing_worktree_names.push(name.to_string());
                                     }
+                                    existing_worktree_paths.insert(worktree.path.clone());
                                 }
                             }
                             Ok(Err(err)) => {
@@ -2986,34 +3345,21 @@ impl AgentPanel {
                         }
                     }
 
-                    let (branch_name, use_existing_branch, start_point) =
-                        match Self::resolve_worktree_branch_target(
-                            &branch_target,
-                            &existing_branches,
-                            &occupied_branches,
-                        ) {
-                            Ok(target) => target,
-                            Err(err) => {
-                                this.update_in(cx, |this, window, cx| {
-                                    this.set_worktree_creation_error(
-                                        err.to_string().into(),
-                                        window,
-                                        cx,
-                                    );
-                                })?;
-                                return anyhow::Ok(());
-                            }
-                        };
+                    let mut rng = rand::rng();
+
+                    let (branch_to_checkout, base_ref) =
+                        Self::resolve_worktree_branch_target(&branch_target);
 
                     let (creation_infos, path_remapping) =
                         match this.update_in(cx, |_this, _window, cx| {
                             Self::start_worktree_creations(
                                 &git_repos,
                                 worktree_name,
-                                &branch_name,
-                                use_existing_branch,
-                                start_point,
+                                &existing_worktree_names,
+                                &existing_worktree_paths,
+                                base_ref,
                                 &worktree_directory_setting,
+                                &mut rng,
                                 cx,
                             )
                         }) {
@@ -3032,8 +3378,16 @@ impl AgentPanel {
                             }
                         };
 
+                    let repo_paths: Vec<(Entity<project::git_store::Repository>, PathBuf)> =
+                        creation_infos
+                            .iter()
+                            .map(|(repo, path, _)| (repo.clone(), path.clone()))
+                            .collect();
+
+                    let fs = cx.update(|_, cx| <dyn Fs>::global(cx))?;
+
                     let created_paths =
-                        match Self::await_and_rollback_on_failure(creation_infos, cx).await {
+                        match Self::await_and_rollback_on_failure(creation_infos, fs, cx).await {
                             Ok(paths) => paths,
                             Err(err) => {
                                 this.update_in(cx, |this, window, cx| {
@@ -3047,45 +3401,58 @@ impl AgentPanel {
                             }
                         };
 
+                    if let Some(ref branch_name) = branch_to_checkout {
+                        for (repo, worktree_path) in &repo_paths {
+                            Self::try_checkout_branch_in_worktree(
+                                repo,
+                                branch_name,
+                                worktree_path,
+                                cx,
+                            )
+                            .await;
+                        }
+                    }
+
                     let mut all_paths = created_paths;
                     let has_non_git = !non_git_paths.is_empty();
                     all_paths.extend(non_git_paths.iter().cloned());
                     (all_paths, path_remapping, has_non_git)
                 }
-                WorktreeCreationArgs::Linked { worktree_path } => {
+                WorktreeCreationArgs::Linked { worktree_path, .. } => {
+                    let path_remapping: Vec<(PathBuf, PathBuf)> = git_repo_work_dirs
+                        .iter()
+                        .map(|work_dir| (work_dir.clone(), worktree_path.clone()))
+                        .collect();
                     let mut all_paths = vec![worktree_path];
                     let has_non_git = !non_git_paths.is_empty();
                     all_paths.extend(non_git_paths.iter().cloned());
-                    (all_paths, Vec::new(), has_non_git)
+                    (all_paths, path_remapping, has_non_git)
                 }
             };
 
-            let app_state = match workspace.upgrade() {
-                Some(workspace) => cx.update(|_, cx| workspace.read(cx).app_state().clone())?,
-                None => {
-                    this.update_in(cx, |this, window, cx| {
-                        this.set_worktree_creation_error(
-                            "Workspace no longer available".into(),
-                            window,
-                            cx,
-                        );
-                    })?;
-                    return anyhow::Ok(());
-                }
-            };
+            if workspace.upgrade().is_none() {
+                this.update_in(cx, |this, window, cx| {
+                    this.set_worktree_creation_error(
+                        "Workspace no longer available".into(),
+                        window,
+                        cx,
+                    );
+                })?;
+                return anyhow::Ok(());
+            }
 
             let this_for_error = this.clone();
             if let Err(err) = Self::open_worktree_workspace_and_start_thread(
                 this,
                 all_paths,
-                app_state,
                 window_handle,
-                active_file_path,
+                previous_workspace_state,
                 path_remapping,
                 non_git_paths,
                 has_non_git,
                 content,
                 selected_agent,
+                remote_connection_options,
                 cx,
             )
             .await
@@ -3111,33 +3478,58 @@ impl AgentPanel {
     async fn open_worktree_workspace_and_start_thread(
         this: WeakEntity<Self>,
         all_paths: Vec<PathBuf>,
-        app_state: Arc<workspace::AppState>,
         window_handle: Option<gpui::WindowHandle<workspace::MultiWorkspace>>,
-        active_file_path: Option<PathBuf>,
+        previous_workspace_state: PreviousWorkspaceState,
         path_remapping: Vec<(PathBuf, PathBuf)>,
         non_git_paths: Vec<PathBuf>,
         has_non_git: bool,
         content: Vec<acp::ContentBlock>,
         selected_agent: Option<Agent>,
+        remote_connection_options: Option<RemoteConnectionOptions>,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let OpenResult {
-            window: new_window_handle,
-            workspace: new_workspace,
-            ..
-        } = cx
-            .update(|_window, cx| {
-                Workspace::new_local(
-                    all_paths,
-                    app_state,
-                    window_handle,
+        let window_handle = window_handle
+            .ok_or_else(|| anyhow!("No window handle available for workspace creation"))?;
+
+        let (workspace_task, modal_workspace) =
+            window_handle.update(cx, |multi_workspace, window, cx| {
+                let path_list = PathList::new(&all_paths);
+                let active_workspace = multi_workspace.workspace().clone();
+                let modal_workspace = active_workspace.clone();
+
+                let dock_structure = previous_workspace_state.dock_structure;
+                let init = Box::new(
+                    move |workspace: &mut Workspace,
+                          window: &mut Window,
+                          cx: &mut Context<Workspace>| {
+                        workspace.set_dock_structure(dock_structure, window, cx);
+                    },
+                );
+
+                let task = multi_workspace.find_or_create_workspace(
+                    path_list,
+                    remote_connection_options,
                     None,
-                    None,
+                    move |connection_options, window, cx| {
+                        remote_connection::connect_with_modal(
+                            &active_workspace,
+                            connection_options,
+                            window,
+                            cx,
+                        )
+                    },
+                    &[],
+                    Some(init),
                     OpenMode::Add,
+                    window,
                     cx,
-                )
-            })?
-            .await?;
+                );
+                (task, modal_workspace)
+            })?;
+
+        let result = workspace_task.await;
+        remote_connection::dismiss_connection_modal(&modal_workspace, cx);
+        let new_workspace = result?;
 
         let panels_task = new_workspace.update(cx, |workspace, _cx| workspace.take_panels_task());
 
@@ -3168,12 +3560,14 @@ impl AgentPanel {
             })
             .await;
 
+        Self::maybe_propagate_worktree_trust(&this, &new_workspace, &all_paths, cx);
+
         let initial_content = AgentInitialContent::ContentBlock {
             blocks: content,
-            auto_submit: true,
+            auto_submit: false,
         };
 
-        new_window_handle.update(cx, |_multi_workspace, window, cx| {
+        window_handle.update(cx, |_multi_workspace, window, cx| {
             new_workspace.update(cx, |workspace, cx| {
                 if has_non_git {
                     let toast_id = workspace::notifications::NotificationId::unique::<AgentPanel>();
@@ -3187,9 +3581,10 @@ impl AgentPanel {
                     );
                 }
 
-                // If we had an active buffer, remap its path and reopen it.
-                let had_active_file = active_file_path.is_some();
-                let remapped_active_path = active_file_path.and_then(|original_path| {
+                // Remap every previously-open file path into the new worktree.
+                // Paths that can't be remapped (e.g. files that don't exist on
+                // the target branch) are silently skipped — best-effort.
+                let remap_path = |original_path: PathBuf| -> Option<PathBuf> {
                     let best_match = path_remapping
                         .iter()
                         .filter_map(|(old_root, new_root)| {
@@ -3209,37 +3604,63 @@ impl AgentPanel {
                         }
                     }
                     None
-                });
+                };
 
-                if had_active_file && remapped_active_path.is_none() {
-                    log::warn!(
-                        "Active file could not be remapped to the new worktree; it will not be reopened"
-                    );
+                let remapped_active_path = previous_workspace_state
+                    .active_file_path
+                    .and_then(|p| remap_path(p));
+
+                // Collect all remapped paths, deduplicating and preserving order.
+                // The active file is placed last so it ends up as the focused tab.
+                let mut paths_to_open: Vec<PathBuf> = Vec::new();
+                let mut seen = HashSet::default();
+                for path in previous_workspace_state.open_file_paths {
+                    if let Some(remapped) = remap_path(path) {
+                        if remapped_active_path.as_ref() != Some(&remapped)
+                            && seen.insert(remapped.clone())
+                        {
+                            paths_to_open.push(remapped);
+                        }
+                    }
                 }
 
-                if let Some(path) = remapped_active_path {
+                if let Some(active) = &remapped_active_path {
+                    if seen.insert(active.clone()) {
+                        paths_to_open.push(active.clone());
+                    }
+                }
+
+                if !paths_to_open.is_empty() {
                     let open_task = workspace.open_paths(
-                        vec![path],
-                        workspace::OpenOptions::default(),
+                        paths_to_open,
+                        workspace::OpenOptions {
+                            focus: Some(false),
+                            ..Default::default()
+                        },
                         None,
                         window,
                         cx,
                     );
                     cx.spawn(async move |_, _| -> anyhow::Result<()> {
                         for item in open_task.await.into_iter().flatten() {
-                            item?;
+                            // Best-effort: files that don't exist on the target
+                            // branch will fail to open and that's fine.
+                            item.log_err();
                         }
                         Ok(())
                     })
                     .detach_and_log_err(cx);
                 }
+            });
+        })?;
+
+        window_handle.update(cx, |multi_workspace, window, cx| {
+            multi_workspace.activate(new_workspace.clone(), window, cx);
+
+            new_workspace.update(cx, |workspace, cx| {
+                workspace.run_create_worktree_tasks(window, cx);
 
                 workspace.focus_panel::<AgentPanel>(window, cx);
-
-                // If no active buffer was open, zoom the agent panel
-                // (equivalent to cmd-esc fullscreen behavior).
-                // This must happen after focus_panel, which activates
-                // and opens the panel in the dock.
 
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                     panel.update(cx, |panel, cx| {
@@ -3250,19 +3671,12 @@ impl AgentPanel {
                             None,
                             Some(initial_content),
                             true,
+                            "agent_panel",
                             window,
                             cx,
                         );
                     });
                 }
-            });
-        })?;
-
-        new_window_handle.update(cx, |multi_workspace, window, cx| {
-            multi_workspace.activate(new_workspace.clone(), window, cx);
-
-            new_workspace.update(cx, |workspace, cx| {
-                workspace.run_create_worktree_tasks(window, cx);
             })
         })?;
 
@@ -3277,7 +3691,6 @@ impl AgentPanel {
                 });
             }
 
-            this.start_thread_in = StartThreadIn::LocalProject;
             this.serialize(cx);
             cx.notify();
         })?;
@@ -3288,14 +3701,12 @@ impl AgentPanel {
 
 impl Focusable for AgentPanel {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match &self.active_view {
-            ActiveView::Uninitialized => self.focus_handle.clone(),
-            ActiveView::AgentThread {
-                conversation_view, ..
-            } => conversation_view.focus_handle(cx),
-            ActiveView::History { view } => view.read(cx).focus_handle(cx),
-            ActiveView::Configuration => {
-                if let Some(configuration) = self.configuration.as_ref() {
+        match self.visible_surface() {
+            VisibleSurface::Uninitialized => self.focus_handle.clone(),
+            VisibleSurface::AgentThread(conversation_view) => conversation_view.focus_handle(cx),
+            VisibleSurface::History(view) => view.read(cx).focus_handle(cx),
+            VisibleSurface::Configuration(configuration) => {
+                if let Some(configuration) = configuration {
                     configuration.focus_handle(cx)
                 } else {
                     self.focus_handle.clone()
@@ -3312,8 +3723,8 @@ fn agent_panel_dock_position(cx: &App) -> DockPosition {
 pub enum AgentPanelEvent {
     ActiveViewChanged,
     ThreadFocused,
-    BackgroundThreadChanged,
-    MessageSentOrQueued { session_id: acp::SessionId },
+    RetainedThreadChanged,
+    MessageSentOrQueued { thread_id: ThreadId },
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}
@@ -3337,6 +3748,11 @@ impl Panel for AgentPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
+        let side = match position {
+            DockPosition::Left => "left",
+            DockPosition::Right | DockPosition::Bottom => "right",
+        };
+        telemetry::event!("Agent Panel Side Changed", side = side);
         settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
             settings
                 .agent
@@ -3350,6 +3766,13 @@ impl Panel for AgentPanel {
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => settings.default_width,
             DockPosition::Bottom => settings.default_height,
+        }
+    }
+
+    fn min_size(&self, window: &Window, cx: &App) -> Option<Pixels> {
+        match self.position(window, cx) {
+            DockPosition::Left | DockPosition::Right => Some(MIN_PANEL_WIDTH),
+            DockPosition::Bottom => None,
         }
     }
 
@@ -3371,15 +3794,8 @@ impl Panel for AgentPanel {
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if active
-            && matches!(self.active_view, ActiveView::Uninitialized)
-            && !matches!(
-                self.worktree_creation_status,
-                Some(WorktreeCreationStatus::Creating)
-            )
-        {
-            let selected_agent = self.selected_agent.clone();
-            self.new_agent_thread_inner(selected_agent, false, window, cx);
+        if active {
+            self.ensure_thread_initialized(window, cx);
         }
     }
 
@@ -3422,9 +3838,20 @@ impl Panel for AgentPanel {
 }
 
 impl AgentPanel {
+    fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(self.base_view, BaseView::Uninitialized)
+            && !matches!(
+                self.worktree_creation_status,
+                Some((_, WorktreeCreationStatus::Creating(_)))
+            )
+        {
+            self.activate_draft(false, window, cx);
+        }
+    }
+
     fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
-        let content = match &self.active_view {
-            ActiveView::AgentThread { conversation_view } => {
+        let content = match self.visible_surface() {
+            VisibleSurface::AgentThread(conversation_view) => {
                 let server_view_ref = conversation_view.read(cx);
                 let is_generating_title = server_view_ref.as_native_thread(cx).is_some()
                     && server_view_ref.root_thread(cx).map_or(false, |tv| {
@@ -3476,9 +3903,11 @@ impl AgentPanel {
                         .into_any_element()
                 }
             }
-            ActiveView::History { .. } => Label::new("History").truncate().into_any_element(),
-            ActiveView::Configuration => Label::new("Settings").truncate().into_any_element(),
-            ActiveView::Uninitialized => Label::new("Agent").truncate().into_any_element(),
+            VisibleSurface::History(_) => Label::new("History").truncate().into_any_element(),
+            VisibleSurface::Configuration(_) => {
+                Label::new("Settings").truncate().into_any_element()
+            }
+            VisibleSurface::Uninitialized => Label::new("Agent").truncate().into_any_element(),
         };
 
         h_flex()
@@ -3509,18 +3938,18 @@ impl AgentPanel {
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        let conversation_view = match &self.active_view {
-            ActiveView::AgentThread { conversation_view } => Some(conversation_view.clone()),
+        let conversation_view = match &self.base_view {
+            BaseView::AgentThread { conversation_view } => Some(conversation_view.clone()),
             _ => None,
         };
-        let thread_with_messages = match &self.active_view {
-            ActiveView::AgentThread { conversation_view } => {
+        let thread_with_messages = match &self.base_view {
+            BaseView::AgentThread { conversation_view } => {
                 conversation_view.read(cx).has_user_submitted_prompt(cx)
             }
             _ => false,
         };
-        let has_auth_methods = match &self.active_view {
-            ActiveView::AgentThread { conversation_view } => {
+        let has_auth_methods = match &self.base_view {
+            BaseView::AgentThread { conversation_view } => {
                 conversation_view.read(cx).has_auth_methods()
             }
             _ => false,
@@ -3596,6 +4025,47 @@ impl AgentPanel {
             })
     }
 
+    fn render_recent_entries_menu(
+        &self,
+        icon: IconName,
+        corner: Corner,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx);
+
+        PopoverMenu::new("agent-nav-menu")
+            .trigger_with_tooltip(
+                IconButton::new("agent-nav-menu", icon).icon_size(IconSize::Small),
+                {
+                    move |_window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Recently Updated Threads",
+                            &ToggleNavigationMenu,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                },
+            )
+            .anchor(corner)
+            .with_handle(self.agent_navigation_menu_handle.clone())
+            .menu({
+                let menu = self.agent_navigation_menu.clone();
+                move |window, cx| {
+                    telemetry::event!("View Thread History Clicked");
+
+                    if let Some(menu) = menu.as_ref() {
+                        menu.update(cx, |_, cx| {
+                            cx.defer_in(window, |menu, window, cx| {
+                                menu.rebuild(window, cx);
+                            });
+                        })
+                    }
+                    menu.clone()
+                }
+            })
+    }
+
     fn render_toolbar_back_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
@@ -3615,105 +4085,107 @@ impl AgentPanel {
         !self.project.read(cx).repositories(cx).is_empty()
     }
 
+    fn is_active_view_creating_worktree(&self, _cx: &App) -> bool {
+        match &self.worktree_creation_status {
+            Some((view_id, WorktreeCreationStatus::Creating(_))) => {
+                self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_active_view_loading_worktree(&self, _cx: &App) -> bool {
+        match &self.worktree_creation_status {
+            Some((view_id, WorktreeCreationStatus::Loading(_))) => {
+                self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id)
+            }
+            _ => false,
+        }
+    }
+
+    fn current_worktree_label(&self, cx: &App) -> SharedString {
+        let project = self.project.read(cx);
+
+        if let Some(repo) = project.active_repository(cx) {
+            let repo = repo.read(cx);
+            let main_path = &repo.original_repo_abs_path;
+            let current_path = &repo.work_directory_abs_path;
+
+            return linked_worktree_short_name(main_path, current_path)
+                .unwrap_or_else(|| "main".into());
+        }
+
+        project
+            .visible_worktrees(cx)
+            .next()
+            .and_then(|wt| {
+                wt.read(cx)
+                    .abs_path()
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| SharedString::from(name.to_string()))
+            })
+            .unwrap_or_else(|| "Worktree".into())
+    }
+
     fn render_start_thread_in_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx);
+        let is_creating = self.is_active_view_creating_worktree(cx);
+        let is_loading = self.is_active_view_loading_worktree(cx);
+        let is_busy = is_creating || is_loading;
 
-        let is_creating = matches!(
-            self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
-        );
+        let label = match &self.worktree_creation_status {
+            Some((view_id, WorktreeCreationStatus::Creating(name)))
+                if self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id) =>
+            {
+                SharedString::from(format!("Creating {name}…"))
+            }
+            Some((view_id, WorktreeCreationStatus::Loading(name)))
+                if self.active_conversation_view().map(|v| v.entity_id()) == Some(*view_id) =>
+            {
+                SharedString::from(format!("Loading {name}…"))
+            }
+            _ => self.current_worktree_label(cx),
+        };
 
-        let trigger_parts = self
-            .start_thread_in
-            .trigger_label(self.project.read(cx), cx);
-
-        let icon = if self.start_thread_in_menu_handle.is_deployed() {
+        let chevron_icon = if self.start_thread_in_menu_handle.is_deployed() {
             IconName::ChevronUp
         } else {
             IconName::ChevronDown
         };
 
-        let trigger_button = ButtonLike::new("thread-target-trigger")
-            .disabled(is_creating)
-            .when_some(trigger_parts.prefix, |this, prefix| {
-                this.child(Label::new(prefix).color(Color::Muted))
-            })
-            .child(Label::new(trigger_parts.label))
-            .when_some(trigger_parts.suffix, |this, suffix| {
-                this.child(Label::new(suffix).color(Color::Muted))
-            })
-            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
+        let focus_handle = self.focus_handle(cx);
+
+        let trigger_button = Button::new("thread-target-trigger", label)
+            .disabled(is_busy)
+            .loading(is_busy)
+            .start_icon(
+                Icon::new(IconName::GitWorktree)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .end_icon(
+                Icon::new(chevron_icon)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            );
 
         let project = self.project.clone();
-        let current_target = self.start_thread_in.clone();
-        let fs = self.fs.clone();
 
         PopoverMenu::new("thread-target-selector")
             .trigger_with_tooltip(trigger_button, {
                 move |_window, cx| {
                     Tooltip::for_action_in(
-                        "Start Thread In…",
-                        &CycleStartThreadIn,
+                        "Select Worktree…",
+                        &ToggleWorktreeSelector,
                         &focus_handle,
                         cx,
                     )
                 }
             })
             .menu(move |window, cx| {
-                let fs = fs.clone();
-                Some(cx.new(|cx| {
-                    ThreadWorktreePicker::new(project.clone(), &current_target, fs, window, cx)
-                }))
+                Some(cx.new(|cx| ThreadWorktreePicker::new(project.clone(), window, cx)))
             })
             .with_handle(self.start_thread_in_menu_handle.clone())
-            .anchor(Corner::TopLeft)
-            .offset(gpui::Point {
-                x: px(1.0),
-                y: px(1.0),
-            })
-    }
-
-    fn render_new_worktree_branch_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_creating = matches!(
-            self.worktree_creation_status,
-            Some(WorktreeCreationStatus::Creating)
-        );
-
-        let project_ref = self.project.read(cx);
-        let trigger_parts = self
-            .start_thread_in
-            .branch_trigger_label(project_ref, cx)
-            .unwrap_or_else(|| StartThreadInLabel {
-                prefix: Some("From:".into()),
-                label: "HEAD".into(),
-                suffix: None,
-            });
-
-        let icon = if self.thread_branch_menu_handle.is_deployed() {
-            IconName::ChevronUp
-        } else {
-            IconName::ChevronDown
-        };
-
-        let trigger_button = ButtonLike::new("thread-branch-trigger")
-            .disabled(is_creating)
-            .when_some(trigger_parts.prefix, |this, prefix| {
-                this.child(Label::new(prefix).color(Color::Muted))
-            })
-            .child(Label::new(trigger_parts.label))
-            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
-
-        let project = self.project.clone();
-        let current_target = self.start_thread_in.clone();
-
-        PopoverMenu::new("thread-branch-selector")
-            .trigger_with_tooltip(trigger_button, Tooltip::text("Choose Worktree Branch…"))
-            .menu(move |window, cx| {
-                Some(cx.new(|cx| {
-                    ThreadBranchPicker::new(project.clone(), &current_target, window, cx)
-                }))
-            })
-            .with_handle(self.thread_branch_menu_handle.clone())
             .anchor(Corner::TopLeft)
             .offset(gpui::Point {
                 x: px(1.0),
@@ -3739,13 +4211,11 @@ impl AgentPanel {
                 (None, self.selected_agent.label())
             };
 
-        let active_thread = match &self.active_view {
-            ActiveView::AgentThread { conversation_view } => {
+        let active_thread = match &self.base_view {
+            BaseView::AgentThread { conversation_view } => {
                 conversation_view.read(cx).as_native_thread(cx)
             }
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {
-                None
-            }
+            BaseView::Uninitialized => None,
         };
 
         let new_thread_menu_builder: Rc<
@@ -3765,8 +4235,6 @@ impl AgentPanel {
             let agent_server_store = agent_server_store;
 
             Rc::new(move |window, cx| {
-                telemetry::event!("New Thread Clicked");
-
                 let active_thread = active_thread.clone();
                 Some(ContextMenu::build(window, cx, |menu, _window, cx| {
                     menu.context(focus_handle.clone())
@@ -3808,10 +4276,14 @@ impl AgentPanel {
                                                     workspace.panel::<AgentPanel>(cx)
                                                 {
                                                     panel.update(cx, |panel, cx| {
-                                                        panel.new_agent_thread(
-                                                            Agent::NativeAgent,
+                                                        panel.selected_agent = Agent::NativeAgent;
+                                                        let id = panel.create_thread(
+                                                            "agent_panel",
                                                             window,
                                                             cx,
+                                                        );
+                                                        panel.activate_retained_thread(
+                                                            id, true, window, cx,
                                                         );
                                                     });
                                                 }
@@ -3893,12 +4365,16 @@ impl AgentPanel {
                                                         workspace.panel::<AgentPanel>(cx)
                                                     {
                                                         panel.update(cx, |panel, cx| {
-                                                            panel.new_agent_thread(
-                                                                Agent::Custom {
-                                                                    id: agent_id.clone(),
-                                                                },
+                                                            panel.selected_agent = Agent::Custom {
+                                                                id: agent_id.clone(),
+                                                            };
+                                                            let id = panel.create_thread(
+                                                                "agent_panel",
                                                                 window,
                                                                 cx,
+                                                            );
+                                                            panel.activate_retained_thread(
+                                                                id, true, window, cx,
                                                             );
                                                         });
                                                     }
@@ -3941,8 +4417,11 @@ impl AgentPanel {
         let selected_agent = div()
             .id("selected_agent_icon")
             .when_some(selected_agent_custom_icon, |this, icon_path| {
-                this.px_1()
-                    .child(Icon::from_external_svg(icon_path).color(Color::Muted))
+                this.px_1().child(
+                    Icon::from_external_svg(icon_path)
+                        .color(Color::Muted)
+                        .size(IconSize::Small),
+                )
             })
             .when(!has_custom_icon, |this| {
                 this.when_some(selected_agent_builtin_icon, |this, icon| {
@@ -3972,12 +4451,11 @@ impl AgentPanel {
             selected_agent.into_any_element()
         };
 
+        let show_history_menu = self.has_history_for_selected_agent(cx);
+        let agent_v2_enabled = agent_v2_enabled(cx);
         let is_empty_state = !self.active_thread_has_messages(cx);
 
-        let is_in_history_or_config = matches!(
-            &self.active_view,
-            ActiveView::History { .. } | ActiveView::Configuration
-        );
+        let is_in_history_or_config = self.is_history_or_configuration_visible();
 
         let is_full_screen = self.is_zoomed(window, cx);
         let full_screen_button = if is_full_screen {
@@ -3996,7 +4474,7 @@ impl AgentPanel {
                 }))
         };
 
-        let use_v2_empty_toolbar = is_empty_state && !is_in_history_or_config;
+        let use_v2_empty_toolbar = agent_v2_enabled && is_empty_state && !is_in_history_or_config;
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
@@ -4066,12 +4544,10 @@ impl AgentPanel {
                         .pl(DynamicSpacing::Base04.rems(cx))
                         .child(agent_selector_menu)
                         .when(
-                            has_visible_worktrees && self.project_has_git_repository(cx),
+                            agent_v2_enabled
+                                && has_visible_worktrees
+                                && self.project_has_git_repository(cx),
                             |this| this.child(self.render_start_thread_in_selector(cx)),
-                        )
-                        .when(
-                            matches!(self.start_thread_in, StartThreadIn::NewWorktree { .. }),
-                            |this| this.child(self.render_new_worktree_branch_selector(cx)),
                         ),
                 )
                 .child(
@@ -4081,6 +4557,13 @@ impl AgentPanel {
                         .gap_1()
                         .pl_1()
                         .pr_1()
+                        .when(show_history_menu && !agent_v2_enabled, |this| {
+                            this.child(self.render_recent_entries_menu(
+                                IconName::MenuAltTemp,
+                                Corner::TopRight,
+                                cx,
+                            ))
+                        })
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -4111,11 +4594,10 @@ impl AgentPanel {
                         .size_full()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
-                        .child(match &self.active_view {
-                            ActiveView::History { .. } | ActiveView::Configuration => {
-                                self.render_toolbar_back_button(cx).into_any_element()
-                            }
-                            _ => selected_agent.into_any_element(),
+                        .child(if self.is_overlay_open() {
+                            self.render_toolbar_back_button(cx).into_any_element()
+                        } else {
+                            selected_agent.into_any_element()
                         })
                         .child(self.render_title_view(window, cx)),
                 )
@@ -4127,6 +4609,13 @@ impl AgentPanel {
                         .pl_1()
                         .pr_1()
                         .child(new_thread_menu)
+                        .when(show_history_menu && !agent_v2_enabled, |this| {
+                            this.child(self.render_recent_entries_menu(
+                                IconName::MenuAltTemp,
+                                Corner::TopRight,
+                                cx,
+                            ))
+                        })
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -4145,30 +4634,13 @@ impl AgentPanel {
     }
 
     fn render_worktree_creation_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let status = self.worktree_creation_status.as_ref()?;
+        let (view_id, status) = self.worktree_creation_status.as_ref()?;
+        let active_view_id = self.active_conversation_view().map(|v| v.entity_id());
+        if active_view_id != Some(*view_id) {
+            return None;
+        }
         match status {
-            WorktreeCreationStatus::Creating => Some(
-                h_flex()
-                    .absolute()
-                    .bottom_12()
-                    .w_full()
-                    .p_2()
-                    .gap_1()
-                    .justify_center()
-                    .bg(cx.theme().colors().editor_background)
-                    .child(
-                        Icon::new(IconName::LoadCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_rotate_animation(3),
-                    )
-                    .child(
-                        Label::new("Creating Worktree…")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .into_any_element(),
-            ),
+            WorktreeCreationStatus::Creating(_) | WorktreeCreationStatus::Loading(_) => None,
             WorktreeCreationStatus::Error(message) => Some(
                 Callout::new()
                     .icon(IconName::XCircleFilled)
@@ -4195,8 +4667,8 @@ impl AgentPanel {
             return false;
         }
 
-        match &self.active_view {
-            ActiveView::AgentThread { .. } => {
+        match &self.base_view {
+            BaseView::AgentThread { .. } => {
                 if LanguageModelRegistry::global(cx)
                     .read(cx)
                     .default_model()
@@ -4207,7 +4679,7 @@ impl AgentPanel {
                     return false;
                 }
             }
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {
+            BaseView::Uninitialized => {
                 return false;
             }
         }
@@ -4233,11 +4705,9 @@ impl AgentPanel {
             return false;
         }
 
-        match &self.active_view {
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {
-                false
-            }
-            ActiveView::AgentThread { .. } => {
+        match &self.base_view {
+            BaseView::Uninitialized => false,
+            BaseView::AgentThread { .. } => {
                 let existing_user = self
                     .new_user_onboarding_upsell_dismissed
                     .load(Ordering::Acquire);
@@ -4306,14 +4776,14 @@ impl AgentPanel {
                     && provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
             });
 
-        match &self.active_view {
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {
+        match &self.base_view {
+            BaseView::Uninitialized => false,
+            BaseView::AgentThread { conversation_view }
+                if conversation_view.read(cx).as_native_thread(cx).is_none() =>
+            {
                 false
             }
-            ActiveView::AgentThread {
-                conversation_view, ..
-            } if conversation_view.read(cx).as_native_thread(cx).is_none() => false,
-            ActiveView::AgentThread { conversation_view } => {
+            BaseView::AgentThread { conversation_view } => {
                 let history_is_empty = conversation_view
                     .read(cx)
                     .history()
@@ -4434,13 +4904,13 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match &self.active_view {
-            ActiveView::AgentThread { conversation_view } => {
+        match &self.base_view {
+            BaseView::AgentThread { conversation_view } => {
                 conversation_view.update(cx, |conversation_view, cx| {
                     conversation_view.insert_dragged_files(paths, added_worktrees, window, cx);
                 });
             }
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {}
+            BaseView::Uninitialized => {}
         }
     }
 
@@ -4479,9 +4949,9 @@ impl AgentPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        match &self.active_view {
-            ActiveView::AgentThread { .. } => key_context.add("acp_thread"),
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {}
+        match &self.base_view {
+            BaseView::AgentThread { .. } => key_context.add("acp_thread"),
+            BaseView::Uninitialized => {}
         }
         key_context
     }
@@ -4532,20 +5002,20 @@ impl Render for AgentPanel {
             .children(self.render_workspace_trust_message(cx))
             .children(self.render_new_user_onboarding(window, cx))
             .children(self.render_agent_layout_onboarding(window, cx))
-            .map(|parent| match &self.active_view {
-                ActiveView::Uninitialized => parent,
-                ActiveView::AgentThread {
-                    conversation_view, ..
-                } => parent
+            .map(|parent| match self.visible_surface() {
+                VisibleSurface::Uninitialized => parent,
+                VisibleSurface::AgentThread(conversation_view) => parent
                     .child(conversation_view.clone())
                     .child(self.render_drag_target(cx)),
-                ActiveView::History { view } => parent.child(view.clone()),
-                ActiveView::Configuration => parent.children(self.configuration.clone()),
+                VisibleSurface::History(view) => parent.child(view.clone()),
+                VisibleSurface::Configuration(configuration) => {
+                    parent.children(configuration.cloned())
+                }
             })
             .children(self.render_worktree_creation_status(cx))
             .children(self.render_trial_end_upsell(window, cx));
 
-        match self.active_view.which_font_size_used() {
+        match self.visible_font_size() {
             WhichFontSize::AgentFont => {
                 WithRemSize::new(ThemeSettings::get_global(cx).agent_ui_font_size(cx))
                     .size_full()
@@ -4652,16 +5122,22 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let workspace = self.workspace.clone();
-        let project = self.project.clone();
-
         let ext_agent = Agent::Custom {
             id: server.agent_id(),
         };
 
-        self.create_agent_thread(
-            server, None, None, None, None, workspace, project, ext_agent, true, window, cx,
+        let thread = self.create_agent_thread_with_server(
+            ext_agent,
+            Some(server),
+            None,
+            None,
+            None,
+            None,
+            "agent_panel",
+            window,
+            cx,
         );
+        self.set_base_view(thread.into(), true, window, cx);
     }
 
     /// Returns the currently active thread view, if any.
@@ -4670,35 +5146,6 @@ impl AgentPanel {
     /// method for test assertions. Not compiled into production builds.
     pub fn active_thread_view_for_tests(&self) -> Option<&Entity<ConversationView>> {
         self.active_conversation_view()
-    }
-
-    /// Sets the start_thread_in value directly, bypassing validation.
-    ///
-    /// This is a test-only helper for visual tests that need to show specific
-    /// start_thread_in states without requiring a real git repository.
-    pub fn set_start_thread_in_for_tests(&mut self, target: StartThreadIn, cx: &mut Context<Self>) {
-        self.start_thread_in = target;
-        cx.notify();
-    }
-
-    /// Returns the current worktree creation status.
-    ///
-    /// This is a test-only helper for visual tests.
-    pub fn worktree_creation_status_for_tests(&self) -> Option<&WorktreeCreationStatus> {
-        self.worktree_creation_status.as_ref()
-    }
-
-    /// Sets the worktree creation status directly.
-    ///
-    /// This is a test-only helper for visual tests that need to show the
-    /// "Creating worktree…" spinner or error banners.
-    pub fn set_worktree_creation_status_for_tests(
-        &mut self,
-        status: Option<WorktreeCreationStatus>,
-        cx: &mut Context<Self>,
-    ) {
-        self.worktree_creation_status = status;
-        cx.notify();
     }
 
     /// Opens the history view.
@@ -4726,6 +5173,32 @@ impl AgentPanel {
     pub fn close_start_thread_in_menu_for_tests(&mut self, cx: &mut Context<Self>) {
         self.start_thread_in_menu_handle.hide(cx);
     }
+
+    /// Creates a draft thread using a stub server and sets it as the active view.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn open_draft_with_server(
+        &mut self,
+        server: Rc<dyn AgentServer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ext_agent = Agent::Custom {
+            id: server.agent_id(),
+        };
+        let thread = self.create_agent_thread_with_server(
+            ext_agent,
+            Some(server),
+            None,
+            None,
+            None,
+            None,
+            "agent_panel",
+            window,
+            cx,
+        );
+        self.draft_thread = Some(thread.conversation_view.clone());
+        self.set_base_view(thread.into(), true, window, cx);
+    }
 }
 
 #[cfg(test)]
@@ -4733,18 +5206,171 @@ mod tests {
     use super::*;
     use crate::conversation_view::tests::{StubAgentServer, init_test};
     use crate::test_support::{
-        active_session_id, open_thread_with_connection, open_thread_with_custom_connection,
-        send_message,
+        active_session_id, active_thread_id, open_thread_with_connection,
+        open_thread_with_custom_connection, send_message,
     };
-    use acp_thread::{StubAgentConnection, ThreadStatus};
+    use acp_thread::{AgentConnection, StubAgentConnection, ThreadStatus, UserMessageId};
+    use action_log::ActionLog;
     use agent_servers::CODEX_ID;
+    use anyhow::Result;
+    use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{App, TestAppContext, VisualTestContext};
+    use parking_lot::Mutex;
     use project::Project;
+    use std::any::Any;
+
     use serde_json::json;
     use std::path::Path;
+    use std::sync::Arc;
     use std::time::Instant;
     use workspace::MultiWorkspace;
+
+    #[derive(Clone, Default)]
+    struct SessionTrackingConnection {
+        next_session_number: Arc<Mutex<usize>>,
+        sessions: Arc<Mutex<HashSet<acp::SessionId>>>,
+    }
+
+    impl SessionTrackingConnection {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        fn create_session(
+            self: Rc<Self>,
+            session_id: acp::SessionId,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            title: Option<SharedString>,
+            cx: &mut App,
+        ) -> Entity<AcpThread> {
+            self.sessions.lock().insert(session_id.clone());
+
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            cx.new(|cx| {
+                AcpThread::new(
+                    None,
+                    title,
+                    Some(work_dirs),
+                    self,
+                    project,
+                    action_log,
+                    session_id,
+                    watch::Receiver::constant(
+                        acp::PromptCapabilities::new()
+                            .image(true)
+                            .audio(true)
+                            .embedded_context(true),
+                    ),
+                    cx,
+                )
+            })
+        }
+    }
+
+    impl AgentConnection for SessionTrackingConnection {
+        fn agent_id(&self) -> AgentId {
+            agent::ZED_AGENT_ID.clone()
+        }
+
+        fn telemetry_id(&self) -> SharedString {
+            "session-tracking-test".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            cx: &mut App,
+        ) -> Task<Result<Entity<AcpThread>>> {
+            let session_id = {
+                let mut next_session_number = self.next_session_number.lock();
+                let session_id = acp::SessionId::new(format!(
+                    "session-tracking-session-{}",
+                    *next_session_number
+                ));
+                *next_session_number += 1;
+                session_id
+            };
+            let thread = self.create_session(session_id, project, work_dirs, None, cx);
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_load_session(&self) -> bool {
+            true
+        }
+
+        fn load_session(
+            self: Rc<Self>,
+            session_id: acp::SessionId,
+            project: Entity<Project>,
+            work_dirs: PathList,
+            title: Option<SharedString>,
+            cx: &mut App,
+        ) -> Task<Result<Entity<AcpThread>>> {
+            let thread = self.create_session(session_id, project, work_dirs, title, cx);
+            thread.update(cx, |thread, cx| {
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                            "Restored user message".into(),
+                        )),
+                        cx,
+                    )
+                    .expect("restored user message should be applied");
+                thread
+                    .handle_session_update(
+                        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                            "Restored assistant message".into(),
+                        )),
+                        cx,
+                    )
+                    .expect("restored assistant message should be applied");
+            });
+            Task::ready(Ok(thread))
+        }
+
+        fn supports_close_session(&self) -> bool {
+            true
+        }
+
+        fn close_session(
+            self: Rc<Self>,
+            session_id: &acp::SessionId,
+            _cx: &mut App,
+        ) -> Task<Result<()>> {
+            self.sessions.lock().remove(session_id);
+            Task::ready(Ok(()))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(&self, _method_id: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _id: UserMessageId,
+            params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<Result<acp::PromptResponse>> {
+            if !self.sessions.lock().contains(&params.session_id) {
+                return Task::ready(Err(anyhow!("Session not found")));
+            }
+
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
 
     #[gpui::test]
     async fn test_active_thread_serialize_and_load_round_trip(cx: &mut TestAppContext) {
@@ -4754,9 +5380,11 @@ mod tests {
             language_model::LanguageModelRegistry::test(cx);
         });
 
-        // --- Create a MultiWorkspace window with two workspaces ---
+        // Create a MultiWorkspace window with two workspaces.
         let fs = FakeFs::new(cx.executor());
-        let project_a = Project::test(fs.clone(), [], cx).await;
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        let project_a = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
         let project_b = Project::test(fs, [], cx).await;
 
         let multi_workspace =
@@ -4783,7 +5411,7 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
-        // --- Set up workspace A: with an active thread ---
+        // Set up workspace A: with an active thread.
         let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
         });
@@ -4809,7 +5437,7 @@ mod tests {
 
         let agent_type_a = panel_a.read_with(cx, |panel, _cx| panel.selected_agent.clone());
 
-        // --- Set up workspace B: ClaudeCode, no active thread ---
+        // Set up workspace B: ClaudeCode, no active thread.
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
             cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
         });
@@ -4820,12 +5448,12 @@ mod tests {
             };
         });
 
-        // --- Serialize both panels ---
+        // Serialize both panels.
         panel_a.update(cx, |panel, cx| panel.serialize(cx));
         panel_b.update(cx, |panel, cx| panel.serialize(cx));
         cx.run_until_parked();
 
-        // --- Load fresh panels for each workspace and verify independent state ---
+        // Load fresh panels for each workspace and verify independent state.
         let async_cx = cx.update(|window, cx| window.to_async(cx));
         let loaded_a = AgentPanel::load(workspace_a.downgrade(), async_cx)
             .await
@@ -4850,7 +5478,7 @@ mod tests {
             );
         });
 
-        // Workspace B should restore its own agent type, with no thread
+        // Workspace B should restore its own agent type but have no active thread.
         loaded_b.read_with(cx, |panel, _cx| {
             assert_eq!(
                 panel.selected_agent,
@@ -4861,7 +5489,7 @@ mod tests {
             );
             assert!(
                 panel.active_conversation_view().is_none(),
-                "workspace B should have no active thread"
+                "workspace B should have no active thread when it had no prior conversation"
             );
         });
     }
@@ -4926,7 +5554,7 @@ mod tests {
         loaded.read_with(cx, |panel, _cx| {
             assert!(
                 panel.active_conversation_view().is_none(),
-                "thread without metadata should not be restored"
+                "thread without metadata should not be restored; the panel should have no active thread"
             );
         });
     }
@@ -5215,9 +5843,10 @@ mod tests {
         panel: &Entity<AgentPanel>,
         connection: &StubAgentConnection,
         cx: &mut VisualTestContext,
-    ) -> acp::SessionId {
+    ) -> (acp::SessionId, ThreadId) {
         open_thread_with_custom_connection(panel, connection.clone(), cx);
         let session_id = active_session_id(panel, cx);
+        let thread_id = active_thread_id(panel, cx);
         send_message(panel, cx);
         cx.update(|_, cx| {
             connection.send_update(
@@ -5227,23 +5856,204 @@ mod tests {
             );
         });
         cx.run_until_parked();
-        session_id
+        (session_id, thread_id)
     }
 
     fn open_idle_thread_with_non_loadable_connection(
         panel: &Entity<AgentPanel>,
         connection: &StubAgentConnection,
         cx: &mut VisualTestContext,
-    ) -> acp::SessionId {
+    ) -> (acp::SessionId, ThreadId) {
         open_thread_with_custom_connection(panel, connection.clone(), cx);
         let session_id = active_session_id(panel, cx);
+        let thread_id = active_thread_id(panel, cx);
 
         connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
             acp::ContentChunk::new("done".into()),
         )]);
         send_message(panel, cx);
 
-        session_id
+        (session_id, thread_id)
+    }
+
+    #[gpui::test]
+    async fn test_draft_promotion_creates_metadata_and_new_session_on_reload(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Register a shared stub connection and use Agent::Stub so the draft
+        // (and any reloaded draft) uses it.
+        let stub_connection =
+            crate::test_support::set_stub_agent_connection(StubAgentConnection::new());
+        stub_connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_agent = Agent::Stub;
+            panel.activate_draft(true, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Verify the thread is considered a draft.
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_thread_is_draft(cx),
+                "thread should be a draft before any message is sent"
+            );
+            assert!(
+                panel.draft_thread.is_some(),
+                "draft_thread field should be set"
+            );
+        });
+        let draft_session_id = active_session_id(&panel, cx);
+        let thread_id = active_thread_id(&panel, cx);
+
+        // No metadata should exist yet for a draft.
+        cx.update(|_window, cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            assert!(
+                store.entry(thread_id).is_none(),
+                "draft thread should not have metadata in the store"
+            );
+        });
+
+        // Set draft prompt and serialize — the draft should survive a round-trip
+        // with its prompt intact but a fresh ACP session.
+        let draft_prompt_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from draft",
+        ))];
+        panel.update(cx, |panel, cx| {
+            let thread = panel.active_agent_thread(cx).unwrap();
+            thread.update(cx, |thread, cx| {
+                thread.set_draft_prompt(Some(draft_prompt_blocks.clone()), cx);
+            });
+            panel.serialize(cx);
+        });
+        cx.run_until_parked();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let reloaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load with draft should succeed");
+        cx.run_until_parked();
+
+        reloaded_panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_thread_is_draft(cx),
+                "reloaded panel should still show the draft as active"
+            );
+            assert!(
+                panel.draft_thread.is_some(),
+                "reloaded panel should have a draft_thread"
+            );
+        });
+
+        let reloaded_session_id = active_session_id(&reloaded_panel, cx);
+        assert_ne!(
+            reloaded_session_id, draft_session_id,
+            "reloaded draft should have a fresh ACP session ID"
+        );
+
+        let restored_text = reloaded_panel.read_with(cx, |panel, cx| {
+            let thread_id = panel.active_thread_id(cx).unwrap();
+            panel.editor_text(thread_id, cx)
+        });
+        assert_eq!(
+            restored_text.as_deref(),
+            Some("Hello from draft"),
+            "draft prompt text should be preserved across serialization"
+        );
+
+        // Send a message on the reloaded panel — this promotes the draft to a real thread.
+        let panel = reloaded_panel;
+        let draft_session_id = reloaded_session_id;
+        let thread_id = active_thread_id(&panel, cx);
+        send_message(&panel, cx);
+
+        // Verify promotion: draft_thread is cleared, metadata exists.
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                !panel.active_thread_is_draft(cx),
+                "thread should no longer be a draft after sending a message"
+            );
+            assert!(
+                panel.draft_thread.is_none(),
+                "draft_thread should be None after promotion"
+            );
+            assert_eq!(
+                panel.active_thread_id(cx),
+                Some(thread_id),
+                "same thread ID should remain active after promotion"
+            );
+        });
+
+        cx.update(|_window, cx| {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            let metadata = store
+                .entry(thread_id)
+                .expect("promoted thread should have metadata");
+            assert!(
+                metadata.session_id.is_some(),
+                "promoted thread metadata should have a real session_id"
+            );
+            assert_eq!(
+                metadata.session_id.as_ref().unwrap(),
+                &draft_session_id,
+                "metadata session_id should match the thread's ACP session"
+            );
+        });
+
+        // Serialize the panel, then reload it.
+        panel.update(cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        cx.run_until_parked();
+
+        // The loaded panel should restore the real thread (not the draft).
+        loaded_panel.read_with(cx, |panel, cx| {
+            let active_id = panel.active_thread_id(cx);
+            assert_eq!(
+                active_id,
+                Some(thread_id),
+                "loaded panel should restore the promoted thread"
+            );
+            assert!(
+                !panel.active_thread_is_draft(cx),
+                "restored thread should not be a draft"
+            );
+        });
     }
 
     async fn setup_panel(cx: &mut TestAppContext) -> (Entity<AgentPanel>, VisualTestContext) {
@@ -5273,38 +6083,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_empty_draft_thread_not_retained_when_navigating_away(cx: &mut TestAppContext) {
-        let (panel, mut cx) = setup_panel(cx).await;
-
-        let connection_a = StubAgentConnection::new();
-        open_thread_with_connection(&panel, connection_a, &mut cx);
-        let session_id_a = active_session_id(&panel, &cx);
-
-        panel.read_with(&cx, |panel, cx| {
-            let thread = panel.active_agent_thread(cx).unwrap();
-            assert!(
-                thread.read(cx).entries().is_empty(),
-                "newly opened draft thread should have no entries"
-            );
-            assert!(panel.background_threads.is_empty());
-        });
-
-        let connection_b = StubAgentConnection::new();
-        open_thread_with_connection(&panel, connection_b, &mut cx);
-
-        panel.read_with(&cx, |panel, _cx| {
-            assert!(
-                panel.background_threads.is_empty(),
-                "empty draft thread should not be retained in background_threads"
-            );
-            assert!(
-                !panel.background_threads.contains_key(&session_id_a),
-                "empty draft thread should not be keyed in background_threads"
-            );
-        });
-    }
-
-    #[gpui::test]
     async fn test_running_thread_retained_when_navigating_away(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
 
@@ -5313,6 +6091,7 @@ mod tests {
         send_message(&panel, &mut cx);
 
         let session_id_a = active_session_id(&panel, &cx);
+        let thread_id_a = active_thread_id(&panel, &cx);
 
         // Send a chunk to keep thread A generating (don't end the turn).
         cx.update(|_, cx| {
@@ -5328,7 +6107,7 @@ mod tests {
         panel.read_with(&cx, |panel, cx| {
             let thread = panel.active_agent_thread(cx).unwrap();
             assert_eq!(thread.read(cx).status(), ThreadStatus::Generating);
-            assert!(panel.background_threads.is_empty());
+            assert!(panel.retained_threads.is_empty());
         });
 
         // Open a new thread B — thread A should be retained in background.
@@ -5337,13 +6116,13 @@ mod tests {
 
         panel.read_with(&cx, |panel, _cx| {
             assert_eq!(
-                panel.background_threads.len(),
+                panel.retained_threads.len(),
                 1,
-                "Running thread A should be retained in background_views"
+                "Running thread A should be retained in retained_threads"
             );
             assert!(
-                panel.background_threads.contains_key(&session_id_a),
-                "Background view should be keyed by thread A's session ID"
+                panel.retained_threads.contains_key(&thread_id_a),
+                "Retained thread should be keyed by thread A's thread ID"
             );
         });
     }
@@ -5362,7 +6141,7 @@ mod tests {
         let weak_view_a = panel.read_with(&cx, |panel, _cx| {
             panel.active_conversation_view().unwrap().downgrade()
         });
-        let session_id_a = active_session_id(&panel, &cx);
+        let thread_id_a = active_thread_id(&panel, &cx);
 
         // Thread A should be idle (auto-completed via set_next_prompt_updates).
         panel.read_with(&cx, |panel, cx| {
@@ -5376,13 +6155,13 @@ mod tests {
 
         panel.read_with(&cx, |panel, _cx| {
             assert_eq!(
-                panel.background_threads.len(),
+                panel.retained_threads.len(),
                 1,
-                "Idle non-loadable thread A should be retained in background_views"
+                "Idle non-loadable thread A should be retained in retained_threads"
             );
             assert!(
-                panel.background_threads.contains_key(&session_id_a),
-                "Background view should be keyed by thread A's session ID"
+                panel.retained_threads.contains_key(&thread_id_a),
+                "Retained thread should be keyed by thread A's thread ID"
             );
         });
 
@@ -5401,6 +6180,7 @@ mod tests {
         send_message(&panel, &mut cx);
 
         let session_id_a = active_session_id(&panel, &cx);
+        let thread_id_a = active_thread_id(&panel, &cx);
 
         // Keep thread A generating.
         cx.update(|_, cx| {
@@ -5417,11 +6197,11 @@ mod tests {
         open_thread_with_connection(&panel, connection_b, &mut cx);
         send_message(&panel, &mut cx);
 
-        let session_id_b = active_session_id(&panel, &cx);
+        let thread_id_b = active_thread_id(&panel, &cx);
 
         panel.read_with(&cx, |panel, _cx| {
-            assert_eq!(panel.background_threads.len(), 1);
-            assert!(panel.background_threads.contains_key(&session_id_a));
+            assert_eq!(panel.retained_threads.len(), 1);
+            assert!(panel.retained_threads.contains_key(&thread_id_a));
         });
 
         // Load thread A back via load_agent_thread — should promote from background.
@@ -5432,6 +6212,7 @@ mod tests {
                 None,
                 None,
                 true,
+                "agent_panel",
                 window,
                 cx,
             );
@@ -5446,18 +6227,74 @@ mod tests {
 
         panel.read_with(&cx, |panel, _cx| {
             assert!(
-                !panel.background_threads.contains_key(&session_id_a),
-                "Promoted thread A should no longer be in background_views"
+                !panel.retained_threads.contains_key(&thread_id_a),
+                "Promoted thread A should no longer be in retained_threads"
             );
             assert!(
-                panel.background_threads.contains_key(&session_id_b),
-                "Thread B (idle, non-loadable) should remain retained in background_views"
+                panel.retained_threads.contains_key(&thread_id_b),
+                "Thread B (idle, non-loadable) should remain retained in retained_threads"
             );
         });
     }
 
     #[gpui::test]
-    async fn test_cleanup_background_threads_keeps_five_most_recent_idle_loadable_threads(
+    async fn test_reopening_visible_thread_keeps_thread_usable(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.connection_store.update(cx, |store, cx| {
+                store.restart_connection(
+                    Agent::NativeAgent,
+                    Rc::new(StubAgentServer::new(SessionTrackingConnection::new())),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.external_thread(
+                Some(Agent::NativeAgent),
+                None,
+                None,
+                None,
+                None,
+                true,
+                "agent_panel",
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        send_message(&panel, &mut cx);
+
+        let session_id = active_session_id(&panel, &cx);
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_thread(session_id.clone(), None, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        send_message(&panel, &mut cx);
+
+        panel.read_with(&cx, |panel, cx| {
+            let active_view = panel
+                .active_conversation_view()
+                .expect("visible conversation should remain open after reopening");
+            let connected = active_view
+                .read(cx)
+                .as_connected()
+                .expect("visible conversation should still be connected in the UI");
+            assert!(
+                !connected.has_thread_error(cx),
+                "reopening an already-visible session should keep the thread usable"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cleanup_retained_threads_keeps_five_most_recent_idle_loadable_threads(
         cx: &mut TestAppContext,
     ) {
         let (panel, mut cx) = setup_panel(cx).await;
@@ -5466,13 +6303,13 @@ mod tests {
             .with_agent_id("loadable-stub".into())
             .with_telemetry_id("loadable-stub".into());
         let mut session_ids = Vec::new();
+        let mut thread_ids = Vec::new();
 
         for _ in 0..7 {
-            session_ids.push(open_generating_thread_with_loadable_connection(
-                &panel,
-                &connection,
-                &mut cx,
-            ));
+            let (session_id, thread_id) =
+                open_generating_thread_with_loadable_connection(&panel, &connection, &mut cx);
+            session_ids.push(session_id);
+            thread_ids.push(thread_id);
         }
 
         let base_time = Instant::now();
@@ -5483,67 +6320,71 @@ mod tests {
         cx.run_until_parked();
 
         panel.update(&mut cx, |panel, cx| {
-            for (index, session_id) in session_ids.iter().take(6).enumerate() {
+            for (index, thread_id) in thread_ids.iter().take(6).enumerate() {
                 let conversation_view = panel
-                    .background_threads
-                    .get(session_id)
-                    .expect("background thread should exist")
+                    .retained_threads
+                    .get(thread_id)
+                    .expect("retained thread should exist")
                     .clone();
                 conversation_view.update(cx, |view, cx| {
                     view.set_updated_at(base_time + Duration::from_secs(index as u64), cx);
                 });
             }
-            panel.cleanup_background_threads(cx);
+            panel.cleanup_retained_threads(cx);
         });
 
         panel.read_with(&cx, |panel, _cx| {
             assert_eq!(
-                panel.background_threads.len(),
+                panel.retained_threads.len(),
                 5,
-                "cleanup should keep at most five idle loadable background threads"
+                "cleanup should keep at most five idle loadable retained threads"
             );
             assert!(
-                !panel.background_threads.contains_key(&session_ids[0]),
-                "oldest idle loadable background thread should be removed"
+                !panel.retained_threads.contains_key(&thread_ids[0]),
+                "oldest idle loadable retained thread should be removed"
             );
-            for session_id in &session_ids[1..6] {
+            for thread_id in &thread_ids[1..6] {
                 assert!(
-                    panel.background_threads.contains_key(session_id),
-                    "more recent idle loadable background threads should be retained"
+                    panel.retained_threads.contains_key(thread_id),
+                    "more recent idle loadable retained threads should be retained"
                 );
             }
             assert!(
-                !panel.background_threads.contains_key(&session_ids[6]),
-                "the active thread should not also be stored as a background thread"
+                !panel.retained_threads.contains_key(&thread_ids[6]),
+                "the active thread should not also be stored as a retained thread"
             );
         });
     }
 
     #[gpui::test]
-    async fn test_cleanup_background_threads_preserves_idle_non_loadable_threads(
+    async fn test_cleanup_retained_threads_preserves_idle_non_loadable_threads(
         cx: &mut TestAppContext,
     ) {
         let (panel, mut cx) = setup_panel(cx).await;
 
         let non_loadable_connection = StubAgentConnection::new();
-        let non_loadable_session_id = open_idle_thread_with_non_loadable_connection(
-            &panel,
-            &non_loadable_connection,
-            &mut cx,
-        );
+        let (_non_loadable_session_id, non_loadable_thread_id) =
+            open_idle_thread_with_non_loadable_connection(
+                &panel,
+                &non_loadable_connection,
+                &mut cx,
+            );
 
         let loadable_connection = StubAgentConnection::new()
             .with_supports_load_session(true)
             .with_agent_id("loadable-stub".into())
             .with_telemetry_id("loadable-stub".into());
         let mut loadable_session_ids = Vec::new();
+        let mut loadable_thread_ids = Vec::new();
 
         for _ in 0..7 {
-            loadable_session_ids.push(open_generating_thread_with_loadable_connection(
+            let (session_id, thread_id) = open_generating_thread_with_loadable_connection(
                 &panel,
                 &loadable_connection,
                 &mut cx,
-            ));
+            );
+            loadable_session_ids.push(session_id);
+            loadable_thread_ids.push(thread_id);
         }
 
         let base_time = Instant::now();
@@ -5554,425 +6395,42 @@ mod tests {
         cx.run_until_parked();
 
         panel.update(&mut cx, |panel, cx| {
-            for (index, session_id) in loadable_session_ids.iter().take(6).enumerate() {
+            for (index, thread_id) in loadable_thread_ids.iter().take(6).enumerate() {
                 let conversation_view = panel
-                    .background_threads
-                    .get(session_id)
-                    .expect("background thread should exist")
+                    .retained_threads
+                    .get(thread_id)
+                    .expect("retained thread should exist")
                     .clone();
                 conversation_view.update(cx, |view, cx| {
                     view.set_updated_at(base_time + Duration::from_secs(index as u64), cx);
                 });
             }
-            panel.cleanup_background_threads(cx);
+            panel.cleanup_retained_threads(cx);
         });
 
         panel.read_with(&cx, |panel, _cx| {
             assert_eq!(
-                panel.background_threads.len(),
+                panel.retained_threads.len(),
                 6,
                 "cleanup should keep the non-loadable idle thread in addition to five loadable ones"
             );
             assert!(
-                panel
-                    .background_threads
-                    .contains_key(&non_loadable_session_id),
-                "idle non-loadable background threads should not be cleanup candidates"
+                panel.retained_threads.contains_key(&non_loadable_thread_id),
+                "idle non-loadable retained threads should not be cleanup candidates"
             );
             assert!(
-                !panel
-                    .background_threads
-                    .contains_key(&loadable_session_ids[0]),
-                "oldest idle loadable background thread should still be removed"
+                !panel.retained_threads.contains_key(&loadable_thread_ids[0]),
+                "oldest idle loadable retained thread should still be removed"
             );
-            for session_id in &loadable_session_ids[1..6] {
+            for thread_id in &loadable_thread_ids[1..6] {
                 assert!(
-                    panel.background_threads.contains_key(session_id),
-                    "more recent idle loadable background threads should be retained"
+                    panel.retained_threads.contains_key(thread_id),
+                    "more recent idle loadable retained threads should be retained"
                 );
             }
             assert!(
-                !panel
-                    .background_threads
-                    .contains_key(&loadable_session_ids[6]),
-                "the active loadable thread should not also be stored as a background thread"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_thread_target_local_project(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            agent::ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "src": {
-                    "main.rs": "fn main() {}"
-                }
-            }),
-        )
-        .await;
-        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
-
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-
-        let multi_workspace =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-
-        let workspace = multi_workspace
-            .read_with(cx, |multi_workspace, _cx| {
-                multi_workspace.workspace().clone()
-            })
-            .unwrap();
-
-        workspace.update(cx, |workspace, _cx| {
-            workspace.set_random_database_id();
-        });
-
-        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
-
-        // Wait for the project to discover the git repository.
-        cx.run_until_parked();
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        });
-
-        cx.run_until_parked();
-
-        // Default thread target should be LocalProject.
-        panel.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                *panel.start_thread_in(),
-                StartThreadIn::LocalProject,
-                "default thread target should be LocalProject"
-            );
-        });
-
-        // Start a new thread with the default LocalProject target.
-        // Use StubAgentServer so the thread connects immediately in tests.
-        panel.update_in(cx, |panel, window, cx| {
-            panel.open_external_thread_with_server(
-                Rc::new(StubAgentServer::default_response()),
-                window,
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        // MultiWorkspace should still have exactly one workspace (no worktree created).
-        multi_workspace
-            .read_with(cx, |multi_workspace, _cx| {
-                assert_eq!(
-                    multi_workspace.workspaces().count(),
-                    1,
-                    "LocalProject should not create a new workspace"
-                );
-            })
-            .unwrap();
-
-        // The thread should be active in the panel.
-        panel.read_with(cx, |panel, cx| {
-            assert!(
-                panel.active_agent_thread(cx).is_some(),
-                "a thread should be running in the current workspace"
-            );
-        });
-
-        // The thread target should still be LocalProject (unchanged).
-        panel.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                *panel.start_thread_in(),
-                StartThreadIn::LocalProject,
-                "thread target should remain LocalProject"
-            );
-        });
-
-        // No worktree creation status should be set.
-        panel.read_with(cx, |panel, _cx| {
-            assert!(
-                panel.worktree_creation_status.is_none(),
-                "no worktree creation should have occurred"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_thread_target_does_not_sync_to_external_linked_worktree_with_invalid_branch_target(
-        cx: &mut TestAppContext,
-    ) {
-        use git::repository::Worktree as GitWorktree;
-
-        init_test(cx);
-        cx.update(|cx| {
-            agent::ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "src": {
-                    "main.rs": "fn main() {}"
-                }
-            }),
-        )
-        .await;
-        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
-        fs.insert_branches(Path::new("/project/.git"), &["main", "feature-worktree"]);
-
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-
-        let multi_workspace =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-
-        let workspace = multi_workspace
-            .read_with(cx, |multi_workspace, _cx| {
-                multi_workspace.workspace().clone()
-            })
-            .unwrap();
-
-        workspace.update(cx, |workspace, _cx| {
-            workspace.set_random_database_id();
-        });
-
-        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
-
-        cx.run_until_parked();
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        });
-
-        cx.run_until_parked();
-
-        panel.update_in(cx, |panel, window, cx| {
-            panel.set_start_thread_in(
-                &StartThreadIn::NewWorktree {
-                    worktree_name: Some("feature worktree".to_string()),
-                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
-                },
-                window,
-                cx,
-            );
-        });
-
-        fs.add_linked_worktree_for_repo(
-            Path::new("/project/.git"),
-            true,
-            GitWorktree {
-                path: PathBuf::from("/linked-feature-worktree"),
-                ref_name: Some("refs/heads/feature-worktree".into()),
-                sha: "abcdef1".into(),
-                is_main: false,
-            },
-        )
-        .await;
-
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-        cx.run_until_parked();
-
-        panel.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                *panel.start_thread_in(),
-                StartThreadIn::NewWorktree {
-                    worktree_name: Some("feature worktree".to_string()),
-                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
-                },
-                "thread target should remain a named new worktree when the external linked worktree does not match the selected branch target",
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_thread_target_serialization_round_trip(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            agent::ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "src": {
-                    "main.rs": "fn main() {}"
-                }
-            }),
-        )
-        .await;
-        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
-
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-
-        let multi_workspace =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-
-        let workspace = multi_workspace
-            .read_with(cx, |multi_workspace, _cx| {
-                multi_workspace.workspace().clone()
-            })
-            .unwrap();
-
-        workspace.update(cx, |workspace, _cx| {
-            workspace.set_random_database_id();
-        });
-
-        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
-
-        // Wait for the project to discover the git repository.
-        cx.run_until_parked();
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        });
-
-        cx.run_until_parked();
-
-        // Default should be LocalProject.
-        panel.read_with(cx, |panel, _cx| {
-            assert_eq!(*panel.start_thread_in(), StartThreadIn::LocalProject);
-        });
-
-        // Change thread target to NewWorktree.
-        panel.update_in(cx, |panel, window, cx| {
-            panel.set_start_thread_in(
-                &StartThreadIn::NewWorktree {
-                    worktree_name: None,
-                    branch_target: NewWorktreeBranchTarget::default(),
-                },
-                window,
-                cx,
-            );
-        });
-
-        panel.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                *panel.start_thread_in(),
-                StartThreadIn::NewWorktree {
-                    worktree_name: None,
-                    branch_target: NewWorktreeBranchTarget::default(),
-                },
-                "thread target should be NewWorktree after set_thread_target"
-            );
-        });
-
-        // Let serialization complete.
-        cx.run_until_parked();
-
-        // Load a fresh panel from the serialized data.
-        let async_cx = cx.update(|window, cx| window.to_async(cx));
-        let loaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
-            .await
-            .expect("panel load should succeed");
-        cx.run_until_parked();
-
-        loaded_panel.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                *panel.start_thread_in(),
-                StartThreadIn::NewWorktree {
-                    worktree_name: None,
-                    branch_target: NewWorktreeBranchTarget::default(),
-                },
-                "thread target should survive serialization round-trip"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_set_active_blocked_during_worktree_creation(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        cx.update(|cx| {
-            agent::ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-            <dyn fs::Fs>::set_global(fs.clone(), cx);
-        });
-
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "src": {
-                    "main.rs": "fn main() {}"
-                }
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-
-        let multi_workspace =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-
-        let workspace = multi_workspace
-            .read_with(cx, |multi_workspace, _cx| {
-                multi_workspace.workspace().clone()
-            })
-            .unwrap();
-
-        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        });
-
-        cx.run_until_parked();
-
-        // Simulate worktree creation in progress and reset to Uninitialized
-        panel.update_in(cx, |panel, window, cx| {
-            panel.worktree_creation_status = Some(WorktreeCreationStatus::Creating);
-            panel.active_view = ActiveView::Uninitialized;
-            Panel::set_active(panel, true, window, cx);
-            assert!(
-                matches!(panel.active_view, ActiveView::Uninitialized),
-                "set_active should not create a thread while worktree is being created"
-            );
-        });
-
-        // Clear the creation status and use open_external_thread_with_server
-        // (which bypasses new_agent_thread) to verify the panel can transition
-        // out of Uninitialized. We can't call set_active directly because
-        // new_agent_thread requires full agent server infrastructure.
-        panel.update_in(cx, |panel, window, cx| {
-            panel.worktree_creation_status = None;
-            panel.active_view = ActiveView::Uninitialized;
-            panel.open_external_thread_with_server(
-                Rc::new(StubAgentServer::default_response()),
-                window,
-                cx,
-            );
-        });
-
-        cx.run_until_parked();
-
-        panel.read_with(cx, |panel, _cx| {
-            assert!(
-                !matches!(panel.active_view, ActiveView::Uninitialized),
-                "panel should transition out of Uninitialized once worktree creation is cleared"
+                !panel.retained_threads.contains_key(&loadable_thread_ids[6]),
+                "the active loadable thread should not also be stored as a retained thread"
             );
         });
     }
@@ -6023,51 +6481,183 @@ mod tests {
         );
     }
 
-    #[test]
+    #[gpui::test]
     fn test_resolve_worktree_branch_target() {
-        let existing_branches = HashSet::from_iter([
-            "main".to_string(),
-            "feature".to_string(),
-            "origin/main".to_string(),
-        ]);
-
-        let resolved = AgentPanel::resolve_worktree_branch_target(
-            &NewWorktreeBranchTarget::CreateBranch {
+        let resolved =
+            AgentPanel::resolve_worktree_branch_target(&NewWorktreeBranchTarget::CreateBranch {
                 name: "new-branch".to_string(),
                 from_ref: Some("main".to_string()),
-            },
-            &existing_branches,
-            &HashSet::from_iter(["main".to_string()]),
-        )
-        .unwrap();
+            });
         assert_eq!(
             resolved,
-            ("new-branch".to_string(), false, Some("main".to_string()))
+            (Some("new-branch".to_string()), Some("main".to_string()))
         );
 
-        let resolved = AgentPanel::resolve_worktree_branch_target(
-            &NewWorktreeBranchTarget::ExistingBranch {
-                name: "feature".to_string(),
-            },
-            &existing_branches,
-            &HashSet::default(),
-        )
-        .unwrap();
-        assert_eq!(resolved, ("feature".to_string(), true, None));
+        let resolved =
+            AgentPanel::resolve_worktree_branch_target(&NewWorktreeBranchTarget::CreateBranch {
+                name: "new-branch".to_string(),
+                from_ref: None,
+            });
+        assert_eq!(resolved, (Some("new-branch".to_string()), None));
 
-        let resolved = AgentPanel::resolve_worktree_branch_target(
-            &NewWorktreeBranchTarget::ExistingBranch {
-                name: "main".to_string(),
-            },
-            &existing_branches,
-            &HashSet::from_iter(["main".to_string()]),
+        let resolved =
+            AgentPanel::resolve_worktree_branch_target(&NewWorktreeBranchTarget::ExistingBranch {
+                name: "feature".to_string(),
+            });
+        assert_eq!(
+            resolved,
+            (Some("feature".to_string()), Some("feature".to_string()))
+        );
+
+        let resolved =
+            AgentPanel::resolve_worktree_branch_target(&NewWorktreeBranchTarget::CurrentBranch);
+        assert_eq!(resolved, (None, None));
+    }
+
+    #[gpui::test]
+    async fn test_worktree_dir_name_is_random_when_using_existing_branch(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let app_state = workspace::AppState::test(cx);
+            workspace::init(app_state.clone(), cx);
+            app_state
+        });
+
+        let fs = app_state.fs.as_fake();
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}"
+                }
+            }),
         )
-        .unwrap();
-        assert_eq!(resolved.1, false);
-        assert_eq!(resolved.2, Some("main".to_string()));
-        assert_ne!(resolved.0, "main");
-        assert!(existing_branches.contains("main"));
-        assert!(!existing_branches.contains(&resolved.0));
+        .await;
+        // Put the main worktree on "develop" so that "main" is NOT
+        // occupied by any worktree.
+        fs.set_branch_name(Path::new("/project/.git"), Some("develop"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "develop"]);
+
+        let project = Project::test(app_state.fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        cx.update(|cx| {
+            cx.observe_new(
+                |workspace: &mut Workspace,
+                 window: Option<&mut Window>,
+                 cx: &mut Context<Workspace>| {
+                    if let Some(window) = window {
+                        let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Select "main" as an existing branch — this should NOT make the
+        // worktree directory named "main"; it should get a random name.
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_requested(
+                content,
+                WorktreeCreationArgs::New {
+                    worktree_name: None,
+                    branch_target: NewWorktreeBranchTarget::ExistingBranch {
+                        name: "main".to_string(),
+                    },
+                },
+                PreviousWorkspaceState::empty(),
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Find the new workspace and check its worktree path.
+        let new_worktree_path = multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                let new_workspace = multi_workspace
+                    .workspaces()
+                    .find(|ws| ws.entity_id() != workspace.entity_id())
+                    .expect("a new workspace should have been created");
+
+                let new_project = new_workspace.read(cx).project().clone();
+                let worktree = new_project
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .next()
+                    .expect("new workspace should have a worktree");
+                worktree.read(cx).abs_path().to_path_buf()
+            })
+            .unwrap();
+
+        // The worktree directory path should contain a random adjective-noun
+        // name, NOT the branch name "main".
+        let path_str = new_worktree_path.to_string_lossy();
+        assert!(
+            !path_str.contains("/main/"),
+            "worktree directory should use a random name, not the branch name. \
+             Got path: {path_str}",
+        );
+        // Verify it looks like an adjective-noun pair (contains a hyphen in
+        // the directory component above the project name).
+        let parent = new_worktree_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .expect("should have a parent directory name");
+        assert!(
+            parent.contains('-'),
+            "worktree parent directory should be an adjective-noun pair (e.g. 'swift-falcon'), \
+             got: {parent}",
+        );
     }
 
     #[gpui::test]
@@ -6155,21 +6745,14 @@ mod tests {
 
         cx.run_until_parked();
 
-        // Set the selected agent to Codex (a custom agent) and start_thread_in
-        // to NewWorktree. We do this AFTER opening the thread because
-        // open_external_thread_with_server overrides selected_agent.
-        panel.update_in(cx, |panel, window, cx| {
+        // Set the selected agent to Codex (a custom agent). We do this AFTER
+        // opening the thread because open_external_thread_with_server overrides
+        // selected_agent.
+        panel.update_in(cx, |panel, _window, cx| {
             panel.selected_agent = Agent::Custom {
                 id: CODEX_ID.into(),
             };
-            panel.set_start_thread_in(
-                &StartThreadIn::NewWorktree {
-                    worktree_name: None,
-                    branch_target: NewWorktreeBranchTarget::default(),
-                },
-                window,
-                cx,
-            );
+            cx.notify();
         });
 
         // Verify the panel has the Codex agent selected.
@@ -6182,8 +6765,7 @@ mod tests {
             );
         });
 
-        // Directly call handle_worktree_creation_requested, which is what
-        // handle_first_send_requested does when start_thread_in == NewWorktree.
+        // Directly call handle_worktree_requested to trigger worktree creation.
         let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
             "Hello from test",
         ))];
@@ -6194,6 +6776,7 @@ mod tests {
                     worktree_name: None,
                     branch_target: NewWorktreeBranchTarget::default(),
                 },
+                PreviousWorkspaceState::empty(),
                 window,
                 cx,
             );
@@ -6201,14 +6784,6 @@ mod tests {
 
         // Let the async worktree creation + workspace setup complete.
         cx.run_until_parked();
-
-        panel.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                panel.start_thread_in(),
-                &StartThreadIn::LocalProject,
-                "the original panel should reset start_thread_in back to the local project after creating a worktree workspace",
-            );
-        });
 
         // Find the new workspace's AgentPanel and verify it used the Codex agent.
         let found_codex = multi_workspace
@@ -6271,11 +6846,12 @@ mod tests {
         });
 
         // Open thread A and send a message. With empty next_prompt_updates it
-        // stays generating, so opening B will move A to background_threads.
+        // stays generating, so opening B will move A to retained_threads.
         let connection_a = StubAgentConnection::new().with_agent_id("agent-a".into());
         open_thread_with_custom_connection(&panel, connection_a.clone(), &mut cx);
         send_message(&panel, &mut cx);
         let session_id_a = active_session_id(&panel, &cx);
+        let thread_id_a = active_thread_id(&panel, &cx);
 
         // Open thread C — thread A (generating) moves to background.
         // Thread C completes immediately (idle), then opening B moves C to background too.
@@ -6285,24 +6861,25 @@ mod tests {
         )]);
         open_thread_with_custom_connection(&panel, connection_c.clone(), &mut cx);
         send_message(&panel, &mut cx);
-        let session_id_c = active_session_id(&panel, &cx);
+        let thread_id_c = active_thread_id(&panel, &cx);
 
         // Open thread B — thread C (idle, non-loadable) is retained in background.
         let connection_b = StubAgentConnection::new().with_agent_id("agent-b".into());
         open_thread_with_custom_connection(&panel, connection_b.clone(), &mut cx);
         send_message(&panel, &mut cx);
         let session_id_b = active_session_id(&panel, &cx);
+        let _thread_id_b = active_thread_id(&panel, &cx);
 
         let metadata_store = cx.update(|_, cx| ThreadMetadataStore::global(cx));
 
         panel.read_with(&cx, |panel, _cx| {
             assert!(
-                panel.background_threads.contains_key(&session_id_a),
-                "Thread A should be in background_threads"
+                panel.retained_threads.contains_key(&thread_id_a),
+                "Thread A should be in retained_threads"
             );
             assert!(
-                panel.background_threads.contains_key(&session_id_c),
-                "Thread C should be in background_threads"
+                panel.retained_threads.contains_key(&thread_id_c),
+                "Thread C should be in retained_threads"
             );
         });
 
@@ -6345,7 +6922,7 @@ mod tests {
 
         // Verify thread A's (background) work_dirs are also updated.
         let updated_a_paths = panel.read_with(&cx, |panel, cx| {
-            let bg_view = panel.background_threads.get(&session_id_a).unwrap();
+            let bg_view = panel.retained_threads.get(&thread_id_a).unwrap();
             let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
             root_thread
                 .read(cx)
@@ -6365,7 +6942,7 @@ mod tests {
 
         // Verify thread idle C was also updated.
         let updated_c_paths = panel.read_with(&cx, |panel, cx| {
-            let bg_view = panel.background_threads.get(&session_id_c).unwrap();
+            let bg_view = panel.retained_threads.get(&thread_id_c).unwrap();
             let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
             root_thread
                 .read(cx)
@@ -6388,9 +6965,9 @@ mod tests {
         for (label, session_id) in [("thread B", &session_id_b), ("thread A", &session_id_a)] {
             let metadata_paths = metadata_store.read_with(&cx, |store, _cx| {
                 let metadata = store
-                    .entry(session_id)
+                    .entry_by_session(session_id)
                     .unwrap_or_else(|| panic!("{label} thread metadata should exist"));
-                metadata.folder_paths.clone()
+                metadata.folder_paths().clone()
             });
             let mut sorted = metadata_paths.ordered_paths().cloned().collect::<Vec<_>>();
             sorted.sort();
@@ -6419,7 +6996,7 @@ mod tests {
         );
 
         let after_remove_a = panel.read_with(&cx, |panel, cx| {
-            let bg_view = panel.background_threads.get(&session_id_a).unwrap();
+            let bg_view = panel.retained_threads.get(&thread_id_a).unwrap();
             let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
             root_thread
                 .read(cx)
@@ -6636,6 +7213,851 @@ mod tests {
             assert!(
                 panel.active_conversation_view().is_some(),
                 "a thread should have been created"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rollback_all_succeed_returns_ok(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let path_a = PathBuf::from("/worktrees/branch/project_a");
+        let path_b = PathBuf::from("/worktrees/branch/project_b");
+
+        let (sender_a, receiver_a) = futures::channel::oneshot::channel::<Result<()>>();
+        let (sender_b, receiver_b) = futures::channel::oneshot::channel::<Result<()>>();
+        sender_a.send(Ok(())).unwrap();
+        sender_b.send(Ok(())).unwrap();
+
+        let creation_infos = vec![
+            (repository.clone(), path_a.clone(), receiver_a),
+            (repository.clone(), path_b.clone(), receiver_b),
+        ];
+
+        let fs_clone = fs.clone();
+        let result = multi_workspace
+            .update(cx, |_, window, cx| {
+                window.spawn(cx, async move |cx| {
+                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
+                })
+            })
+            .unwrap()
+            .await;
+
+        let paths = result.expect("all succeed should return Ok");
+        assert_eq!(paths, vec![path_a, path_b]);
+    }
+
+    #[gpui::test]
+    async fn test_rollback_on_failure_attempts_all_worktrees(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        // Actually create a worktree so it exists in FakeFs for rollback to find.
+        let success_path = PathBuf::from("/worktrees/branch/project");
+        cx.update(|cx| {
+            repository.update(cx, |repo, _| {
+                repo.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "branch".to_string(),
+                        base_sha: None,
+                    },
+                    success_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        cx.executor().run_until_parked();
+
+        // Verify the worktree directory exists before rollback.
+        assert!(
+            fs.is_dir(&success_path).await,
+            "worktree directory should exist before rollback"
+        );
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        // Build creation_infos: one success, one failure.
+        let failed_path = PathBuf::from("/worktrees/branch/failed_project");
+
+        let (sender_ok, receiver_ok) = futures::channel::oneshot::channel::<Result<()>>();
+        let (sender_err, receiver_err) = futures::channel::oneshot::channel::<Result<()>>();
+        sender_ok.send(Ok(())).unwrap();
+        sender_err
+            .send(Err(anyhow!("branch already exists")))
+            .unwrap();
+
+        let creation_infos = vec![
+            (repository.clone(), success_path.clone(), receiver_ok),
+            (repository.clone(), failed_path.clone(), receiver_err),
+        ];
+
+        let fs_clone = fs.clone();
+        let result = multi_workspace
+            .update(cx, |_, window, cx| {
+                window.spawn(cx, async move |cx| {
+                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
+                })
+            })
+            .unwrap()
+            .await;
+
+        assert!(
+            result.is_err(),
+            "should return error when any creation fails"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("branch already exists"),
+            "error should mention the original failure: {err_msg}"
+        );
+
+        // The successful worktree should have been rolled back by git.
+        cx.executor().run_until_parked();
+        assert!(
+            !fs.is_dir(&success_path).await,
+            "successful worktree directory should be removed by rollback"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rollback_on_canceled_receiver(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let path = PathBuf::from("/worktrees/branch/project");
+
+        // Drop the sender to simulate a canceled receiver.
+        let (_sender, receiver) = futures::channel::oneshot::channel::<Result<()>>();
+        drop(_sender);
+
+        let creation_infos = vec![(repository.clone(), path.clone(), receiver)];
+
+        let fs_clone = fs.clone();
+        let result = multi_workspace
+            .update(cx, |_, window, cx| {
+                window.spawn(cx, async move |cx| {
+                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
+                })
+            })
+            .unwrap()
+            .await;
+
+        assert!(
+            result.is_err(),
+            "should return error when receiver is canceled"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("canceled"),
+            "error should mention cancellation: {err_msg}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rollback_cleans_up_orphan_directories(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        // Simulate the orphan state: create_dir_all was called but git
+        // worktree add failed, leaving a directory with leftover files.
+        let orphan_path = PathBuf::from("/worktrees/branch/orphan_project");
+        fs.insert_tree(
+            "/worktrees/branch/orphan_project",
+            json!({ "leftover.txt": "junk" }),
+        )
+        .await;
+
+        assert!(
+            fs.is_dir(&orphan_path).await,
+            "orphan dir should exist before rollback"
+        );
+
+        let (sender, receiver) = futures::channel::oneshot::channel::<Result<()>>();
+        sender.send(Err(anyhow!("hook failed"))).unwrap();
+
+        let creation_infos = vec![(repository.clone(), orphan_path.clone(), receiver)];
+
+        let fs_clone = fs.clone();
+        let result = multi_workspace
+            .update(cx, |_, window, cx| {
+                window.spawn(cx, async move |cx| {
+                    AgentPanel::await_and_rollback_on_failure(creation_infos, fs_clone, cx).await
+                })
+            })
+            .unwrap()
+            .await;
+
+        cx.executor().run_until_parked();
+
+        assert!(result.is_err());
+        assert!(
+            !fs.is_dir(&orphan_path).await,
+            "orphan worktree directory should be removed by filesystem cleanup"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_worktree_creation_for_remote_project(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let app_state = workspace::AppState::test(cx);
+            workspace::init(app_state.clone(), cx);
+            app_state
+        });
+
+        server_cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+
+        // Set up the remote server side with a git repo.
+        let server_fs = FakeFs::new(server_cx.executor());
+        server_fs
+            .insert_tree(
+                "/project",
+                json!({
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }),
+            )
+            .await;
+        server_fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        // Create a mock remote connection.
+        let (opts, server_session, _) = remote::RemoteClient::fake_server(cx, server_cx);
+
+        server_cx.update(remote_server::HeadlessProject::init);
+        let server_executor = server_cx.executor();
+        let _headless = server_cx.new(|cx| {
+            remote_server::HeadlessProject::new(
+                remote_server::HeadlessAppState {
+                    session: server_session,
+                    fs: server_fs.clone(),
+                    http_client: Arc::new(http_client::BlockedHttpClient),
+                    node_runtime: node_runtime::NodeRuntime::unavailable(),
+                    languages: Arc::new(language::LanguageRegistry::new(server_executor.clone())),
+                    extension_host_proxy: Arc::new(extension::ExtensionHostProxy::new()),
+                    startup_time: Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+
+        // Connect the client side and build a remote project.
+        // Use a separate Client to avoid double-registering proto handlers
+        // (Workspace::test_new creates its own WorkspaceStore from the
+        // project's client).
+        let remote_client = remote::RemoteClient::connect_mock(opts, cx).await;
+        let project = cx.update(|cx| {
+            let project_client = client::Client::new(
+                Arc::new(clock::FakeSystemClock::new()),
+                http_client::FakeHttpClient::with_404_response(),
+                cx,
+            );
+            let user_store = cx.new(|cx| client::UserStore::new(project_client.clone(), cx));
+            project::Project::remote(
+                remote_client,
+                project_client,
+                node_runtime::NodeRuntime::unavailable(),
+                user_store,
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                false,
+                cx,
+            )
+        });
+
+        // Open the remote path as a worktree in the project.
+        let worktree_path = Path::new("/project");
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(worktree_path, true, cx)
+            })
+            .await
+            .expect("should be able to open remote worktree");
+        cx.run_until_parked();
+
+        // Verify the project is indeed remote.
+        project.read_with(cx, |project, cx| {
+            assert!(!project.is_local(), "project should be remote, not local");
+            assert!(
+                project.remote_connection_options(cx).is_some(),
+                "project should have remote connection options"
+            );
+        });
+
+        // Create the workspace and agent panel.
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        // Register a callback so new workspaces also get an AgentPanel.
+        cx.update(|cx| {
+            cx.observe_new(
+                |workspace: &mut Workspace,
+                 window: Option<&mut Window>,
+                 cx: &mut Context<Workspace>| {
+                    if let Some(window) = window {
+                        let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Open a thread.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Trigger worktree creation for a known linked path.
+        let linked_path = PathBuf::from("/project");
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from remote test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_requested(
+                content,
+                WorktreeCreationArgs::Linked {
+                    worktree_path: linked_path,
+                    display_name: "test-worktree".to_string(),
+                },
+                PreviousWorkspaceState::empty(),
+                window,
+                cx,
+            );
+        });
+
+        // The refactored code uses `find_or_create_workspace`, which
+        // finds the existing remote workspace (matching paths + host)
+        // and reuses it instead of creating a new connection.
+        cx.run_until_parked();
+
+        // The task should have completed: the existing workspace was
+        // found and reused.
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                panel.worktree_creation_status.is_none(),
+                "worktree creation should have completed, but status is: {:?}",
+                panel.worktree_creation_status
+            );
+        });
+
+        // The existing remote workspace was reused — no new workspace
+        // should have been created.
+        multi_workspace
+            .read_with(cx, |multi_workspace, cx| {
+                let project = workspace.read(cx).project().clone();
+                assert!(
+                    !project.read(cx).is_local(),
+                    "workspace project should still be remote, not local"
+                );
+                assert_eq!(
+                    multi_workspace.workspaces().count(),
+                    1,
+                    "existing remote workspace should be reused, not a new one created"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_linked_worktree_switch_remaps_open_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let app_state = cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+
+            let app_state = workspace::AppState::test(cx);
+            workspace::init(app_state.clone(), cx);
+            app_state
+        });
+
+        let fs = app_state.fs.as_fake();
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": "fn main() {}",
+                    "lib.rs": "pub fn hello() {}"
+                }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        // Create a linked worktree directory with the same file structure.
+        let linked_path = PathBuf::from("/linked-worktree");
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            git::repository::Worktree {
+                path: linked_path.clone(),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+        fs.insert_tree(
+            "/linked-worktree",
+            json!({
+                "src": {
+                    "main.rs": "fn main() { // linked }",
+                    "lib.rs": "pub fn hello() { // linked }"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(app_state.fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        // Register observer so new workspaces get AgentPanel automatically.
+        cx.update(|cx| {
+            cx.observe_new(
+                |workspace: &mut Workspace,
+                 window: Option<&mut Window>,
+                 cx: &mut Context<Workspace>| {
+                    if let Some(window) = window {
+                        let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+                        workspace.add_panel(panel, window, cx);
+                    }
+                },
+            )
+            .detach();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.run_until_parked();
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        cx.run_until_parked();
+
+        // Open files in the original workspace.
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![
+                        PathBuf::from("/project/src/main.rs"),
+                        PathBuf::from("/project/src/lib.rs"),
+                    ],
+                    workspace::OpenOptions::default(),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .await;
+        cx.run_until_parked();
+
+        // Verify files are open.
+        workspace.read_with(cx, |workspace, cx| {
+            let open_paths = workspace.open_item_abs_paths(cx);
+            assert!(
+                open_paths.iter().any(|p| p.ends_with("src/main.rs")),
+                "main.rs should be open, got: {open_paths:?}"
+            );
+            assert!(
+                open_paths.iter().any(|p| p.ends_with("src/lib.rs")),
+                "lib.rs should be open, got: {open_paths:?}"
+            );
+        });
+
+        // Open a thread so the panel is in a valid state.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_external_thread_with_server(
+                Rc::new(StubAgentServer::default_response()),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Build a PreviousWorkspaceState with the open files.
+        let previous_state =
+            workspace.update_in(cx, |workspace, window, cx| PreviousWorkspaceState {
+                dock_structure: workspace.capture_dock_state(window, cx),
+                open_file_paths: vec![
+                    PathBuf::from("/project/src/main.rs"),
+                    PathBuf::from("/project/src/lib.rs"),
+                ],
+                active_file_path: Some(PathBuf::from("/project/src/main.rs")),
+            });
+
+        // Trigger the linked worktree switch.
+        let content = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "Hello from linked worktree test",
+        ))];
+        panel.update_in(cx, |panel, window, cx| {
+            panel.handle_worktree_requested(
+                content,
+                WorktreeCreationArgs::Linked {
+                    worktree_path: linked_path.clone(),
+                    display_name: "feature".to_string(),
+                },
+                previous_state,
+                window,
+                cx,
+            );
+        });
+
+        cx.run_until_parked();
+
+        // Find the new workspace.
+        let new_workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace
+                    .workspaces()
+                    .find(|ws| ws.entity_id() != workspace.entity_id())
+                    .cloned()
+            })
+            .unwrap()
+            .expect("a new workspace should have been created for the linked worktree");
+
+        // Verify that files were remapped and opened in the new workspace.
+        // The original /project/src/main.rs should now be /linked-worktree/src/main.rs.
+        let new_open_paths =
+            new_workspace.read_with(cx, |workspace, cx| workspace.open_item_abs_paths(cx));
+
+        assert!(
+            new_open_paths
+                .iter()
+                .any(|p| p == &linked_path.join("src/main.rs")),
+            "main.rs should have been remapped to the linked worktree. \
+             Open paths: {new_open_paths:?}"
+        );
+        assert!(
+            new_open_paths
+                .iter()
+                .any(|p| p == &linked_path.join("src/lib.rs")),
+            "lib.rs should have been remapped to the linked worktree. \
+             Open paths: {new_open_paths:?}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_selected_agent_syncs_when_navigating_between_threads(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        let stub_agent = Agent::Custom { id: "Test".into() };
+
+        // Open thread A and send a message so it is retained.
+        let connection_a = StubAgentConnection::new();
+        connection_a.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("response a".into()),
+        )]);
+        open_thread_with_connection(&panel, connection_a, &mut cx);
+        let session_id_a = active_session_id(&panel, &cx);
+        send_message(&panel, &mut cx);
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(panel.selected_agent, stub_agent);
+        });
+
+        // Open thread B with a different agent — thread A goes to retained.
+        let custom_agent = Agent::Custom {
+            id: "my-custom-agent".into(),
+        };
+        let connection_b = StubAgentConnection::new()
+            .with_agent_id("my-custom-agent".into())
+            .with_telemetry_id("my-custom-agent".into());
+        connection_b.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("response b".into()),
+        )]);
+        open_thread_with_custom_connection(&panel, connection_b, &mut cx);
+        send_message(&panel, &mut cx);
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent, custom_agent,
+                "selected_agent should have changed to the custom agent"
+            );
+        });
+
+        // Navigate back to thread A via load_agent_thread.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                stub_agent.clone(),
+                session_id_a.clone(),
+                None,
+                None,
+                true,
+                "agent_panel",
+                window,
+                cx,
+            );
+        });
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(
+                panel.selected_agent, stub_agent,
+                "selected_agent should sync back to thread A's agent"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_classify_worktrees_skips_non_git_root_with_nested_repo(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/repo_a",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/repo_b",
+            json!({
+                ".git": {},
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+        // `plain_dir` is NOT a git repo, but contains a nested git repo.
+        fs.insert_tree(
+            "/plain_dir",
+            json!({
+                "nested_repo": {
+                    ".git": {},
+                    "src": { "lib.rs": "" }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/repo_a"),
+                Path::new("/repo_b"),
+                Path::new("/plain_dir"),
+            ],
+            cx,
+        )
+        .await;
+
+        // Let the worktree scanner discover all `.git` directories.
+        cx.executor().run_until_parked();
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            let (git_repos, non_git_paths) = panel.classify_worktrees(cx);
+
+            let git_work_dirs: Vec<PathBuf> = git_repos
+                .iter()
+                .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
+                .collect();
+
+            assert_eq!(
+                git_repos.len(),
+                2,
+                "only repo_a and repo_b should be classified as git repos, \
+                 but got: {git_work_dirs:?}"
+            );
+            assert!(
+                git_work_dirs.contains(&PathBuf::from("/repo_a")),
+                "repo_a should be in git_repos: {git_work_dirs:?}"
+            );
+            assert!(
+                git_work_dirs.contains(&PathBuf::from("/repo_b")),
+                "repo_b should be in git_repos: {git_work_dirs:?}"
+            );
+
+            assert_eq!(
+                non_git_paths,
+                vec![PathBuf::from("/plain_dir")],
+                "plain_dir should be classified as a non-git path \
+                 (not matched to nested_repo inside it)"
             );
         });
     }

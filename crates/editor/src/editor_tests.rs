@@ -13471,6 +13471,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
                 editor.save(
                     SaveOptions {
                         format: true,
+                        force_format: false,
                         autosave: false,
                     },
                     project.clone(),
@@ -13510,6 +13511,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
                 editor.save(
                     SaveOptions {
                         format: true,
+                        force_format: false,
                         autosave: false,
                     },
                     project.clone(),
@@ -13556,6 +13558,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
                 editor.save(
                     SaveOptions {
                         format: true,
+                        force_format: false,
                         autosave: false,
                     },
                     project.clone(),
@@ -13642,6 +13645,7 @@ async fn test_auto_formatter_skips_server_without_formatting(cx: &mut TestAppCon
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -13712,6 +13716,7 @@ async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
                 editor.save(
                     SaveOptions {
                         format: true,
+                        force_format: false,
                         autosave: false,
                     },
                     project.clone(),
@@ -13931,6 +13936,7 @@ async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -14127,6 +14133,7 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
         editor.save(
             SaveOptions {
                 format: true,
+                force_format: false,
                 autosave: true,
             },
             project.clone(),
@@ -14163,6 +14170,7 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
         editor.save(
             SaveOptions {
                 format: true,
+                force_format: false,
                 autosave: false,
             },
             project.clone(),
@@ -14250,6 +14258,7 @@ async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -14305,6 +14314,7 @@ async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -14332,6 +14342,7 @@ async fn test_range_format_not_called_for_clean_buffer(cx: &mut TestAppContext) 
             editor.save(
                 SaveOptions {
                     format: false,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -14373,6 +14384,7 @@ async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppC
             editor.save(
                 SaveOptions {
                     format: true,
+                    force_format: false,
                     autosave: false,
                 },
                 project.clone(),
@@ -31442,6 +31454,7 @@ async fn test_race_in_multibuffer_save(cx: &mut TestAppContext) {
         editor.save(
             SaveOptions {
                 format: true,
+                force_format: false,
                 autosave: true,
             },
             project,

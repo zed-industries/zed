@@ -453,9 +453,9 @@ pub struct AgentLayoutOnboarding {
 
 impl Render for AgentLayoutOnboarding {
     fn render(&mut self, _window: &mut ui::Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let description = "The new threads sidebar, positioned in the far left of your workspace, allows you to manage agents across many projects. Your agent thread lives alongside it, and all other panels live on the right.";
+        let description = "With the new Threads Sidebar, you can manage multiple agents across several projects, all in one window.";
 
-        let dismiss_button = div().absolute().top_1().right_1().child(
+        let dismiss_button = div().absolute().top_0().right_0().child(
             IconButton::new("dismiss", IconName::Close)
                 .icon_size(IconSize::Small)
                 .on_click({
@@ -500,14 +500,18 @@ impl Render for AgentLayoutOnboarding {
             .w_full()
             .relative()
             .gap_1()
-            .child(Label::new("A new workspace layout for agentic work"))
+            .child(Label::new("A new workspace layout for agentic workflows"))
             .child(Label::new(description).color(Color::Muted).mb_2())
             .child(
                 List::new()
-                    .child(ListBulletItem::new("Use your favorite agents in parallel"))
-                    .child(ListBulletItem::new("Isolate agents using worktrees"))
                     .child(ListBulletItem::new(
-                        "Combine multiple projects in one window",
+                        "The Sidebar and Agent Panel are on the left by default",
+                    ))
+                    .child(ListBulletItem::new(
+                        "The Project Panel and all other panels shift to the right",
+                    ))
+                    .child(ListBulletItem::new(
+                        "You can always customize your workspace layout in your Settings",
                     )),
             )
             .child(
@@ -516,6 +520,14 @@ impl Render for AgentLayoutOnboarding {
                     .gap_1()
                     .flex_wrap()
                     .justify_end()
+                    .child(
+                        Button::new("learn", "Learn More")
+                            .label_size(LabelSize::Small)
+                            .style(ButtonStyle::OutlinedGhost)
+                            .on_click(move |_, _, cx| {
+                                cx.open_url(&zed_urls::parallel_agents_blog(cx))
+                            }),
+                    )
                     .child(primary_button),
             )
             .child(dismiss_button);

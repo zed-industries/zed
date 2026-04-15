@@ -11,6 +11,7 @@ use crate::{
     repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
+use alacritty_terminal::vte::ansi;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -1271,6 +1272,14 @@ impl GitPanel {
     }
 
     fn open_diff(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(GitListEntry::Directory(dir_entry)) = self
+            .selected_entry
+            .and_then(|i| self.entries.get(i))
+            .cloned()
+        {
+            self.toggle_directory(&dir_entry.key, window, cx);
+            return;
+        }
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
             let workspace = self.workspace.upgrade()?;
@@ -3855,9 +3864,9 @@ impl GitPanel {
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
                 match style {
-                    Toast => this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted)),
+                    Toast => this.icon(ToastIcon::new(IconName::GitBranch).color(Color::Muted)),
                     ToastWithLog { output } => this
-                        .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
+                        .icon(ToastIcon::new(IconName::GitBranch).color(Color::Muted))
                         .action("View Log", move |window, cx| {
                             let output = output.clone();
                             let output =
@@ -3869,7 +3878,7 @@ impl GitPanel {
                                 .ok();
                         }),
                     PushPrLink { text, link } => this
-                        .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
+                        .icon(ToastIcon::new(IconName::GitBranch).color(Color::Muted))
                         .action(text, move |_, cx| cx.open_url(&link)),
                 }
                 .dismiss_button(true)
@@ -5798,7 +5807,7 @@ impl Panel for GitPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranchAlt).filter(|_| GitPanelSettings::get_global(cx).button)
+        Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -6118,15 +6127,13 @@ impl RenderOnce for PanelRepoFooter {
                     .flex_1()
                     .overflow_hidden()
                     .gap_px()
-                    .child(
-                        Icon::new(IconName::GitBranchAlt)
-                            .size(IconSize::Small)
-                            .color(if single_repo {
-                                Color::Disabled
-                            } else {
-                                Color::Muted
-                            }),
-                    )
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::Small).color(
+                        if single_repo {
+                            Color::Disabled
+                        } else {
+                            Color::Muted
+                        },
+                    ))
                     .child(repo_selector)
                     .when(show_separator, |this| {
                         this.child(
@@ -6407,7 +6414,13 @@ fn open_output(
     cx: &mut Context<Workspace>,
 ) {
     let operation = operation.into();
-    let buffer = cx.new(|cx| Buffer::local(output, cx));
+
+    let mut handler = GitOutputHandler::default();
+    let mut processor = ansi::Processor::<ansi::StdSyncHandler>::default();
+    processor.advance(&mut handler, output.as_bytes());
+    let plain_text = handler.output;
+
+    let buffer = cx.new(|cx| Buffer::local(plain_text.as_str(), cx));
     buffer.update(cx, |buffer, cx| {
         buffer.set_capability(language::Capability::ReadOnly, cx);
     });
@@ -6421,6 +6434,32 @@ fn open_output(
     });
 
     workspace.add_item_to_center(Box::new(editor), window, cx);
+}
+
+#[derive(Default)]
+struct GitOutputHandler {
+    output: String,
+    line_start: usize,
+}
+
+impl ansi::Handler for GitOutputHandler {
+    fn input(&mut self, c: char) {
+        self.output.push(c);
+    }
+
+    fn linefeed(&mut self) {
+        self.output.push('\n');
+        self.line_start = self.output.len();
+    }
+
+    fn carriage_return(&mut self) {
+        self.output.truncate(self.line_start);
+    }
+
+    fn put_tab(&mut self, count: u16) {
+        self.output
+            .extend(std::iter::repeat_n('\t', count as usize));
+    }
 }
 
 pub(crate) fn show_error_toast(
@@ -7861,6 +7900,25 @@ mod tests {
         // "Update tracked"
         let message = panel.update(cx, |panel, cx| panel.suggest_commit_message(cx));
         assert_eq!(message, Some("Update tracked".to_string()));
+    }
+
+    #[test]
+    fn test_git_output_handler_strips_ansi_codes() {
+        use alacritty_terminal::vte::ansi;
+
+        let cases = [
+            ("no escape codes here\n", "no escape codes here\n"),
+            ("\x1b[31mhello\x1b[0m", "hello"),
+            ("\x1b[1;32mfoo\x1b[0m bar", "foo bar"),
+            ("progress 10%\rprogress 100%\n", "progress 100%\n"),
+        ];
+
+        for (input, expected) in cases {
+            let mut handler = GitOutputHandler::default();
+            let mut processor = ansi::Processor::<ansi::StdSyncHandler>::default();
+            processor.advance(&mut handler, input.as_bytes());
+            assert_eq!(handler.output, expected);
+        }
     }
 
     #[gpui::test]

@@ -1133,6 +1133,11 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            #[cfg_attr(
+                not(any(target_os = "linux", target_os = "freebsd")),
+                allow(unused_variables)
+            )]
+            icon,
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
             tabbing_identifier,
         } = options;
@@ -1151,6 +1156,7 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                icon,
                 #[cfg(target_os = "macos")]
                 tabbing_identifier,
             },
@@ -1211,18 +1217,38 @@ impl Window {
                     .update(&mut cx, |_, _, cx| cx.thermal_state())
                     .log_err();
 
-                if thermal_state == Some(ThermalState::Serious)
-                    || thermal_state == Some(ThermalState::Critical)
+                // Throttle frame rate based on conditions:
+                // - Thermal pressure (Serious/Critical): cap to ~60fps
+                // - Inactive window (not focused): cap to ~30fps to save energy
+                let min_frame_interval = if !request_frame_options.force_render
+                    && !request_frame_options.require_presentation
+                    && next_frame_callbacks.borrow().is_empty()
                 {
-                    let now = Instant::now();
-                    let last_frame_time = last_frame_time.replace(Some(now));
+                    None
+                } else if !active.get() {
+                    Some(Duration::from_micros(33333))
+                } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
+                    Some(Duration::from_micros(16667))
+                } else {
+                    None
+                };
 
-                    if let Some(last_frame) = last_frame_time
-                        && now.duration_since(last_frame) < Duration::from_micros(16667)
+                let now = Instant::now();
+                if let Some(min_interval) = min_frame_interval {
+                    if let Some(last_frame) = last_frame_time.get()
+                        && now.duration_since(last_frame) < min_interval
                     {
+                        // Must still complete the frame on platforms that require it.
+                        // On Wayland, `surface.frame()` was already called to request the
+                        // next frame callback, so we must call `surface.commit()` (via
+                        // `complete_frame`) or the compositor won't send another callback.
+                        handle
+                            .update(&mut cx, |_, window, _| window.complete_frame())
+                            .log_err();
                         return;
                     }
                 }
+                last_frame_time.set(Some(now));
 
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {

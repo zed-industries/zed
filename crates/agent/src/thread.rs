@@ -65,6 +65,18 @@ const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
+/// Returned when a turn is attempted but no language model has been selected.
+#[derive(Debug)]
+pub struct NoModelConfiguredError;
+
+impl std::fmt::Display for NoModelConfiguredError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "no language model configured")
+    }
+}
+
+impl std::error::Error for NoModelConfiguredError {}
+
 /// Context passed to a subagent thread for lifecycle management
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SubagentContext {
@@ -1044,6 +1056,10 @@ impl Thread {
             .default_model
             .as_ref()
             .and_then(|model| model.effort.clone());
+        let speed = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         let worktree_roots: Vec<std::path::PathBuf> = project
@@ -1082,7 +1098,7 @@ impl Thread {
             model,
             summarization_model: None,
             thinking_enabled: enable_thinking,
-            speed: None,
+            speed,
             thinking_effort,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
@@ -1788,7 +1804,9 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        let model = self.model().context("No language model configured")?;
+        let model = self
+            .model()
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
 
         log::info!("Thread::send called with model: {}", model.name().0);
         self.advance_prompt_id();
@@ -1912,7 +1930,10 @@ impl Thread {
             // mid-turn changes (e.g. the user switches model, toggles tools,
             // or changes profile) take effect between tool-call rounds.
             let (model, request) = this.update(cx, |this, cx| {
-                let model = this.model.clone().context("No language model configured")?;
+                let model = this
+                    .model
+                    .clone()
+                    .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
                 let request = this.build_completion_request(intent, cx)?;
                 anyhow::Ok((model, request))
@@ -2758,7 +2779,9 @@ impl Thread {
                 completion_intent
             };
 
-        let model = self.model().context("No language model configured")?;
+        let model = self
+            .model()
+            .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
         let tools = if let Some(turn) = self.running_turn.as_ref() {
             turn.tools
                 .iter()

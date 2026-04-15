@@ -490,7 +490,8 @@ pub fn adjusted_font_size(size: Pixels, cx: &App) -> Pixels {
     clamp_font_size(adjusted_font_size)
 }
 
-/// Adjusts the buffer font size.
+/// Adjusts the buffer font size, without persisting the result in the settings.
+/// This will be effective until the app is restarted.
 pub fn adjust_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     let adjusted_size = cx

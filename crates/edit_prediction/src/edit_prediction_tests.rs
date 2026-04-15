@@ -3252,6 +3252,12 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     let snapshot_a = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let empty_edits: Arc<[(Range<Anchor>, Arc<str>)]> = Vec::new().into();
+    let edit_preview_a = buffer
+        .read_with(cx, |buffer, cx| {
+            buffer.preview_edits(empty_edits.clone(), cx)
+        })
+        .await;
 
     // Region A: first 10 lines of the buffer.
     let editable_region_a = 0..snapshot_a.point_to_offset(Point::new(10, 0));
@@ -3263,6 +3269,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &buffer,
             &snapshot_a,
             editable_region_a.clone(),
+            &edit_preview_a,
             None,
             Duration::from_secs(0),
             cx,
@@ -3318,6 +3325,9 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     let snapshot_b2 = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let edit_preview_b = buffer
+        .read_with(cx, |buffer, cx| buffer.preview_edits(empty_edits, cx))
+        .await;
     let editable_region_b = line_20_offset..snapshot_b2.point_to_offset(Point::new(25, 0));
 
     ep_store.update(cx, |ep_store, cx| {
@@ -3327,6 +3337,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             &buffer,
             &snapshot_b2,
             editable_region_b.clone(),
+            &edit_preview_b,
             None,
             Duration::from_secs(0),
             cx,

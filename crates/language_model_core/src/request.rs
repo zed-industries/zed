@@ -333,7 +333,9 @@ pub struct LanguageModelRequest {
     pub speed: Option<Speed>,
 }
 
-#[derive(Clone, Copy, Default, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Default, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Speed {
     #[default]

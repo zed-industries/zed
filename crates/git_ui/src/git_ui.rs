@@ -281,33 +281,6 @@ fn open_modified_files(
     }
 }
 
-/// Resolves the repository for git operations, respecting the workspace's
-/// active worktree override from the project dropdown.
-pub fn resolve_active_repository(workspace: &Workspace, cx: &App) -> Option<Entity<Repository>> {
-    let project = workspace.project().read(cx);
-    workspace
-        .active_worktree_override()
-        .and_then(|override_id| {
-            project
-                .worktree_for_id(override_id, cx)
-                .and_then(|worktree| {
-                    let worktree_abs_path = worktree.read(cx).abs_path();
-                    let git_store = project.git_store().read(cx);
-                    git_store
-                        .repositories()
-                        .values()
-                        .filter(|repo| {
-                            let repo_path = &repo.read(cx).work_directory_abs_path;
-                            *repo_path == worktree_abs_path
-                                || worktree_abs_path.starts_with(repo_path.as_ref())
-                        })
-                        .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
-                        .cloned()
-                })
-        })
-        .or_else(|| project.active_repository(cx))
-}
-
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
     GitStatusIcon::new(status)
 }
