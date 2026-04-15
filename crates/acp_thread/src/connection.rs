@@ -125,7 +125,7 @@ pub trait AgentConnection {
 
     fn prompt(
         &self,
-        user_message_id: Option<UserMessageId>,
+        user_message_id: UserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
@@ -875,7 +875,7 @@ mod test_support {
 
         fn prompt(
             &self,
-            _id: Option<UserMessageId>,
+            _id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {

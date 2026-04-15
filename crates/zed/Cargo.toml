@@ -240,6 +240,11 @@ gpui = { workspace = true, features = [
     "x11",
 ] }
 ashpd.workspace = true
+image.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.build-dependencies]
+image.workspace = true
+
 
 [target.'cfg(target_os = "linux")'.build-dependencies]
 pkg-config = "0.3.22"
@@ -261,6 +266,8 @@ image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
 repl = { workspace = true, features = ["test-support"] }
+
+
 
 [package.metadata.bundle-dev]
 icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]

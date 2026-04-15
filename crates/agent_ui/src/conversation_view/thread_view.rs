@@ -7,14 +7,14 @@ use std::cell::RefCell;
 use acp_thread::{ContentBlock, PlanEntry};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+use feature_flags::AcpBetaFeatureFlag;
 
-use crate::StartThreadIn;
 use crate::message_editor::SharedSessionCapabilities;
 
 use gpui::{Corner, List};
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
-use settings::update_settings_file;
+use settings::{SidebarSide, update_settings_file};
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
@@ -206,7 +206,6 @@ impl RenderOnce for GeneratingSpinnerElement {
 }
 
 pub enum AcpThreadViewEvent {
-    FirstSendRequested { content: Vec<acp::ContentBlock> },
     MessageSentOrQueued,
 }
 
@@ -493,8 +492,8 @@ impl ThreadView {
                     None
                 };
                 this.update(cx, |this, cx| {
-                    this.thread.update(cx, |thread, _cx| {
-                        thread.set_draft_prompt(draft);
+                    this.thread.update(cx, |thread, cx| {
+                        thread.set_draft_prompt(draft, cx);
                     });
                     this.schedule_save(cx);
                 })
@@ -754,6 +753,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
+                    && self.thread.read(cx).supports_truncate(cx)
                     && user_message.id.is_some()
                     && !self.is_subagent()
                 {
@@ -764,6 +764,7 @@ impl ThreadView {
             ViewEvent::MessageEditorEvent(editor, MessageEditorEvent::LostFocus) => {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
+                    && self.thread.read(cx).supports_truncate(cx)
                     && user_message.id.is_some()
                     && !self.is_subagent()
                 {
@@ -906,49 +907,6 @@ impl ThreadView {
 
         let message_editor = self.message_editor.clone();
 
-        // Intercept the first send so the agent panel can capture the full
-        // content blocks — needed for "Start thread in New Worktree",
-        // which must create a workspace before sending the message there.
-        let intercept_first_send = self.thread.read(cx).entries().is_empty()
-            && !message_editor.read(cx).is_empty(cx)
-            && self
-                .workspace
-                .upgrade()
-                .and_then(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
-                .is_some_and(|panel| {
-                    !matches!(
-                        panel.read(cx).start_thread_in(),
-                        StartThreadIn::LocalProject
-                    )
-                });
-
-        if intercept_first_send {
-            cx.emit(AcpThreadViewEvent::MessageSentOrQueued);
-            let content_task = self.resolve_message_contents(&message_editor, cx);
-
-            cx.spawn(async move |this, cx| match content_task.await {
-                Ok((content, _tracked_buffers)) => {
-                    if content.is_empty() {
-                        return;
-                    }
-
-                    this.update(cx, |_, cx| {
-                        cx.emit(AcpThreadViewEvent::FirstSendRequested { content });
-                    })
-                    .ok();
-                }
-                Err(error) => {
-                    this.update(cx, |this, cx| {
-                        this.handle_thread_error(error, cx);
-                    })
-                    .ok();
-                }
-            })
-            .detach();
-
-            return;
-        }
-
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
@@ -1073,6 +1031,11 @@ impl ThreadView {
         })
         .detach();
 
+        let side = match AgentSettings::get_global(cx).sidebar_side() {
+            SidebarSide::Left => "left",
+            SidebarSide::Right => "right",
+        };
+
         let task = cx.spawn_in(window, async move |this, cx| {
             let Some((contents, tracked_buffers)) = contents_task.await? else {
                 return Ok(());
@@ -1141,7 +1104,8 @@ impl ThreadView {
                     session = session_id,
                     parent_session_id = parent_session_id.as_ref().map(|id| id.to_string()),
                     model = model_id,
-                    mode = mode_id
+                    mode = mode_id,
+                    side = side
                 );
 
                 thread.send(contents, cx)
@@ -1170,6 +1134,7 @@ impl ThreadView {
                 mode = mode_id,
                 status,
                 turn_time_ms,
+                side = side
             );
             res.map(|_| ())
         });
@@ -3545,6 +3510,19 @@ impl ThreadView {
         let usage = thread.token_usage()?;
         let show_split = self.supports_split_token_display(cx);
 
+        let cost_label = if cx.has_flag::<AcpBetaFeatureFlag>() {
+            thread.cost().map(|cost| {
+                let precision = if cost.amount > 0.0 && cost.amount < 0.01 {
+                    4
+                } else {
+                    2
+                };
+                format!("{:.prec$} {}", cost.amount, cost.currency, prec = precision)
+            })
+        } else {
+            None
+        };
+
         let progress_color = |ratio: f32| -> Hsla {
             if ratio >= 0.85 {
                 cx.theme().status().warning
@@ -3615,6 +3593,7 @@ impl ThreadView {
                 let output_max_label = output_max_label.clone();
                 let project_entry_ids = project_entry_ids.clone();
                 let workspace = workspace.clone();
+                let cost_label = cost_label.clone();
                 cx.new(move |_cx| TokenUsageTooltip {
                     percentage,
                     used,
@@ -3624,6 +3603,7 @@ impl ThreadView {
                     input_max: input_max_label,
                     output_max: output_max_label,
                     show_split,
+                    cost_label,
                     separator_color: tooltip_separator_color,
                     user_rules_count,
                     first_user_rules_id,
@@ -4271,6 +4251,7 @@ struct TokenUsageTooltip {
     input_max: String,
     output_max: String,
     show_split: bool,
+    cost_label: Option<String>,
     separator_color: Color,
     user_rules_count: usize,
     first_user_rules_id: Option<uuid::Uuid>,
@@ -4290,6 +4271,7 @@ impl Render for TokenUsageTooltip {
         let input_max = self.input_max.clone();
         let output_max = self.output_max.clone();
         let show_split = self.show_split;
+        let cost_label = self.cost_label.clone();
         let user_rules_count = self.user_rules_count;
         let first_user_rules_id = self.first_user_rules_id;
         let project_rules_count = self.project_rules_count;
@@ -4335,6 +4317,22 @@ impl Render for TokenUsageTooltip {
                                     .child(Label::new("/").color(separator_color))
                                     .child(Label::new(output_max).color(Color::Muted)),
                             ),
+                    )
+                })
+                .when_some(cost_label, |this, cost_label| {
+                    this.child(
+                        v_flex()
+                            .mt_1p5()
+                            .pt_1p5()
+                            .gap_0p5()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(
+                                Label::new("Cost")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .child(Label::new(cost_label)),
                     )
                 })
                 .when(
@@ -4495,7 +4493,8 @@ impl ThreadView {
                     .is_some_and(|checkpoint| checkpoint.show);
 
                 let is_subagent = self.is_subagent();
-                let is_editable = message.id.is_some() && !is_subagent;
+                let can_rewind = self.thread.read(cx).supports_truncate(cx);
+                let is_editable = can_rewind && message.id.is_some() && !is_subagent;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {

@@ -147,28 +147,6 @@ pub fn build_root_plan(
     })
 }
 
-/// Returns `true` if any unarchived thread other than `current_session_id`
-/// references `path` in its folder paths. Used to determine whether a
-/// worktree can safely be removed from disk.
-pub fn path_is_referenced_by_other_unarchived_threads(
-    current_thread_id: ThreadId,
-    path: &Path,
-    cx: &App,
-) -> bool {
-    ThreadMetadataStore::global(cx)
-        .read(cx)
-        .entries()
-        .filter(|thread| thread.thread_id != current_thread_id)
-        .filter(|thread| !thread.archived)
-        .any(|thread| {
-            thread
-                .folder_paths()
-                .paths()
-                .iter()
-                .any(|other_path| other_path.as_path() == path)
-        })
-}
-
 /// Removes a worktree from all affected projects and deletes it from disk
 /// via `git worktree remove`.
 ///
@@ -211,20 +189,40 @@ async fn remove_root_after_worktree_removal(
         }
     }
 
+    // Delete the directory ourselves first, then tell git to clean up the
+    // metadata. This avoids a problem where `git worktree remove` can
+    // remove the metadata in `.git/worktrees/<name>` but fail to delete
+    // the directory (git continues past directory-removal errors), leaving
+    // an orphaned folder on disk. By deleting the directory first, we
+    // guarantee it's gone, and `git worktree remove --force` with a
+    // missing working tree just cleans up the admin entry.
+    let root_path = root.root_path.clone();
+    cx.background_executor()
+        .spawn(async move {
+            match std::fs::remove_dir_all(&root_path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete worktree directory '{}'",
+                root.root_path.display()
+            )
+        })?;
+
     let (repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx).await?;
-    // force=true is required because the working directory is still dirty
-    // — persist_worktree_state captures state into detached commits without
-    // modifying the real index or working tree, so git refuses to delete
-    // the worktree without --force.
     let receiver = repo.update(cx, |repo: &mut Repository, _cx| {
         repo.remove_worktree(root.root_path.clone(), true)
     });
     let result = receiver
         .await
-        .map_err(|_| anyhow!("git worktree removal was canceled"))?;
+        .map_err(|_| anyhow!("git worktree metadata cleanup was canceled"))?;
     // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
     drop(_temp_project);
-    result.context("git worktree removal failed")?;
+    result.context("git worktree metadata cleanup failed")?;
 
     remove_empty_parent_dirs_up_to_worktrees_base(
         root.root_path.clone(),
@@ -591,25 +589,83 @@ pub async fn restore_worktree_via_git(
         }
     };
 
-    // Switch to the branch. Since the branch was never moved during
-    // archival (WIP commits are detached), it still points at
-    // original_commit_hash, so this is essentially a no-op for HEAD.
     if let Some(branch_name) = &row.branch_name {
-        let rx = wt_repo.update(cx, |repo, _cx| repo.change_branch(branch_name.clone()));
-        if let Err(checkout_error) = rx.await.map_err(|e| anyhow!("{e}")).and_then(|r| r) {
-            log::debug!(
-                "change_branch('{}') failed: {checkout_error:#}, trying create_branch",
-                branch_name
-            );
-            let rx = wt_repo.update(cx, |repo, _cx| {
-                repo.create_branch(branch_name.clone(), None)
-            });
-            if let Ok(Err(error)) | Err(error) = rx.await.map_err(|e| anyhow!("{e}")) {
-                log::warn!(
-                    "Could not create branch '{}': {error} — \
-                     restored worktree will be in detached HEAD state.",
-                    branch_name
+        // Attempt to check out the branch the worktree was previously on.
+        let checkout_result = wt_repo
+            .update(cx, |repo, _cx| repo.change_branch(branch_name.clone()))
+            .await;
+
+        match checkout_result.map_err(|e| anyhow!("{e}")).flatten() {
+            Ok(()) => {
+                // Branch checkout succeeded. Check whether the branch has moved since
+                // we archived the worktree, by comparing HEAD to the expected SHA.
+                let head_sha = wt_repo
+                    .update(cx, |repo, _cx| repo.head_sha())
+                    .await
+                    .map_err(|e| anyhow!("{e}"))
+                    .and_then(|r| r);
+
+                match head_sha {
+                    Ok(Some(sha)) if sha == row.original_commit_hash => {
+                        // Branch still points at the original commit; we're all done!
+                    }
+                    Ok(Some(sha)) => {
+                        // The branch has moved. We don't want to restore the worktree to
+                        // a different filesystem state, so checkout the original commit
+                        // in detached HEAD state.
+                        log::info!(
+                            "Branch '{branch_name}' has moved since archival (now at {sha}); \
+                             restoring worktree in detached HEAD at {}",
+                            row.original_commit_hash
+                        );
+                        let detach_result = main_repo
+                            .update(cx, |repo, _cx| {
+                                repo.checkout_branch_in_worktree(
+                                    row.original_commit_hash.clone(),
+                                    row.worktree_path.clone(),
+                                    false,
+                                )
+                            })
+                            .await;
+
+                        if let Err(error) = detach_result.map_err(|e| anyhow!("{e}")).flatten() {
+                            log::warn!(
+                                "Failed to detach HEAD at {}: {error:#}",
+                                row.original_commit_hash
+                            );
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!(
+                            "head_sha unexpectedly returned None after checking out \"{branch_name}\"; \
+                             proceeding in current HEAD state."
+                        );
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "Failed to read HEAD after checking out \"{branch_name}\": {error:#}"
+                        );
+                    }
+                }
+            }
+            Err(checkout_error) => {
+                // We weren't able to check out the branch, most likely because it was deleted.
+                // This is fine; users will often delete old branches! We'll try to recreate it.
+                log::debug!(
+                    "change_branch('{branch_name}') failed: {checkout_error:#}, trying create_branch"
                 );
+                let create_result = wt_repo
+                    .update(cx, |repo, _cx| {
+                        repo.create_branch(branch_name.clone(), None)
+                    })
+                    .await;
+
+                if let Err(error) = create_result.map_err(|e| anyhow!("{e}")).flatten() {
+                    log::warn!(
+                        "Failed to create branch '{branch_name}': {error:#}; \
+                         restored worktree will be in detached HEAD state."
+                    );
+                }
             }
         }
     }
@@ -756,7 +812,7 @@ fn current_app_state(cx: &mut AsyncApp) -> Option<Arc<AppState>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::FakeFs;
+    use fs::{FakeFs, Fs as _};
     use git::repository::Worktree as GitWorktree;
     use gpui::TestAppContext;
     use project::Project;
@@ -945,6 +1001,7 @@ mod tests {
                 ref_name: Some("refs/heads/feature".into()),
                 sha: "abc123".into(),
                 is_main: false,
+                is_bare: false,
             },
         )
         .await;
@@ -991,5 +1048,196 @@ mod tests {
                  even when a linked worktree exists",
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_remove_root_deletes_directory_and_git_metadata(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/linked-worktree"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project"), Path::new("/linked-worktree")],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // Build the root plan while the worktree is still loaded.
+        let root = workspace
+            .read_with(cx, |_workspace, cx| {
+                build_root_plan(
+                    Path::new("/linked-worktree"),
+                    std::slice::from_ref(&workspace),
+                    cx,
+                )
+            })
+            .expect("should produce a root plan for the linked worktree");
+
+        assert!(fs.is_dir(Path::new("/linked-worktree")).await);
+
+        // Remove the root.
+        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
+        task.await.expect("remove_root should succeed");
+
+        cx.run_until_parked();
+
+        // The FakeFs directory should be gone (removed by the FakeGitRepository
+        // backend's remove_worktree implementation).
+        assert!(
+            !fs.is_dir(Path::new("/linked-worktree")).await,
+            "linked worktree directory should be removed from FakeFs"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_root_succeeds_when_directory_already_gone(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/linked-worktree"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project"), Path::new("/linked-worktree")],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let root = workspace
+            .read_with(cx, |_workspace, cx| {
+                build_root_plan(
+                    Path::new("/linked-worktree"),
+                    std::slice::from_ref(&workspace),
+                    cx,
+                )
+            })
+            .expect("should produce a root plan for the linked worktree");
+
+        // Manually remove the worktree directory from FakeFs before calling
+        // remove_root, simulating the directory being deleted externally.
+        fs.as_ref()
+            .remove_dir(
+                Path::new("/linked-worktree"),
+                fs::RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: false,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(!fs.as_ref().is_dir(Path::new("/linked-worktree")).await);
+
+        // remove_root should still succeed — the std::fs::remove_dir_all
+        // handles NotFound, and git worktree remove handles a missing
+        // working tree directory.
+        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
+        task.await
+            .expect("remove_root should succeed even when directory is already gone");
+    }
+
+    #[test]
+    fn test_remove_dir_all_deletes_real_directory() {
+        let tmp = TempDir::new().unwrap();
+        let worktree_dir = tmp.path().join("linked-worktree");
+        std::fs::create_dir_all(worktree_dir.join("src")).unwrap();
+        std::fs::write(worktree_dir.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(worktree_dir.join("README.md"), "# Hello").unwrap();
+
+        assert!(worktree_dir.is_dir());
+
+        // This is the same pattern used in remove_root_after_worktree_removal.
+        match std::fs::remove_dir_all(&worktree_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("unexpected error: {error}"),
+        }
+
+        assert!(
+            !worktree_dir.exists(),
+            "worktree directory should be deleted"
+        );
+    }
+
+    #[test]
+    fn test_remove_dir_all_handles_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let nonexistent = tmp.path().join("does-not-exist");
+
+        assert!(!nonexistent.exists());
+
+        // Should not panic — NotFound is handled gracefully.
+        match std::fs::remove_dir_all(&nonexistent) {
+            Ok(()) => panic!("expected NotFound error"),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => panic!("unexpected error: {error}"),
+        }
     }
 }

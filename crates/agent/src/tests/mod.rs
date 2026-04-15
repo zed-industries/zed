@@ -3350,7 +3350,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let result = cx
         .update(|cx| {
             connection.prompt(
-                Some(acp_thread::UserMessageId::new()),
+                acp_thread::UserMessageId::new(),
                 acp::PromptRequest::new(session_id.clone(), vec!["ghi".into()]),
                 cx,
             )

@@ -127,6 +127,17 @@ pub struct CommitDetails {
     body: String,
 }
 
+impl CommitDetails {
+    pub fn new(sha: CommitSha, author: Committer, title: String, body: String) -> Self {
+        Self {
+            sha,
+            author,
+            title,
+            body,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Committer {
     name: String,

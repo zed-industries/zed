@@ -6,7 +6,7 @@ use clap::Parser;
 use compliance::{
     checks::Reporter,
     git::{CommitsFromVersionToVersion, GetVersionTags, GitCommand, VersionTag},
-    github::GitHubClient,
+    github::{GithubClient, Repository},
     report::ReportReviewSummary,
 };
 
@@ -69,9 +69,10 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     println!("Checking commit range {range}, {} total", commits.len());
 
-    let client = GitHubClient::for_app(
+    let client = GithubClient::for_app_in_repo(
         app_id.parse().context("Failed to parse app ID as int")?,
         key.as_ref(),
+        Repository::ZED.owner(),
     )
     .await?;
 
@@ -93,7 +94,7 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
 
     for report in report.errors() {
         if let Some(pr_number) = report.commit.pr_number()
-            && let Ok(pull_request) = client.get_pull_request(pr_number).await
+            && let Ok(pull_request) = client.get_pull_request(&Repository::ZED, pr_number).await
             && pull_request.labels.is_none_or(|labels| {
                 labels
                     .iter()
@@ -103,7 +104,11 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
             println!("Adding review label to PR {}...", pr_number);
 
             client
-                .add_label_to_issue(compliance::github::PR_REVIEW_LABEL, pr_number)
+                .add_label_to_issue(
+                    &Repository::ZED,
+                    compliance::github::PR_REVIEW_LABEL,
+                    pr_number,
+                )
                 .await?;
         }
     }
