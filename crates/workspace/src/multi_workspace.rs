@@ -105,6 +105,7 @@ pub enum MultiWorkspaceEvent {
     ActiveWorkspaceChanged,
     WorkspaceAdded(Entity<Workspace>),
     WorkspaceRemoved(EntityId),
+    ProjectGroupsChanged,
 }
 
 pub enum SidebarEvent {
@@ -854,6 +855,7 @@ impl MultiWorkspace {
 
         // Now remove the group.
         self.project_groups.retain(|group| group.key != *group_key);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
 
         let excluded_workspaces = workspaces.clone();
         self.remove(

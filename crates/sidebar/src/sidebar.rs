@@ -411,7 +411,8 @@ impl Sidebar {
                     this.subscribe_to_workspace(workspace, window, cx);
                     this.update_entries(cx);
                 }
-                MultiWorkspaceEvent::WorkspaceRemoved(_) => {
+                MultiWorkspaceEvent::WorkspaceRemoved(_)
+                | MultiWorkspaceEvent::ProjectGroupsChanged => {
                     this.update_entries(cx);
                 }
             },
