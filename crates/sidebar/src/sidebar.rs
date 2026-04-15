@@ -45,8 +45,8 @@ use ui::{
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
-    AddFolderToProject, CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent,
-    NextProject, NextThread, Open, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
+    CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, NextProject,
+    NextThread, Open, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
     ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
     ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
 };
@@ -473,6 +473,7 @@ impl Sidebar {
             |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
                     this.sync_active_entry_from_active_workspace(cx);
+                    this.replace_archived_panel_thread(window, cx);
                     this.observe_draft_editors(cx);
                     this.update_entries(cx);
                 }
@@ -481,10 +482,6 @@ impl Sidebar {
                     this.update_entries(cx);
                 }
                 MultiWorkspaceEvent::WorkspaceRemoved(_) => {
-                    this.update_entries(cx);
-                }
-                MultiWorkspaceEvent::ProjectGroupKeyUpdated { old_key, new_key } => {
-                    this.move_threads_for_key_change(old_key, new_key, cx);
                     this.update_entries(cx);
                 }
             },
@@ -671,51 +668,6 @@ impl Sidebar {
         }
     }
 
-    fn move_threads_for_key_change(
-        &mut self,
-        old_key: &ProjectGroupKey,
-        new_key: &ProjectGroupKey,
-        cx: &mut Context<Self>,
-    ) {
-        let old_main_paths = old_key.path_list();
-        let new_main_paths = new_key.path_list();
-
-        let added_paths: Vec<PathBuf> = new_main_paths
-            .paths()
-            .iter()
-            .filter(|p| !old_main_paths.paths().contains(p))
-            .cloned()
-            .collect();
-
-        let removed_paths: Vec<PathBuf> = old_main_paths
-            .paths()
-            .iter()
-            .filter(|p| !new_main_paths.paths().contains(p))
-            .cloned()
-            .collect();
-
-        if added_paths.is_empty() && removed_paths.is_empty() {
-            return;
-        }
-
-        let remote_connection = old_key.host();
-        ThreadMetadataStore::global(cx).update(cx, |store, store_cx| {
-            store.change_worktree_paths_by_main(
-                old_main_paths,
-                remote_connection.as_ref(),
-                |paths| {
-                    for path in &added_paths {
-                        paths.add_path(path, path);
-                    }
-                    for path in &removed_paths {
-                        paths.remove_main_path(path);
-                    }
-                },
-                store_cx,
-            );
-        });
-    }
-
     fn move_thread_paths(
         &mut self,
         project: &Entity<project::Project>,
@@ -802,6 +754,29 @@ impl Sidebar {
         }
     }
 
+    /// When switching workspaces, the active panel may still be showing
+    /// a thread that was archived from a different workspace. In that
+    /// case, create a fresh draft so the panel has valid content and
+    /// `active_entry` can point at it.
+    fn replace_archived_panel_thread(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(workspace) = self.active_workspace(cx) else {
+            return;
+        };
+        let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+            return;
+        };
+        let Some(thread_id) = panel.read(cx).active_thread_id(cx) else {
+            return;
+        };
+        let is_archived = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .is_some_and(|m| m.archived);
+        if is_archived {
+            self.create_new_thread(&workspace, window, cx);
+        }
+    }
+
     /// Syncs `active_entry` from the agent panel's current state.
     /// Called from `ActiveViewChanged` — the panel has settled into its
     /// new view, so we can safely read it without race conditions.
@@ -846,14 +821,20 @@ impl Sidebar {
         }
 
         if let Some(thread_id) = panel.active_thread_id(cx) {
-            let session_id = panel
-                .active_agent_thread(cx)
-                .map(|thread| thread.read(cx).session_id().clone());
-            self.active_entry = Some(ActiveEntry {
-                thread_id,
-                session_id,
-                workspace: active_workspace,
-            });
+            let is_archived = ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(thread_id)
+                .is_some_and(|m| m.archived);
+            if !is_archived {
+                let session_id = panel
+                    .active_agent_thread(cx)
+                    .map(|thread| thread.read(cx).session_id().clone());
+                self.active_entry = Some(ActiveEntry {
+                    thread_id,
+                    session_id,
+                    workspace: active_workspace,
+                });
+            }
         }
 
         false
@@ -1860,10 +1841,38 @@ impl Sidebar {
         id_prefix: &str,
         project_group_key: &ProjectGroupKey,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let multi_workspace = self.multi_workspace.clone();
-        let this = cx.weak_entity();
         let project_group_key = project_group_key.clone();
+
+        let show_menu = multi_workspace
+            .read_with(cx, |mw, _| {
+                project_group_key.host().is_none() && mw.project_group_keys().len() >= 2
+            })
+            .unwrap_or(false);
+
+        if !show_menu {
+            return IconButton::new(
+                SharedString::from(format!("{id_prefix}-close-project-{ix}")),
+                IconName::Close,
+            )
+            .icon_size(IconSize::Small)
+            .tooltip(Tooltip::text("Remove Project"))
+            .on_click(cx.listener({
+                move |_, _, window, cx| {
+                    multi_workspace
+                        .update(cx, |multi_workspace, cx| {
+                            multi_workspace
+                                .remove_project_group(&project_group_key, window, cx)
+                                .detach_and_log_err(cx);
+                        })
+                        .ok();
+                }
+            }))
+            .into_any_element();
+        }
+
+        let this = cx.weak_entity();
 
         PopoverMenu::new(format!("{id_prefix}project-header-menu-{ix}"))
             .trigger(
@@ -1889,108 +1898,44 @@ impl Sidebar {
                 let multi_workspace = multi_workspace.clone();
                 let project_group_key = project_group_key.clone();
 
-                let has_multiple_projects = multi_workspace
-                    .read_with(cx, |mw, _| mw.project_group_keys().len() >= 2)
-                    .unwrap_or(false);
-
                 let menu =
                     ContextMenu::build_persistent(window, cx, move |menu, _window, menu_cx| {
                         let weak_menu = menu_cx.weak_entity();
-                        let mut menu = menu
-                            .header("Project Folders")
-                            .end_slot_action(Box::new(menu::EndSlot));
 
-                        for path in project_group_key.path_list().paths() {
-                            let Some(name) = path.file_name() else {
-                                continue;
-                            };
-                            let name: SharedString = name.to_string_lossy().into_owned().into();
-                            let path = path.clone();
-                            let project_group_key = project_group_key.clone();
-                            let multi_workspace = multi_workspace.clone();
-                            let weak_menu = weak_menu.clone();
-                            menu = menu.entry_with_end_slot_on_hover(
-                                name.clone(),
-                                None,
-                                |_, _| {},
-                                IconName::Close,
-                                "Remove Folder".into(),
-                                move |_window, cx| {
-                                    multi_workspace
-                                        .update(cx, |multi_workspace, cx| {
-                                            multi_workspace.remove_folder_from_project_group(
-                                                &project_group_key,
-                                                &path,
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                    weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                },
-                            );
-                        }
-
-                        let menu = menu.separator().entry(
-                            "Add Folder to Project",
-                            Some(Box::new(AddFolderToProject)),
+                        let menu = menu.entry(
+                            "Open Project in New Window",
+                            Some(Box::new(workspace::MoveProjectToNewWindow)),
                             {
                                 let project_group_key = project_group_key.clone();
                                 let multi_workspace = multi_workspace.clone();
-                                let weak_menu = weak_menu.clone();
                                 move |window, cx| {
                                     multi_workspace
                                         .update(cx, |multi_workspace, cx| {
-                                            multi_workspace.prompt_to_add_folders_to_project_group(
-                                                project_group_key.clone(),
-                                                window,
-                                                cx,
-                                            );
+                                            multi_workspace
+                                                .open_project_group_in_new_window(
+                                                    &project_group_key,
+                                                    window,
+                                                    cx,
+                                                )
+                                                .detach_and_log_err(cx);
                                         })
                                         .ok();
-                                    weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
                                 }
                             },
                         );
 
-                        let menu = if project_group_key.host().is_none() && has_multiple_projects {
-                            menu.entry(
-                                "Open Project in New Window",
-                                Some(Box::new(workspace::MoveProjectToNewWindow)),
-                                {
-                                    let project_group_key = project_group_key.clone();
-                                    let multi_workspace = multi_workspace.clone();
-                                    move |window, cx| {
-                                        multi_workspace
-                                            .update(cx, |multi_workspace, cx| {
-                                                multi_workspace
-                                                    .open_project_group_in_new_window(
-                                                        &project_group_key,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .detach_and_log_err(cx);
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            )
-                        } else {
-                            menu
-                        };
-
                         let project_group_key = project_group_key.clone();
                         let multi_workspace = multi_workspace.clone();
-                        menu.separator()
-                            .entry("Remove Project", None, move |window, cx| {
-                                multi_workspace
-                                    .update(cx, |multi_workspace, cx| {
-                                        multi_workspace
-                                            .remove_project_group(&project_group_key, window, cx)
-                                            .detach_and_log_err(cx);
-                                    })
-                                    .ok();
-                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                            })
+                        menu.entry("Remove Project", None, move |window, cx| {
+                            multi_workspace
+                                .update(cx, |multi_workspace, cx| {
+                                    multi_workspace
+                                        .remove_project_group(&project_group_key, window, cx)
+                                        .detach_and_log_err(cx);
+                                })
+                                .ok();
+                            weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                        })
                     });
 
                 let this = this.clone();
@@ -2011,6 +1956,7 @@ impl Sidebar {
                 x: px(0.),
                 y: px(1.),
             })
+            .into_any_element()
     }
 
     fn render_sticky_header(

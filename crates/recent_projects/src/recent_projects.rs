@@ -1639,7 +1639,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         let open_action = workspace::Open {
                             create_new_window: self.create_new_window,
                         };
-                        Button::new("open_local_folder", "Open Local Project")
+                        Button::new("open_local_folder", "Open Local Folders")
                             .key_binding(KeyBinding::for_action_in(&open_action, &focus_handle, cx))
                             .on_click({
                                 let workspace = self.workspace.clone();
@@ -1655,7 +1655,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             })
                     })
                     .child(
-                        Button::new("open_remote_folder", "Open Remote Project")
+                        Button::new("open_remote_folder", "Open Remote Folder")
                             .key_binding(KeyBinding::for_action(
                                 &OpenRemote {
                                     from_existing_connection: false,
@@ -1827,7 +1827,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                                 .separator()
                                             })
                                             .entry(
-                                                "Open Local Project",
+                                                "Open Local Folders",
                                                 Some(open_action.boxed_clone()),
                                                 {
                                                     let workspace_handle = workspace_handle.clone();
@@ -1842,7 +1842,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                                 },
                                             )
                                             .action(
-                                                "Open Remote Project",
+                                                "Open Remote Folder",
                                                 OpenRemote {
                                                     from_existing_connection: false,
                                                     create_new_window: false,
