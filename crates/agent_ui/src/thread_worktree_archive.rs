@@ -569,25 +569,83 @@ pub async fn restore_worktree_via_git(
         }
     };
 
-    // Switch to the branch. Since the branch was never moved during
-    // archival (WIP commits are detached), it still points at
-    // original_commit_hash, so this is essentially a no-op for HEAD.
     if let Some(branch_name) = &row.branch_name {
-        let rx = wt_repo.update(cx, |repo, _cx| repo.change_branch(branch_name.clone()));
-        if let Err(checkout_error) = rx.await.map_err(|e| anyhow!("{e}")).and_then(|r| r) {
-            log::debug!(
-                "change_branch('{}') failed: {checkout_error:#}, trying create_branch",
-                branch_name
-            );
-            let rx = wt_repo.update(cx, |repo, _cx| {
-                repo.create_branch(branch_name.clone(), None)
-            });
-            if let Ok(Err(error)) | Err(error) = rx.await.map_err(|e| anyhow!("{e}")) {
-                log::warn!(
-                    "Could not create branch '{}': {error} — \
-                     restored worktree will be in detached HEAD state.",
-                    branch_name
+        // Attempt to check out the branch the worktree was previously on.
+        let checkout_result = wt_repo
+            .update(cx, |repo, _cx| repo.change_branch(branch_name.clone()))
+            .await;
+
+        match checkout_result.map_err(|e| anyhow!("{e}")).flatten() {
+            Ok(()) => {
+                // Branch checkout succeeded. Check whether the branch has moved since
+                // we archived the worktree, by comparing HEAD to the expected SHA.
+                let head_sha = wt_repo
+                    .update(cx, |repo, _cx| repo.head_sha())
+                    .await
+                    .map_err(|e| anyhow!("{e}"))
+                    .and_then(|r| r);
+
+                match head_sha {
+                    Ok(Some(sha)) if sha == row.original_commit_hash => {
+                        // Branch still points at the original commit; we're all done!
+                    }
+                    Ok(Some(sha)) => {
+                        // The branch has moved. We don't want to restore the worktree to
+                        // a different filesystem state, so checkout the original commit
+                        // in detached HEAD state.
+                        log::info!(
+                            "Branch '{branch_name}' has moved since archival (now at {sha}); \
+                             restoring worktree in detached HEAD at {}",
+                            row.original_commit_hash
+                        );
+                        let detach_result = main_repo
+                            .update(cx, |repo, _cx| {
+                                repo.checkout_branch_in_worktree(
+                                    row.original_commit_hash.clone(),
+                                    row.worktree_path.clone(),
+                                    false,
+                                )
+                            })
+                            .await;
+
+                        if let Err(error) = detach_result.map_err(|e| anyhow!("{e}")).flatten() {
+                            log::warn!(
+                                "Failed to detach HEAD at {}: {error:#}",
+                                row.original_commit_hash
+                            );
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!(
+                            "head_sha unexpectedly returned None after checking out \"{branch_name}\"; \
+                             proceeding in current HEAD state."
+                        );
+                    }
+                    Err(error) => {
+                        log::warn!(
+                            "Failed to read HEAD after checking out \"{branch_name}\": {error:#}"
+                        );
+                    }
+                }
+            }
+            Err(checkout_error) => {
+                // We weren't able to check out the branch, most likely because it was deleted.
+                // This is fine; users will often delete old branches! We'll try to recreate it.
+                log::debug!(
+                    "change_branch('{branch_name}') failed: {checkout_error:#}, trying create_branch"
                 );
+                let create_result = wt_repo
+                    .update(cx, |repo, _cx| {
+                        repo.create_branch(branch_name.clone(), None)
+                    })
+                    .await;
+
+                if let Err(error) = create_result.map_err(|e| anyhow!("{e}")).flatten() {
+                    log::warn!(
+                        "Failed to create branch '{branch_name}': {error:#}; \
+                         restored worktree will be in detached HEAD state."
+                    );
+                }
             }
         }
     }

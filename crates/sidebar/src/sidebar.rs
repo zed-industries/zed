@@ -2628,8 +2628,10 @@ impl Sidebar {
                 ) {
                     self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
                 } else {
-                    let key =
-                        ProjectGroupKey::new(metadata.remote_connection.clone(), path_list.clone());
+                    let key = ProjectGroupKey::from_worktree_paths(
+                        &metadata.worktree_paths,
+                        metadata.remote_connection.clone(),
+                    );
                     self.open_workspace_and_activate_thread(metadata, path_list, &key, window, cx);
                 }
             }
@@ -2673,9 +2675,9 @@ impl Sidebar {
                                 cx,
                             );
                         } else {
-                            let key = ProjectGroupKey::new(
+                            let key = ProjectGroupKey::from_worktree_paths(
+                                &metadata.worktree_paths,
                                 metadata.remote_connection.clone(),
-                                path_list.clone(),
                             );
                             this.open_workspace_and_activate_thread(
                                 metadata, path_list, &key, window, cx,
@@ -2742,6 +2744,10 @@ impl Sidebar {
 
                     if let Some(updated_metadata) = updated_metadata {
                         let new_paths = updated_metadata.folder_paths().clone();
+                        let key = ProjectGroupKey::from_worktree_paths(
+                            &updated_metadata.worktree_paths,
+                            updated_metadata.remote_connection.clone(),
+                        );
 
                         cx.update(|_window, cx| {
                             store.update(cx, |store, cx| {
@@ -2751,10 +2757,6 @@ impl Sidebar {
 
                         this.update_in(cx, |this, window, cx| {
                             this.restoring_tasks.remove(&thread_id);
-                            let key = ProjectGroupKey::new(
-                                updated_metadata.remote_connection.clone(),
-                                new_paths.clone(),
-                            );
                             this.open_workspace_and_activate_thread(
                                 updated_metadata,
                                 new_paths,

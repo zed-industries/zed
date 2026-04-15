@@ -807,12 +807,13 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                same_remote_connection_identity(
-                    self.threads
-                        .get(id)
-                        .and_then(|t| t.remote_connection.as_ref()),
-                    remote_connection,
-                )
+                self.threads.get(id).is_some_and(|t| {
+                    !t.archived
+                        && same_remote_connection_identity(
+                            t.remote_connection.as_ref(),
+                            remote_connection,
+                        )
+                })
             })
             .copied()
             .collect();
