@@ -5829,7 +5829,7 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
     let remove_task = multi_workspace.update_in(cx, |mw, window, cx| {
         mw.remove(
             vec![worktree_workspace],
-            move |_this, _window, _cx| Task::ready(Ok(main_workspace.clone())),
+            move |_this, _window, _cx| Task::ready(Ok(main_workspace)),
             window,
             cx,
         )
@@ -5860,9 +5860,7 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.activate_archived_thread(metadata, window, cx);
     });
-    for _ in 0..10 {
-        cx.run_until_parked();
-    }
+    cx.run_until_parked();
 
     // The provisional key should use [/project] (the main repo),
     // which matches the existing main workspace. If it incorrectly

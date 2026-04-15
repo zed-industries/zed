@@ -579,7 +579,7 @@ pub async fn restore_worktree_via_git(
             Ok(Ok(Some(sha))) => {
                 // A branch with that name already exists, so we won't try to create one.
                 if sha == row.original_commit_hash {
-                    // The existing branch branch points to the same sha as our original commit;
+                    // The existing branch points to the same sha as our original commit;
                     // try to check it out.
                     let result = wt_repo
                         .update(cx, |repo, _cx| repo.change_branch(branch_name.clone()))
