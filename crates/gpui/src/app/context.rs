@@ -479,6 +479,24 @@ impl<'a, T: 'static> Context<'a, T> {
         subscription
     }
 
+    /// Registers a callback to be invoked when the window button layout changes.
+    pub fn observe_button_layout_changed(
+        &self,
+        window: &mut Window,
+        mut callback: impl FnMut(&mut T, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let (subscription, activate) = window.button_layout_observers.insert(
+            (),
+            Box::new(move |window, cx| {
+                view.update(cx, |view, cx| callback(view, window, cx))
+                    .is_ok()
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Register a callback to be invoked when a keystroke is received by the application
     /// in any window. Note that this fires after all other action and event mechanisms have resolved
     /// and that this API will not be invoked if the event's propagation is stopped.

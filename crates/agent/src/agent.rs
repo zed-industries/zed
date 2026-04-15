@@ -82,7 +82,7 @@ struct Session {
     /// The ACP thread that handles protocol communication
     acp_thread: Entity<acp_thread::AcpThread>,
     project_id: EntityId,
-    pending_save: Task<()>,
+    pending_save: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -349,7 +349,7 @@ impl NativeAgent {
                 prompt_capabilities_rx,
                 cx,
             );
-            acp_thread.set_draft_prompt(draft_prompt);
+            acp_thread.set_draft_prompt(draft_prompt, cx);
             acp_thread.set_ui_scroll_position(scroll_position);
             acp_thread.update_token_usage(token_usage, cx);
             acp_thread
@@ -387,7 +387,7 @@ impl NativeAgent {
                 acp_thread: acp_thread.clone(),
                 project_id,
                 _subscriptions: subscriptions,
-                pending_save: Task::ready(()),
+                pending_save: Task::ready(Ok(())),
             },
         );
 
@@ -662,12 +662,17 @@ impl NativeAgent {
         let Some(session) = self.sessions.get(session_id) else {
             return;
         };
+
         let thread = thread.downgrade();
         let acp_thread = session.acp_thread.downgrade();
         cx.spawn(async move |_, cx| {
             let title = thread.read_with(cx, |thread, _| thread.title())?;
-            let task = acp_thread.update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))?;
-            task.await
+            if let Some(title) = title {
+                let task =
+                    acp_thread.update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))?;
+                task.await?;
+            }
+            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
@@ -937,6 +942,9 @@ impl NativeAgent {
                 NativeAgentConnection::handle_thread_events(events, acp_thread.downgrade(), cx)
             })
             .await?;
+            acp_thread.update(cx, |thread, cx| {
+                thread.snapshot_completed_plan(cx);
+            });
             Ok(acp_thread)
         })
     }
@@ -998,7 +1006,7 @@ impl NativeAgent {
         let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
-                return;
+                return Ok(());
             };
             let db_thread = db_thread.await;
             database
@@ -1006,6 +1014,7 @@ impl NativeAgent {
                 .await
                 .log_err();
             thread_store.update(cx, |store, cx| store.reload(cx));
+            Ok(())
         });
     }
 
@@ -1346,6 +1355,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
                 let provider = model.provider_id().0.to_string();
                 let model = model.id().0.to_string();
                 let enable_thinking = thread.read(cx).thinking_enabled();
+                let speed = thread.read(cx).speed();
                 settings
                     .agent
                     .get_or_insert_default()
@@ -1354,6 +1364,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
                         model,
                         enable_thinking,
                         effort,
+                        speed,
                     });
             },
         );
@@ -1442,18 +1453,23 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         cx: &mut App,
     ) -> Task<Result<()>> {
         self.0.update(cx, |agent, cx| {
+            let thread = agent.sessions.get(session_id).map(|s| s.thread.clone());
+            if let Some(thread) = thread {
+                agent.save_thread(thread, cx);
+            }
+
             let Some(session) = agent.sessions.remove(session_id) else {
-                return;
+                return Task::ready(Ok(()));
             };
             let project_id = session.project_id;
-            agent.save_thread(session.thread, cx);
 
             let has_remaining = agent.sessions.values().any(|s| s.project_id == project_id);
             if !has_remaining {
                 agent.projects.remove(&project_id);
             }
-        });
-        Task::ready(Ok(()))
+
+            session.pending_save
+        })
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
@@ -1473,11 +1489,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn prompt(
         &self,
-        id: Option<acp_thread::UserMessageId>,
+        id: acp_thread::UserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
-        let id = id.expect("UserMessageId is required");
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
@@ -2828,14 +2843,16 @@ mod internal_tests {
 
         cx.run_until_parked();
 
-        // Set a draft prompt with rich content blocks before saving.
+        // Set a draft prompt with rich content blocks and scroll position
+        // AFTER run_until_parked, so the only save that captures these
+        // changes is the one performed by close_session itself.
         let draft_blocks = vec![
             acp::ContentBlock::Text(acp::TextContent::new("Check out ")),
             acp::ContentBlock::ResourceLink(acp::ResourceLink::new("b.md", uri.to_string())),
             acp::ContentBlock::Text(acp::TextContent::new(" please")),
         ];
-        acp_thread.update(cx, |thread, _cx| {
-            thread.set_draft_prompt(Some(draft_blocks.clone()));
+        acp_thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(Some(draft_blocks.clone()), cx);
         });
         thread.update(cx, |thread, _cx| {
             thread.set_ui_scroll_position(Some(gpui::ListOffset {
@@ -2843,8 +2860,6 @@ mod internal_tests {
                 offset_in_item: gpui::px(12.5),
             }));
         });
-        thread.update(cx, |_thread, cx| cx.notify());
-        cx.run_until_parked();
 
         // Close the session so it can be reloaded from disk.
         cx.update(|cx| connection.clone().close_session(&session_id, cx))
@@ -2908,6 +2923,151 @@ mod internal_tests {
             assert_eq!(scroll.item_ix, 5);
             assert_eq!(scroll.offset_in_item, gpui::px(12.5));
         });
+    }
+
+    #[gpui::test]
+    async fn test_close_session_saves_thread(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {
+                    "file.txt": "hello"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| {
+            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+        });
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+
+        let model = Arc::new(FakeLanguageModel::default());
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+        });
+
+        // Send a message so the thread is non-empty (empty threads aren't saved).
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        model.send_last_completion_stream_text_chunk("world");
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        // Set a draft prompt WITHOUT calling run_until_parked afterwards.
+        // This means no observe-triggered save has run for this change.
+        // The only way this data gets persisted is if close_session
+        // itself performs the save.
+        let draft_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new(
+            "unsaved draft",
+        ))];
+        acp_thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(Some(draft_blocks.clone()), cx);
+        });
+
+        // Close the session immediately — no run_until_parked in between.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Reopen and verify the draft prompt was saved.
+        let reloaded = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        reloaded.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.draft_prompt(),
+                Some(draft_blocks.as_slice()),
+                "close_session must save the thread; draft prompt was lost"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_rapid_title_changes_do_not_loop(cx: &mut TestAppContext) {
+        // Regression test: rapid title changes must not cause a propagation loop
+        // between Thread and AcpThread via handle_thread_title_updated.
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| {
+            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
+        });
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+            .await
+            .unwrap();
+
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+
+        let title_updated_count = Rc::new(std::cell::RefCell::new(0usize));
+        cx.update(|cx| {
+            let count = title_updated_count.clone();
+            cx.subscribe(
+                &thread,
+                move |_entity: Entity<Thread>, _event: &TitleUpdated, _cx: &mut App| {
+                    let new_count = {
+                        let mut count = count.borrow_mut();
+                        *count += 1;
+                        *count
+                    };
+                    assert!(
+                        new_count <= 2,
+                        "TitleUpdated fired {new_count} times; \
+                         title updates are looping"
+                    );
+                },
+            )
+            .detach();
+        });
+
+        thread.update(cx, |thread, cx| thread.set_title("first".into(), cx));
+        thread.update(cx, |thread, cx| thread.set_title("second".into(), cx));
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.title(), Some("second".into()));
+        });
+        acp_thread.read_with(cx, |acp_thread, _| {
+            assert_eq!(acp_thread.title(), Some("second".into()));
+        });
+
+        assert_eq!(*title_updated_count.borrow(), 2);
     }
 
     fn thread_entries(

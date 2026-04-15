@@ -18,7 +18,9 @@ use gpui::{
 use indoc::indoc;
 use language::{
     EditPredictionsMode, File, Language,
-    language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
+    language_settings::{
+        AllLanguageSettings, EditPredictionProvider, LanguageSettings, all_language_settings,
+    },
 };
 use project::{DisableAiSettings, Project};
 use regex::Regex;
@@ -323,7 +325,6 @@ impl Render for EditPredictionButton {
             }
             provider @ (EditPredictionProvider::Experimental(_)
             | EditPredictionProvider::Zed
-            | EditPredictionProvider::Sweep
             | EditPredictionProvider::Mercury) => {
                 let enabled = self.editor_enabled.unwrap_or(true);
                 let file = self.file.clone();
@@ -347,16 +348,6 @@ impl Render for EditPredictionButton {
                 let mut missing_token = false;
 
                 match provider {
-                    EditPredictionProvider::Sweep => {
-                        missing_token = edit_prediction::EditPredictionStore::try_global(cx)
-                            .is_some_and(|ep_store| !ep_store.read(cx).has_sweep_api_token(cx));
-                        ep_icon = if enabled { icons.base } else { icons.disabled };
-                        tooltip_meta = if missing_token {
-                            "Missing API key for Sweep"
-                        } else {
-                            "Powered by Sweep"
-                        };
-                    }
                     EditPredictionProvider::Mercury => {
                         ep_icon = if enabled { icons.base } else { icons.disabled };
                         let mercury_has_error =
@@ -546,17 +537,12 @@ impl EditPredictionButton {
             .detach();
 
         edit_prediction::ollama::ensure_authenticated(cx);
-        let sweep_api_token_task = edit_prediction::sweep_ai::load_sweep_api_token(cx);
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
         let open_ai_compatible_api_token_task =
             edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
 
         cx.spawn(async move |this, cx| {
-            _ = futures::join!(
-                sweep_api_token_task,
-                mercury_api_token_task,
-                open_ai_compatible_api_token_task
-            );
+            _ = futures::join!(mercury_api_token_task, open_ai_compatible_api_token_task);
             this.update(cx, |_, cx| {
                 cx.notify();
             })
@@ -587,6 +573,14 @@ impl EditPredictionButton {
         current_provider: EditPredictionProvider,
         cx: &mut App,
     ) -> ContextMenu {
+        let organization_configuration = self
+            .user_store
+            .read(cx)
+            .current_organization_configuration();
+
+        let is_zed_provider_disabled = organization_configuration
+            .is_some_and(|configuration| !configuration.edit_prediction.is_enabled);
+
         let available_providers = get_available_providers(cx);
 
         let providers: Vec<_> = available_providers
@@ -606,7 +600,26 @@ impl EditPredictionButton {
 
                 menu = menu.item(
                     ContextMenuEntry::new(name)
-                        .toggleable(IconPosition::Start, is_current)
+                        .toggleable(
+                            IconPosition::Start,
+                            is_current
+                                && (provider == EditPredictionProvider::Zed
+                                    && !is_zed_provider_disabled),
+                        )
+                        .disabled(
+                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
+                        )
+                        .when(
+                            provider == EditPredictionProvider::Zed && is_zed_provider_disabled,
+                            |item| {
+                                item.documentation_aside(DocumentationSide::Left, move |_cx| {
+                                    Label::new(
+                                        "Edit predictions are disabled for this organization.",
+                                    )
+                                    .into_any_element()
+                                })
+                            },
+                        )
                         .handler(move |_, cx| {
                             set_completion_provider(fs.clone(), cx, provider);
                         }),
@@ -674,8 +687,7 @@ impl EditPredictionButton {
         let language_state = self.language.as_ref().map(|language| {
             (
                 language.clone(),
-                language_settings::language_settings(Some(language.name()), None, cx)
-                    .show_edit_predictions,
+                LanguageSettings::resolve(None, Some(&language.name()), cx).show_edit_predictions,
             )
         });
 
@@ -805,7 +817,7 @@ impl EditPredictionButton {
                             .toggleable(IconPosition::Start, data_collection.is_enabled())
                             .icon(icon_name)
                             .icon_color(icon_color)
-                            .disabled(cx.is_staff())
+                            .disabled(!provider.can_toggle_data_collection(cx))
                             .documentation_aside(DocumentationSide::Left, move |cx| {
                                 let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                     (true, true) => (
@@ -1372,14 +1384,19 @@ async fn open_disabled_globs_setting_in_editor(
             let settings = cx.global::<SettingsStore>();
 
             // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
-            let edits = settings.edits_for_update(&text, |file| {
-                file.project
-                    .all_languages
-                    .edit_predictions
-                    .get_or_insert_with(Default::default)
-                    .disabled_globs
-                    .get_or_insert_with(Vec::new);
-            });
+            let Some(edits) = settings
+                .edits_for_update(&text, |file| {
+                    file.project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_with(Default::default)
+                        .disabled_globs
+                        .get_or_insert_with(Vec::new);
+                })
+                .log_err()
+            else {
+                return;
+            };
 
             if !edits.is_empty() {
                 item.edit(
@@ -1433,9 +1450,9 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
 
     providers.push(EditPredictionProvider::Zed);
 
-    if let Some(app_state) = workspace::AppState::global(cx).upgrade()
-        && copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
-            .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
+    let app_state = workspace::AppState::global(cx);
+    if copilot::GlobalCopilotAuth::try_get_or_init(app_state, cx)
+        .is_some_and(|copilot| copilot.0.read(cx).is_authenticated())
     {
         providers.push(EditPredictionProvider::Copilot);
     };
@@ -1454,13 +1471,6 @@ pub fn get_available_providers(cx: &mut App) -> Vec<EditPredictionProvider> {
         .is_some()
     {
         providers.push(EditPredictionProvider::OpenAiCompatibleApi);
-    }
-
-    if edit_prediction::sweep_ai::sweep_api_token(cx)
-        .read(cx)
-        .has_key()
-    {
-        providers.push(EditPredictionProvider::Sweep);
     }
 
     if edit_prediction::mercury::mercury_api_token(cx)
@@ -1599,8 +1609,7 @@ fn emit_edit_prediction_menu_opened(
 ) {
     let language_name = language.as_ref().map(|l| l.name());
     let edit_predictions_enabled_for_language =
-        language_settings::language_settings(language_name, file.as_ref(), cx)
-            .show_edit_predictions;
+        LanguageSettings::resolve(None, language_name.as_ref(), cx).show_edit_predictions;
     let file_extension = file
         .as_ref()
         .and_then(|f| {

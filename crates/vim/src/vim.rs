@@ -51,7 +51,7 @@ pub use settings::{
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
@@ -247,6 +247,8 @@ actions!(
         PushReplaceWithRegister,
         /// Toggles comments.
         PushToggleComments,
+        /// Toggles block comments.
+        PushToggleBlockComments,
         /// Selects (count) next menu item
         MenuSelectNext,
         /// Selects (count) previous menu item
@@ -432,8 +434,12 @@ pub fn init(cx: &mut App) {
                 .and_then(|item| item.act_as::<Editor>(cx))
                 .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
             let Some(vim) = vim else { return };
-            vim.entity.update(cx, |_, cx| {
-                cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+            vim.entity.update(cx, |vim, cx| {
+                if !vim.search.cmd_f_search {
+                    cx.defer_in(window, |vim, window, cx| vim.search_submit(window, cx))
+                } else {
+                    cx.propagate()
+                }
             })
         });
         workspace.register_action(|_, _: &GoToTab, window, cx| {
@@ -449,7 +455,10 @@ pub fn init(cx: &mut App) {
                 );
             } else {
                 // If no count is provided, go to the next tab.
-                window.dispatch_action(workspace::pane::ActivateNextItem.boxed_clone(), cx);
+                window.dispatch_action(
+                    workspace::pane::ActivateNextItem::default().boxed_clone(),
+                    cx,
+                );
             }
         });
 
@@ -473,7 +482,10 @@ pub fn init(cx: &mut App) {
                 }
             } else {
                 // No count provided, go to the previous tab.
-                window.dispatch_action(workspace::pane::ActivatePreviousItem.boxed_clone(), cx);
+                window.dispatch_action(
+                    workspace::pane::ActivatePreviousItem::default().boxed_clone(),
+                    cx,
+                );
             }
         });
     })
@@ -601,9 +613,11 @@ impl Vim {
         }
 
         let mut was_enabled = Vim::enabled(cx);
+        let mut was_helix_enabled = HelixModeSetting::get_global(cx).0;
         let mut was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
         cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
             let enabled = Vim::enabled(cx);
+            let helix_enabled = HelixModeSetting::get_global(cx).0;
             let toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
             if enabled && was_enabled && (toggle != was_toggle) {
                 if toggle {
@@ -615,15 +629,20 @@ impl Vim {
                     editor.set_relative_line_number(None, cx)
                 }
             }
-            was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
-            if was_enabled == enabled {
+            let helix_changed = was_helix_enabled != helix_enabled;
+            was_toggle = toggle;
+            was_helix_enabled = helix_enabled;
+
+            let state_changed = (was_enabled != enabled) || (was_enabled && helix_changed);
+            if !state_changed {
                 return;
+            }
+            if was_enabled {
+                Self::deactivate(editor, cx);
             }
             was_enabled = enabled;
             if enabled {
-                Self::activate(editor, window, cx)
-            } else {
-                Self::deactivate(editor, cx)
+                Self::activate(editor, window, cx);
             }
         })
         .detach();
@@ -881,6 +900,14 @@ impl Vim {
             Vim::action(editor, cx, |vim, _: &PushToggleComments, window, cx| {
                 vim.push_operator(Operator::ToggleComments, window, cx)
             });
+
+            Vim::action(
+                editor,
+                cx,
+                |vim, _: &PushToggleBlockComments, window, cx| {
+                    vim.push_operator(Operator::ToggleBlockComments, window, cx)
+                },
+            );
 
             Vim::action(editor, cx, |vim, _: &ClearOperators, window, cx| {
                 vim.clear_operator(window, cx)
@@ -1203,7 +1230,7 @@ impl Vim {
             return;
         }
 
-        if !mode.is_visual() && last_mode.is_visual() {
+        if !mode.is_visual() && last_mode.is_visual() && !last_mode.is_helix() {
             self.create_visual_marks(last_mode, window, cx);
         }
 
@@ -1270,7 +1297,7 @@ impl Vim {
                 }
 
                 s.move_with(&mut |map, selection| {
-                    if last_mode.is_visual() && !mode.is_visual() {
+                    if last_mode.is_visual() && !last_mode.is_helix() && !mode.is_visual() {
                         let mut point = selection.head();
                         if !selection.reversed && !selection.is_empty() {
                             point = movement::left(map, selection.head());
@@ -2073,7 +2100,7 @@ impl Vim {
         VimEditorSettingsState {
             cursor_shape: self.cursor_shape(cx),
             clip_at_line_ends: self.clip_at_line_ends(),
-            collapse_matches: !HelixModeSetting::get_global(cx).0,
+            collapse_matches: !HelixModeSetting::get_global(cx).0 && !self.search.cmd_f_search,
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
@@ -2124,6 +2151,7 @@ struct VimSettings {
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: settings::UseSystemClipboard,
     pub use_smartcase_find: bool,
+    pub use_regex_search: bool,
     pub gdefault: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
@@ -2210,6 +2238,7 @@ impl Settings for VimSettings {
             toggle_relative_line_numbers: vim.toggle_relative_line_numbers.unwrap(),
             use_system_clipboard: vim.use_system_clipboard.unwrap(),
             use_smartcase_find: vim.use_smartcase_find.unwrap(),
+            use_regex_search: vim.use_regex_search.unwrap(),
             gdefault: vim.gdefault.unwrap(),
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),

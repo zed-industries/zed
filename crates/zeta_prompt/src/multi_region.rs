@@ -792,14 +792,22 @@ fn encode_from_old_and_new_impl(
         common_prefix_suffix(old_editable.as_bytes(), new_editable.as_bytes());
     let change_end_in_old = old_editable.len() - common_suffix;
 
-    let start_marker_idx = marker_offsets
+    let mut start_marker_idx = marker_offsets
         .iter()
         .rposition(|&offset| offset <= common_prefix)
         .unwrap_or(0);
-    let end_marker_idx = marker_offsets
+    let mut end_marker_idx = marker_offsets
         .iter()
         .position(|&offset| offset >= change_end_in_old)
         .unwrap_or(marker_offsets.len() - 1);
+
+    if start_marker_idx == end_marker_idx {
+        if end_marker_idx < marker_offsets.len().saturating_sub(1) {
+            end_marker_idx += 1;
+        } else if start_marker_idx > 0 {
+            start_marker_idx -= 1;
+        }
+    }
 
     let old_start = marker_offsets[start_marker_idx];
     let old_end = marker_offsets[end_marker_idx];
@@ -1579,6 +1587,36 @@ If you'd like to contribute, please take a look at the contributing guide.
         let new = "line1\nline2\nline3\n\nline5\nLINE6\nline7\nline8\nline9\nline10\n";
         let encoded =
             encode_from_old_and_new_v0318(old, new, None, "<|user_cursor|>", "<|end|>").unwrap();
+        let stripped = encoded
+            .strip_suffix("<|end|>")
+            .expect("should have end marker");
+        let reconstructed = apply_marker_span_v0318(old, stripped).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_roundtrip_v0318_append_at_end_of_editable_region() {
+        let old = "line1\nline2\nline3\n";
+        let new = "line1\nline2\nline3\nline4\n";
+        let encoded =
+            encode_from_old_and_new_v0318(old, new, None, "<|user_cursor|>", "<|end|>").unwrap();
+
+        assert_ne!(encoded, "<|marker_2|><|end|>");
+
+        let stripped = encoded
+            .strip_suffix("<|end|>")
+            .expect("should have end marker");
+        let reconstructed = apply_marker_span_v0318(old, stripped).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_roundtrip_v0318_insert_at_internal_marker_boundary() {
+        let old = "alpha\nbeta\n\ngamma\ndelta\n";
+        let new = "alpha\nbeta\n\ninserted\ngamma\ndelta\n";
+        let encoded =
+            encode_from_old_and_new_v0318(old, new, None, "<|user_cursor|>", "<|end|>").unwrap();
+
         let stripped = encoded
             .strip_suffix("<|end|>")
             .expect("should have end marker");

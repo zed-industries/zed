@@ -47,12 +47,6 @@ impl FeatureFlag for DiffReviewFeatureFlag {
     }
 }
 
-pub struct GitGraphFeatureFlag;
-
-impl FeatureFlag for GitGraphFeatureFlag {
-    const NAME: &'static str = "git-graph";
-}
-
 pub struct StreamingEditFileToolFeatureFlag;
 
 impl FeatureFlag for StreamingEditFileToolFeatureFlag {
@@ -69,7 +63,7 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
     const NAME: &'static str = "update-plan-tool";
 
     fn enabled_for_staff() -> bool {
-        true
+        false
     }
 }
 
@@ -79,6 +73,6 @@ impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
     const NAME: &'static str = "project-panel-undo-redo";
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }

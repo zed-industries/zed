@@ -7,8 +7,8 @@ use anyhow::Result;
 use collections::HashMap;
 use dap::{CompletionItem, CompletionItemType, OutputEvent};
 use editor::{
-    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, ExcerptId,
-    HighlightKey, MultiBufferOffset, SizingBehavior,
+    Bias, CompletionProvider, Editor, EditorElement, EditorMode, EditorStyle, HighlightKey,
+    MultiBufferOffset, SizingBehavior,
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
@@ -26,7 +26,8 @@ use project::{
 use settings::Settings;
 use std::fmt::Write;
 use std::{ops::Range, rc::Rc, usize};
-use theme::{Theme, ThemeSettings};
+use theme::Theme;
+use theme_settings::ThemeSettings;
 use ui::{ContextMenu, Divider, PopoverMenu, SplitButton, Tooltip, prelude::*};
 use util::ResultExt;
 
@@ -83,6 +84,7 @@ impl Console {
             editor.set_show_indent_guides(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_use_modal_editing(false);
+            editor.disable_mouse_wheel_zoom();
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
@@ -527,7 +529,6 @@ struct ConsoleQueryBarCompletionProvider(WeakEntity<Console>);
 impl CompletionProvider for ConsoleQueryBarCompletionProvider {
     fn completions(
         &self,
-        _excerpt_id: ExcerptId,
         buffer: &Entity<Buffer>,
         buffer_position: language::Anchor,
         _trigger: editor::CompletionContext,

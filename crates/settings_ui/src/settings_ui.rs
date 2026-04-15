@@ -33,7 +33,7 @@ use std::{
     sync::{Arc, LazyLock, RwLock},
     time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, IconButtonShape, KeyBinding,
     KeybindingHint, PopoverMenu, Scrollbars, Switch, Tooltip, TreeViewItem, WithScrollbar,
@@ -458,6 +458,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::RestoreOnStartupBehavior>(render_dropdown)
         .add_basic_renderer::<settings::BottomDockLayout>(render_dropdown)
         .add_basic_renderer::<settings::OnLastWindowClosed>(render_dropdown)
+        .add_basic_renderer::<settings::CliDefaultOpenBehavior>(render_dropdown)
         .add_basic_renderer::<settings::CloseWindowWhenNoItems>(render_dropdown)
         .add_basic_renderer::<settings::TextRenderingMode>(render_dropdown)
         .add_basic_renderer::<settings::FontFamilyName>(render_font_picker)
@@ -474,6 +475,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::DockSide>(render_dropdown)
         .add_basic_renderer::<settings::TerminalDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::DockPosition>(render_dropdown)
+        .add_basic_renderer::<settings::SidebarDockPosition>(render_dropdown)
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
@@ -486,6 +488,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ShowCloseButton>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelEntrySpacing>(render_dropdown)
         .add_basic_renderer::<settings::ProjectPanelSortMode>(render_dropdown)
+        .add_basic_renderer::<settings::ProjectPanelSortOrder>(render_dropdown)
         .add_basic_renderer::<settings::RewrapBehavior>(render_dropdown)
         .add_basic_renderer::<settings::FormatOnSave>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
@@ -500,18 +503,18 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionPromptFormat>(render_dropdown)
-        .add_basic_renderer::<f32>(render_number_field)
-        .add_basic_renderer::<u32>(render_number_field)
-        .add_basic_renderer::<u64>(render_number_field)
-        .add_basic_renderer::<usize>(render_number_field)
-        .add_basic_renderer::<NonZero<usize>>(render_number_field)
-        .add_basic_renderer::<NonZeroU32>(render_number_field)
-        .add_basic_renderer::<settings::CodeFade>(render_number_field)
-        .add_basic_renderer::<settings::DelayMs>(render_number_field)
-        .add_basic_renderer::<settings::FontWeightContent>(render_number_field)
-        .add_basic_renderer::<settings::CenteredPaddingSettings>(render_number_field)
-        .add_basic_renderer::<settings::InactiveOpacity>(render_number_field)
-        .add_basic_renderer::<settings::MinimumContrast>(render_number_field)
+        .add_basic_renderer::<f32>(render_editable_number_field)
+        .add_basic_renderer::<u32>(render_editable_number_field)
+        .add_basic_renderer::<u64>(render_editable_number_field)
+        .add_basic_renderer::<usize>(render_editable_number_field)
+        .add_basic_renderer::<NonZero<usize>>(render_editable_number_field)
+        .add_basic_renderer::<NonZeroU32>(render_editable_number_field)
+        .add_basic_renderer::<settings::CodeFade>(render_editable_number_field)
+        .add_basic_renderer::<settings::DelayMs>(render_editable_number_field)
+        .add_basic_renderer::<settings::FontWeightContent>(render_editable_number_field)
+        .add_basic_renderer::<settings::CenteredPaddingSettings>(render_editable_number_field)
+        .add_basic_renderer::<settings::InactiveOpacity>(render_editable_number_field)
+        .add_basic_renderer::<settings::MinimumContrast>(render_editable_number_field)
         .add_basic_renderer::<settings::ShowScrollbar>(render_dropdown)
         .add_basic_renderer::<settings::ScrollbarDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::ShowMinimap>(render_dropdown)
@@ -523,7 +526,9 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::VimInsertModeCursorShape>(render_dropdown)
         .add_basic_renderer::<settings::SteppingGranularity>(render_dropdown)
         .add_basic_renderer::<settings::NotifyWhenAgentWaiting>(render_dropdown)
+        .add_basic_renderer::<settings::PlaySoundWhenAgentDone>(render_dropdown)
         .add_basic_renderer::<settings::NewThreadLocation>(render_dropdown)
+        .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
@@ -545,6 +550,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::EditPredictionsMode>(render_dropdown)
         .add_basic_renderer::<settings::RelativeLineNumbers>(render_dropdown)
         .add_basic_renderer::<settings::WindowDecorations>(render_dropdown)
+        .add_basic_renderer::<settings::WindowButtonLayoutContentDiscriminants>(render_dropdown)
         .add_basic_renderer::<settings::FontSize>(render_editable_number_field)
         .add_basic_renderer::<settings::OllamaModelName>(render_ollama_model_picker)
         .add_basic_renderer::<settings::SemanticTokens>(render_dropdown)
@@ -581,9 +587,9 @@ pub fn open_settings_editor(
 
         settings_window.opening_link = true;
         settings_window.search_bar.update(cx, |editor, cx| {
-            editor.set_text(query, window, cx);
+            editor.set_text(query.clone(), window, cx);
         });
-        settings_window.apply_match_indices(indices.iter().copied());
+        settings_window.apply_match_indices(indices.iter().copied(), &query);
 
         if indices.len() == 1
             && let Some(search_index) = settings_window.search_index.as_ref()
@@ -638,7 +644,9 @@ pub fn open_settings_editor(
     // We have to defer this to get the workspace off the stack.
     let path = path.map(ToOwned::to_owned);
     cx.defer(move |cx| {
-        let current_rem_size: f32 = theme::ThemeSettings::get_global(cx).ui_font_size(cx).into();
+        let current_rem_size: f32 = theme_settings::ThemeSettings::get_global(cx)
+            .ui_font_size(cx)
+            .into();
 
         let default_bounds = DEFAULT_ADDITIONAL_WINDOW_SIZE;
         let default_rem_size = 16.0;
@@ -1206,7 +1214,8 @@ fn render_settings_item(
                 .child(
                     Label::new(SharedString::new_static(setting_item.description))
                         .size(LabelSize::Small)
-                        .color(Color::Muted),
+                        .color(Color::Muted)
+                        .render_code_spans(),
                 ),
         )
         .child(control)
@@ -1391,17 +1400,14 @@ impl PartialEq for ActionLink {
 }
 
 fn all_language_names(cx: &App) -> Vec<SharedString> {
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map_or(vec![], |state| {
-            state
-                .languages
-                .language_names()
-                .into_iter()
-                .filter(|name| name.as_ref() != "Zed Keybind Context")
-                .map(Into::into)
-                .collect()
-        })
+    let state = workspace::AppState::global(cx);
+    state
+        .languages
+        .language_names()
+        .into_iter()
+        .filter(|name| name.as_ref() != "Zed Keybind Context")
+        .map(Into::into)
+        .collect()
 }
 
 #[allow(unused)]
@@ -1515,7 +1521,7 @@ impl SettingsWindow {
         })
         .detach();
 
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
                 .into_iter()
@@ -1532,29 +1538,26 @@ impl SettingsWindow {
         })
         .detach();
 
-        if let Some(app_state) = AppState::global(cx).upgrade() {
-            let workspaces: Vec<Entity<Workspace>> = app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .collect();
+        let app_state = AppState::global(cx);
+        let workspaces: Vec<Entity<Workspace>> = app_state
+            .workspace_store
+            .read(cx)
+            .workspaces()
+            .filter_map(|weak| weak.upgrade())
+            .collect();
 
-            for workspace in workspaces {
-                let project = workspace.read(cx).project().clone();
-                cx.observe_release_in(&project, window, |this, _, window, cx| {
-                    this.fetch_files(window, cx)
-                })
+        for workspace in workspaces {
+            let project = workspace.read(cx).project().clone();
+            cx.observe_release_in(&project, window, |this, _, window, cx| {
+                this.fetch_files(window, cx)
+            })
+            .detach();
+            cx.subscribe_in(&project, window, Self::handle_project_event)
                 .detach();
-                cx.subscribe_in(&project, window, Self::handle_project_event)
-                    .detach();
-                cx.observe_release_in(&workspace, window, |this, _, window, cx| {
-                    this.fetch_files(window, cx)
-                })
-                .detach();
-            }
-        } else {
-            log::error!("App state doesn't exist when creating a new settings window");
+            cx.observe_release_in(&workspace, window, |this, _, window, cx| {
+                this.fetch_files(window, cx)
+            })
+            .detach();
         }
 
         let this_weak = cx.weak_entity();
@@ -1870,7 +1873,7 @@ impl SettingsWindow {
         indices
     }
 
-    fn apply_match_indices(&mut self, match_indices: impl Iterator<Item = usize>) {
+    fn apply_match_indices(&mut self, match_indices: impl Iterator<Item = usize>, query: &str) {
         let Some(search_index) = self.search_index.as_ref() else {
             return;
         };
@@ -1892,8 +1895,11 @@ impl SettingsWindow {
         }
         self.has_query = true;
         self.filter_matches_to_file();
-        self.open_first_nav_page();
+        let query_lower = query.to_lowercase();
+        let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+        self.open_best_matching_nav_page(&query_words);
         self.reset_list_state();
+        self.scroll_content_to_best_match(&query_words);
     }
 
     fn update_matches(&mut self, cx: &mut Context<SettingsWindow>) {
@@ -1914,7 +1920,7 @@ impl SettingsWindow {
         if is_json_link_query {
             let indices = self.filter_by_json_path(&query);
             if !indices.is_empty() {
-                self.apply_match_indices(indices.into_iter());
+                self.apply_match_indices(indices.into_iter(), &query);
                 cx.notify();
                 return;
             }
@@ -1957,19 +1963,18 @@ impl SettingsWindow {
             let fuzzy_matches = fuzzy_search_task.await;
             let exact_matches = exact_match_task.await;
 
-            _ = this
-                .update(cx, |this, cx| {
-                    let exact_indices = exact_matches.into_iter();
-                    let fuzzy_indices = fuzzy_matches
-                        .into_iter()
-                        .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
-                        .map(|fuzzy_match| fuzzy_match.candidate_id);
-                    let merged_indices = exact_indices.chain(fuzzy_indices);
+            this.update(cx, |this, cx| {
+                let exact_indices = exact_matches.into_iter();
+                let fuzzy_indices = fuzzy_matches
+                    .into_iter()
+                    .take_while(|fuzzy_match| fuzzy_match.score >= 0.5)
+                    .map(|fuzzy_match| fuzzy_match.candidate_id);
+                let merged_indices = exact_indices.chain(fuzzy_indices);
 
-                    this.apply_match_indices(merged_indices);
-                    cx.notify();
-                })
-                .ok();
+                this.apply_match_indices(merged_indices, &query);
+                cx.notify();
+            })
+            .ok();
 
             cx.background_executor().timer(Duration::from_secs(1)).await;
             telemetry::event!("Settings Searched", query = query)
@@ -2244,6 +2249,58 @@ impl SettingsWindow {
         }
 
         self.sub_page_stack.clear();
+    }
+
+    fn open_best_matching_nav_page(&mut self, query_words: &[&str]) {
+        let mut entries = self.visible_navbar_entries().peekable();
+        let first_entry = entries.peek().map(|(index, _)| (0, *index));
+        let best_match = entries
+            .enumerate()
+            .filter(|(_, (_, entry))| !entry.is_root)
+            .map(|(logical_index, (index, entry))| {
+                let title_lower = entry.title.to_lowercase();
+                let matching_words = query_words
+                    .iter()
+                    .filter(|query_word| {
+                        title_lower
+                            .split_whitespace()
+                            .any(|title_word| title_word.starts_with(*query_word))
+                    })
+                    .count();
+                (logical_index, index, matching_words)
+            })
+            .filter(|(_, _, count)| *count > 0)
+            .max_by_key(|(_, _, count)| *count)
+            .map(|(logical_index, index, _)| (logical_index, index));
+        if let Some((logical_index, navbar_entry_index)) = best_match.or(first_entry) {
+            self.open_navbar_entry_page(navbar_entry_index);
+            self.navbar_scroll_handle
+                .scroll_to_item(logical_index + 1, gpui::ScrollStrategy::Top);
+        }
+    }
+
+    fn scroll_content_to_best_match(&self, query_words: &[&str]) {
+        let position = self
+            .visible_page_items()
+            .enumerate()
+            .find(|(_, (_, item))| match item {
+                SettingsPageItem::SectionHeader(title) => {
+                    let title_lower = title.to_lowercase();
+                    query_words.iter().all(|query_word| {
+                        title_lower
+                            .split_whitespace()
+                            .any(|title_word| title_word.starts_with(query_word))
+                    })
+                }
+                _ => false,
+            })
+            .map(|(position, _)| position);
+        if let Some(position) = position {
+            self.list_state.scroll_to(gpui::ListOffset {
+                item_ix: position + 1,
+                offset_in_item: px(0.),
+            });
+        }
     }
 
     fn open_first_nav_page(&mut self) {
@@ -3359,9 +3416,7 @@ impl SettingsWindow {
             }
             SettingsUiFile::Project((worktree_id, path)) => {
                 let settings_path = path.join(paths::local_settings_file_relative_path());
-                let Some(app_state) = workspace::AppState::global(cx).upgrade() else {
-                    return;
-                };
+                let app_state = workspace::AppState::global(cx);
 
                 let Some((workspace_window, worktree, corresponding_workspace)) = app_state
                     .workspace_store
@@ -3649,7 +3704,7 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
 
         client_side_decorations(
             v_flex()
@@ -3742,31 +3797,25 @@ fn all_projects(
     cx: &App,
 ) -> impl Iterator<Item = Entity<Project>> {
     let mut seen_project_ids = std::collections::HashSet::new();
-    workspace::AppState::global(cx)
-        .upgrade()
-        .map(|app_state| {
-            app_state
-                .workspace_store
-                .read(cx)
-                .workspaces()
-                .filter_map(|weak| weak.upgrade())
-                .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
-                .chain(
-                    window
-                        .and_then(|handle| handle.read(cx).ok())
-                        .into_iter()
-                        .flat_map(|multi_workspace| {
-                            multi_workspace
-                                .workspaces()
-                                .iter()
-                                .map(|workspace| workspace.read(cx).project().clone())
-                                .collect::<Vec<_>>()
-                        }),
-                )
-                .filter(move |project| seen_project_ids.insert(project.entity_id()))
-        })
-        .into_iter()
-        .flatten()
+    let app_state = workspace::AppState::global(cx);
+    app_state
+        .workspace_store
+        .read(cx)
+        .workspaces()
+        .filter_map(|weak| weak.upgrade())
+        .map(|workspace: Entity<Workspace>| workspace.read(cx).project().clone())
+        .chain(
+            window
+                .and_then(|handle| handle.read(cx).ok())
+                .into_iter()
+                .flat_map(|multi_workspace| {
+                    multi_workspace
+                        .workspaces()
+                        .map(|workspace| workspace.read(cx).project().clone())
+                        .collect::<Vec<_>>()
+                }),
+        )
+        .filter(move |project| seen_project_ids.insert(project.entity_id()))
 }
 
 fn open_user_settings_in_workspace(
@@ -3941,10 +3990,13 @@ impl ProjectSettingsUpdateQueue {
 
         buffer.update(cx, |buffer, cx| {
             let current_text = buffer.text();
-            let new_text = cx
+            if let Some(new_text) = cx
                 .global::<SettingsStore>()
-                .new_text_for_update(current_text, |settings| update(settings, cx));
-            buffer.edit([(0..buffer.len(), new_text)], None, cx);
+                .new_text_for_update(current_text, |settings| update(settings, cx))
+                .log_err()
+            {
+                buffer.edit([(0..buffer.len(), new_text)], None, cx);
+            }
         });
 
         buffer_store
@@ -4050,41 +4102,6 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
                 update_settings_file(file.clone(), field.json_path, window, cx, move |settings, _cx| {
                     (field.write)(settings, Some(state.into()));
                 })
-                .log_err(); // todo(settings_ui) don't log err
-            }
-        })
-        .into_any_element()
-}
-
-fn render_number_field<T: NumberFieldType + Send + Sync>(
-    field: SettingField<T>,
-    file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let (_, value) = SettingsStore::global(cx).get_value_from_file(file.to_settings(), field.pick);
-    let value = value.copied().unwrap_or_else(T::min_value);
-
-    let id = field
-        .json_path
-        .map(|p| format!("numeric_stepper_{}", p))
-        .unwrap_or_else(|| "numeric_stepper".to_string());
-
-    NumberField::new(id, value, window, cx)
-        .tab_index(0_isize)
-        .on_change({
-            move |value, window, cx| {
-                let value = *value;
-                update_settings_file(
-                    file.clone(),
-                    field.json_path,
-                    window,
-                    cx,
-                    move |settings, _cx| {
-                        (field.write)(settings, Some(value));
-                    },
-                )
                 .log_err(); // todo(settings_ui) don't log err
             }
         })
@@ -4409,7 +4426,7 @@ pub mod test {
 
     pub fn register_settings(cx: &mut App) {
         settings::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         menu::init();
     }
@@ -4720,7 +4737,7 @@ pub mod test {
 
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
-            AppState::set_global(Arc::downgrade(&app_state), cx);
+            AppState::set_global(app_state.clone(), cx);
             app_state
         });
 
@@ -4894,7 +4911,7 @@ pub mod test {
 
         let app_state = cx.update(|cx| {
             let app_state = AppState::test(cx);
-            AppState::set_global(Arc::downgrade(&app_state), cx);
+            AppState::set_global(app_state.clone(), cx);
             app_state
         });
 
@@ -5074,7 +5091,7 @@ mod project_settings_update_tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
             let queue = ProjectSettingsUpdateQueue::new(cx);

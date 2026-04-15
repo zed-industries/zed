@@ -21,7 +21,7 @@ use language::LanguageRegistry;
 use livekit::{LocalTrackPublication, ParticipantIdentity, RoomEvent};
 use livekit_client::{self as livekit, AudioStream, TrackSid};
 use postage::{sink::Sink, stream::Stream, watch};
-use project::Project;
+use project::{CURRENT_PROJECT_FEATURES, Project};
 use settings::Settings as _;
 use std::sync::atomic::AtomicU64;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration, time::Instant};
@@ -1237,6 +1237,10 @@ impl Room {
             worktrees: project.read(cx).worktree_metadata_protos(cx),
             is_ssh_project: project.read(cx).is_via_remote_server(),
             windows_paths: Some(project.read(cx).path_style(cx) == PathStyle::Windows),
+            features: CURRENT_PROJECT_FEATURES
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         });
 
         cx.spawn(async move |this, cx| {
@@ -1773,7 +1777,15 @@ fn spawn_room_connection(
                 });
                 this.diagnostics = Some(cx.new(|cx| CallDiagnostics::new(weak_room, cx)));
 
-                if !muted_by_user && this.can_use_microphone() {
+                // Always open the microphone track on join, even when
+                // `muted_by_user` is set. Note that the microphone will still
+                // be muted, as it is still gated in `share_microphone` by
+                // `muted_by_user`. For users that have `mute_on_join` enabled,
+                // this moves the Bluetooth profile switch (A2DP -> HFP) (which
+                // can cause 1-2 seconds of audio silence on some Bluetooth
+                // headphones) from first unmute to channel join, where
+                // instability is expected.
+                if this.can_use_microphone() {
                     this.share_microphone(cx)
                 } else {
                     Task::ready(Ok(()))

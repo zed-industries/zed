@@ -12,7 +12,7 @@ use crate::tasks::workflows::{
     vars::{PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch_and_token},
 };
 
-pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "03d8e9aee95ea6117d75a48bcac2e19241f6e667";
+pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "1fa7f1a3ec28ea1eae6db2e937d7a538fb10c0c7";
 
 // This should follow the set target in crates/extension/src/extension_builder.rs
 const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";

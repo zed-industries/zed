@@ -1,6 +1,7 @@
 use crate::{AgentServer, AgentServerDelegate};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
+use client::RefreshLlmTokenListener;
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::AppContext;
 use gpui::{Entity, TestAppContext};
@@ -208,8 +209,10 @@ pub async fn test_tool_call_with_permission<T, F>(
     thread.update(cx, |thread, cx| {
         thread.authorize_tool_call(
             tool_call_id,
-            allow_option_id.into(),
-            acp::PermissionOptionKind::AllowOnce,
+            acp_thread::SelectedPermissionOutcome::new(
+                allow_option_id,
+                acp::PermissionOptionKind::AllowOnce,
+            ),
             cx,
         );
 
@@ -411,7 +414,8 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         cx.set_http_client(Arc::new(http_client));
         let client = client::Client::production(cx);
         let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
-        language_model::init(user_store, client, cx);
+        language_model::init(cx);
+        RefreshLlmTokenListener::register(client.clone(), user_store, cx);
 
         #[cfg(test)]
         project::agent_server_store::AllAgentServersSettings::override_global(
