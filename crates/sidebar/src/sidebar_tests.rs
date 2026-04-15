@@ -5298,6 +5298,7 @@ async fn test_restore_worktree_when_branch_has_moved(cx: &mut TestAppContext) {
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "original-sha".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -5410,6 +5411,7 @@ async fn test_restore_worktree_when_branch_has_not_moved(cx: &mut TestAppContext
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "original-sha".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -5506,6 +5508,7 @@ async fn test_restore_worktree_when_branch_does_not_exist(cx: &mut TestAppContex
             ref_name: Some("refs/heads/feature-d".into()),
             sha: "original-sha".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
@@ -5609,6 +5612,7 @@ async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut 
             ref_name: Some("refs/heads/feature-c".into()),
             sha: "original-sha".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
