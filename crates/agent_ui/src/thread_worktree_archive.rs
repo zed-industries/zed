@@ -590,9 +590,14 @@ pub async fn restore_worktree_via_git(
                             "Checking out branch '{branch_name}' failed: {checkout_error:#}; restored worktree will be in detached HEAD state."
                         );
                     }
+                } else {
+                    log::info!(
+                        "Branch '{branch_name}' has moved since archival (now at {sha}); restoring worktree in detached HEAD at {}",
+                        row.original_commit_hash
+                    );
                 }
             }
-            _ => {
+            Ok(Ok(None)) => {
                 // No branch with that name exists; try to create one.
                 let result = wt_repo
                     .update(cx, |repo, _cx| {
@@ -602,10 +607,15 @@ pub async fn restore_worktree_via_git(
 
                 if let Err(error) = result.map_err(|e| anyhow!("{e}")).flatten() {
                     log::warn!(
-                        "Failed to create branch '{branch_name}': {error};
-                  restored worktree will be in detached HEAD state."
+                        "Failed to create branch '{branch_name}': {error:#}; restored worktree will be in detached HEAD state."
                     );
                 }
+            }
+            Ok(Err(error)) => {
+                log::warn!("Failed to resolve branch ref '{branch_name}': {error:#}");
+            }
+            Err(_) => {
+                log::warn!("resolve_ref channel for '{branch_name}' was canceled");
             }
         };
     }

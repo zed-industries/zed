@@ -807,12 +807,13 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                let thread = self.threads.get(id);
-                !thread.is_some_and(|t| t.archived)
-                    && same_remote_connection_identity(
-                        thread.and_then(|t| t.remote_connection.as_ref()),
-                        remote_connection,
-                    )
+                self.threads.get(id).is_some_and(|t| {
+                    !t.archived
+                        && same_remote_connection_identity(
+                            t.remote_connection.as_ref(),
+                            remote_connection,
+                        )
+                })
             })
             .copied()
             .collect();
@@ -839,12 +840,13 @@ impl ThreadMetadataStore {
             .into_iter()
             .flatten()
             .filter(|id| {
-                let thread = self.threads.get(id);
-                !thread.is_some_and(|t| t.archived)
-                    && same_remote_connection_identity(
-                        thread.and_then(|t| t.remote_connection.as_ref()),
-                        remote_connection,
-                    )
+                self.threads.get(id).is_some_and(|t| {
+                    !t.archived
+                        && same_remote_connection_identity(
+                            t.remote_connection.as_ref(),
+                            remote_connection,
+                        )
+                })
             })
             .copied()
             .collect();

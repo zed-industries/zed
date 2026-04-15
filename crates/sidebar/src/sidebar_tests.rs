@@ -5727,6 +5727,17 @@ async fn test_restore_worktree_when_branch_does_not_exist(cx: &mut TestAppContex
         "restore should succeed when branch does not exist: {:?}",
         result.err()
     );
+
+    // Verify the branch was actually recreated.
+    let restored_branch_sha = fs
+        .with_git_state(Path::new("/project/.git"), false, |state| {
+            state.refs.get("refs/heads/feature-d").cloned()
+        })
+        .unwrap();
+    assert!(
+        restored_branch_sha.is_some(),
+        "the branch should have been recreated by restore"
+    );
 }
 
 #[gpui::test]
