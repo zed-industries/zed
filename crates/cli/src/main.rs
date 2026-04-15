@@ -67,17 +67,20 @@ struct Args {
     #[arg(short, long)]
     wait: bool,
     /// Add files to the currently open workspace
-    #[arg(short, long, overrides_with_all = ["new", "reuse", "existing"])]
+    #[arg(short, long, overrides_with_all = ["new", "reuse", "existing", "classic"])]
     add: bool,
     /// Create a new workspace
-    #[arg(short, long, overrides_with_all = ["add", "reuse", "existing"])]
+    #[arg(short, long, overrides_with_all = ["add", "reuse", "existing", "classic"])]
     new: bool,
     /// Reuse an existing window, replacing its workspace
-    #[arg(short, long, overrides_with_all = ["add", "new", "existing"], hide = true)]
+    #[arg(short, long, overrides_with_all = ["add", "new", "existing", "classic"], hide = true)]
     reuse: bool,
     /// Open in existing Zed window
-    #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse"])]
+    #[arg(short = 'e', long = "existing", overrides_with_all = ["add", "new", "reuse", "classic"])]
     existing: bool,
+    /// Use the classic open behavior: new window for directories, reuse for files
+    #[arg(long, hide = true, overrides_with_all = ["add", "new", "reuse", "existing"])]
+    classic: bool,
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
     /// This overrides the default platform-specific data directory location:
     #[cfg_attr(target_os = "macos", doc = "`~/Library/Application Support/Zed`.")]
@@ -538,15 +541,19 @@ fn main() -> Result<()> {
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
 
-    let open_new_workspace = if args.new {
-        Some(true)
+    let open_behavior = if args.new {
+        cli::OpenBehavior::AlwaysNew
     } else if args.add {
-        Some(false)
+        cli::OpenBehavior::Add
+    } else if args.existing {
+        cli::OpenBehavior::ExistingWindow
+    } else if args.classic {
+        cli::OpenBehavior::Classic
+    } else if args.reuse {
+        cli::OpenBehavior::Reuse
     } else {
-        None
+        cli::OpenBehavior::Default
     };
-
-    let force_existing_window = args.existing;
 
     let env = {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -676,9 +683,7 @@ fn main() -> Result<()> {
                     diff_all: diff_all_mode,
                     wsl,
                     wait: args.wait,
-                    open_new_workspace,
-                    force_existing_window,
-                    reuse: args.reuse,
+                    open_behavior,
                     env,
                     user_data_dir: user_data_dir_for_thread,
                     dev_container: args.dev_container,
@@ -697,7 +702,7 @@ fn main() -> Result<()> {
                         }
                         CliResponse::PromptOpenBehavior => {
                             let behavior = prompt_open_behavior()
-                                .unwrap_or(cli::CliOpenBehavior::ExistingWindow);
+                                .unwrap_or(cli::CliBehaviorSetting::ExistingWindow);
                             tx.send(CliRequest::SetOpenBehavior { behavior })?;
                         }
                     }
@@ -796,15 +801,18 @@ fn anonymous_fd(path: &str) -> Option<fs::File> {
 /// Shows an interactive prompt asking the user to choose the default open
 /// behavior for `zed <path>`. Returns `None` if the prompt cannot be shown
 /// (e.g. stdin is not a terminal) or the user cancels.
-fn prompt_open_behavior() -> Option<cli::CliOpenBehavior> {
+fn prompt_open_behavior() -> Option<cli::CliBehaviorSetting> {
     if !std::io::stdin().is_terminal() {
         return None;
     }
 
     let blue = console::Style::new().blue();
     let items = [
-        format!("Add to existing Zed window ({})", blue.apply_to("zed -e")),
-        format!("Open a new window ({})", blue.apply_to("zed -n")),
+        format!(
+            "Add to existing Zed window ({})",
+            blue.apply_to("zed --existing")
+        ),
+        format!("Open a new window ({})", blue.apply_to("zed --classic")),
     ];
 
     let prompt = format!(
@@ -821,9 +829,9 @@ fn prompt_open_behavior() -> Option<cli::CliOpenBehavior> {
         .ok()?;
 
     Some(if selection == 0 {
-        cli::CliOpenBehavior::ExistingWindow
+        cli::CliBehaviorSetting::ExistingWindow
     } else {
-        cli::CliOpenBehavior::NewWindow
+        cli::CliBehaviorSetting::NewWindow
     })
 }
 

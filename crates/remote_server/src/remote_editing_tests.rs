@@ -1566,6 +1566,7 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
             ref_name: Some("refs/heads/feature-branch".into()),
             sha: "abc123".into(),
             is_main: false,
+            is_bare: false,
         },
     )
     .await;
