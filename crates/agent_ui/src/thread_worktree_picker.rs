@@ -188,6 +188,8 @@ enum ThreadWorktreeEntry {
     },
     CreateNamed {
         name: String,
+        /// When Some, create from this branch name (e.g. "main"). When None, create from current branch.
+        from_branch: Option<String>,
         disabled_reason: Option<String>,
     },
 }
@@ -307,13 +309,21 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         let has_named_worktree = self.all_worktrees.iter().any(|worktree| {
             worktree.directory_name(main_worktree_path.as_deref()) == normalized_query
         });
-        let create_named_disabled_reason = if self.has_multiple_repositories {
+        let create_named_disabled_reason: Option<String> = if self.has_multiple_repositories {
             Some("Cannot create a named worktree in a project with multiple repositories".into())
         } else if has_named_worktree {
             Some("A worktree with this name already exists".into())
         } else {
             None
         };
+
+        let show_default_branch_create = !self.has_multiple_repositories
+            && self.default_branch_name.as_ref().is_some_and(|default| {
+                self.current_branch_name
+                    .as_ref()
+                    .is_none_or(|current| current != default)
+            });
+        let default_branch_name = self.default_branch_name.clone();
 
         if query.is_empty() {
             let mut matches = self.build_fixed_entries();
@@ -402,8 +412,18 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                     }
                     new_matches.push(ThreadWorktreeEntry::CreateNamed {
                         name: normalized_query.clone(),
+                        from_branch: None,
                         disabled_reason: create_named_disabled_reason.clone(),
                     });
+                    if show_default_branch_create {
+                        if let Some(ref default_branch) = default_branch_name {
+                            new_matches.push(ThreadWorktreeEntry::CreateNamed {
+                                name: normalized_query.clone(),
+                                from_branch: Some(default_branch.clone()),
+                                disabled_reason: create_named_disabled_reason.clone(),
+                            });
+                        }
+                    }
 
                     picker.delegate.matches = new_matches;
                     picker.delegate.sync_selected_index(true);
@@ -469,12 +489,19 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
 
             ThreadWorktreeEntry::CreateNamed {
                 name,
+                from_branch,
                 disabled_reason: None,
             } => {
+                let branch_target = match from_branch {
+                    Some(branch) => NewWorktreeBranchTarget::ExistingBranch {
+                        name: branch.clone(),
+                    },
+                    None => NewWorktreeBranchTarget::CurrentBranch,
+                };
                 window.dispatch_action(
                     Box::new(CreateWorktree {
                         worktree_name: Some(name.clone()),
-                        branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                        branch_target,
                     }),
                     cx,
                 );
@@ -691,12 +718,20 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
 
             ThreadWorktreeEntry::CreateNamed {
                 name,
+                from_branch,
                 disabled_reason,
             } => {
-                let label = format!("Create Worktree: \"{name}\"…");
+                let branch_label = from_branch
+                    .as_deref()
+                    .unwrap_or(self.current_branch_name.as_deref().unwrap_or("HEAD"));
+                let label = format!("Create \"{name}\" based on {branch_label}");
+                let element_id = match from_branch {
+                    Some(branch) => format!("create-named-from-{branch}"),
+                    None => "create-named-from-current".to_string(),
+                };
 
                 let item = create_new_list_item(
-                    "create-fresh-new".to_string().into(),
+                    element_id.into(),
                     label.into(),
                     disabled_reason.clone().map(SharedString::from),
                     selected,
@@ -774,12 +809,17 @@ mod tests {
                 }
                 ThreadWorktreeEntry::CreateNamed {
                     name,
+                    from_branch,
                     disabled_reason,
                 } => {
+                    let branch = from_branch
+                        .as_deref()
+                        .map(|b| format!("from {b}"))
+                        .unwrap_or_else(|| "from current".to_string());
                     if disabled_reason.is_some() {
-                        format!("CreateNamed({name}, disabled)")
+                        format!("CreateNamed({name}, {branch}, disabled)")
                     } else {
-                        format!("CreateNamed({name})")
+                        format!("CreateNamed({name}, {branch})")
                     }
                 }
             })
@@ -890,13 +930,14 @@ mod tests {
                 make_worktree("/my-worktree", "experiment", false),
             ],
             HashSet::default(),
+            Some("dev".into()),
             Some("main".into()),
-            None,
             false,
         )
         .await;
 
-        // Partial match filters to matching worktrees and offers to create.
+        // Partial match filters to matching worktrees and offers to create
+        // from both current branch and default branch.
         picker
             .update(cx, |picker, window, cx| {
                 picker.set_query("feat", window, cx)
@@ -908,10 +949,17 @@ mod tests {
             .read_with(cx, |picker, _| entry_names(&picker.delegate))
             .unwrap();
         assert!(names.contains(&"Worktree(/repo-feature)".to_string()));
-        assert!(names.contains(&"CreateNamed(feat)".to_string()));
+        assert!(
+            names.contains(&"CreateNamed(feat, from current)".to_string()),
+            "should offer to create from current branch, got: {names:?}"
+        );
+        assert!(
+            names.contains(&"CreateNamed(feat, from main)".to_string()),
+            "should offer to create from default branch, got: {names:?}"
+        );
         assert!(!names.contains(&"Worktree(/repo-bugfix)".to_string()));
 
-        // Exact match: the create entry appears but is disabled.
+        // Exact match: both create entries appear but are disabled.
         picker
             .update(cx, |picker, window, cx| {
                 picker.set_query("repo-feature", window, cx)
@@ -923,8 +971,8 @@ mod tests {
             .read_with(cx, |picker, _| entry_names(&picker.delegate))
             .unwrap();
         assert!(
-            names.contains(&"CreateNamed(repo-feature, disabled)".to_string()),
-            "exact name match should show a disabled create entry, got: {names:?}"
+            names.contains(&"CreateNamed(repo-feature, from current, disabled)".to_string()),
+            "exact name match should show disabled create entries, got: {names:?}"
         );
 
         // Spaces are normalized to hyphens: "my worktree" matches "my-worktree".
@@ -939,7 +987,7 @@ mod tests {
             .read_with(cx, |picker, _| entry_names(&picker.delegate))
             .unwrap();
         assert!(
-            names.contains(&"CreateNamed(my-worktree, disabled)".to_string()),
+            names.contains(&"CreateNamed(my-worktree, from current, disabled)".to_string()),
             "spaces should normalize to hyphens and detect existing worktree, got: {names:?}"
         );
     }
@@ -982,7 +1030,7 @@ mod tests {
             .read_with(cx, |picker, _| entry_names(&picker.delegate))
             .unwrap();
         assert!(
-            names.contains(&"CreateNamed(new-thing, disabled)".to_string()),
+            names.contains(&"CreateNamed(new-thing, from current, disabled)".to_string()),
             "multi-repo should disable create named, got: {names:?}"
         );
     }
