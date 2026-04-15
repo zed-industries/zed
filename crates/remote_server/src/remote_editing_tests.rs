@@ -1664,83 +1664,53 @@ async fn test_remote_archive_git_operations_are_supported(
         .expect("head_sha should succeed")
         .expect("HEAD should exist");
 
-    let update_ref_result = cx
-        .update(|cx| {
-            repository.update(cx, |repository, _| {
-                repository.update_ref("refs/zed-tests/archive-checkpoint".to_string(), head_sha)
-            })
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        repository.update(cx, |repository, _| {
+            repository.update_ref("refs/zed-tests/archive-checkpoint".to_string(), head_sha)
         })
-        .await
-        .expect("update_ref request should complete");
+    })
+    .await
+    .expect("update_ref request should complete")
+    .expect("update_ref should succeed for remote repository");
 
-    let delete_ref_result = cx
-        .update(|cx| {
-            repository.update(cx, |repository, _| {
-                repository.delete_ref("refs/zed-tests/archive-checkpoint".to_string())
-            })
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        repository.update(cx, |repository, _| {
+            repository.delete_ref("refs/zed-tests/archive-checkpoint".to_string())
         })
-        .await
-        .expect("delete_ref request should complete");
+    })
+    .await
+    .expect("delete_ref request should complete")
+    .expect("delete_ref should succeed for remote repository");
 
-    let repair_worktrees_result = cx
-        .update(|cx| repository.update(cx, |repository, _| repository.repair_worktrees()))
-        .await
-        .expect("repair_worktrees request should complete");
+    cx.run_until_parked();
 
-    let archive_checkpoint_result = cx
+    cx.update(|cx| repository.update(cx, |repository, _| repository.repair_worktrees()))
+        .await
+        .expect("repair_worktrees request should complete")
+        .expect("repair_worktrees should succeed for remote repository");
+
+    cx.run_until_parked();
+
+    let (staged_commit_sha, unstaged_commit_sha) = cx
         .update(|cx| repository.update(cx, |repository, _| repository.create_archive_checkpoint()))
         .await
-        .expect("create_archive_checkpoint request should complete");
+        .expect("create_archive_checkpoint request should complete")
+        .expect("create_archive_checkpoint should succeed for remote repository");
 
-    let restore_archive_checkpoint_result = match &archive_checkpoint_result {
-        Ok((staged_commit_sha, unstaged_commit_sha)) => {
-            let staged_commit_sha = staged_commit_sha.clone();
-            let unstaged_commit_sha = unstaged_commit_sha.clone();
-            cx.update(|cx| {
-                repository.update(cx, |repository, _| {
-                    repository.restore_archive_checkpoint(staged_commit_sha, unstaged_commit_sha)
-                })
-            })
-            .await
-            .expect("restore_archive_checkpoint request should complete")
-        }
-        Err(error) => Err(anyhow::anyhow!(
-            "create_archive_checkpoint failed before restore: {error:#}"
-        )),
-    };
+    cx.run_until_parked();
 
-    let mut errors = Vec::new();
-    if let Err(error) = update_ref_result {
-        errors.push(format!(
-            "update_ref failed for remote repository: {error:#}"
-        ));
-    }
-    if let Err(error) = delete_ref_result {
-        errors.push(format!(
-            "delete_ref failed for remote repository: {error:#}"
-        ));
-    }
-    if let Err(error) = repair_worktrees_result {
-        errors.push(format!(
-            "repair_worktrees failed for remote repository: {error:#}"
-        ));
-    }
-    if let Err(error) = archive_checkpoint_result {
-        errors.push(format!(
-            "create_archive_checkpoint failed for remote repository: {error:#}"
-        ));
-    }
-    if let Err(error) = restore_archive_checkpoint_result {
-        errors.push(format!(
-            "restore_archive_checkpoint failed for remote repository: {error:#}"
-        ));
-    }
-
-    assert!(
-        errors.is_empty(),
-        "remote archive git operations should all succeed:\n{}",
-        errors.join("\n")
-    );
+    cx.update(|cx| {
+        repository.update(cx, |repository, _| {
+            repository.restore_archive_checkpoint(staged_commit_sha, unstaged_commit_sha)
+        })
+    })
+    .await
+    .expect("restore_archive_checkpoint request should complete")
+    .expect("restore_archive_checkpoint should succeed for remote repository");
 }
 
 #[gpui::test]

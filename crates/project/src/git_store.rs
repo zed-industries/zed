@@ -6217,7 +6217,9 @@ impl Repository {
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let action = match commit {
                         Some(sha) => proto::git_edit_ref::Action::UpdateToCommit(sha),
-                        None => proto::git_edit_ref::Action::Delete(true),
+                        None => {
+                            proto::git_edit_ref::Action::Delete(proto::git_edit_ref::DeleteRef {})
+                        }
                     };
                     client
                         .request(proto::GitEditRef {

@@ -1004,7 +1004,8 @@ pub struct RealGitRepository {
     is_trusted: Arc<AtomicBool>,
 }
 
-enum RefEdit {
+#[derive(Debug)]
+pub enum RefEdit {
     Update { ref_name: String, commit: String },
     Delete { ref_name: String },
 }

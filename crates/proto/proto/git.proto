@@ -583,8 +583,9 @@ message GitEditRef {
   string ref_name = 3;
   oneof action {
     string update_to_commit = 4;
-    bool delete = 5;
+    DeleteRef delete = 5;
   }
+  message DeleteRef {}
 }
 
 message GitRepairWorktrees {

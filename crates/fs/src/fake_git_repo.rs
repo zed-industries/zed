@@ -8,8 +8,8 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
-        RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
+        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -89,11 +89,6 @@ impl FakeGitRepositoryState {
             stash_entries: Default::default(),
         }
     }
-}
-
-enum RefEdit {
-    Update { ref_name: String, commit: String },
-    Delete { ref_name: String },
 }
 
 impl FakeGitRepository {
