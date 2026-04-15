@@ -1367,11 +1367,6 @@ impl AgentPanel {
         }
     }
 
-    pub fn new_thread_from_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let id = self.create_thread("sidebar", window, cx);
-        self.activate_retained_thread(id, true, window, cx);
-    }
-
     pub fn create_thread(
         &mut self,
         source: &'static str,
