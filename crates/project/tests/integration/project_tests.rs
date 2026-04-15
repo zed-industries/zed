@@ -7008,9 +7008,9 @@ async fn test_rename_fallback_to_second_server(cx: &mut gpui::TestAppContext) {
 
     // vue-language-server can't rename TS symbols in <script> (returns None -> InvalidPosition).
     // Set handlers BEFORE initiating the request so both are ready when requests arrive.
-    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
-        |_, _| async move { Ok(None) },
-    );
+    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+        Ok(None)
+    });
     ts_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
         |params, _| async move {
             assert_eq!(params.position, lsp::Position::new(0, 7));
@@ -7132,14 +7132,12 @@ async fn test_rename_no_fallback_when_first_server_succeeds(cx: &mut gpui::TestA
 
     // vue-language-server succeeds (e.g., renaming a template component).
     // vtsls should never be queried.
-    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
-        |_, _| async move {
-            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
-                lsp::Position::new(0, 6),
-                lsp::Position::new(0, 14),
-            ))))
-        },
-    );
+    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+        Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+            lsp::Position::new(0, 6),
+            lsp::Position::new(0, 14),
+        ))))
+    });
 
     let response = project
         .update(cx, |project, cx| {
@@ -7251,12 +7249,12 @@ async fn test_rename_fallback_all_servers_fail(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     // Both servers return None (InvalidPosition).
-    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
-        |_, _| async move { Ok(None) },
-    );
-    ts_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
-        |_, _| async move { Ok(None) },
-    );
+    vue_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+        Ok(None)
+    });
+    ts_server.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+        Ok(None)
+    });
 
     let response = project
         .update(cx, |project, cx| {
