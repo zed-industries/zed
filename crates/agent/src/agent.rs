@@ -87,6 +87,11 @@ struct Session {
     ref_count: usize,
 }
 
+struct PendingSession {
+    task: Shared<Task<Result<Entity<AcpThread>, Arc<anyhow::Error>>>>,
+    ref_count: usize,
+}
+
 pub struct LanguageModels {
     /// Access language model by ID
     models: HashMap<acp::ModelId, Arc<dyn LanguageModel>>,
@@ -246,6 +251,7 @@ impl LanguageModels {
 pub struct NativeAgent {
     /// Session ID -> Session mapping
     sessions: HashMap<acp::SessionId, Session>,
+    pending_sessions: HashMap<acp::SessionId, PendingSession>,
     thread_store: Entity<ThreadStore>,
     /// Project-specific state keyed by project EntityId
     projects: HashMap<EntityId, ProjectState>,
@@ -279,6 +285,7 @@ impl NativeAgent {
 
             Self {
                 sessions: HashMap::default(),
+                pending_sessions: HashMap::default(),
                 thread_store,
                 projects: HashMap::default(),
                 templates,
@@ -317,13 +324,14 @@ impl NativeAgent {
             )
         });
 
-        self.register_session(thread, project_id, cx)
+        self.register_session(thread, project_id, 1, cx)
     }
 
     fn register_session(
         &mut self,
         thread_handle: Entity<Thread>,
         project_id: EntityId,
+        ref_count: usize,
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
         let connection = Rc::new(NativeAgentConnection(cx.entity()));
@@ -389,7 +397,7 @@ impl NativeAgent {
                 project_id,
                 _subscriptions: subscriptions,
                 pending_save: Task::ready(Ok(())),
-                ref_count: 1,
+                ref_count,
             },
         );
 
@@ -933,23 +941,63 @@ impl NativeAgent {
             return Task::ready(Ok(session.acp_thread.clone()));
         }
 
-        let task = self.load_thread(id, project.clone(), cx);
-        cx.spawn(async move |this, cx| {
-            let thread = task.await?;
-            let acp_thread = this.update(cx, |this, cx| {
-                let project_id = this.get_or_create_project_state(&project, cx);
-                this.register_session(thread.clone(), project_id, cx)
-            })?;
-            let events = thread.update(cx, |thread, cx| thread.replay(cx));
-            cx.update(|cx| {
-                NativeAgentConnection::handle_thread_events(events, acp_thread.downgrade(), cx)
+        if let Some(pending) = self.pending_sessions.get_mut(&id) {
+            pending.ref_count += 1;
+            let task = pending.task.clone();
+            return cx.spawn(async move |_, _cx| task.await.map_err(|err| anyhow!(err)));
+        }
+
+        let task = self.load_thread(id.clone(), project.clone(), cx);
+        let shared_task = cx
+            .spawn({
+                let id = id.clone();
+                async move |this, cx| {
+                    let thread = match task.await {
+                        Ok(thread) => thread,
+                        Err(err) => {
+                            this.update(cx, |this, _cx| {
+                                this.pending_sessions.remove(&id);
+                            })
+                            .ok();
+                            return Err(Arc::new(err));
+                        }
+                    };
+                    let acp_thread = this
+                        .update(cx, |this, cx| {
+                            let project_id = this.get_or_create_project_state(&project, cx);
+                            let ref_count = this
+                                .pending_sessions
+                                .remove(&id)
+                                .map_or(1, |pending| pending.ref_count);
+                            this.register_session(thread.clone(), project_id, ref_count, cx)
+                        })
+                        .map_err(Arc::new)?;
+                    let events = thread.update(cx, |thread, cx| thread.replay(cx));
+                    cx.update(|cx| {
+                        NativeAgentConnection::handle_thread_events(
+                            events,
+                            acp_thread.downgrade(),
+                            cx,
+                        )
+                    })
+                    .await
+                    .map_err(Arc::new)?;
+                    acp_thread.update(cx, |thread, cx| {
+                        thread.snapshot_completed_plan(cx);
+                    });
+                    Ok(acp_thread)
+                }
             })
-            .await?;
-            acp_thread.update(cx, |thread, cx| {
-                thread.snapshot_completed_plan(cx);
-            });
-            Ok(acp_thread)
-        })
+            .shared();
+        self.pending_sessions.insert(
+            id,
+            PendingSession {
+                task: shared_task.clone(),
+                ref_count: 1,
+            },
+        );
+
+        cx.background_spawn(async move { shared_task.await.map_err(|err| anyhow!(err)) })
     }
 
     pub fn thread_summary(
@@ -1839,7 +1887,7 @@ impl NativeThreadEnvironment {
                     .get(&parent_session_id)
                     .map(|s| s.project_id)
                     .context("parent session not found")?;
-                Ok(agent.register_session(subagent_thread.clone(), project_id, cx))
+                Ok(agent.register_session(subagent_thread.clone(), project_id, 1, cx))
             })??;
 
         let depth = current_depth + 1;
@@ -3179,32 +3227,35 @@ mod internal_tests {
             assert!(agent.sessions.is_empty());
         });
 
-        let first_loaded_thread = cx
-            .update(|cx| {
-                connection.clone().load_session(
-                    session_id.clone(),
-                    project.clone(),
-                    PathList::new(&[Path::new("")]),
-                    None,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        let second_loaded_thread = cx
-            .update(|cx| {
-                connection.clone().load_session(
-                    session_id.clone(),
-                    project.clone(),
-                    PathList::new(&[Path::new("")]),
-                    None,
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
+        let first_loaded_thread = cx.update(|cx| {
+            connection.clone().load_session(
+                session_id.clone(),
+                project.clone(),
+                PathList::new(&[Path::new("")]),
+                None,
+                cx,
+            )
+        });
+        let second_loaded_thread = cx.update(|cx| {
+            connection.clone().load_session(
+                session_id.clone(),
+                project.clone(),
+                PathList::new(&[Path::new("")]),
+                None,
+                cx,
+            )
+        });
+
+        let first_loaded_thread = first_loaded_thread.await.unwrap();
+        let second_loaded_thread = second_loaded_thread.await.unwrap();
 
         cx.run_until_parked();
+
+        assert_eq!(
+            first_loaded_thread.entity_id(),
+            second_loaded_thread.entity_id(),
+            "concurrent loads for the same session should share one AcpThread"
+        );
 
         cx.update(|cx| connection.clone().close_session(&session_id, cx))
             .await
