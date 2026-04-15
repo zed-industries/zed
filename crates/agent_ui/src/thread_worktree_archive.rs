@@ -134,6 +134,17 @@ pub fn build_root_plan(
     // Main worktrees must be left alone — git refuses to remove them.
     let (linked_snapshot, repo) = linked_repo?;
     let main_repo_path = linked_snapshot.original_repo_abs_path.to_path_buf();
+
+    // Only archive worktrees that live inside the Zed-managed worktrees
+    // directory (configured via `git.worktree_directory`). Worktrees the
+    // user created outside that directory should be left untouched.
+    let worktree_directory_setting = &ProjectSettings::get_global(cx).git.worktree_directory;
+    let worktrees_base =
+        worktrees_directory_for_repo(&main_repo_path, worktree_directory_setting).log_err()?;
+    if !path.starts_with(&worktrees_base) {
+        return None;
+    }
+
     let branch_name = linked_snapshot
         .branch
         .as_ref()
@@ -997,7 +1008,7 @@ mod tests {
             Path::new("/project/.git"),
             true,
             GitWorktree {
-                path: PathBuf::from("/linked-worktree"),
+                path: PathBuf::from("/worktrees/project/feature/project"),
                 ref_name: Some("refs/heads/feature".into()),
                 sha: "abc123".into(),
                 is_main: false,
@@ -1008,7 +1019,10 @@ mod tests {
 
         let project = Project::test(
             fs.clone(),
-            [Path::new("/project"), Path::new("/linked-worktree")],
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
             cx,
         )
         .await;
@@ -1027,7 +1041,7 @@ mod tests {
         workspace.read_with(cx, |_workspace, cx| {
             // The linked worktree SHOULD produce a root plan.
             let plan = build_root_plan(
-                Path::new("/linked-worktree"),
+                Path::new("/worktrees/project/feature/project"),
                 std::slice::from_ref(&workspace),
                 cx,
             );
@@ -1036,7 +1050,10 @@ mod tests {
                 "build_root_plan should return Some for a linked worktree",
             );
             let plan = plan.unwrap();
-            assert_eq!(plan.root_path, PathBuf::from("/linked-worktree"));
+            assert_eq!(
+                plan.root_path,
+                PathBuf::from("/worktrees/project/feature/project")
+            );
             assert_eq!(plan.main_repo_path, PathBuf::from("/project"));
 
             // The main worktree should still return None.
@@ -1046,6 +1063,69 @@ mod tests {
                 main_plan.is_none(),
                 "build_root_plan should return None for the main worktree \
                  even when a linked worktree exists",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_build_root_plan_returns_none_for_external_linked_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/external-worktree"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [Path::new("/project"), Path::new("/external-worktree")],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |_workspace, cx| {
+            let plan = build_root_plan(
+                Path::new("/external-worktree"),
+                std::slice::from_ref(&workspace),
+                cx,
+            );
+            assert!(
+                plan.is_none(),
+                "build_root_plan should return None for a linked worktree \
+                 outside the Zed-managed worktrees directory",
             );
         });
     }
@@ -1070,7 +1150,7 @@ mod tests {
             Path::new("/project/.git"),
             true,
             GitWorktree {
-                path: PathBuf::from("/linked-worktree"),
+                path: PathBuf::from("/worktrees/project/feature/project"),
                 ref_name: Some("refs/heads/feature".into()),
                 sha: "abc123".into(),
                 is_main: false,
@@ -1081,7 +1161,10 @@ mod tests {
 
         let project = Project::test(
             fs.clone(),
-            [Path::new("/project"), Path::new("/linked-worktree")],
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
             cx,
         )
         .await;
@@ -1101,14 +1184,17 @@ mod tests {
         let root = workspace
             .read_with(cx, |_workspace, cx| {
                 build_root_plan(
-                    Path::new("/linked-worktree"),
+                    Path::new("/worktrees/project/feature/project"),
                     std::slice::from_ref(&workspace),
                     cx,
                 )
             })
             .expect("should produce a root plan for the linked worktree");
 
-        assert!(fs.is_dir(Path::new("/linked-worktree")).await);
+        assert!(
+            fs.is_dir(Path::new("/worktrees/project/feature/project"))
+                .await
+        );
 
         // Remove the root.
         let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
@@ -1119,7 +1205,8 @@ mod tests {
         // The FakeFs directory should be gone (removed by the FakeGitRepository
         // backend's remove_worktree implementation).
         assert!(
-            !fs.is_dir(Path::new("/linked-worktree")).await,
+            !fs.is_dir(Path::new("/worktrees/project/feature/project"))
+                .await,
             "linked worktree directory should be removed from FakeFs"
         );
     }
@@ -1144,7 +1231,7 @@ mod tests {
             Path::new("/project/.git"),
             true,
             GitWorktree {
-                path: PathBuf::from("/linked-worktree"),
+                path: PathBuf::from("/worktrees/project/feature/project"),
                 ref_name: Some("refs/heads/feature".into()),
                 sha: "abc123".into(),
                 is_main: false,
@@ -1155,7 +1242,10 @@ mod tests {
 
         let project = Project::test(
             fs.clone(),
-            [Path::new("/project"), Path::new("/linked-worktree")],
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
             cx,
         )
         .await;
@@ -1174,7 +1264,7 @@ mod tests {
         let root = workspace
             .read_with(cx, |_workspace, cx| {
                 build_root_plan(
-                    Path::new("/linked-worktree"),
+                    Path::new("/worktrees/project/feature/project"),
                     std::slice::from_ref(&workspace),
                     cx,
                 )
@@ -1185,7 +1275,7 @@ mod tests {
         // remove_root, simulating the directory being deleted externally.
         fs.as_ref()
             .remove_dir(
-                Path::new("/linked-worktree"),
+                Path::new("/worktrees/project/feature/project"),
                 fs::RemoveOptions {
                     recursive: true,
                     ignore_if_not_exists: false,
@@ -1193,7 +1283,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!fs.as_ref().is_dir(Path::new("/linked-worktree")).await);
+        assert!(
+            !fs.as_ref()
+                .is_dir(Path::new("/worktrees/project/feature/project"))
+                .await
+        );
 
         // remove_root should still succeed — the std::fs::remove_dir_all
         // handles NotFound, and git worktree remove handles a missing
