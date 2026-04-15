@@ -1519,7 +1519,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
         let Some(project_state) = self.0.read(cx).session_project_state(&session_id) else {
             log::error!("Session not found in prompt: {}", session_id);
-            if self.0.read(cx).sessions.get(&session_id).is_some() {
+            if self.0.read(cx).sessions.contains_key(&session_id) {
                 log::error!(
                     "Session found in sessions map, but not in project state: {}",
                     session_id
