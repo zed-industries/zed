@@ -519,7 +519,9 @@ pub fn init(
 }
 
 fn agent_v2_enabled(cx: &App) -> bool {
-    !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
+    cfg!(test)
+        || cfg!(feature = "test-support")
+        || !matches!(ReleaseChannel::try_global(cx), Some(ReleaseChannel::Stable))
 }
 
 fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut App) {
