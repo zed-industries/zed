@@ -589,6 +589,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_remove_worktree);
         client.add_entity_request_handler(Self::handle_rename_worktree);
         client.add_entity_request_handler(Self::handle_get_head_sha);
+        client.add_entity_request_handler(Self::handle_edit_ref);
         client.add_entity_request_handler(Self::handle_repair_worktrees);
     }
 
@@ -2516,6 +2517,25 @@ impl GitStore {
             .await??;
 
         Ok(proto::GitGetHeadShaResponse { sha: head_sha })
+    }
+
+    async fn handle_edit_ref(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitEditRef>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let ref_name = envelope.payload.ref_name;
+        let commit = envelope.payload.commit;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.edit_ref(ref_name, commit)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_repair_worktrees(
@@ -6137,34 +6157,43 @@ impl Repository {
         })
     }
 
-    pub fn update_ref(
+    fn edit_ref(
         &mut self,
         ref_name: String,
-        commit: String,
+        commit: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
             match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.update_ref(ref_name, commit).await
-                }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("update_ref is not supported for remote repositories")
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => match commit {
+                    Some(commit) => backend.update_ref(ref_name, commit).await,
+                    None => backend.delete_ref(ref_name).await,
+                },
+                RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                    client
+                        .request(proto::GitEditRef {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            ref_name,
+                            commit,
+                        })
+                        .await?;
+                    Ok(())
                 }
             }
         })
     }
 
+    pub fn update_ref(
+        &mut self,
+        ref_name: String,
+        commit: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        self.edit_ref(ref_name, Some(commit))
+    }
+
     pub fn delete_ref(&mut self, ref_name: String) -> oneshot::Receiver<Result<()>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.delete_ref(ref_name).await
-                }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("delete_ref is not supported for remote repositories")
-                }
-            }
-        })
+        self.edit_ref(ref_name, None)
     }
 
     pub fn repair_worktrees(&mut self) -> oneshot::Receiver<Result<()>> {

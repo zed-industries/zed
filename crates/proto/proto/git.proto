@@ -577,6 +577,13 @@ message GitGetHeadShaResponse {
   optional string sha = 1;
 }
 
+message GitEditRef {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string ref_name = 3;
+  optional string commit = 4;
+}
+
 message GitRepairWorktrees {
   uint64 project_id = 1;
   uint64 repository_id = 2;
