@@ -3144,14 +3144,21 @@ impl AgentPanel {
             let Some(trusted_store) = TrustedWorktrees::try_get_global(cx) else {
                 return;
             };
+            
             let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store();
-            let paths_to_trust: collections::HashSet<PathTrust> = paths
+            let paths_to_trust: HashSet<_> = paths
                 .iter()
-                .map(|p| PathTrust::AbsPath(p.clone()))
+                .filter_map(|path| {
+                    let (worktree, _) = worktree_store.read(cx).find_worktree(path, cx)?;
+                    Some(PathTrust::Worktree(worktree.read(cx).id()))
+                })
                 .collect();
-            trusted_store.update(cx, |store, cx| {
-                store.trust(&worktree_store, paths_to_trust, cx);
-            });
+            
+            if !paths_to_trust.is_empty() {
+                trusted_store.update(cx, |store, cx| {
+                    store.trust(&worktree_store, paths_to_trust, cx);
+                });
+            }
         })
         .ok();
     }
