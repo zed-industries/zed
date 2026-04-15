@@ -138,6 +138,12 @@ impl Project {
                     let Some(toolchain) = toolchain.await else {
                         continue;
                     };
+                    if should_skip_toolchain_activation_for_task(
+                        &toolchain,
+                        spawn_task.command.as_deref(),
+                    ) {
+                        return Some(Vec::new());
+                    }
                     let language = lang_registry
                         .language_for_name(&toolchain.language_name.0)
                         .await
@@ -637,4 +643,83 @@ fn create_remote_shell(
         },
         command.env,
     ))
+}
+
+fn should_skip_toolchain_activation_for_task(
+    toolchain: &language::Toolchain,
+    command: Option<&str>,
+) -> bool {
+    command.is_some_and(|command| {
+        toolchain.language_name.0 == "Python"
+            && toolchain.path.as_ref() == command
+            && toolchain
+                .as_json
+                .get("activation_scripts")
+                .and_then(serde_json::Value::as_object)
+                .is_some_and(|activation_scripts| !activation_scripts.is_empty())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::SharedString;
+    use language::{LanguageName, Toolchain};
+    use serde_json::json;
+
+    use super::should_skip_toolchain_activation_for_task;
+
+    #[test]
+    fn skips_python_venv_activation_when_task_uses_the_same_interpreter() {
+        let toolchain = Toolchain {
+            name: SharedString::from("Python"),
+            path: SharedString::from("/tmp/folder with spaces/.venv/bin/python"),
+            language_name: LanguageName::new_static("Python"),
+            as_json: json!({
+                "activation_scripts": {
+                    "posix": "/tmp/folder with spaces/.venv/bin/activate",
+                }
+            }),
+        };
+
+        assert!(should_skip_toolchain_activation_for_task(
+            &toolchain,
+            Some("/tmp/folder with spaces/.venv/bin/python"),
+        ));
+    }
+
+    #[test]
+    fn keeps_activation_for_python_toolchains_without_venv_scripts() {
+        let toolchain = Toolchain {
+            name: SharedString::from("Python"),
+            path: SharedString::from("/tmp/conda/bin/python"),
+            language_name: LanguageName::new_static("Python"),
+            as_json: json!({
+                "activation_scripts": {}
+            }),
+        };
+
+        assert!(!should_skip_toolchain_activation_for_task(
+            &toolchain,
+            Some("/tmp/conda/bin/python"),
+        ));
+    }
+
+    #[test]
+    fn keeps_activation_when_task_uses_a_different_command() {
+        let toolchain = Toolchain {
+            name: SharedString::from("Python"),
+            path: SharedString::from("/tmp/project/.venv/bin/python"),
+            language_name: LanguageName::new_static("Python"),
+            as_json: json!({
+                "activation_scripts": {
+                    "posix": "/tmp/project/.venv/bin/activate",
+                }
+            }),
+        };
+
+        assert!(!should_skip_toolchain_activation_for_task(
+            &toolchain,
+            Some("python3"),
+        ));
+    }
 }
