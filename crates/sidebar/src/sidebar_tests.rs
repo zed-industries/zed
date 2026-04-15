@@ -881,97 +881,6 @@ async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn test_adding_folder_to_non_backed_group_migrates_threads(cx: &mut TestAppContext) {
-    use workspace::ProjectGroup;
-    // When a project group has no backing workspace (e.g. the workspace was
-    // closed but the group and its threads remain), adding a folder via
-    // `add_folders_to_project_group` should still migrate thread metadata
-    // to the new key and cause the sidebar to rerender.
-    let (_fs, project) =
-        init_multi_project_test(&["/active-project", "/orphan-a", "/orphan-b"], cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-
-    // Insert a standalone project group for [/orphan-a] with no backing
-    // workspace — simulating a group that persisted after its workspace
-    // was closed.
-    let group_key = ProjectGroupKey::new(None, PathList::new(&[PathBuf::from("/orphan-a")]));
-    multi_workspace.update(cx, |mw, _cx| {
-        mw.test_add_project_group(ProjectGroup {
-            key: group_key.clone(),
-            workspaces: Vec::new(),
-            expanded: true,
-            visible_thread_count: None,
-        });
-    });
-
-    // Verify the group has no backing workspaces.
-    multi_workspace.read_with(cx, |mw, cx| {
-        let group = mw
-            .project_groups(cx)
-            .into_iter()
-            .find(|g| g.key == group_key)
-            .expect("group should exist");
-        assert!(
-            group.workspaces.is_empty(),
-            "group should have no backing workspaces"
-        );
-    });
-
-    // Save threads directly into the metadata store under [/orphan-a].
-    save_thread_metadata_with_main_paths(
-        "t-1",
-        "Thread One",
-        PathList::new(&[PathBuf::from("/orphan-a")]),
-        PathList::new(&[PathBuf::from("/orphan-a")]),
-        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
-        cx,
-    );
-    save_thread_metadata_with_main_paths(
-        "t-2",
-        "Thread Two",
-        PathList::new(&[PathBuf::from("/orphan-a")]),
-        PathList::new(&[PathBuf::from("/orphan-a")]),
-        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
-        cx,
-    );
-    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
-    cx.run_until_parked();
-
-    // Verify threads show under the standalone group.
-    assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
-        vec![
-            "v [active-project]",
-            "v [orphan-a]",
-            "  Thread Two",
-            "  Thread One",
-        ]
-    );
-
-    // Add /orphan-b to the non-backed group.
-    multi_workspace.update(cx, |mw, cx| {
-        mw.add_folders_to_project_group(&group_key, vec![PathBuf::from("/orphan-b")], cx);
-    });
-    cx.run_until_parked();
-
-    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
-    cx.run_until_parked();
-
-    // Threads should now appear under the combined key.
-    assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
-        vec![
-            "v [active-project]",
-            "v [orphan-a, orphan-b]",
-            "  Thread Two",
-            "  Thread One",
-        ]
-    );
-}
-
-#[gpui::test]
 async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
     use workspace::ProjectGroup;
 
@@ -3017,94 +2926,6 @@ async fn test_new_thread_button_works_after_adding_folder(cx: &mut TestAppContex
         );
     });
 }
-#[gpui::test]
-async fn test_group_level_folder_add_syncs_siblings_but_individual_add_splits(
-    cx: &mut TestAppContext,
-) {
-    // Group-level operations (via the "..." menu) should keep all workspaces
-    // in the group in sync. Individual worktree additions should let a
-    // workspace diverge from its group.
-    init_test(cx);
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
-        .await;
-    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
-        .await;
-    fs.insert_tree("/project-c", serde_json::json!({ "src": {} }))
-        .await;
-    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
-
-    let project_a = project::Project::test(fs.clone(), [Path::new("/project-a")], cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
-    let _sidebar = setup_sidebar(&multi_workspace, cx);
-
-    // Add a second workspace in the same group by adding it with the same
-    // project so they share a project group key.
-    let project_a2 = project::Project::test(fs.clone(), [Path::new("/project-a")], cx).await;
-    multi_workspace.update_in(cx, |mw, window, cx| {
-        mw.test_add_workspace(project_a2.clone(), window, cx);
-    });
-    cx.run_until_parked();
-
-    // Both workspaces should be in the same group with key [/project-a].
-    multi_workspace.read_with(cx, |mw, _cx| {
-        assert_eq!(mw.workspaces().count(), 2);
-        assert_eq!(mw.project_group_keys().len(), 1);
-    });
-
-    // --- Group-level add: add /project-b via the group API ---
-    let group_key = multi_workspace.read_with(cx, |mw, _cx| mw.project_group_keys()[0].clone());
-    multi_workspace.update(cx, |mw, cx| {
-        mw.add_folders_to_project_group(&group_key, vec![PathBuf::from("/project-b")], cx);
-    });
-    cx.run_until_parked();
-
-    // Both workspaces should now have /project-b as a worktree.
-    multi_workspace.read_with(cx, |mw, cx| {
-        for workspace in mw.workspaces() {
-            let paths = workspace.read(cx).root_paths(cx);
-            assert!(
-                paths.iter().any(|p| p.ends_with("project-b")),
-                "group-level add should propagate /project-b to all siblings, got {:?}",
-                paths,
-            );
-        }
-    });
-
-    // --- Individual add: add /project-c directly to one workspace ---
-    let first_workspace =
-        multi_workspace.read_with(cx, |mw, _cx| mw.workspaces().next().unwrap().clone());
-    let first_project = first_workspace.read_with(cx, |ws, _cx| ws.project().clone());
-    first_project
-        .update(cx, |project, cx| {
-            project.find_or_create_worktree("/project-c", true, cx)
-        })
-        .await
-        .expect("should add worktree");
-    cx.run_until_parked();
-
-    // The first workspace should now have /project-c but the second should not.
-    let second_workspace =
-        multi_workspace.read_with(cx, |mw, _cx| mw.workspaces().nth(1).unwrap().clone());
-    first_workspace.read_with(cx, |ws, cx| {
-        let paths = ws.root_paths(cx);
-        assert!(
-            paths.iter().any(|p| p.ends_with("project-c")),
-            "individual add should give /project-c to this workspace, got {:?}",
-            paths,
-        );
-    });
-    second_workspace.read_with(cx, |ws, cx| {
-        let paths = ws.root_paths(cx);
-        assert!(
-            !paths.iter().any(|p| p.ends_with("project-c")),
-            "individual add should NOT propagate /project-c to sibling, got {:?}",
-            paths,
-        );
-    });
-}
-
 #[gpui::test]
 async fn test_draft_title_updates_from_editor_text(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
@@ -5396,6 +5217,482 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     assert!(
         !entries.iter().any(|e| e.contains("Worktree Thread")),
         "archived worktree thread should not be visible: {entries:?}"
+    );
+
+    // The archived thread must retain its folder_paths so it can be
+    // restored to the correct workspace later.
+    let wt_thread_id = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&wt_thread_id)
+            .unwrap()
+            .thread_id
+    });
+    let archived_paths = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(wt_thread_id)
+            .unwrap()
+            .folder_paths()
+            .clone()
+    });
+    assert_eq!(
+        archived_paths.paths(),
+        &[PathBuf::from("/wt-feature-a")],
+        "archived thread must retain its folder_paths for restore"
+    );
+}
+
+#[gpui::test]
+async fn test_restore_worktree_when_branch_has_moved(cx: &mut TestAppContext) {
+    // restore_worktree_via_git should succeed when the branch has moved
+    // to a different SHA since archival. The worktree stays in detached
+    // HEAD and the moved branch is left untouched.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/wt-feature-a",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-a",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-a"),
+            ref_name: Some("refs/heads/feature-a".into()),
+            sha: "original-sha".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, _cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    multi_workspace.update_in(_cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    let wt_repo = worktree_project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    let (staged_hash, unstaged_hash) = cx
+        .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Move the branch to a different SHA.
+    fs.with_git_state(Path::new("/project/.git"), false, |state| {
+        state
+            .refs
+            .insert("refs/heads/feature-a".into(), "moved-sha".into());
+    })
+    .unwrap();
+
+    let result = cx
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                    id: 1,
+                    worktree_path: PathBuf::from("/wt-feature-a"),
+                    main_repo_path: PathBuf::from("/project"),
+                    branch_name: Some("feature-a".to_string()),
+                    staged_commit_hash: staged_hash,
+                    unstaged_commit_hash: unstaged_hash,
+                    original_commit_hash: "original-sha".to_string(),
+                },
+                &mut cx,
+            )
+            .await
+        })
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "restore should succeed even when branch has moved: {:?}",
+        result.err()
+    );
+
+    // The moved branch ref should be completely untouched.
+    let branch_sha = fs
+        .with_git_state(Path::new("/project/.git"), false, |state| {
+            state.refs.get("refs/heads/feature-a").cloned()
+        })
+        .unwrap();
+    assert_eq!(
+        branch_sha.as_deref(),
+        Some("moved-sha"),
+        "the moved branch ref should not be modified by the restore"
+    );
+}
+
+#[gpui::test]
+async fn test_restore_worktree_when_branch_has_not_moved(cx: &mut TestAppContext) {
+    // restore_worktree_via_git should succeed when the branch still
+    // points at the same SHA as at archive time.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-b": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-b",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/wt-feature-b",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-b",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-b"),
+            ref_name: Some("refs/heads/feature-b".into()),
+            sha: "original-sha".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-b".as_ref()], cx).await;
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, _cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    multi_workspace.update_in(_cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    let wt_repo = worktree_project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    let (staged_hash, unstaged_hash) = cx
+        .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // refs/heads/feature-b already points at "original-sha" (set by
+    // add_linked_worktree_for_repo), matching original_commit_hash.
+
+    let result = cx
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                    id: 1,
+                    worktree_path: PathBuf::from("/wt-feature-b"),
+                    main_repo_path: PathBuf::from("/project"),
+                    branch_name: Some("feature-b".to_string()),
+                    staged_commit_hash: staged_hash,
+                    unstaged_commit_hash: unstaged_hash,
+                    original_commit_hash: "original-sha".to_string(),
+                },
+                &mut cx,
+            )
+            .await
+        })
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "restore should succeed when branch has not moved: {:?}",
+        result.err()
+    );
+}
+
+#[gpui::test]
+async fn test_restore_worktree_when_branch_does_not_exist(cx: &mut TestAppContext) {
+    // restore_worktree_via_git should succeed when the branch no longer
+    // exists (e.g. it was deleted while the thread was archived). The
+    // code should attempt to recreate the branch.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-d": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-d",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/wt-feature-d",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-d",
+            "src": {},
+        }),
+    )
+    .await;
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-d"),
+            ref_name: Some("refs/heads/feature-d".into()),
+            sha: "original-sha".into(),
+            is_main: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-d".as_ref()], cx).await;
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, _cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    multi_workspace.update_in(_cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    let wt_repo = worktree_project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    let (staged_hash, unstaged_hash) = cx
+        .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
+        .await
+        .unwrap()
+        .unwrap();
+
+    // Remove the branch ref so change_branch will fail.
+    fs.with_git_state(Path::new("/project/.git"), false, |state| {
+        state.refs.remove("refs/heads/feature-d");
+    })
+    .unwrap();
+
+    let result = cx
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                    id: 1,
+                    worktree_path: PathBuf::from("/wt-feature-d"),
+                    main_repo_path: PathBuf::from("/project"),
+                    branch_name: Some("feature-d".to_string()),
+                    staged_commit_hash: staged_hash,
+                    unstaged_commit_hash: unstaged_hash,
+                    original_commit_hash: "original-sha".to_string(),
+                },
+                &mut cx,
+            )
+            .await
+        })
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "restore should succeed when branch does not exist: {:?}",
+        result.err()
+    );
+}
+
+#[gpui::test]
+async fn test_restore_worktree_thread_uses_main_repo_project_group_key(cx: &mut TestAppContext) {
+    // Activating an archived linked worktree thread whose directory has
+    // been deleted should reuse the existing main repo workspace, not
+    // create a new one. The provisional ProjectGroupKey must be derived
+    // from main_worktree_paths so that find_or_create_local_workspace
+    // matches the main repo workspace when the worktree path is absent.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-c": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-c",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/wt-feature-c",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-c",
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/wt-feature-c"),
+            ref_name: Some("refs/heads/feature-c".into()),
+            sha: "original-sha".into(),
+            is_main: false,
+        },
+    )
+    .await;
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-c".as_ref()], cx).await;
+
+    main_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |p, cx| p.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let worktree_workspace = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    // Save thread metadata for the linked worktree.
+    let wt_session_id = acp::SessionId::new(Arc::from("wt-thread-c"));
+    save_thread_metadata(
+        wt_session_id.clone(),
+        Some("Worktree Thread C".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        &worktree_project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    let thread_id = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&wt_session_id)
+            .unwrap()
+            .thread_id
+    });
+
+    // Archive the thread without creating ArchivedGitWorktree records.
+    let store = cx.update(|_window, cx| ThreadMetadataStore::global(cx));
+    cx.update(|_window, cx| {
+        store.update(cx, |store, cx| store.archive(thread_id, None, cx));
+    });
+    cx.run_until_parked();
+
+    // Remove the worktree workspace and delete the worktree from disk.
+    let main_workspace =
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().next().unwrap().clone());
+    let remove_task = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.remove(
+            vec![worktree_workspace],
+            move |_this, _window, _cx| Task::ready(Ok(main_workspace)),
+            window,
+            cx,
+        )
+    });
+    remove_task.await.ok();
+    cx.run_until_parked();
+    cx.run_until_parked();
+    fs.remove_dir(
+        Path::new("/wt-feature-c"),
+        fs::RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .unwrap();
+
+    let workspace_count_before = multi_workspace.read_with(cx, |mw, _| mw.workspaces().count());
+    assert_eq!(
+        workspace_count_before, 1,
+        "should have only the main workspace"
+    );
+
+    // Activate the archived thread. The worktree path is missing from
+    // disk, so find_or_create_local_workspace falls back to the
+    // provisional ProjectGroupKey to find a matching workspace.
+    let metadata = cx.update(|_window, cx| store.read(cx).entry(thread_id).unwrap().clone());
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.activate_archived_thread(metadata, window, cx);
+    });
+    cx.run_until_parked();
+
+    // The provisional key should use [/project] (the main repo),
+    // which matches the existing main workspace. If it incorrectly
+    // used [/wt-feature-c] (the linked worktree path), no workspace
+    // would match and a spurious new one would be created.
+    let workspace_count_after = multi_workspace.read_with(cx, |mw, _| mw.workspaces().count());
+    assert_eq!(
+        workspace_count_after, 1,
+        "restoring a linked worktree thread should reuse the main repo workspace, \
+         not create a new one (workspace count went from {workspace_count_before} to \
+         {workspace_count_after})"
     );
 }
 
@@ -8654,8 +8951,6 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
     });
 
     // Add a second worktree to the project.
-    // TODO: Should there be different behavior for calling Project::find_or_create_worktree,
-    //       or MultiWorkspace::add_folders_to_project_group?
     project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/project-b", true, cx)
@@ -8738,12 +9033,12 @@ async fn test_non_archive_thread_paths_migrate_on_worktree_add_and_remove(cx: &m
 }
 
 #[gpui::test]
-async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut TestAppContext) {
+async fn test_worktree_add_only_regroups_threads_for_changed_workspace(cx: &mut TestAppContext) {
     // When two workspaces share the same project group (same main path)
     // but have different folder paths (main repo vs linked worktree),
-    // adding a worktree to the main workspace should only migrate threads
-    // whose folder paths match that workspace — not the linked worktree's
-    // threads.
+    // adding a worktree to the main workspace should regroup only that
+    // workspace and its threads into the new project group. Threads for the
+    // linked worktree workspace should remain under the original group.
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
@@ -8787,7 +9082,7 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
 
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
-    let _sidebar = setup_sidebar(&multi_workspace, cx);
+    let sidebar = setup_sidebar(&multi_workspace, cx);
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.test_add_workspace(worktree_project.clone(), window, cx);
     });
@@ -8817,7 +9112,8 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
     let folder_paths_main = PathList::new(&[PathBuf::from("/project")]);
     let folder_paths_wt = PathList::new(&[PathBuf::from("/wt-feature")]);
 
-    // Sanity-check: each thread is indexed under its own folder paths.
+    // Sanity-check: each thread is indexed under its own folder paths, but
+    // both appear under the shared sidebar group keyed by the main worktree.
     cx.update(|_window, cx| {
         let store = ThreadMetadataStore::global(cx).read(cx);
         assert_eq!(
@@ -8831,6 +9127,16 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
             "one thread under [/wt-feature]"
         );
     });
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [project]",
+            "  Worktree Thread {wt-feature}",
+            "  Main Thread",
+        ]
+    );
 
     // Add /project-b to the main project only.
     main_project
@@ -8841,8 +9147,9 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
         .expect("should add worktree");
     cx.run_until_parked();
 
-    // Main Thread (folder paths [/project]) should have migrated to
-    // [/project, /project-b]. Worktree Thread should be unchanged.
+    // Main Thread (folder paths [/project]) should be regrouped to
+    // [/project, /project-b]. Worktree Thread should remain under the
+    // original [/project] group.
     let folder_paths_main_b =
         PathList::new(&[PathBuf::from("/project"), PathBuf::from("/project-b")]);
     cx.update(|_window, cx| {
@@ -8863,6 +9170,18 @@ async fn test_worktree_add_only_migrates_threads_for_same_folder_paths(cx: &mut 
             "worktree thread should remain unchanged under [/wt-feature]"
         );
     });
+
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [project]",
+            "  Worktree Thread {wt-feature}",
+            "v [project, project-b]",
+            "  Main Thread",
+        ]
+    );
 }
 
 #[gpui::test]

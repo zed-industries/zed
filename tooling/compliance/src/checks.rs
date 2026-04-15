@@ -5,7 +5,7 @@ use itertools::Itertools as _;
 use crate::{
     git::{CommitDetails, CommitList},
     github::{
-        CommitAuthor, GitHubClient, GitHubUser, GithubLogin, PullRequestComment, PullRequestData,
+        CommitAuthor, GithubClient, GithubLogin, GithubUser, PullRequestComment, PullRequestData,
         PullRequestReview, Repository, ReviewState,
     },
     report::Report,
@@ -18,7 +18,7 @@ const ZED_ZIPPY_GROUP_APPROVAL: &str = "@zed-industries/approved";
 pub enum ReviewSuccess {
     ApprovingComment(Vec<PullRequestComment>),
     CoAuthored(Vec<CommitAuthor>),
-    ExternalMergedContribution { merged_by: GitHubUser },
+    ExternalMergedContribution { merged_by: GithubUser },
     PullRequestReviewed(Vec<PullRequestReview>),
 }
 
@@ -98,11 +98,11 @@ impl<E: Into<anyhow::Error>> From<E> for ReviewFailure {
 
 pub struct Reporter<'a> {
     commits: CommitList,
-    github_client: &'a GitHubClient,
+    github_client: &'a GithubClient,
 }
 
 impl<'a> Reporter<'a> {
-    pub fn new(commits: CommitList, github_client: &'a GitHubClient) -> Self {
+    pub fn new(commits: CommitList, github_client: &'a GithubClient) -> Self {
         Self {
             commits,
             github_client,
@@ -331,13 +331,13 @@ mod tests {
 
     use crate::git::{CommitDetails, CommitList, CommitSha};
     use crate::github::{
-        AuthorsForCommits, GitHubApiClient, GitHubClient, GitHubUser, GithubLogin,
+        AuthorsForCommits, GithubApiClient, GithubClient, GithubLogin, GithubUser,
         PullRequestComment, PullRequestData, PullRequestReview, Repository, ReviewState,
     };
 
     use super::{Reporter, ReviewFailure, ReviewSuccess};
 
-    struct MockGitHubApi {
+    struct MockGithubApi {
         pull_request: PullRequestData,
         reviews: Vec<PullRequestReview>,
         comments: Vec<PullRequestComment>,
@@ -346,7 +346,7 @@ mod tests {
     }
 
     #[async_trait::async_trait(?Send)]
-    impl GitHubApiClient for MockGitHubApi {
+    impl GithubApiClient for MockGithubApi {
         async fn get_pull_request(
             &self,
             _repo: &Repository<'_>,
@@ -420,7 +420,7 @@ mod tests {
 
     fn review(login: &str, state: ReviewState) -> PullRequestReview {
         PullRequestReview {
-            user: Some(GitHubUser {
+            user: Some(GithubUser {
                 login: login.to_owned(),
             }),
             state: Some(state),
@@ -430,7 +430,7 @@ mod tests {
 
     fn comment(login: &str, body: &str) -> PullRequestComment {
         PullRequestComment {
-            user: GitHubUser {
+            user: GithubUser {
                 login: login.to_owned(),
             },
             body: Some(body.to_owned()),
@@ -451,7 +451,7 @@ mod tests {
             Self {
                 pull_request: PullRequestData {
                     number: 1234,
-                    user: Some(GitHubUser {
+                    user: Some(GithubUser {
                         login: "alice".to_owned(),
                     }),
                     merged_by: None,
@@ -497,14 +497,14 @@ mod tests {
         }
 
         async fn run_scenario(self) -> Result<ReviewSuccess, ReviewFailure> {
-            let mock = MockGitHubApi {
+            let mock = MockGithubApi {
                 pull_request: self.pull_request,
                 reviews: self.reviews,
                 comments: self.comments,
                 commit_authors_json: self.commit_authors_json,
                 org_members: self.org_members,
             };
-            let client = GitHubClient::new(Rc::new(mock));
+            let client = GithubClient::new(Rc::new(mock));
             let reporter = Reporter::new(CommitList::default(), &client);
             reporter.check_commit(&self.commit).await
         }
