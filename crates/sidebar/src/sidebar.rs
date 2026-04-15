@@ -4573,7 +4573,7 @@ impl Sidebar {
                 this.child(
                     IconButton::new("thread-import", IconName::ThreadImport)
                         .icon_size(IconSize::Small)
-                        .tooltip(Tooltip::text("Import ACP Threads"))
+                        .tooltip(Tooltip::text("Import External Agent Threads"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.show_archive(window, cx);
                             this.show_thread_import_modal(window, cx);
