@@ -987,7 +987,9 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, (id, _, paths, _))| self.is_valid_recent_candidate(*id, paths, cx))
+            .filter(|(_, (id, location, paths, _))| {
+                self.is_valid_recent_candidate(*id, location, paths, cx)
+            })
             .map(|(id, (_, _, paths, _))| {
                 let combined_string = paths
                     .ordered_paths()
@@ -1060,8 +1062,8 @@ impl PickerDelegate for RecentProjectsDelegate {
             entries.push(ProjectPickerEntry::Header("Recent Projects".into()));
 
             if is_empty_query {
-                for (id, (workspace_id, _, paths, _)) in self.workspaces.iter().enumerate() {
-                    if self.is_valid_recent_candidate(*workspace_id, paths, cx) {
+                for (id, (workspace_id, location, paths, _)) in self.workspaces.iter().enumerate() {
+                    if self.is_valid_recent_candidate(*workspace_id, location, paths, cx) {
                         entries.push(ProjectPickerEntry::RecentProject(StringMatch {
                             candidate_id: id,
                             score: 0.0,
@@ -2108,14 +2110,20 @@ impl RecentProjectsDelegate {
         false
     }
 
-    fn is_in_current_window_groups(&self, paths: &PathList) -> bool {
-        self.window_project_groups
-            .iter()
-            .any(|key| key.path_list() == paths)
+    fn is_in_current_window_groups(
+        &self,
+        location: &SerializedWorkspaceLocation,
+        paths: &PathList,
+    ) -> bool {
+        self.window_project_groups.iter().any(|key| {
+            key.path_list() == paths && location_matches_remote_host(location, key.host().as_ref())
+        })
     }
 
-    fn is_open_folder(&self, paths: &PathList) -> bool {
-        if self.open_folders.is_empty() {
+    fn is_open_folder(&self, location: &SerializedWorkspaceLocation, paths: &PathList) -> bool {
+        if self.open_folders.is_empty()
+            || !location_matches_remote_host(location, self.project_connection_options.as_ref())
+        {
             return false;
         }
 
@@ -2133,18 +2141,30 @@ impl RecentProjectsDelegate {
     fn is_valid_recent_candidate(
         &self,
         workspace_id: WorkspaceId,
+        location: &SerializedWorkspaceLocation,
         paths: &PathList,
         cx: &mut Context<Picker<Self>>,
     ) -> bool {
         !self.is_current_workspace(workspace_id, cx)
-            && !self.is_in_current_window_groups(paths)
-            && !self.is_open_folder(paths)
+            && !self.is_in_current_window_groups(location, paths)
+            && !self.is_open_folder(location, paths)
+    }
+}
+
+fn location_matches_remote_host(
+    location: &SerializedWorkspaceLocation,
+    remote_host: Option<&RemoteConnectionOptions>,
+) -> bool {
+    match location {
+        SerializedWorkspaceLocation::Local => remote_host.is_none(),
+        SerializedWorkspaceLocation::Remote(connection) => Some(connection) == remote_host,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use remote::SshConnectionOptions;
 
     use serde_json::json;
     use settings::SettingsStore;
@@ -2152,6 +2172,31 @@ mod tests {
     use workspace::{AppState, open_paths};
 
     use super::*;
+
+    #[test]
+    fn test_location_matches_remote_host() {
+        let remote = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "remote-host".into(),
+            ..Default::default()
+        });
+
+        assert!(location_matches_remote_host(
+            &SerializedWorkspaceLocation::Local,
+            None,
+        ));
+        assert!(!location_matches_remote_host(
+            &SerializedWorkspaceLocation::Local,
+            Some(&remote),
+        ));
+        assert!(location_matches_remote_host(
+            &SerializedWorkspaceLocation::Remote(remote.clone()),
+            Some(&remote),
+        ));
+        assert!(!location_matches_remote_host(
+            &SerializedWorkspaceLocation::Remote(remote),
+            None,
+        ));
+    }
 
     #[gpui::test]
     async fn test_open_dev_container_action_with_single_config(cx: &mut TestAppContext) {
