@@ -3045,30 +3045,6 @@ fn run_error_wrapping_visual_tests(
     Ok(test_result)
 }
 
-#[cfg(all(target_os = "macos", feature = "visual-tests"))]
-/// Runs a git command in the given directory and returns an error with
-/// stderr/stdout context if the command fails (non-zero exit status).
-fn run_git_command(args: &[&str], dir: &std::path::Path) -> Result<()> {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .with_context(|| format!("failed to spawn `git {}`", args.join(" ")))?;
-
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "`git {}` failed (exit {})\nstdout: {}\nstderr: {}",
-            args.join(" "),
-            output.status,
-            stdout.trim(),
-            stderr.trim(),
-        );
-    }
-    Ok(())
-}
-
 #[cfg(target_os = "macos")]
 /// Helper to create a project, add a worktree at the given path, and return the project.
 fn create_project_with_worktree(

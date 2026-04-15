@@ -324,7 +324,7 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
                     .find(|wt| wt.is_main)
                     .map(|wt| wt.path.clone());
 
-                let mut sorted = repo_worktrees.clone();
+                let mut sorted = repo_worktrees;
                 let project_paths = &self.project_worktree_paths;
 
                 sorted.sort_by(|a, b| {
