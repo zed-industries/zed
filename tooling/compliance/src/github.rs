@@ -9,15 +9,15 @@ use crate::git::CommitSha;
 pub const PR_REVIEW_LABEL: &str = "PR state:needs review";
 
 #[derive(Debug, Clone)]
-pub struct GitHubUser {
+pub struct GithubUser {
     pub login: String,
 }
 
 #[derive(Debug, Clone)]
 pub struct PullRequestData {
     pub number: u64,
-    pub user: Option<GitHubUser>,
-    pub merged_by: Option<GitHubUser>,
+    pub user: Option<GithubUser>,
+    pub merged_by: Option<GithubUser>,
     pub labels: Option<Vec<String>>,
 }
 
@@ -29,7 +29,7 @@ pub enum ReviewState {
 
 #[derive(Debug, Clone)]
 pub struct PullRequestReview {
-    pub user: Option<GitHubUser>,
+    pub user: Option<GithubUser>,
     pub state: Option<ReviewState>,
     pub body: Option<String>,
 }
@@ -45,7 +45,7 @@ impl PullRequestReview {
 
 #[derive(Debug, Clone)]
 pub struct PullRequestComment {
-    pub user: GitHubUser,
+    pub user: GithubUser,
     pub body: Option<String>,
 }
 
@@ -176,7 +176,7 @@ impl Repository<'static> {
 }
 
 #[async_trait::async_trait(?Send)]
-pub trait GitHubApiClient {
+pub trait GithubApiClient {
     async fn get_pull_request(
         &self,
         repo: &Repository<'_>,
@@ -211,12 +211,12 @@ pub trait GitHubApiClient {
 }
 
 #[derive(Deref)]
-pub struct GitHubClient {
-    api: Rc<dyn GitHubApiClient>,
+pub struct GithubClient {
+    api: Rc<dyn GithubApiClient>,
 }
 
-impl GitHubClient {
-    pub fn new(api: Rc<dyn GitHubApiClient>) -> Self {
+impl GithubClient {
+    pub fn new(api: Rc<dyn GithubApiClient>) -> Self {
         Self { api }
     }
 
@@ -333,7 +333,7 @@ mod octo_client {
     };
 
     use super::{
-        AuthorsForCommits, GitHubApiClient, GitHubUser, GithubLogin, PullRequestComment,
+        AuthorsForCommits, GithubApiClient, GithubLogin, GithubUser, PullRequestComment,
         PullRequestData, PullRequestReview, ReviewState,
     };
 
@@ -406,7 +406,7 @@ mod octo_client {
     }
 
     #[async_trait::async_trait(?Send)]
-    impl GitHubApiClient for OctocrabClient {
+    impl GithubApiClient for OctocrabClient {
         async fn get_pull_request(
             &self,
             repo: &Repository<'_>,
@@ -419,8 +419,8 @@ mod octo_client {
                 .await?;
             Ok(PullRequestData {
                 number: pr.number,
-                user: pr.user.map(|user| GitHubUser { login: user.login }),
-                merged_by: pr.merged_by.map(|user| GitHubUser { login: user.login }),
+                user: pr.user.map(|user| GithubUser { login: user.login }),
+                merged_by: pr.merged_by.map(|user| GithubUser { login: user.login }),
                 labels: pr
                     .labels
                     .map(|labels| labels.into_iter().map(|label| label.name).collect()),
@@ -445,7 +445,7 @@ mod octo_client {
             Ok(reviews
                 .into_iter()
                 .map(|review| PullRequestReview {
-                    user: review.user.map(|user| GitHubUser { login: user.login }),
+                    user: review.user.map(|user| GithubUser { login: user.login }),
                     state: review.state.map(|state| match state {
                         OctocrabReviewState::Approved => ReviewState::Approved,
                         _ => ReviewState::Other,
@@ -473,7 +473,7 @@ mod octo_client {
             Ok(comments
                 .into_iter()
                 .map(|comment| PullRequestComment {
-                    user: GitHubUser {
+                    user: GithubUser {
                         login: comment.user.login,
                     },
                     body: comment.body,
