@@ -9457,9 +9457,6 @@ impl Editor {
             })
     }
 
-    // We add the gutter breakpoint indicator to breakpoint_rows after painting
-    // line numbers so we don't paint a line number debug accent color if a user
-    // has their mouse over that line when a breakpoint isn't there
     fn render_gutter_hover_button(
         &self,
         position: Anchor,
@@ -9467,43 +9464,94 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        let alt_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
-            ..Default::default()
+
+        #[derive(Clone, Copy)]
+        enum Action {
+            SetBookmark,
+            SetBreakpoint,
+        }
+
+        impl Action {
+            fn as_str(&self) -> &'static str {
+                match self {
+                    Action::SetBookmark => "Set bookmark",
+                    Action::SetBreakpoint => "Set breakpoint",
+                }
+            }
+
+            fn icon(&self) -> ui::IconName {
+                match self {
+                    Action::SetBookmark => ui::IconName::Bookmark,
+                    Action::SetBreakpoint => ui::IconName::DebugBreakpoint,
+                }
+            }
+
+            fn color(&self) -> Color {
+                match self {
+                    Action::SetBookmark => Color::Info,
+                    Action::SetBreakpoint => Color::Hint,
+                }
+            }
+
+            fn secondary_and_options(&self) -> String {
+                let alt_as_text = gpui::Keystroke {
+                    modifiers: Modifiers::secondary_key(),
+                    ..Default::default()
+                };
+                match self {
+                    Action::SetBookmark => format!(
+                        "{alt_as_text}click to add a breakpoint,\nright-click for more options."
+                    ),
+                    Action::SetBreakpoint => format!(
+                        "{alt_as_text}click to add a bookmark,\nright-click for more options."
+                    ),
+                }
+            }
+        }
+
+        let gutter_settings = EditorSettings::get_global(cx).gutter;
+        let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
+        let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
+
+        let [primary, secondary] = match [show_breakpoints, show_bookmarks] {
+            [true, true] => [Action::SetBreakpoint, Action::SetBookmark],
+            [true, false] => [Action::SetBreakpoint; 2],
+            [false, true] => [Action::SetBookmark; 2],
+            [false, false] => {
+                log::error!("Trying to place gutter_hover without anything enabled!!");
+                [Action::SetBookmark; 2]
+            }
         };
 
-        let meta = format!("{alt_as_text}click to add a bookmark,\nright-click for more options.");
         let action = if window.modifiers().secondary() {
-            "Set Bookmark"
+            secondary
         } else {
-            "Set Breakpoint"
-        };
-        let proposed_breakpoint = Breakpoint::new_standard();
-
-        let (icon, color) = if window.modifiers().secondary() {
-            (ui::IconName::Bookmark, Color::Info)
-        } else {
-            (ui::IconName::DebugBreakpoint, Color::Hint)
+            primary
         };
 
         let focus_handle = self.focus_handle.clone();
-        IconButton::new(("add_breakpoint_button", row.0 as usize), icon)
+        IconButton::new(("add_breakpoint_button", row.0 as usize), action.icon())
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
-            .icon_color(color)
+            .icon_color(action.color())
             .style(ButtonStyle::Transparent)
             .on_click(cx.listener({
                 move |editor, _: &ClickEvent, window, cx| {
-                    if window.modifiers().secondary() {
-                        editor.toggle_bookmark_at_row(row, cx);
+                    window.focus(&editor.focus_handle(cx), cx);
+                    let action = if window.modifiers().secondary() {
+                        secondary
                     } else {
-                        window.focus(&editor.focus_handle(cx), cx);
-                        editor.edit_breakpoint_at_anchor(
+                        primary
+                    };
+
+                    match action {
+                        Action::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
+                        Action::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
-                            proposed_breakpoint.clone(),
+                            Breakpoint::new_standard(),
                             BreakpointEditAction::Toggle,
                             cx,
-                        );
+                        ),
                     }
                 }
             }))
@@ -9512,9 +9560,9 @@ impl Editor {
             }))
             .tooltip(move |_window, cx| {
                 Tooltip::with_meta_in(
-                    action,
+                    action.as_str(),
                     Some(&ToggleBreakpoint),
-                    meta.clone(),
+                    action.secondary_and_options(),
                     &focus_handle,
                     cx,
                 )
