@@ -6147,23 +6147,6 @@ impl Repository {
         })
     }
 
-    /// Resolves a Git ref (e.g. `refs/heads/main`) to its SHA.
-    /// Returns `Ok(None)` if the ref doesn't exist.
-    /// Only supported for local repositories; returns an error for remote ones.
-    pub fn resolve_ref(&mut self, ref_name: String) -> oneshot::Receiver<Result<Option<String>>> {
-        self.send_job(None, move |repo, _cx| async move {
-            match repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let results = backend.revparse_batch(vec![ref_name]).await?;
-                    Ok(results.into_iter().next().flatten())
-                }
-                RepositoryState::Remote(_) => {
-                    anyhow::bail!("resolve_ref is not supported for remote repositories")
-                }
-            }
-        })
-    }
-
     pub fn update_ref(
         &mut self,
         ref_name: String,
