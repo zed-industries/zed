@@ -4757,7 +4757,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     .await;
 
     fs.insert_tree(
-        "/wt-feature-a",
+        "/worktrees/project/feature-a/project",
         serde_json::json!({
             ".git": "gitdir: /project/.git/worktrees/feature-a",
             "src": {},
@@ -4769,7 +4769,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         Path::new("/project/.git"),
         false,
         git::repository::Worktree {
-            path: PathBuf::from("/wt-feature-a"),
+            path: PathBuf::from("/worktrees/project/feature-a/project"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
@@ -4781,7 +4781,12 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+    let worktree_project = project::Project::test(
+        fs.clone(),
+        ["/worktrees/project/feature-a/project".as_ref()],
+        cx,
+    )
+    .await;
 
     main_project
         .update(cx, |p, cx| p.git_scans_complete(cx))
@@ -4851,7 +4856,8 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
 
     // The linked worktree checkout directory should also be removed from disk.
     assert!(
-        !fs.is_dir(Path::new("/wt-feature-a")).await,
+        !fs.is_dir(Path::new("/worktrees/project/feature-a/project"))
+            .await,
         "linked worktree directory should be removed from disk after archiving its last thread"
     );
 
@@ -4885,7 +4891,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     });
     assert_eq!(
         archived_paths.paths(),
-        &[PathBuf::from("/wt-feature-a")],
+        &[PathBuf::from("/worktrees/project/feature-a/project")],
         "archived thread must retain its folder_paths for restore"
     );
 }
@@ -10100,7 +10106,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
     .await;
 
     fs.insert_tree(
-        "/wt-feature-a",
+        "/worktrees/project/feature-a/project",
         serde_json::json!({
             ".git": "gitdir: /project/.git/worktrees/feature-a",
             "src": {
@@ -10114,7 +10120,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
         Path::new("/project/.git"),
         false,
         git::repository::Worktree {
-            path: PathBuf::from("/wt-feature-a"),
+            path: PathBuf::from("/worktrees/project/feature-a/project"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
@@ -10126,7 +10132,12 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+    let worktree_project = project::Project::test(
+        fs.clone(),
+        ["/worktrees/project/feature-a/project".as_ref()],
+        cx,
+    )
+    .await;
 
     main_project
         .update(cx, |p, cx| p.git_scans_complete(cx))
@@ -10153,7 +10164,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
         "worktree-thread",
         "Worktree Thread",
         PathList::new(&[
-            PathBuf::from("/wt-feature-a"),
+            PathBuf::from("/worktrees/project/feature-a/project"),
             PathBuf::from("/nonexistent"),
         ]),
         PathList::new(&[PathBuf::from("/project"), PathBuf::from("/nonexistent")]),
@@ -10212,7 +10223,8 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
 
     // The linked worktree directory should be removed from disk.
     assert!(
-        !fs.is_dir(Path::new("/wt-feature-a")).await,
+        !fs.is_dir(Path::new("/worktrees/project/feature-a/project"))
+            .await,
         "linked worktree directory should be removed from disk"
     );
 }
@@ -10245,7 +10257,7 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
     .await;
 
     fs.insert_tree(
-        "/wt-feature-b",
+        "/worktrees/main-repo/feature-b/main-repo",
         serde_json::json!({
             ".git": "gitdir: /main-repo/.git/worktrees/feature-b",
             "src": {
@@ -10259,7 +10271,7 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
         Path::new("/main-repo/.git"),
         false,
         git::repository::Worktree {
-            path: PathBuf::from("/wt-feature-b"),
+            path: PathBuf::from("/worktrees/main-repo/feature-b/main-repo"),
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "def".into(),
             is_main: false,
@@ -10274,7 +10286,10 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
     // linked worktree — this makes it a "mixed" workspace.
     let mixed_project = project::Project::test(
         fs.clone(),
-        ["/main-repo".as_ref(), "/wt-feature-b".as_ref()],
+        [
+            "/main-repo".as_ref(),
+            "/worktrees/main-repo/feature-b/main-repo".as_ref(),
+        ],
         cx,
     )
     .await;
@@ -10301,15 +10316,15 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
 
     let main_repo_wt_id = worktree_ids
         .iter()
-        .find(|(_, path)| path.ends_with("main-repo"))
+        .find(|(_, path)| path.as_ref() == Path::new("/main-repo"))
         .map(|(id, _)| *id)
         .expect("should find main-repo worktree");
 
     let feature_b_wt_id = worktree_ids
         .iter()
-        .find(|(_, path)| path.ends_with("wt-feature-b"))
+        .find(|(_, path)| path.as_ref() == Path::new("/worktrees/main-repo/feature-b/main-repo"))
         .map(|(id, _)| *id)
-        .expect("should find wt-feature-b worktree");
+        .expect("should find feature-b worktree");
 
     // Open files from both worktrees.
     let main_repo_path = project::ProjectPath {
@@ -10366,7 +10381,7 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
         "feature-b-thread",
         "Feature B Thread",
         PathList::new(&[
-            PathBuf::from("/wt-feature-b"),
+            PathBuf::from("/worktrees/main-repo/feature-b/main-repo"),
             PathBuf::from("/nonexistent"),
         ]),
         PathList::new(&[PathBuf::from("/main-repo"), PathBuf::from("/nonexistent")]),
