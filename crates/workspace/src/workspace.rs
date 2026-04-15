@@ -7989,12 +7989,20 @@ fn notify_if_database_failed(window: WindowHandle<MultiWorkspace>, cx: &mut Asyn
                 if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                     struct DatabaseFailedNotification;
 
+                    let message = if (*db::ALL_FILE_DB_IS_FROM_NEWER_VERSION)
+                        .load(std::sync::atomic::Ordering::Acquire)
+                    {
+                        "This profile was opened by a newer version of Zed. Upgrade Zed or use a separate profile."
+                    } else {
+                        "Failed to load the database file."
+                    };
+
                     workspace.show_notification(
                         NotificationId::unique::<DatabaseFailedNotification>(),
                         cx,
                         |cx| {
                             cx.new(|cx| {
-                                MessageNotification::new("Failed to load the database file.", cx)
+                                MessageNotification::new(message, cx)
                                     .primary_message("File an Issue")
                                     .primary_icon(IconName::Plus)
                                     .primary_on_click(|window, cx| {
