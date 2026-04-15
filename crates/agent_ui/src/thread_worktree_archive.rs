@@ -570,14 +570,15 @@ pub async fn restore_worktree_via_git(
     };
 
     if let Some(branch_name) = &row.branch_name {
+        // Attempt to check out the branch the worktree was previously on.
         let checkout_result = wt_repo
             .update(cx, |repo, _cx| repo.change_branch(branch_name.clone()))
             .await;
 
         match checkout_result.map_err(|e| anyhow!("{e}")).flatten() {
             Ok(()) => {
-                // Branch checkout succeeded. Check whether the branch has
-                // moved since archival by comparing HEAD to the expected SHA.
+                // Branch checkout succeeded. Check whether the branch has moved since
+                // we archived the worktree, by comparing HEAD to the expected SHA.
                 let head_sha = wt_repo
                     .update(cx, |repo, _cx| repo.head_sha())
                     .await
@@ -586,10 +587,12 @@ pub async fn restore_worktree_via_git(
 
                 match head_sha {
                     Ok(Some(sha)) if sha == row.original_commit_hash => {
-                        // Branch still points at the original commit — nothing more to do.
+                        // Branch still points at the original commit; we're all done!
                     }
                     Ok(Some(sha)) => {
-                        // Branch has moved; detach HEAD at the original commit.
+                        // The branch has moved. We don't want to restore the worktree to
+                        // a different filesystem state, so checkout the original commit
+                        // in detached HEAD state.
                         log::info!(
                             "Branch '{branch_name}' has moved since archival (now at {sha}); \
                              restoring worktree in detached HEAD at {}",
@@ -614,16 +617,20 @@ pub async fn restore_worktree_via_git(
                     }
                     Ok(None) => {
                         log::warn!(
-                            "head_sha returned None after checking out '{branch_name}'; \
-                             proceeding in current HEAD state"
+                            "head_sha unexpectedly returned None after checking out \"{branch_name}\"; \
+                             proceeding in current HEAD state."
                         );
                     }
                     Err(error) => {
-                        log::warn!("Failed to read HEAD after checkout: {error:#}");
+                        log::warn!(
+                            "Failed to read HEAD after checking out \"{branch_name}\": {error:#}"
+                        );
                     }
                 }
             }
             Err(checkout_error) => {
+                // We weren't able to check out the branch, most likely because it was deleted.
+                // This is fine; users will often delete old branches! We'll try to recreate it.
                 log::debug!(
                     "change_branch('{branch_name}') failed: {checkout_error:#}, trying create_branch"
                 );
