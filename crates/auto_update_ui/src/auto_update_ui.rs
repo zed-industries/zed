@@ -16,7 +16,7 @@ use smol::io::AsyncReadExt;
 use ui::{AnnouncementToast, ListBulletItem, ParallelAgentsIllustration, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{
-    ToggleWorkspaceSidebar, Workspace,
+    FocusWorkspaceSidebar, Workspace,
     notifications::{
         ErrorMessagePrompt, Notification, NotificationId, SuppressEvent, show_app_notification,
         simple_message_notification::MessageNotification,
