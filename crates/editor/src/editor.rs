@@ -9466,30 +9466,30 @@ impl Editor {
     ) -> IconButton {
 
         #[derive(Clone, Copy)]
-        enum Action {
+        enum Intent {
             SetBookmark,
             SetBreakpoint,
         }
 
-        impl Action {
+        impl Intent {
             fn as_str(&self) -> &'static str {
                 match self {
-                    Action::SetBookmark => "Set bookmark",
-                    Action::SetBreakpoint => "Set breakpoint",
+                    Intent::SetBookmark => "Set bookmark",
+                    Intent::SetBreakpoint => "Set breakpoint",
                 }
             }
 
             fn icon(&self) -> ui::IconName {
                 match self {
-                    Action::SetBookmark => ui::IconName::Bookmark,
-                    Action::SetBreakpoint => ui::IconName::DebugBreakpoint,
+                    Intent::SetBookmark => ui::IconName::Bookmark,
+                    Intent::SetBreakpoint => ui::IconName::DebugBreakpoint,
                 }
             }
 
             fn color(&self) -> Color {
                 match self {
-                    Action::SetBookmark => Color::Info,
-                    Action::SetBreakpoint => Color::Hint,
+                    Intent::SetBookmark => Color::Info,
+                    Intent::SetBreakpoint => Color::Hint,
                 }
             }
 
@@ -9499,10 +9499,10 @@ impl Editor {
                     ..Default::default()
                 };
                 match self {
-                    Action::SetBookmark => format!(
+                    Intent::SetBookmark => format!(
                         "{alt_as_text}click to add a breakpoint,\nright-click for more options."
                     ),
-                    Action::SetBreakpoint => format!(
+                    Intent::SetBreakpoint => format!(
                         "{alt_as_text}click to add a bookmark,\nright-click for more options."
                     ),
                 }
@@ -9514,39 +9514,39 @@ impl Editor {
         let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
 
         let [primary, secondary] = match [show_breakpoints, show_bookmarks] {
-            [true, true] => [Action::SetBreakpoint, Action::SetBookmark],
-            [true, false] => [Action::SetBreakpoint; 2],
-            [false, true] => [Action::SetBookmark; 2],
+            [true, true] => [Intent::SetBreakpoint, Intent::SetBookmark],
+            [true, false] => [Intent::SetBreakpoint; 2],
+            [false, true] => [Intent::SetBookmark; 2],
             [false, false] => {
                 log::error!("Trying to place gutter_hover without anything enabled!!");
-                [Action::SetBookmark; 2]
+                [Intent::SetBookmark; 2]
             }
         };
 
-        let action = if window.modifiers().secondary() {
+        let intent = if window.modifiers().secondary() {
             secondary
         } else {
             primary
         };
 
         let focus_handle = self.focus_handle.clone();
-        IconButton::new(("add_breakpoint_button", row.0 as usize), action.icon())
+        IconButton::new(("add_breakpoint_button", row.0 as usize), intent.icon())
             .icon_size(IconSize::XSmall)
             .size(ui::ButtonSize::None)
-            .icon_color(action.color())
+            .icon_color(intent.color())
             .style(ButtonStyle::Transparent)
             .on_click(cx.listener({
                 move |editor, _: &ClickEvent, window, cx| {
                     window.focus(&editor.focus_handle(cx), cx);
-                    let action = if window.modifiers().secondary() {
+                    let intent = if window.modifiers().secondary() {
                         secondary
                     } else {
                         primary
                     };
 
-                    match action {
-                        Action::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
-                        Action::SetBreakpoint => editor.edit_breakpoint_at_anchor(
+                    match intent {
+                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
+                        Intent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
                             Breakpoint::new_standard(),
                             BreakpointEditAction::Toggle,
@@ -9560,9 +9560,9 @@ impl Editor {
             }))
             .tooltip(move |_window, cx| {
                 Tooltip::with_meta_in(
-                    action.as_str(),
+                    intent.as_str(),
                     Some(&ToggleBreakpoint),
-                    action.secondary_and_options(),
+                    intent.secondary_and_options(),
                     &focus_handle,
                     cx,
                 )

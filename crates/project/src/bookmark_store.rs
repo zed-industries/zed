@@ -82,7 +82,7 @@ impl BookmarkEntry {
 pub struct BookmarkStore {
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
-    bookmarks: BTreeMap<Arc<Path>, BookmarkEntry>,
+    bookmarks: BTreeMap<Arc<Path>, BookmarkEntry>, // TODO!(yara) this must be a RelPath so it survives collab (aka linux paths on a windows system)
 }
 
 impl BookmarkStore {
