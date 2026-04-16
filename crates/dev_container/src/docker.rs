@@ -196,7 +196,9 @@ impl Docker {
             output.map(|o| o.status.success()).unwrap_or(false)
         };
         if !has_buildx && docker_cli != "podman" {
-            log::info!("docker buildx not found; dev container builds will use the scratch-image fallback");
+            log::info!(
+                "docker buildx not found; dev container builds will use the scratch-image fallback"
+            );
         }
         Self {
             docker_cli: docker_cli.to_string(),
