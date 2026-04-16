@@ -7317,11 +7317,7 @@ impl Workspace {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn test_new(
-        project: Entity<Project>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn test_new(project: Entity<Project>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         use node_runtime::NodeRuntime;
         use session::Session;
 

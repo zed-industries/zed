@@ -29,8 +29,8 @@ use editor::{
     movement::{self, FindRange},
 };
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, Focusable, KeyContext,
+    KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{
@@ -1043,8 +1043,17 @@ impl Vim {
     }
 
     pub fn pane(&self, window: &Window, cx: &Context<Self>) -> Option<Entity<Pane>> {
-        self.workspace(window, cx)
-            .map(|workspace| workspace.read(cx).focused_pane(window, cx))
+        let pane = self
+            .workspace(window, cx)
+            .map(|workspace| workspace.read(cx).focused_pane(window, cx))?;
+        // `focused_pane` falls back to the center pane when a dock panel
+        // without its own pane (e.g. the Agent panel) has focus. Guard
+        // against that so vim search/match commands don't steal focus.
+        if pane.read(cx).focus_handle(cx).contains_focused(window, cx) {
+            Some(pane)
+        } else {
+            None
+        }
     }
 
     pub fn enabled(cx: &mut App) -> bool {

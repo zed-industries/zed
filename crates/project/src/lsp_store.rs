@@ -4747,6 +4747,7 @@ impl LspStore {
 
                     this.update(cx, |this, cx| {
                         let mut plain_text_buffers = Vec::new();
+                        let mut buffers_with_language = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
                         for handle in this.buffer_store.read(cx).buffers() {
                             let buffer = handle.read(cx);
@@ -4754,8 +4755,11 @@ impl LspStore {
                                 || buffer.language() == Some(&*language::PLAIN_TEXT)
                             {
                                 plain_text_buffers.push(handle);
-                            } else if buffer.contains_unknown_injections() {
-                                buffers_with_unknown_injections.push(handle);
+                            } else {
+                                if buffer.contains_unknown_injections() {
+                                    buffers_with_unknown_injections.push(handle.clone());
+                                }
+                                buffers_with_language.push(handle);
                             }
                         }
 
@@ -4772,6 +4776,24 @@ impl LspStore {
                             this.detect_language_for_buffer(&buffer, cx);
                             if let Some(local) = this.as_local_mut() {
                                 local.initialize_buffer(&buffer, cx);
+                                if local
+                                    .registered_buffers
+                                    .contains_key(&buffer.read(cx).remote_id())
+                                {
+                                    local.register_buffer_with_language_servers(
+                                        &buffer,
+                                        HashSet::default(),
+                                        cx,
+                                    );
+                                }
+                            }
+                        }
+
+                        // Also register buffers that already have a language with
+                        // any newly-available language servers (e.g., from extensions
+                        // that finished loading after buffers were restored).
+                        if let Some(local) = this.as_local_mut() {
+                            for buffer in buffers_with_language {
                                 if local
                                     .registered_buffers
                                     .contains_key(&buffer.read(cx).remote_id())

@@ -1875,7 +1875,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
-                            "root",
+                            &devcontainer_up.remote_user,
                             &devcontainer_up.remote_env,
                             command,
                         )
@@ -1889,7 +1889,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
                         .run_docker_exec(
                             &devcontainer_up.container_id,
                             &remote_folder,
-                            "root",
+                            &devcontainer_up.remote_user,
                             &devcontainer_up.remote_env,
                             command,
                         )
@@ -2108,9 +2108,9 @@ pub(crate) async fn read_devcontainer_configuration(
     environment: HashMap<String, String>,
 ) -> Result<DevContainer, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman")
+        Docker::new("podman").await
     } else {
-        Docker::new("docker")
+        Docker::new("docker").await
     };
     let mut dev_container = DevContainerManifest::new(
         context,
@@ -2132,9 +2132,9 @@ pub(crate) async fn spawn_dev_container(
     local_project_path: &Path,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman")
+        Docker::new("podman").await
     } else {
-        Docker::new("docker")
+        Docker::new("docker").await
     };
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
@@ -2371,8 +2371,6 @@ fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -
         })
 }
 
-// Container user things
-// This should come from spec - see the docs
 fn get_remote_user_from_config(
     docker_config: &DockerInspect,
     devcontainer: &DevContainerManifest,
@@ -4784,12 +4782,14 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
     pub(crate) struct FakeDocker {
         exec_commands_recorded: Mutex<Vec<RecordedExecCommand>>,
         podman: bool,
+        has_buildx: bool,
     }
 
     impl FakeDocker {
         pub(crate) fn new() -> Self {
             Self {
                 podman: false,
+                has_buildx: true,
                 exec_commands_recorded: Mutex::new(Vec::new()),
             }
         }
@@ -5029,7 +5029,7 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
             }))
         }
         fn supports_compose_buildkit(&self) -> bool {
-            !self.podman
+            !self.podman && self.has_buildx
         }
         fn docker_cli(&self) -> String {
             if self.podman {
