@@ -78,6 +78,7 @@ pub trait Along {
     Deserialize,
     JsonSchema,
     Hash,
+    Neg,
 )]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
@@ -179,12 +180,6 @@ impl<T: Clone + Debug + Default + PartialEq> Along for Point<T> {
                 y: f(self.y.clone()),
             },
         }
-    }
-}
-
-impl<T: Clone + Debug + Default + PartialEq + Negate> Negate for Point<T> {
-    fn negate(self) -> Self {
-        self.map(Negate::negate)
     }
 }
 
@@ -393,7 +388,9 @@ impl<T: Clone + Debug + Default + PartialEq + Display> Display for Point<T> {
 ///
 /// This struct is generic over the type `T`, which can be any type that implements `Clone`, `Default`, and `Debug`.
 /// It is commonly used to specify dimensions for elements in a UI, such as a window or element.
-#[derive(Refineable, Default, Clone, Copy, PartialEq, Div, Hash, Serialize, Deserialize)]
+#[derive(
+    Add, Clone, Copy, Default, Deserialize, Div, Hash, Neg, PartialEq, Refineable, Serialize, Sub,
+)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Size<T: Clone + Debug + Default + PartialEq> {
@@ -598,34 +595,6 @@ where
     }
 }
 
-impl<T> Sub for Size<T>
-where
-    T: Sub<Output = T> + Clone + Debug + Default + PartialEq,
-{
-    type Output = Size<T>;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        Size {
-            width: self.width - rhs.width,
-            height: self.height - rhs.height,
-        }
-    }
-}
-
-impl<T> Add for Size<T>
-where
-    T: Add<Output = T> + Clone + Debug + Default + PartialEq,
-{
-    type Output = Size<T>;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Size {
-            width: self.width + rhs.width,
-            height: self.height + rhs.height,
-        }
-    }
-}
-
 impl<T, Rhs> Mul<Rhs> for Size<T>
 where
     T: Mul<Rhs, Output = Rhs> + Clone + Debug + Default + PartialEq,
@@ -748,7 +717,7 @@ impl Size<Length> {
 /// assert_eq!(bounds.origin, origin);
 /// assert_eq!(bounds.size, size);
 /// ```
-#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
+#[derive(Refineable, Copy, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Debug + Default + PartialEq> {
@@ -1112,7 +1081,10 @@ impl<T: PartialOrd + Add<T, Output = T> + Sub<Output = T> + Clone + Debug + Defa
     /// ```
     pub fn intersect(&self, other: &Self) -> Self {
         let upper_left = self.origin.max(&other.origin);
-        let bottom_right = self.bottom_right().min(&other.bottom_right());
+        let bottom_right = self
+            .bottom_right()
+            .min(&other.bottom_right())
+            .max(&upper_left);
         Self::from_corners(upper_left, bottom_right)
     }
 
@@ -1238,6 +1210,15 @@ where
         Self {
             origin: self.origin - rhs,
             size: self.size,
+        }
+    }
+}
+
+impl<T: Clone + Debug + Default + PartialEq> From<Size<T>> for Point<T> {
+    fn from(size: Size<T>) -> Self {
+        Self {
+            x: size.width,
+            y: size.height,
         }
     }
 }
@@ -1416,9 +1397,9 @@ where
     /// ```
     pub fn contains(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
-            && point.x <= self.origin.x.clone() + self.size.width.clone()
+            && point.x < self.origin.x.clone() + self.size.width.clone()
             && point.y >= self.origin.y
-            && point.y <= self.origin.y.clone() + self.size.height.clone()
+            && point.y < self.origin.y.clone() + self.size.height.clone()
     }
 
     /// Checks if this bounds is completely contained within another bounds.
@@ -1589,7 +1570,7 @@ impl<T: Clone + Debug + Default + PartialEq + Display + Add<T, Output = T>> Disp
 
 impl Size<DevicePixels> {
     /// Converts the size from physical to logical pixels.
-    pub(crate) fn to_pixels(self, scale_factor: f32) -> Size<Pixels> {
+    pub fn to_pixels(self, scale_factor: f32) -> Size<Pixels> {
         size(
             px(self.width.0 as f32 / scale_factor),
             px(self.height.0 as f32 / scale_factor),
@@ -1599,7 +1580,7 @@ impl Size<DevicePixels> {
 
 impl Size<Pixels> {
     /// Converts the size from logical to physical pixels.
-    pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
+    pub fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
         size(
             DevicePixels((self.width.0 * scale_factor).round() as i32),
             DevicePixels((self.height.0 * scale_factor).round() as i32),
@@ -1675,8 +1656,6 @@ impl Bounds<DevicePixels> {
         }
     }
 }
-
-impl<T: Copy + Clone + Debug + Default + PartialEq> Copy for Bounds<T> {}
 
 /// Represents the edges of a box in a 2D space, such as padding or margin.
 ///
@@ -2650,6 +2629,18 @@ impl Debug for Pixels {
     }
 }
 
+impl std::iter::Sum for Pixels {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + b)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a Pixels> for Pixels {
+    fn sum<I: Iterator<Item = &'a Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, |a, b| a + *b)
+    }
+}
+
 impl TryFrom<&'_ str> for Pixels {
     type Error = anyhow::Error;
 
@@ -2669,6 +2660,11 @@ impl Pixels {
     pub const MAX: Pixels = Pixels(f32::MAX);
     /// The minimum value that can be represented by `Pixels`.
     pub const MIN: Pixels = Pixels(f32::MIN);
+
+    /// Returns the raw `f32` value of this `Pixels`.
+    pub fn as_f32(self) -> f32 {
+        self.0
+    }
 
     /// Floors the `Pixels` value to the nearest whole number.
     ///
@@ -2951,9 +2947,14 @@ impl From<usize> for DevicePixels {
 /// display resolutions.
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
 #[repr(transparent)]
-pub struct ScaledPixels(pub(crate) f32);
+pub struct ScaledPixels(pub f32);
 
 impl ScaledPixels {
+    /// Returns the raw `f32` value of this `ScaledPixels`.
+    pub fn as_f32(self) -> f32 {
+        self.0
+    }
+
     /// Floors the `ScaledPixels` value to the nearest whole number.
     ///
     /// # Returns
@@ -3569,7 +3570,7 @@ pub const fn relative(fraction: f32) -> DefiniteLength {
 }
 
 /// Returns the Golden Ratio, i.e. `~(1.0 + sqrt(5.0)) / 2.0`.
-pub fn phi() -> DefiniteLength {
+pub const fn phi() -> DefiniteLength {
     relative(1.618_034)
 }
 
@@ -3582,7 +3583,7 @@ pub fn phi() -> DefiniteLength {
 /// # Returns
 ///
 /// A `Rems` representing the specified number of rems.
-pub fn rems(rems: f32) -> Rems {
+pub const fn rems(rems: f32) -> Rems {
     Rems(rems)
 }
 
@@ -3610,7 +3611,7 @@ pub const fn px(pixels: f32) -> Pixels {
 /// # Returns
 ///
 /// A `Length` variant set to `Auto`.
-pub fn auto() -> Length {
+pub const fn auto() -> Length {
     Length::Auto
 }
 
@@ -3728,48 +3729,6 @@ impl Half for Pixels {
 impl Half for Rems {
     fn half(&self) -> Self {
         Self(self.0 / 2.)
-    }
-}
-
-/// Provides a trait for types that can negate their values.
-pub trait Negate {
-    /// Returns the negation of the given value
-    fn negate(self) -> Self;
-}
-
-impl Negate for i32 {
-    fn negate(self) -> Self {
-        -self
-    }
-}
-
-impl Negate for f32 {
-    fn negate(self) -> Self {
-        -self
-    }
-}
-
-impl Negate for DevicePixels {
-    fn negate(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl Negate for ScaledPixels {
-    fn negate(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl Negate for Pixels {
-    fn negate(self) -> Self {
-        Self(-self.0)
-    }
-}
-
-impl Negate for Rems {
-    fn negate(self) -> Self {
-        Self(-self.0)
     }
 }
 

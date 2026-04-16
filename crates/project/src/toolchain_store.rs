@@ -4,7 +4,7 @@ use anyhow::{Context as _, Result, bail};
 
 use async_trait::async_trait;
 use collections::{BTreeMap, IndexSet};
-use fs::Fs;
+
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
@@ -32,6 +32,7 @@ use crate::{
 pub struct ToolchainStore {
     mode: ToolchainStoreInner,
     user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
+    worktree_store: Entity<WorktreeStore>,
     _sub: Subscription,
 }
 
@@ -61,28 +62,32 @@ impl ToolchainStore {
         worktree_store: Entity<WorktreeStore>,
         project_environment: Entity<ProjectEnvironment>,
         manifest_tree: Entity<ManifestTree>,
-        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
         let entity = cx.new(|_| LocalToolchainStore {
             languages,
-            worktree_store,
+            worktree_store: worktree_store.clone(),
             project_environment,
             active_toolchains: Default::default(),
             manifest_tree,
-            fs,
         });
         let _sub = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
         });
         Self {
             mode: ToolchainStoreInner::Local(entity),
+            worktree_store,
             user_toolchains: Default::default(),
             _sub,
         }
     }
 
-    pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) -> Self {
+    pub(super) fn remote(
+        project_id: u64,
+        worktree_store: Entity<WorktreeStore>,
+        client: AnyProtoClient,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let entity = cx.new(|_| RemoteToolchainStore { client, project_id });
         let _sub = cx.subscribe(&entity, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
@@ -90,6 +95,7 @@ impl ToolchainStore {
         Self {
             mode: ToolchainStoreInner::Remote(entity),
             user_toolchains: Default::default(),
+            worktree_store,
             _sub,
         }
     }
@@ -165,12 +171,22 @@ impl ToolchainStore {
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Option<Toolchains>> {
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(path.worktree_id, cx)
+        else {
+            return Task::ready(None);
+        };
+        let target_root_path = worktree.read_with(cx, |this, _| this.abs_path());
+
         let user_toolchains = self
             .user_toolchains
             .iter()
             .filter(|(scope, _)| {
-                if let ToolchainScope::Subproject(worktree_id, relative_path) = scope {
-                    path.worktree_id == *worktree_id && relative_path.starts_with(&path.path)
+                if let ToolchainScope::Subproject(subproject_root_path, relative_path) = scope {
+                    target_root_path == *subproject_root_path
+                        && relative_path.starts_with(&path.path)
                 } else {
                     true
                 }
@@ -252,7 +268,7 @@ impl ToolchainStore {
                 RelPath::empty().into()
             };
             Ok(this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx))
-        })??
+        })?
         .await;
         Ok(proto::Ack {})
     }
@@ -274,7 +290,7 @@ impl ToolchainStore {
                     language_name,
                     cx,
                 )
-            })?
+            })
             .await;
 
         Ok(proto::ActiveToolchainResponse {
@@ -304,7 +320,7 @@ impl ToolchainStore {
                     language_name,
                     cx,
                 ))
-            })??
+            })?
             .await;
         let has_values = toolchains.is_some();
         let groups = if let Some(Toolchains { toolchains, .. }) = &toolchains {
@@ -362,7 +378,7 @@ impl ToolchainStore {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
                 let path = PathBuf::from(envelope.payload.abs_path);
                 this.resolve_toolchain(path, language_name, cx)
-            })?
+            })
             .await;
         let response = match toolchain {
             Ok(toolchain) => {
@@ -400,7 +416,6 @@ pub struct LocalToolchainStore {
     project_environment: Entity<ProjectEnvironment>,
     active_toolchains: BTreeMap<(WorktreeId, LanguageName), BTreeMap<Arc<RelPath>, Toolchain>>,
     manifest_tree: Entity<ManifestTree>,
-    fs: Arc<dyn Fs>,
 }
 
 #[async_trait(?Send)]
@@ -489,7 +504,6 @@ impl LocalToolchainStore {
         let registry = self.languages.clone();
 
         let manifest_tree = self.manifest_tree.downgrade();
-        let fs = self.fs.clone();
 
         let environment = self.project_environment.clone();
         cx.spawn(async move |this, cx| {
@@ -521,9 +535,7 @@ impl LocalToolchainStore {
                     path: Arc::from(RelPath::empty()),
                     worktree_id,
                 });
-            let abs_path = worktree
-                .update(cx, |this, _| this.absolutize(&relative_path.path))
-                .ok()?;
+            let abs_path = worktree.update(cx, |this, _| this.absolutize(&relative_path.path));
 
             let project_env = environment
                 .update(cx, |environment, cx| {
@@ -533,18 +545,12 @@ impl LocalToolchainStore {
                         cx,
                     )
                 })
-                .ok()?
                 .await;
 
             cx.background_spawn(async move {
                 Some((
                     toolchains
-                        .list(
-                            worktree_root,
-                            relative_path.path.clone(),
-                            project_env,
-                            fs.as_ref(),
-                        )
+                        .list(worktree_root, relative_path.path.clone(), project_env)
                         .await,
                     relative_path.path,
                 ))
@@ -578,7 +584,6 @@ impl LocalToolchainStore {
     ) -> Task<Result<Toolchain>> {
         let registry = self.languages.clone();
         let environment = self.project_environment.clone();
-        let fs = self.fs.clone();
         cx.spawn(async move |_, cx| {
             let language = cx
                 .background_spawn(registry.language_for_name(&language_name.0))
@@ -595,14 +600,10 @@ impl LocalToolchainStore {
                         path.as_path().into(),
                         cx,
                     )
-                })?
+                })
                 .await;
-            cx.background_spawn(async move {
-                toolchain_lister
-                    .resolve(path, project_env, fs.as_ref())
-                    .await
-            })
-            .await
+            cx.background_spawn(async move { toolchain_lister.resolve(path, project_env).await })
+                .await
         })
     }
 }

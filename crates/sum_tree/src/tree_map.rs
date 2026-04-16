@@ -53,6 +53,10 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         self.0.is_empty()
     }
 
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
     pub fn get(&self, key: &K) -> Option<&V> {
         let (.., item) = self
             .0
@@ -70,6 +74,12 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
 
     pub fn insert(&mut self, key: K, value: V) {
         self.0.insert_or_replace(MapEntry { key, value }, ());
+    }
+
+    pub fn insert_or_replace(&mut self, key: K, value: V) -> Option<V> {
+        self.0
+            .insert_or_replace(MapEntry { key, value }, ())
+            .map(|it| it.value)
     }
 
     pub fn extend(&mut self, iter: impl IntoIterator<Item = (K, V)>) {

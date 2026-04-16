@@ -9,9 +9,7 @@ use async_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValu
 use futures::StreamExt;
 use smol::io::AsyncReadExt as _;
 
-use crate::Session;
-
-use super::RunningKernel;
+use super::{KernelSession, RunningKernel};
 use anyhow::Result;
 use jupyter_websocket_client::{
     JupyterWebSocket, JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
@@ -121,16 +119,17 @@ pub struct RemoteRunningKernel {
     http_client: Arc<dyn HttpClient>,
     pub working_directory: std::path::PathBuf,
     pub request_tx: mpsc::Sender<JupyterMessage>,
+    pub stdin_tx: mpsc::Sender<JupyterMessage>,
     pub execution_state: ExecutionState,
     pub kernel_info: Option<KernelInfoReply>,
     pub kernel_id: String,
 }
 
 impl RemoteRunningKernel {
-    pub fn new(
+    pub fn new<S: KernelSession + 'static>(
         kernelspec: RemoteKernelSpecification,
         working_directory: std::path::PathBuf,
-        session: Entity<Session>,
+        session: Entity<S>,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
@@ -213,12 +212,15 @@ impl RemoteRunningKernel {
                 }
             });
 
+            let stdin_tx = request_tx.clone();
+
             anyhow::Ok(Box::new(Self {
                 _routing_task: routing_task,
                 _receiving_task: receiving_task,
                 remote_server,
                 working_directory,
                 request_tx,
+                stdin_tx,
                 // todo(kyle): pull this from the kernel API to start with
                 execution_state: ExecutionState::Idle,
                 kernel_info: None,
@@ -245,6 +247,10 @@ impl Debug for RemoteRunningKernel {
 impl RunningKernel for RemoteRunningKernel {
     fn request_tx(&self) -> futures::channel::mpsc::Sender<runtimelib::JupyterMessage> {
         self.request_tx.clone()
+    }
+
+    fn stdin_tx(&self) -> futures::channel::mpsc::Sender<runtimelib::JupyterMessage> {
+        self.stdin_tx.clone()
     }
 
     fn working_directory(&self) -> &std::path::PathBuf {
@@ -290,5 +296,10 @@ impl RunningKernel for RemoteRunningKernel {
             );
             Ok(())
         })
+    }
+
+    fn kill(&mut self) {
+        self.request_tx.close_channel();
+        self.stdin_tx.close_channel();
     }
 }

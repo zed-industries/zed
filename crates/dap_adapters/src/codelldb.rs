@@ -380,6 +380,21 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         };
         let mut json_config = config.config.clone();
 
+        // Auto-detect Rust projects and add sourceLanguages if not present.
+        // This enables panic breakpoints to work correctly with CodeLLDB.
+        if let Some(config_obj) = json_config.as_object_mut() {
+            if !config_obj.contains_key("sourceLanguages") {
+                // Check if this looks like a Rust binary (Cargo build output)
+                if let Some(program) = config_obj.get("program").and_then(|p| p.as_str()) {
+                    let path_str = program.replace('\\', "/");
+                    if path_str.contains("/target/debug/") || path_str.contains("/target/release/")
+                    {
+                        config_obj.insert("sourceLanguages".to_owned(), json!(["rust"]));
+                    }
+                }
+            }
+        }
+
         Ok(DebugAdapterBinary {
             command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),

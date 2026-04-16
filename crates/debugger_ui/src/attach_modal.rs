@@ -317,7 +317,7 @@ impl PickerDelegate for AttachModalDelegate {
         let candidate = self.candidates.get(hit.candidate_id)?;
 
         Some(
-            ListItem::new(SharedString::from(format!("process-entry-{ix}")))
+            ListItem::new(format!("process-entry-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
@@ -327,7 +327,7 @@ impl PickerDelegate for AttachModalDelegate {
                         .child(Label::new(format!("{} {}", candidate.name, candidate.pid)))
                         .child(
                             div()
-                                .id(SharedString::from(format!("process-entry-{ix}-command")))
+                                .id(format!("process-entry-{ix}-command"))
                                 .tooltip(Tooltip::text(
                                     candidate
                                         .command

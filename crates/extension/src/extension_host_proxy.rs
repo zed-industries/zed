@@ -8,7 +8,7 @@ use language::{BinaryStatus, LanguageMatcher, LanguageName, LoadedLanguage};
 use lsp::LanguageServerName;
 use parking_lot::RwLock;
 
-use crate::{Extension, SlashCommand};
+use crate::Extension;
 
 #[derive(Default)]
 struct GlobalExtensionHostProxy(Arc<ExtensionHostProxy>);
@@ -19,6 +19,9 @@ impl Global for GlobalExtensionHostProxy {}
 ///
 /// This object implements each of the individual proxy types so that their
 /// methods can be called directly on it.
+/// Registration function for language model providers.
+pub type LanguageModelProviderRegistration = Box<dyn FnOnce(&mut App) + Send>;
+
 #[derive(Default)]
 pub struct ExtensionHostProxy {
     theme_proxy: RwLock<Option<Arc<dyn ExtensionThemeProxy>>>,
@@ -26,9 +29,9 @@ pub struct ExtensionHostProxy {
     language_proxy: RwLock<Option<Arc<dyn ExtensionLanguageProxy>>>,
     language_server_proxy: RwLock<Option<Arc<dyn ExtensionLanguageServerProxy>>>,
     snippet_proxy: RwLock<Option<Arc<dyn ExtensionSnippetProxy>>>,
-    slash_command_proxy: RwLock<Option<Arc<dyn ExtensionSlashCommandProxy>>>,
     context_server_proxy: RwLock<Option<Arc<dyn ExtensionContextServerProxy>>>,
     debug_adapter_provider_proxy: RwLock<Option<Arc<dyn ExtensionDebugAdapterProviderProxy>>>,
+    language_model_provider_proxy: RwLock<Option<Arc<dyn ExtensionLanguageModelProviderProxy>>>,
 }
 
 impl ExtensionHostProxy {
@@ -51,9 +54,9 @@ impl ExtensionHostProxy {
             language_proxy: RwLock::default(),
             language_server_proxy: RwLock::default(),
             snippet_proxy: RwLock::default(),
-            slash_command_proxy: RwLock::default(),
             context_server_proxy: RwLock::default(),
             debug_adapter_provider_proxy: RwLock::default(),
+            language_model_provider_proxy: RwLock::default(),
         }
     }
 
@@ -77,16 +80,21 @@ impl ExtensionHostProxy {
         self.snippet_proxy.write().replace(Arc::new(proxy));
     }
 
-    pub fn register_slash_command_proxy(&self, proxy: impl ExtensionSlashCommandProxy) {
-        self.slash_command_proxy.write().replace(Arc::new(proxy));
-    }
-
     pub fn register_context_server_proxy(&self, proxy: impl ExtensionContextServerProxy) {
         self.context_server_proxy.write().replace(Arc::new(proxy));
     }
 
     pub fn register_debug_adapter_proxy(&self, proxy: impl ExtensionDebugAdapterProviderProxy) {
         self.debug_adapter_provider_proxy
+            .write()
+            .replace(Arc::new(proxy));
+    }
+
+    pub fn register_language_model_provider_proxy(
+        &self,
+        proxy: impl ExtensionLanguageModelProviderProxy,
+    ) {
+        self.language_model_provider_proxy
             .write()
             .replace(Arc::new(proxy));
     }
@@ -209,6 +217,7 @@ pub trait ExtensionGrammarProxy: Send + Sync + 'static {
 }
 
 impl ExtensionGrammarProxy for ExtensionHostProxy {
+    #[ztracing::instrument(skip_all)]
     fn register_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
         let Some(proxy) = self.grammar_proxy.read().clone() else {
             return;
@@ -236,6 +245,7 @@ pub trait ExtensionLanguageProxy: Send + Sync + 'static {
 }
 
 impl ExtensionLanguageProxy for ExtensionHostProxy {
+    #[ztracing::instrument(skip_all, fields(lang = language.0.as_str()))]
     fn register_language(
         &self,
         language: LanguageName,
@@ -340,30 +350,6 @@ impl ExtensionSnippetProxy for ExtensionHostProxy {
     }
 }
 
-pub trait ExtensionSlashCommandProxy: Send + Sync + 'static {
-    fn register_slash_command(&self, extension: Arc<dyn Extension>, command: SlashCommand);
-
-    fn unregister_slash_command(&self, command_name: Arc<str>);
-}
-
-impl ExtensionSlashCommandProxy for ExtensionHostProxy {
-    fn register_slash_command(&self, extension: Arc<dyn Extension>, command: SlashCommand) {
-        let Some(proxy) = self.slash_command_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.register_slash_command(extension, command)
-    }
-
-    fn unregister_slash_command(&self, command_name: Arc<str>) {
-        let Some(proxy) = self.slash_command_proxy.read().clone() else {
-            return;
-        };
-
-        proxy.unregister_slash_command(command_name)
-    }
-}
-
 pub trait ExtensionContextServerProxy: Send + Sync + 'static {
     fn register_context_server(
         &self,
@@ -444,5 +430,39 @@ impl ExtensionDebugAdapterProviderProxy for ExtensionHostProxy {
         };
 
         proxy.unregister_debug_locator(locator_name)
+    }
+}
+
+pub trait ExtensionLanguageModelProviderProxy: Send + Sync + 'static {
+    fn register_language_model_provider(
+        &self,
+        provider_id: Arc<str>,
+        register_fn: LanguageModelProviderRegistration,
+        cx: &mut App,
+    );
+
+    fn unregister_language_model_provider(&self, provider_id: Arc<str>, cx: &mut App);
+}
+
+impl ExtensionLanguageModelProviderProxy for ExtensionHostProxy {
+    fn register_language_model_provider(
+        &self,
+        provider_id: Arc<str>,
+        register_fn: LanguageModelProviderRegistration,
+        cx: &mut App,
+    ) {
+        let Some(proxy) = self.language_model_provider_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.register_language_model_provider(provider_id, register_fn, cx)
+    }
+
+    fn unregister_language_model_provider(&self, provider_id: Arc<str>, cx: &mut App) {
+        let Some(proxy) = self.language_model_provider_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.unregister_language_model_provider(provider_id, cx)
     }
 }

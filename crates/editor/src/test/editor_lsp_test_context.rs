@@ -22,7 +22,7 @@ use language::{
 use lsp::{notification, request};
 use project::Project;
 use smol::stream::StreamExt;
-use workspace::{AppState, Workspace, WorkspaceHandle};
+use workspace::{AppState, MultiWorkspace, Workspace, WorkspaceHandle};
 
 use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 
@@ -95,7 +95,8 @@ impl EditorLspTestContext {
             )
             .await;
 
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
 
         let workspace = window.root(cx).unwrap();
 
@@ -106,12 +107,20 @@ impl EditorLspTestContext {
             })
             .await
             .unwrap();
-        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
-            .await;
-        let file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
+        cx.read(|cx| {
+            workspace
+                .read(cx)
+                .workspace()
+                .read(cx)
+                .worktree_scans_complete(cx)
+        })
+        .await;
+        let file = cx.read(|cx| workspace.read(cx).workspace().file_project_paths(cx)[0].clone());
         let item = workspace
             .update_in(&mut cx, |workspace, window, cx| {
-                workspace.open_path(file, None, true, window, cx)
+                workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.open_path(file, None, true, window, cx)
+                })
             })
             .await
             .expect("Could not open test file");
@@ -122,14 +131,22 @@ impl EditorLspTestContext {
         editor.update_in(&mut cx, |editor, window, cx| {
             let nav_history = workspace
                 .read(cx)
+                .workspace()
+                .read(cx)
                 .active_pane()
                 .read(cx)
                 .nav_history_for_item(&cx.entity());
             editor.set_nav_history(Some(nav_history));
-            window.focus(&editor.focus_handle(cx))
+            window.focus(&editor.focus_handle(cx), cx)
         });
 
         let lsp = fake_servers.next().await.unwrap();
+
+        // Ensure the language server is fully registered with the buffer
+        cx.executor().run_until_parked();
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+
         Self {
             cx: EditorTestContext {
                 cx,
@@ -205,6 +222,49 @@ impl EditorLspTestContext {
                 (_ "{" "}" @end) @indent
                 (_ "(" ")" @end) @indent
                 "#})),
+            text_objects: Some(Cow::from(indoc! {r#"
+                (function_declaration
+                    body: (_
+                        "{"
+                        (_)* @function.inside
+                        "}")) @function.around
+
+                (method_definition
+                    body: (_
+                        "{"
+                        (_)* @function.inside
+                        "}")) @function.around
+
+                ; Arrow function in variable declaration - capture the full declaration
+                ([
+                    (lexical_declaration
+                        (variable_declarator
+                            value: (arrow_function
+                                body: (statement_block
+                                    "{"
+                                    (_)* @function.inside
+                                    "}"))))
+                    (variable_declaration
+                        (variable_declarator
+                            value: (arrow_function
+                                body: (statement_block
+                                    "{"
+                                    (_)* @function.inside
+                                    "}"))))
+                ]) @function.around
+
+                ([
+                    (lexical_declaration
+                        (variable_declarator
+                            value: (arrow_function)))
+                    (variable_declaration
+                        (variable_declarator
+                            value: (arrow_function)))
+                ]) @function.around
+
+                ; Catch-all for arrow functions in other contexts (callbacks, etc.)
+                ((arrow_function) @function.around (#not-has-parent? @function.around variable_declarator))
+                "#})),
             ..Default::default()
         })
         .expect("Could not parse queries");
@@ -275,6 +335,49 @@ impl EditorLspTestContext {
                 (jsx_element
                   (jsx_opening_element) @start
                   (jsx_closing_element)? @end) @indent
+                "#})),
+            text_objects: Some(Cow::from(indoc! {r#"
+                (function_declaration
+                    body: (_
+                        "{"
+                        (_)* @function.inside
+                        "}")) @function.around
+
+                (method_definition
+                    body: (_
+                        "{"
+                        (_)* @function.inside
+                        "}")) @function.around
+
+                ; Arrow function in variable declaration - capture the full declaration
+                ([
+                    (lexical_declaration
+                        (variable_declarator
+                            value: (arrow_function
+                                body: (statement_block
+                                    "{"
+                                    (_)* @function.inside
+                                    "}"))))
+                    (variable_declaration
+                        (variable_declarator
+                            value: (arrow_function
+                                body: (statement_block
+                                    "{"
+                                    (_)* @function.inside
+                                    "}"))))
+                ]) @function.around
+
+                ([
+                    (lexical_declaration
+                        (variable_declarator
+                            value: (arrow_function)))
+                    (variable_declaration
+                        (variable_declarator
+                            value: (arrow_function)))
+                ]) @function.around
+
+                ; Catch-all for arrow functions in other contexts (callbacks, etc.)
+                ((arrow_function) @function.around (#not-has-parent? @function.around variable_declarator))
                 "#})),
             ..Default::default()
         })
@@ -398,12 +501,12 @@ impl EditorLspTestContext {
     }
 
     #[cfg(target_os = "windows")]
-    fn root_path() -> &'static Path {
+    pub fn root_path() -> &'static Path {
         Path::new("C:\\root")
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn root_path() -> &'static Path {
+    pub fn root_path() -> &'static Path {
         Path::new("/root")
     }
 }

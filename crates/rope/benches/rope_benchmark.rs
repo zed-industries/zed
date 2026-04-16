@@ -238,6 +238,35 @@ fn rope_benchmarks(c: &mut Criterion) {
         });
     }
     group.finish();
+
+    let mut group = c.benchmark_group("append many");
+    group.throughput(Throughput::Bytes(128 * 100_000));
+
+    group.bench_function("small to large", |b| {
+        b.iter(|| {
+            let mut rope = Rope::new();
+            let small = Rope::from("A".repeat(128));
+            for _ in 0..100_000 {
+                rope.append(small.clone());
+            }
+            assert_eq!(rope.len(), 128 * 100_000);
+        });
+    });
+
+    group.bench_function("large to small", |b| {
+        b.iter(|| {
+            let mut rope = Rope::new();
+            let small = Rope::from("A".repeat(128));
+            for _ in 0..100_000 {
+                let large = rope;
+                rope = small.clone();
+                rope.append(large);
+            }
+            assert_eq!(rope.len(), 128 * 100_000);
+        });
+    });
+
+    group.finish();
 }
 
 criterion_group!(benches, rope_benchmarks);

@@ -1,3 +1,8 @@
+---
+title: C
+description: "Configure C language support in Zed, including language servers, formatting, and debugging."
+---
+
 # C
 
 C support is available natively in Zed.
@@ -11,6 +16,7 @@ C support is available natively in Zed.
 Clangd out of the box assumes mixed C++/C projects. If you have a C-only project you may wish to instruct clangd to treat all files as C using the `-xc` flag. To do this, create a `.clangd` file in the root of your project with the following:
 
 ```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clangd.json
 CompileFlags:
   Add: [-xc]
 ```
@@ -27,9 +33,10 @@ By default clang and gcc will recognize `*.C` and `*.H` (uppercase extensions) a
 
 ## Formatting
 
-By default Zed will use the `clangd` language server for formatting C code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+By default Zed will use the `clangd` language server for formatting C code like the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
 
 ```yaml
+# yaml-language-server: $schema=https://json.schemastore.org/clang-format-21.x.json
 ---
 BasedOnStyle: GNU
 IndentWidth: 2
@@ -38,7 +45,9 @@ IndentWidth: 2
 
 See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
 
-You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
+You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by enabling format on save.
+
+Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > C, or add to your settings file:
 
 ```json [settings]
   "languages": {

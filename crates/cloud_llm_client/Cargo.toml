@@ -7,6 +7,7 @@ license = "Apache-2.0"
 
 [features]
 test-support = []
+predict-edits = ["dep:zeta_prompt"]
 
 [lints]
 workspace = true
@@ -16,12 +17,10 @@ path = "src/cloud_llm_client.rs"
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 strum = { workspace = true, features = ["derive"] }
 uuid = { workspace = true, features = ["serde"] }
+zeta_prompt = { workspace = true, optional = true }
 
-[dev-dependencies]
-pretty_assertions.workspace = true
-indoc.workspace = true
+

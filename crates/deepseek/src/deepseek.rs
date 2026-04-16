@@ -56,7 +56,7 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        /// The name displayed in the UI, such as in the agent panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: u64,
         max_output_tokens: Option<u64>,
@@ -103,8 +103,9 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Self::Chat => Some(8_192),
-            Self::Reasoner => Some(64_000),
+            // Their API treats this max against the context window, which means we hit the limit a lot
+            // Using the default value of None in the API instead
+            Self::Chat | Self::Reasoner => None,
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -155,6 +156,8 @@ pub enum RequestMessage {
         content: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
     },
     User {
         content: String,

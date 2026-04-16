@@ -11,7 +11,7 @@ GPUI is still in active development as we work on the Zed code editor, and is st
 gpui = { version = "*" }
 ```
 
- - [Ownership and data flow](src/_ownership_and_data_flow.rs)
+ - [Ownership and data flow](_ownership_and_data_flow)
 
 Everything in GPUI starts with an `Application`. You can create one with `Application::new()`, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()`, and register your first root view. See [gpui.rs](https://www.gpui.rs/) for a complete example.
 

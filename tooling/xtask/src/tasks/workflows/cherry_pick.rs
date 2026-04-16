@@ -2,15 +2,15 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, named},
-    vars::{self, Input, StepOutput},
+    steps::{self, NamedJob, RepositoryTarget, TokenPermissions, named},
+    vars::{StepOutput, WorkflowInput},
 };
 
 pub fn cherry_pick() -> Workflow {
-    let branch = Input::string("branch", None);
-    let commit = Input::string("commit", None);
-    let channel = Input::string("channel", None);
-    let pr_number = Input::string("pr_number", None);
+    let branch = WorkflowInput::string("branch", None);
+    let commit = WorkflowInput::string("commit", None);
+    let channel = WorkflowInput::string("channel", None);
+    let pr_number = WorkflowInput::string("pr_number", None);
     let cherry_pick = run_cherry_pick(&branch, &commit, &channel);
     named::workflow()
         .run_name(format!("cherry_pick to {channel} #{pr_number}"))
@@ -24,33 +24,42 @@ pub fn cherry_pick() -> Workflow {
         .add_job(cherry_pick.name, cherry_pick.job)
 }
 
-fn run_cherry_pick(branch: &Input, commit: &Input, channel: &Input) -> NamedJob {
-    fn authenticate_as_zippy() -> (Step<Use>, StepOutput) {
-        let step = named::uses(
-            "actions",
-            "create-github-app-token",
-            "bef1eaf1c0ac2b148ee2a0a74c65fbe6db0631f1",
-        ) // v2
-        .add_with(("app-id", vars::ZED_ZIPPY_APP_ID))
-        .add_with(("private-key", vars::ZED_ZIPPY_APP_PRIVATE_KEY))
-        .id("get-app-token");
-        let output = StepOutput::new(&step, "token");
-        (step, output)
-    }
-
+fn run_cherry_pick(
+    branch: &WorkflowInput,
+    commit: &WorkflowInput,
+    channel: &WorkflowInput,
+) -> NamedJob {
     fn cherry_pick(
-        branch: &Input,
-        commit: &Input,
-        channel: &Input,
+        branch: &WorkflowInput,
+        commit: &WorkflowInput,
+        channel: &WorkflowInput,
         token: &StepOutput,
     ) -> Step<Run> {
-        named::bash(&format!("./script/cherry-pick {branch} {commit} {channel}"))
-            .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-            .add_env(("GIT_COMMITTER_EMAIL", "hi@zed.dev"))
+        named::bash(r#"./script/cherry-pick "$BRANCH" "$COMMIT" "$CHANNEL""#)
+            .add_env(("BRANCH", branch.to_string()))
+            .add_env(("COMMIT", commit.to_string()))
+            .add_env(("CHANNEL", channel.to_string()))
+            .add_env(("GIT_AUTHOR_NAME", "zed-zippy[bot]"))
+            .add_env((
+                "GIT_AUTHOR_EMAIL",
+                "<234243425+zed-zippy[bot]@users.noreply.github.com>",
+            ))
+            .add_env(("GIT_COMMITTER_NAME", "zed-zippy[bot]"))
+            .add_env((
+                "GIT_COMMITTER_EMAIL",
+                "<234243425+zed-zippy[bot]@users.noreply.github.com>",
+            ))
             .add_env(("GITHUB_TOKEN", token))
     }
 
-    let (authenticate, token) = authenticate_as_zippy();
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(RepositoryTarget::current())
+        .with_permissions([
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
+            (TokenPermissions::PullRequests, Level::Write),
+        ])
+        .into();
 
     named::job(
         Job::default()

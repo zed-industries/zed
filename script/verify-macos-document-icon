@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  script/verify-macos-document-icon /path/to/Zed.app
+
+Verifies that the given macOS app bundle's Info.plist references a document icon
+named "Document" and that the corresponding icon file exists in the bundle.
+
+Specifically checks:
+  - CFBundleDocumentTypes[*].CFBundleTypeIconFile includes "Document"
+  - Contents/Resources/Document.icns exists
+
+Exit codes:
+  0 - success
+  1 - verification failed
+  2 - invalid usage / missing prerequisites
+USAGE
+}
+
+fail() {
+  echo "error: $*" >&2
+  exit 1
+}
+
+if [[ $# -ne 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+app_path="$1"
+
+if [[ ! -d "${app_path}" ]]; then
+  fail "app bundle not found: ${app_path}"
+fi
+
+info_plist="${app_path}/Contents/Info.plist"
+if [[ ! -f "${info_plist}" ]]; then
+  fail "missing Info.plist: ${info_plist}"
+fi
+
+if ! command -v plutil >/dev/null 2>&1; then
+  fail "plutil not found (required on macOS to read Info.plist)"
+fi
+
+# Convert to JSON for robust parsing. plutil outputs JSON to stdout in this mode.
+info_json="$(plutil -convert json -o - "${info_plist}")"
+
+# Check that CFBundleDocumentTypes exists and that at least one entry references "Document".
+# We use Python for JSON parsing; macOS ships with Python 3 on many setups, but not all.
+# If python3 isn't available, fall back to a simpler grep-based check.
+has_document_icon_ref="false"
+if command -v python3 >/dev/null 2>&1; then
+  has_document_icon_ref="$(python3 -c "import json,sys; d=json.load(sys.stdin); types=d.get('CFBundleDocumentTypes', []); vals=[t.get('CFBundleTypeIconFile') for t in types if isinstance(t, dict)]; print('true' if 'Document' in vals else 'false')" <<<"${info_json}")"
+else
+  # This is a best-effort fallback. It may produce false negatives if the JSON formatting differs.
+  if echo "${info_json}" | grep -q '"CFBundleTypeIconFile"[[:space:]]*:[[:space:]]*"Document"'; then
+    has_document_icon_ref="true"
+  fi
+fi
+
+if [[ "${has_document_icon_ref}" != "true" ]]; then
+  echo "Verification failed for: ${app_path}" >&2
+  echo "Expected Info.plist to reference CFBundleTypeIconFile \"Document\" in CFBundleDocumentTypes." >&2
+  echo "Tip: This bundle may be missing DocumentTypes.plist extensions or may have different icon naming." >&2
+  exit 1
+fi
+
+document_icon_path="${app_path}/Contents/Resources/Document.icns"
+if [[ ! -f "${document_icon_path}" ]]; then
+  echo "Verification failed for: ${app_path}" >&2
+  echo "Expected document icon to exist: ${document_icon_path}" >&2
+  echo "Tip: The bundle script should copy crates/zed/resources/Document.icns into Contents/Resources/Document.icns." >&2
+  exit 1
+fi
+
+echo "OK: ${app_path}"
+echo " - Info.plist references CFBundleTypeIconFile \"Document\""
+echo " - Found ${document_icon_path}"
