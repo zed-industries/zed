@@ -1135,7 +1135,7 @@ impl ThreadMetadataStore {
     ) {
         let view = conversation_view.read(cx);
         let thread_id = view.thread_id;
-        let Some(thread) = view.root_acp_thread(cx) else {
+        let Some(thread) = view.root_thread(cx) else {
             return;
         };
 

@@ -246,7 +246,7 @@ pub fn init(cx: &mut App) {
                         .and_then(|conversation| {
                             conversation
                                 .read(cx)
-                                .active_thread()
+                                .root_thread_view()
                                 .map(|r| r.read(cx).thread.clone())
                         });
 
@@ -799,7 +799,7 @@ impl AgentPanel {
             Some(
                 conversation
                     .read(cx)
-                    .root_thread(cx)?
+                    .root_thread_view()?
                     .read(cx)
                     .thread
                     .read(cx)
@@ -1333,7 +1333,7 @@ impl AgentPanel {
         };
         if let Some(draft) = &self.draft_thread {
             let agent_matches = *draft.read(cx).agent_key() == desired_agent;
-            let has_editor_content = draft.read(cx).active_thread().is_some_and(|tv| {
+            let has_editor_content = draft.read(cx).root_thread_view().is_some_and(|tv| {
                 !tv.read(cx)
                     .message_editor
                     .read(cx)
@@ -1367,7 +1367,7 @@ impl AgentPanel {
         conversation_view: &Entity<ConversationView>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(acp_thread) = conversation_view.read(cx).root_acp_thread(cx) {
+        if let Some(acp_thread) = conversation_view.read(cx).root_thread(cx) {
             self._draft_editor_observation = Some(cx.subscribe(
                 &acp_thread,
                 |this, _, e: &AcpThreadEvent, cx| {
@@ -1379,7 +1379,7 @@ impl AgentPanel {
         } else {
             let cv = conversation_view.clone();
             self._draft_editor_observation = Some(cx.observe(&cv, |this, cv, cx| {
-                if cv.read(cx).root_acp_thread(cx).is_some() {
+                if cv.read(cx).root_thread(cx).is_some() {
                     this.observe_draft_editor(&cv, cx);
                 }
             }));
@@ -1467,7 +1467,7 @@ impl AgentPanel {
                 }
                 _ => None,
             })?;
-        let tv = cv.read(cx).active_thread()?;
+        let tv = cv.read(cx).root_thread_view()?;
         let text = tv.read(cx).message_editor.read(cx).text(cx);
         if text.trim().is_empty() {
             None
@@ -1489,7 +1489,7 @@ impl AgentPanel {
                 _ => None,
             });
         let Some(cv) = cv else { return };
-        let Some(tv) = cv.read(cx).active_thread() else {
+        let Some(tv) = cv.read(cx).root_thread_view() else {
             return;
         };
         let editor = tv.read(cx).message_editor.clone();
@@ -1627,7 +1627,7 @@ impl AgentPanel {
             return;
         };
 
-        let Some(active_thread) = conversation_view.read(cx).active_thread().cloned() else {
+        let Some(active_thread) = conversation_view.read(cx).root_thread_view() else {
             return;
         };
 
@@ -2097,15 +2097,14 @@ impl AgentPanel {
 
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
         let server_view = self.active_conversation_view()?;
-        server_view.read(cx).active_thread().cloned()
+        server_view.read(cx).root_thread_view()
     }
 
     pub fn active_agent_thread(&self, cx: &App) -> Option<Entity<AcpThread>> {
         match &self.base_view {
-            BaseView::AgentThread { conversation_view } => conversation_view
-                .read(cx)
-                .active_thread()
-                .map(|r| r.read(cx).thread.clone()),
+            BaseView::AgentThread { conversation_view } => {
+                conversation_view.read(cx).root_thread(cx)
+            }
             _ => None,
         }
     }
@@ -2122,7 +2121,7 @@ impl AgentPanel {
 
         for conversation_view in conversation_views {
             if *thread_id == conversation_view.read(cx).thread_id {
-                if let Some(thread_view) = conversation_view.read(cx).root_thread_view(cx) {
+                if let Some(thread_view) = conversation_view.read(cx).root_thread_view() {
                     thread_view.update(cx, |view, cx| view.cancel_generation(cx));
                     return true;
                 }
@@ -2137,13 +2136,13 @@ impl AgentPanel {
         let mut views = Vec::new();
 
         if let Some(server_view) = self.active_conversation_view() {
-            if let Some(thread_view) = server_view.read(cx).root_thread(cx) {
+            if let Some(thread_view) = server_view.read(cx).root_thread_view() {
                 views.push(thread_view);
             }
         }
 
         for server_view in self.retained_threads.values() {
-            if let Some(thread_view) = server_view.read(cx).root_thread(cx) {
+            if let Some(thread_view) = server_view.read(cx).root_thread_view() {
                 views.push(thread_view);
             }
         }
@@ -2210,7 +2209,7 @@ impl AgentPanel {
             .retained_threads
             .iter()
             .filter(|(_id, view)| {
-                let Some(thread_view) = view.read(cx).root_thread(cx) else {
+                let Some(thread_view) = view.read(cx).root_thread_view() else {
                     return true;
                 };
                 let thread = thread_view.read(cx).thread.read(cx);
@@ -2437,7 +2436,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Subscription> {
-        server_view.read(cx).active_thread().cloned().map(|tv| {
+        server_view.read(cx).root_thread_view().map(|tv| {
             cx.subscribe_in(
                 &tv,
                 window,
@@ -3867,12 +3866,12 @@ impl AgentPanel {
             VisibleSurface::AgentThread(conversation_view) => {
                 let server_view_ref = conversation_view.read(cx);
                 let is_generating_title = server_view_ref.as_native_thread(cx).is_some()
-                    && server_view_ref.root_thread(cx).map_or(false, |tv| {
+                    && server_view_ref.root_thread_view().map_or(false, |tv| {
                         tv.read(cx).thread.read(cx).has_provisional_title()
                     });
 
                 if let Some(title_editor) = server_view_ref
-                    .root_thread(cx)
+                    .root_thread_view()
                     .map(|r| r.read(cx).title_editor.clone())
                 {
                     if is_generating_title {
@@ -6936,7 +6935,7 @@ mod tests {
         // Verify thread A's (background) work_dirs are also updated.
         let updated_a_paths = panel.read_with(&cx, |panel, cx| {
             let bg_view = panel.retained_threads.get(&thread_id_a).unwrap();
-            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            let root_thread = bg_view.read(cx).root_thread_view().unwrap();
             root_thread
                 .read(cx)
                 .thread
@@ -6956,7 +6955,7 @@ mod tests {
         // Verify thread idle C was also updated.
         let updated_c_paths = panel.read_with(&cx, |panel, cx| {
             let bg_view = panel.retained_threads.get(&thread_id_c).unwrap();
-            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            let root_thread = bg_view.read(cx).root_thread_view().unwrap();
             root_thread
                 .read(cx)
                 .thread
@@ -7010,7 +7009,7 @@ mod tests {
 
         let after_remove_a = panel.read_with(&cx, |panel, cx| {
             let bg_view = panel.retained_threads.get(&thread_id_a).unwrap();
-            let root_thread = bg_view.read(cx).root_thread(cx).unwrap();
+            let root_thread = bg_view.read(cx).root_thread_view().unwrap();
             root_thread
                 .read(cx)
                 .thread
