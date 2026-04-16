@@ -188,7 +188,7 @@ fn bench_string_matching(criterion: &mut Criterion) {
                 b.iter(|| {
                     let query = queries[query_idx % queries.len()];
                     query_idx += 1;
-                    foreground_executor.block_on(fuzzy_nucleo::match_strings(
+                    foreground_executor.block_on(fuzzy_nucleo::match_strings_async(
                         &candidates,
                         query,
                         false,

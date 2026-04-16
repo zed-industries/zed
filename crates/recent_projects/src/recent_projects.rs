@@ -22,7 +22,7 @@ pub use remote_connection::{RemoteConnectionModal, connect};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
-use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings_sync};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Subscription, Task, WeakEntity, Window, actions, px,
@@ -951,7 +951,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .map(|(id, folder)| StringMatchCandidate::new(id, folder.name.as_ref()))
                 .collect();
 
-            match_strings_sync(&candidates, query, smart_case, true, 100)
+            match_strings(&candidates, query, smart_case, true, 100)
         };
 
         let project_group_candidates: Vec<_> = self
@@ -970,7 +970,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .collect();
 
         let project_group_matches =
-            match_strings_sync(&project_group_candidates, query, smart_case, true, 100);
+            match_strings(&project_group_candidates, query, smart_case, true, 100);
 
         // Build candidates for recent projects (not current, not sibling, not open folder)
         let recent_candidates: Vec<_> = self
@@ -988,7 +988,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             })
             .collect();
 
-        let recent_matches = match_strings_sync(&recent_candidates, query, smart_case, true, 100);
+        let recent_matches = match_strings(&recent_candidates, query, smart_case, true, 100);
 
         let mut entries = Vec::new();
 

@@ -100,7 +100,7 @@ impl Ord for StringMatch {
     }
 }
 
-pub async fn match_strings<T>(
+pub async fn match_strings_async<T>(
     candidates: &[T],
     query: &str,
     smart_case: bool,
@@ -170,7 +170,7 @@ where
     results
 }
 
-pub fn match_strings_sync<T>(
+pub fn match_strings<T>(
     candidates: &[T],
     query: &str,
     smart_case: bool,
@@ -321,7 +321,7 @@ mod tests {
     async fn test_basic_match(executor: BackgroundExecutor) {
         let cs = candidates(&["hello", "world", "help"]);
         let cancel = AtomicBool::new(false);
-        let results = match_strings(&cs, "hel", false, false, 10, &cancel, executor).await;
+        let results = match_strings_async(&cs, "hel", false, false, 10, &cancel, executor).await;
         let matched: Vec<&str> = results.iter().map(|m| m.string.as_str()).collect();
         assert!(matched.contains(&"hello"));
         assert!(matched.contains(&"help"));
@@ -336,7 +336,7 @@ mod tests {
             "tests/parser_test.rs",
         ]);
         let cancel = AtomicBool::new(false);
-        let results = match_strings(&cs, "src parser", false, false, 10, &cancel, executor).await;
+        let results = match_strings_async(&cs, "src parser", false, false, 10, &cancel, executor).await;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].string, "src/lib/parser.rs");
     }
@@ -345,7 +345,7 @@ mod tests {
     async fn test_empty_query_returns_all(executor: BackgroundExecutor) {
         let cs = candidates(&["alpha", "beta", "gamma"]);
         let cancel = AtomicBool::new(false);
-        let results = match_strings(&cs, "", false, false, 10, &cancel, executor).await;
+        let results = match_strings_async(&cs, "", false, false, 10, &cancel, executor).await;
         assert_eq!(results.len(), 3);
         assert!(results.iter().all(|m| m.score == 0.0));
     }
@@ -354,7 +354,7 @@ mod tests {
     async fn test_empty_candidates(executor: BackgroundExecutor) {
         let cs: Vec<StringMatchCandidate> = vec![];
         let cancel = AtomicBool::new(false);
-        let results = match_strings(&cs, "query", false, false, 10, &cancel, executor).await;
+        let results = match_strings_async(&cs, "query", false, false, 10, &cancel, executor).await;
         assert!(results.is_empty());
     }
 
@@ -362,7 +362,7 @@ mod tests {
     async fn test_cancellation(executor: BackgroundExecutor) {
         let cs = candidates(&["hello", "world"]);
         let cancel = AtomicBool::new(true);
-        let results = match_strings(&cs, "hel", false, false, 10, &cancel, executor).await;
+        let results = match_strings_async(&cs, "hel", false, false, 10, &cancel, executor).await;
         assert!(results.is_empty());
     }
 
@@ -370,7 +370,7 @@ mod tests {
     async fn test_max_results_limit(executor: BackgroundExecutor) {
         let cs = candidates(&["ab", "abc", "abcd", "abcde"]);
         let cancel = AtomicBool::new(false);
-        let results = match_strings(&cs, "ab", false, false, 2, &cancel, executor).await;
+        let results = match_strings_async(&cs, "ab", false, false, 2, &cancel, executor).await;
         assert_eq!(results.len(), 2);
     }
 
@@ -383,7 +383,7 @@ mod tests {
         ]);
         let cancel = AtomicBool::new(false);
         let results =
-            match_strings(&cs, "fuzzy", false, false, 10, &cancel, executor.clone()).await;
+            match_strings_async(&cs, "fuzzy", false, false, 10, &cancel, executor.clone()).await;
 
         // Exact/shorter matches should score higher than substrings buried in long names.
         let ordered = matches!(
@@ -401,7 +401,7 @@ mod tests {
         assert!(ordered, "matches are not in the proper order.");
 
         // penalize length should widen the gap between results.
-        let results_penalty = match_strings(&cs, "fuzzy", false, true, 10, &cancel, executor).await;
+        let results_penalty = match_strings_async(&cs, "fuzzy", false, true, 10, &cancel, executor).await;
         let greater = results[2].score > results_penalty[2].score;
 
         assert!(
@@ -414,7 +414,7 @@ mod tests {
     async fn test_utf8_positions(executor: BackgroundExecutor) {
         let cs = candidates(&["café"]);
         let cancel = AtomicBool::new(false);
-        let results = match_strings(&cs, "caf", false, false, 10, &cancel, executor).await;
+        let results = match_strings_async(&cs, "caf", false, false, 10, &cancel, executor).await;
         assert_eq!(results.len(), 1);
         let m = &results[0];
         assert_eq!(m.positions, vec![0, 1, 2]);
@@ -434,10 +434,10 @@ mod tests {
         let cancel = AtomicBool::new(false);
 
         let case_insensitive =
-            match_strings(&cs, "foobar", false, false, 10, &cancel, executor.clone()).await;
+            match_strings_async(&cs, "foobar", false, false, 10, &cancel, executor.clone()).await;
         assert_eq!(case_insensitive.len(), 3);
 
-        let smart = match_strings(&cs, "FooBar", true, false, 10, &cancel, executor).await;
+        let smart = match_strings_async(&cs, "FooBar", true, false, 10, &cancel, executor).await;
         assert!(smart.iter().any(|m| m.string == "FooBar"));
         let foobar_score = smart.iter().find(|m| m.string == "FooBar").map(|m| m.score);
         let lower_score = smart.iter().find(|m| m.string == "foobar").map(|m| m.score);
@@ -453,7 +453,7 @@ mod tests {
     async fn test_char_bag_prefilter(executor: BackgroundExecutor) {
         let cs = candidates(&["abcdef", "abc", "def", "aabbcc"]);
         let cancel = AtomicBool::new(false);
-        let results = match_strings(&cs, "abc", false, false, 10, &cancel, executor).await;
+        let results = match_strings_async(&cs, "abc", false, false, 10, &cancel, executor).await;
         let matched: Vec<&str> = results.iter().map(|m| m.string.as_str()).collect();
         assert!(matched.contains(&"abcdef"));
         assert!(matched.contains(&"abc"));
@@ -464,7 +464,7 @@ mod tests {
     #[test]
     fn test_sync_basic_match() {
         let cs = candidates(&["hello", "world", "help"]);
-        let results = match_strings_sync(&cs, "hel", false, false, 10);
+        let results = match_strings(&cs, "hel", false, false, 10);
         let matched: Vec<&str> = results.iter().map(|m| m.string.as_str()).collect();
         assert!(matched.contains(&"hello"));
         assert!(matched.contains(&"help"));
@@ -474,14 +474,14 @@ mod tests {
     #[test]
     fn test_sync_empty_query_returns_all() {
         let cs = candidates(&["alpha", "beta", "gamma"]);
-        let results = match_strings_sync(&cs, "", false, false, 10);
+        let results = match_strings(&cs, "", false, false, 10);
         assert_eq!(results.len(), 3);
     }
 
     #[test]
     fn test_sync_max_results() {
         let cs = candidates(&["ab", "abc", "abcd", "abcde"]);
-        let results = match_strings_sync(&cs, "ab", false, false, 2);
+        let results = match_strings(&cs, "ab", false, false, 2);
         assert_eq!(results.len(), 2);
     }
 
@@ -489,7 +489,7 @@ mod tests {
     async fn test_empty_query_respects_max_results(executor: BackgroundExecutor) {
         let cs = candidates(&["alpha", "beta", "gamma", "delta"]);
         let cancel = AtomicBool::new(false);
-        let results = match_strings(&cs, "", false, false, 2, &cancel, executor).await;
+        let results = match_strings_async(&cs, "", false, false, 2, &cancel, executor).await;
         assert_eq!(results.len(), 2);
     }
 }

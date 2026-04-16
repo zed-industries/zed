@@ -835,7 +835,7 @@ impl DefaultState {
             return;
         }
         let smart_case = query.chars().any(|c| c.is_uppercase());
-        let matches = fuzzy_nucleo::match_strings_sync(
+        let matches = fuzzy_nucleo::match_strings(
             &self.filter_data.candidates,
             query,
             smart_case,
@@ -1592,7 +1592,7 @@ impl RemoteServerProjects {
         let executor = cx.background_executor().clone();
 
         self._filter_task = cx.spawn(async move |this, cx| {
-            let matches = fuzzy_nucleo::match_strings(
+            let matches = fuzzy_nucleo::match_strings_async(
                 &filter_data.candidates,
                 &query,
                 smart_case,
@@ -3400,7 +3400,7 @@ mod filter_tests {
 
     fn filter(data: &FilterData, query: &str) -> Vec<FilteredServer> {
         let smart_case = query.chars().any(|c| c.is_uppercase());
-        let matches = fuzzy_nucleo::match_strings_sync(
+        let matches = fuzzy_nucleo::match_strings(
             &data.candidates,
             query,
             smart_case,
