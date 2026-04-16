@@ -5,7 +5,7 @@ use collections::{HashMap, HashSet};
 use editor::items::{
     entry_diagnostic_aware_icon_decoration_and_color, entry_git_aware_label_color,
 };
-use fuzzy::StringMatchCandidate;
+use fuzzy_nucleo::StringMatchCandidate;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Modifiers, ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Point,
@@ -441,18 +441,10 @@ impl TabSwitcherDelegate {
                     ))
                 })
                 .collect::<Vec<_>>();
-            smol::block_on(fuzzy::match_strings(
-                &candidates,
-                &query,
-                true,
-                true,
-                10000,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ))
-            .into_iter()
-            .map(|m| all_items[m.candidate_id].clone())
-            .collect()
+            fuzzy_nucleo::match_strings(&candidates, &query, true, true, 10000)
+                .into_iter()
+                .map(|m| all_items[m.candidate_id].clone())
+                .collect()
         };
 
         if self.open_in_active_pane {

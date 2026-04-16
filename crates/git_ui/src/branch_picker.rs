@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use editor::Editor;
-use fuzzy::StringMatchCandidate;
+use fuzzy_nucleo::StringMatchCandidate;
 
 use collections::HashSet;
 use git::repository::Branch;
@@ -729,7 +729,7 @@ impl PickerDelegate for BranchListDelegate {
                     .enumerate()
                     .map(|(ix, branch)| StringMatchCandidate::new(ix, branch.name()))
                     .collect::<Vec<StringMatchCandidate>>();
-                let mut matches: Vec<Entry> = fuzzy::match_strings(
+                let mut matches: Vec<Entry> = fuzzy_nucleo::match_strings_async(
                     &candidates,
                     &query,
                     true,

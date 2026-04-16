@@ -13,7 +13,7 @@ use command_palette_hooks::{
     GlobalCommandPaletteInterceptor,
 };
 
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     ParentElement, Render, Styled, Task, WeakEntity, Window,
@@ -474,7 +474,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
                     .collect::<Vec<_>>();
 
-                let matches = fuzzy::match_strings(
+                let matches = fuzzy_nucleo::match_strings_async(
                     &candidates,
                     &query,
                     true,
