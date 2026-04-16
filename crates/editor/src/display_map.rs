@@ -2278,7 +2278,8 @@ impl DisplaySnapshot {
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
-            let max_point = self.buffer_snapshot().max_point();
+            let snapshot = self.buffer_snapshot();
+            let max_point = snapshot.max_point();
             let mut closing_row = None;
 
             // End byte of the smallest syntactic node enclosing `buffer_row`.
@@ -2287,9 +2288,8 @@ impl DisplaySnapshot {
             // or block comment belonging to the folded node (which does not).
             let foldable_node_end = {
                 let row_start = Point::new(buffer_row.0, 0);
-                let row_end =
-                    Point::new(buffer_row.0, self.buffer_snapshot().line_len(buffer_row));
-                self.buffer_snapshot()
+                let row_end = Point::new(buffer_row.0, snapshot.line_len(buffer_row));
+                snapshot
                     .syntax_ancestor(row_start..row_end)
                     .map(|(_, range)| range.end)
             };
@@ -2299,8 +2299,7 @@ impl DisplaySnapshot {
                 if !line_indent.is_line_blank()
                     && line_indent.raw_len() <= start_line_indent.raw_len()
                 {
-                    let in_string_or_comment_scope = self
-                        .buffer_snapshot()
+                    let in_string_or_comment_scope = snapshot
                         .language_scope_at(Point::new(row, 0))
                         .is_some_and(|scope| {
                             matches!(
@@ -2310,12 +2309,9 @@ impl DisplaySnapshot {
                         });
                     if in_string_or_comment_scope
                         && let Some(end) = foldable_node_end
+                        && Point::new(row, 0).to_offset(snapshot) < end
                     {
-                        let row_offset: MultiBufferOffset =
-                            Point::new(row, 0).to_offset(self.buffer_snapshot());
-                        if row_offset < end {
-                            continue;
-                        }
+                        continue;
                     }
 
                     closing_row = Some(row);
