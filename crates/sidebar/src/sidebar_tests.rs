@@ -10532,8 +10532,6 @@ async fn test_remote_archive_thread_with_active_connection(
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
     cx.run_until_parked();
-    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
-    cx.run_until_parked();
 
     assert!(
         server_fs
@@ -10542,17 +10540,11 @@ async fn test_remote_archive_thread_with_active_connection(
         "linked worktree directory should exist on remote before archiving"
     );
 
-    // Archive the worktree thread. archive_thread chains workspace-level
-    // cleanup with background git persist + disk-removal tasks, each of
-    // which spawns work on both client and server executors, so pump a
-    // few rounds on both to drive the whole pipeline.
     sidebar.update_in(cx, |sidebar: &mut Sidebar, window, cx| {
         sidebar.archive_thread(&wt_thread_id, window, cx);
     });
-    for _ in 0..5 {
-        cx.run_until_parked();
-        server_cx.run_until_parked();
-    }
+    cx.run_until_parked();
+    server_cx.run_until_parked();
 
     let is_archived = cx.update(|_window, cx| {
         ThreadMetadataStore::global(cx)
