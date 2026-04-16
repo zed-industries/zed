@@ -454,13 +454,14 @@ fn check_wasm() -> NamedJob {
 
     fn cargo_check_wasm() -> Step<Run> {
         named::bash(concat!(
-            "cargo +nightly -Zbuild-std=std,panic_abort ",
+            "cargo -Zbuild-std=std,panic_abort ",
             "check --target wasm32-unknown-unknown -p gpui_platform",
         ))
         .add_env((
             "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
             "-C target-feature=+atomics,+bulk-memory,+mutable-globals",
         ))
+        .add_env(("RUSTC_BOOTSTRAP", "1"))
     }
 
     named::job(
