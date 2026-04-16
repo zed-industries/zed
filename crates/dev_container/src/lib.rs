@@ -95,6 +95,30 @@ fn get_safe_id(input: &str) -> String {
     result
 }
 
+/// Sanitize a string for use as a Docker image tag component.
+/// Docker tags must match [a-z0-9]+([._-][a-z0-9]+)*, so this collapses
+/// runs of non-alphanumeric characters into single hyphens and strips
+/// leading/trailing hyphens.
+pub(crate) fn sanitize_docker_tag(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut prev_was_separator = true;
+    for c in input.chars() {
+        if c.is_ascii_alphanumeric() {
+            result.push(c);
+            prev_was_separator = false;
+        } else if !prev_was_separator {
+            result.push('-');
+            prev_was_separator = true;
+        }
+    }
+    let trimmed = result.trim_end_matches('-');
+    if trimmed.is_empty() {
+        "zed".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
     pub use_podman: bool,
