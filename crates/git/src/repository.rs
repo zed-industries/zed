@@ -295,7 +295,7 @@ impl Worktree {
 
     pub fn directory_name(&self, main_worktree_path: Option<&Path>) -> String {
         if self.is_main {
-            return "main".to_string();
+            return "main worktree".to_string();
         }
 
         let dir_name = self

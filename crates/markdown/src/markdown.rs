@@ -1067,12 +1067,12 @@ impl MarkdownElement {
 
             image_container.child(
                 img(source)
+                    .id(("markdown-image", range.start))
                     .max_w_full()
                     .when_some(height, |this, height| this.h(height))
                     .when_some(width, |this, width| this.w(width)),
             )
         });
-        let _ = range;
     }
 
     fn push_markdown_paragraph(

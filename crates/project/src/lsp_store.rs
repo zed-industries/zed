@@ -2340,9 +2340,8 @@ impl LocalLspStore {
     fn server_supports_formatting(server: &Arc<LanguageServer>) -> bool {
         let capabilities = server.capabilities();
         let formatting = capabilities.document_formatting_provider.as_ref();
-        let range_formatting = capabilities.document_range_formatting_provider.as_ref();
         matches!(formatting, Some(p) if *p != OneOf::Left(false))
-            || matches!(range_formatting, Some(p) if *p != OneOf::Left(false))
+            || server_capabilities_support_range_formatting(&capabilities)
     }
 
     async fn format_via_lsp(
@@ -5003,48 +5002,22 @@ impl LspStore {
         )
     }
 
-    fn check_if_capable_for_proto_request<F>(
+    fn relevant_server_ids_for_capability_check(
         &self,
         buffer: &Entity<Buffer>,
-        check: F,
         cx: &App,
-    ) -> bool
-    where
-        F: FnMut(&lsp::ServerCapabilities) -> bool,
-    {
-        let Some(language) = buffer.read(cx).language().cloned() else {
-            return false;
-        };
-        let registered_language_servers = self
-            .languages
-            .lsp_adapters(&language.name())
-            .into_iter()
-            .map(|lsp_adapter| lsp_adapter.name())
-            .collect::<HashSet<_>>();
-        self.language_server_statuses
-            .iter()
-            .filter_map(|(server_id, server_status)| {
-                // Include servers that are either registered for this language OR
-                // available to be loaded (for SSH remote mode where adapters like
-                // ty/pylsp/pyright are registered via register_available_lsp_adapter
-                // but only loaded on the server side)
-                let is_relevant = registered_language_servers.contains(&server_status.name)
-                    || self.languages.is_lsp_adapter_available(&server_status.name);
-                is_relevant.then_some(server_id)
-            })
-            .filter_map(|server_id| self.lsp_server_capabilities.get(server_id))
-            .any(check)
-    }
+    ) -> Vec<LanguageServerId> {
+        let buffer_id = buffer.read(cx).remote_id();
+        if let Some(local) = self.as_local() {
+            return local
+                .buffers_opened_in_servers
+                .get(&buffer_id)
+                .into_iter()
+                .flatten()
+                .copied()
+                .collect();
+        }
 
-    fn all_capable_for_proto_request<F>(
-        &self,
-        buffer: &Entity<Buffer>,
-        mut check: F,
-        cx: &App,
-    ) -> Vec<(lsp::LanguageServerId, lsp::LanguageServerName)>
-    where
-        F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
-    {
         let Some(language) = buffer.read(cx).language().cloned() else {
             return Vec::default();
         };
@@ -5063,15 +5036,103 @@ impl LspStore {
                 // but only loaded on the server side)
                 let is_relevant = registered_language_servers.contains(&server_status.name)
                     || self.languages.is_lsp_adapter_available(&server_status.name);
-                is_relevant.then_some((server_id, &server_status.name))
+                is_relevant.then_some(*server_id)
             })
-            .filter_map(|(server_id, server_name)| {
-                self.lsp_server_capabilities
-                    .get(server_id)
-                    .map(|c| (server_id, server_name, c))
+            .collect()
+    }
+
+    fn check_if_any_relevant_server_matches<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        mut check: F,
+        cx: &App,
+    ) -> bool
+    where
+        F: FnMut(&LanguageServerStatus, &lsp::ServerCapabilities) -> bool,
+    {
+        self.relevant_server_ids_for_capability_check(buffer, cx)
+            .into_iter()
+            .filter_map(|server_id| {
+                Some((
+                    self.language_server_statuses.get(&server_id)?,
+                    self.lsp_server_capabilities.get(&server_id)?,
+                ))
+            })
+            .any(|(server_status, capabilities)| check(server_status, capabilities))
+    }
+
+    fn check_if_capable_for_proto_request<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        mut check: F,
+        cx: &App,
+    ) -> bool
+    where
+        F: FnMut(&lsp::ServerCapabilities) -> bool,
+    {
+        self.check_if_any_relevant_server_matches(buffer, |_, capabilities| check(capabilities), cx)
+    }
+
+    pub fn supports_range_formatting(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
+        settings.formatter.as_ref().iter().any(|formatter| {
+            match formatter {
+                Formatter::None => false,
+                Formatter::Auto => {
+                    settings.prettier.allowed
+                        || self.check_if_capable_for_proto_request(
+                            buffer,
+                            server_capabilities_support_range_formatting,
+                            cx,
+                        )
+                }
+                Formatter::Prettier => true,
+                Formatter::External { .. } => false,
+                Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current) => {
+                    self.check_if_capable_for_proto_request(
+                        buffer,
+                        server_capabilities_support_range_formatting,
+                        cx,
+                    )
+                }
+                Formatter::LanguageServer(
+                    settings::LanguageServerFormatterSpecifier::Specific { name },
+                ) => self.check_if_any_relevant_server_matches(
+                    buffer,
+                    |server_status, capabilities| {
+                        server_status.name.0.as_ref() == name
+                            && server_capabilities_support_range_formatting(capabilities)
+                    },
+                    cx,
+                ),
+                // `FormatSelections` should only surface when a formatter can honor the
+                // selected ranges. Code actions can still run as part of formatting, but
+                // they operate on the whole buffer rather than the selected text.
+                Formatter::CodeAction(_) => false,
+            }
+        })
+    }
+
+    fn all_capable_for_proto_request<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        mut check: F,
+        cx: &App,
+    ) -> Vec<(lsp::LanguageServerId, lsp::LanguageServerName)>
+    where
+        F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
+    {
+        self.relevant_server_ids_for_capability_check(buffer, cx)
+            .into_iter()
+            .filter_map(|server_id| {
+                Some((
+                    server_id,
+                    &self.language_server_statuses.get(&server_id)?.name,
+                    self.lsp_server_capabilities.get(&server_id)?,
+                ))
             })
             .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
-            .map(|(server_id, server_name, _)| (*server_id, server_name.clone()))
+            .map(|(server_id, server_name, _)| (server_id, server_name.clone()))
             .collect()
     }
 
@@ -13285,6 +13346,13 @@ fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
         Some(options) => OneOf::Right(serde_json::from_value::<T>(options)?),
         None => OneOf::Left(true),
     })
+}
+
+fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabilities) -> bool {
+    matches!(
+        capabilities.document_range_formatting_provider.as_ref(),
+        Some(provider) if *provider != OneOf::Left(false)
+    )
 }
 
 fn subscribe_to_binary_statuses(

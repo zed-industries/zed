@@ -19608,6 +19608,28 @@ impl Editor {
         self.pending_rename.as_ref()
     }
 
+    fn can_format_selections(&self, cx: &App) -> bool {
+        if !self.mode.is_full() {
+            return false;
+        }
+
+        let Some(project) = &self.project else {
+            return false;
+        };
+
+        let project = project.read(cx);
+        let multi_buffer = self.buffer.read(cx);
+        let snapshot = multi_buffer.snapshot(cx);
+
+        self.selections
+            .disjoint_anchor_ranges()
+            .filter(|range| range.start != range.end)
+            .flat_map(|range| [range.start, range.end])
+            .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
+            .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
+            .any(|buffer| project.supports_range_formatting(&buffer, cx))
+    }
+
     fn format(
         &mut self,
         _: &Format,

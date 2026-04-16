@@ -361,7 +361,6 @@ impl PickerDelegate for ThreadWorktreePickerDelegate {
         }
 
         // When the user is typing, fuzzy-match worktree names using display_name
-        // For the main worktree, also match against "main"
         let main_worktree_path = repo_worktrees
             .iter()
             .find(|wt| wt.is_main)

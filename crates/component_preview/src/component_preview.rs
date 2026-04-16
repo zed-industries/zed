@@ -8,7 +8,7 @@ use gpui::{
 };
 use gpui::{ListState, ScrollHandle, ScrollStrategy, UniformListScrollHandle};
 use language::LanguageRegistry;
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
 use persistence::ComponentPreviewDb;
 use project::Project;
 use std::{iter::Iterator, ops::Range, sync::Arc};
@@ -561,10 +561,14 @@ impl ComponentPreview {
             workspace.update(cx, |workspace, cx| {
                 let status_toast =
                     StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::GitBranch).color(Color::Muted))
-                            .action("Open Pull Request", |_, cx| {
-                                cx.open_url("https://github.com/")
-                            })
+                        this.icon(
+                            Icon::new(IconName::GitBranch)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .action("Open Pull Request", |_, cx| {
+                            cx.open_url("https://github.com/")
+                        })
                     });
                 workspace.toggle_status_toast(status_toast, cx)
             });

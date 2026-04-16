@@ -552,11 +552,13 @@ actions!(
         Format,
         /// Formats only the selected text.
         ///
+        /// This action is only available when the active formatter can format ranges.
         /// When using a language server, this sends an LSP range formatting request for each
-        /// selection. When using Prettier, Prettier's own range formatting is used to format the
-        /// encompassing range of all selections, and resulting edits outside the selected ranges
-        /// are discarded. External command formatters do not support range formatting and are
-        /// skipped.
+        /// selection, and is hidden when the selected buffer's configured language server does
+        /// not advertise range-formatting support. When using Prettier, Prettier's own range
+        /// formatting is used to format the encompassing range of all selections, and resulting
+        /// edits outside the selected ranges are discarded. External command formatters do not
+        /// support range formatting and are skipped.
         FormatSelections,
         /// Goes to the declaration of the symbol at cursor.
         GoToDeclaration,
