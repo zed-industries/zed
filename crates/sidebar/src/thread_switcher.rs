@@ -249,9 +249,9 @@ impl Render for ThreadSwitcher {
                             this.select_index(ix, cx);
                         }
                     }))
+                    // TODO: This is not properly propagating to the tread item.
                     .on_click(
                         cx.listener(move |this, _event: &gpui::ClickEvent, _window, cx| {
-                            dbg!("ThreadItem on_click fired", ix);
                             this.select_and_confirm(ix, cx);
                         }),
                     )
