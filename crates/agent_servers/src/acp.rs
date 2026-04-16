@@ -68,6 +68,12 @@ struct PendingAcpSession {
     ref_count: usize,
 }
 
+struct SessionConfigResponse {
+    modes: Option<acp::SessionModeState>,
+    models: Option<acp::SessionModelState>,
+    config_options: Option<Vec<acp::SessionConfigOption>>,
+}
+
 struct ConfigOptions {
     config_options: Rc<RefCell<Vec<acp::SessionConfigOption>>>,
     tx: Rc<RefCell<watch::Sender<()>>>,
@@ -450,6 +456,114 @@ impl AcpConnection {
         }
     }
 
+    fn open_or_create_session(
+        self: Rc<Self>,
+        session_id: acp::SessionId,
+        project: Entity<Project>,
+        work_dirs: PathList,
+        title: Option<SharedString>,
+        rpc_call: impl FnOnce(
+            Rc<acp::ClientSideConnection>,
+            acp::SessionId,
+            PathBuf,
+        )
+            -> futures::future::LocalBoxFuture<'static, Result<SessionConfigResponse>>
+        + 'static,
+        cx: &mut App,
+    ) -> Task<Result<Entity<AcpThread>>> {
+        if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
+            session.ref_count += 1;
+            if let Some(thread) = session.thread.upgrade() {
+                return Task::ready(Ok(thread));
+            }
+        }
+
+        if let Some(pending) = self.pending_sessions.borrow_mut().get_mut(&session_id) {
+            pending.ref_count += 1;
+            let task = pending.task.clone();
+            return cx
+                .foreground_executor()
+                .spawn(async move { task.await.map_err(|err| anyhow!(err)) });
+        }
+
+        // TODO: remove this once ACP supports multiple working directories
+        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
+            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
+        };
+
+        let shared_task = cx
+            .spawn({
+                let session_id = session_id.clone();
+                let this = self.clone();
+                async move |cx| {
+                    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+                    let thread: Entity<AcpThread> = cx.new(|cx| {
+                        AcpThread::new(
+                            None,
+                            title,
+                            Some(work_dirs),
+                            this.clone(),
+                            project,
+                            action_log,
+                            session_id.clone(),
+                            watch::Receiver::constant(
+                                this.agent_capabilities.prompt_capabilities.clone(),
+                            ),
+                            cx,
+                        )
+                    });
+
+                    let response =
+                        match rpc_call(this.connection.clone(), session_id.clone(), cwd).await {
+                            Ok(response) => response,
+                            Err(err) => {
+                                this.pending_sessions.borrow_mut().remove(&session_id);
+                                return Err(Arc::new(err));
+                            }
+                        };
+
+                    let (modes, models, config_options) =
+                        config_state(response.modes, response.models, response.config_options);
+
+                    if let Some(config_opts) = config_options.as_ref() {
+                        this.apply_default_config_options(&session_id, config_opts, cx);
+                    }
+
+                    let ref_count = this
+                        .pending_sessions
+                        .borrow_mut()
+                        .remove(&session_id)
+                        .map_or(1, |pending| pending.ref_count);
+
+                    this.sessions.borrow_mut().insert(
+                        session_id,
+                        AcpSession {
+                            thread: thread.downgrade(),
+                            suppress_abort_err: false,
+                            session_modes: modes,
+                            models,
+                            config_options: config_options.map(ConfigOptions::new),
+                            ref_count,
+                        },
+                    );
+
+                    Ok(thread)
+                }
+            })
+            .shared();
+
+        self.pending_sessions.borrow_mut().insert(
+            session_id,
+            PendingAcpSession {
+                task: shared_task.clone(),
+                ref_count: 1,
+            },
+        );
+
+        cx.foreground_executor()
+            .spawn(async move { shared_task.await.map_err(|err| anyhow!(err)) })
+    }
+
     fn apply_default_config_options(
         &self,
         session_id: &acp::SessionId,
@@ -776,104 +890,29 @@ impl AgentConnection for AcpConnection {
             ))));
         }
 
-        if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
-            session.ref_count += 1;
-            if let Some(thread) = session.thread.upgrade() {
-                return Task::ready(Ok(thread));
-            }
-        }
-
-        if let Some(pending) = self.pending_sessions.borrow_mut().get_mut(&session_id) {
-            pending.ref_count += 1;
-            let task = pending.task.clone();
-            return cx
-                .foreground_executor()
-                .spawn(async move { task.await.map_err(|err| anyhow!(err)) });
-        }
-
-        // TODO: remove this once ACP supports multiple working directories
-        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
-            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
-        };
-
         let mcp_servers = mcp_servers_for_project(&project, cx);
-        let shared_task = cx
-            .spawn({
-                let session_id = session_id.clone();
-                let this = self.clone();
-                async move |cx| {
-                    let action_log = cx.new(|_| ActionLog::new(project.clone()));
-                    let thread: Entity<AcpThread> = cx.new(|cx| {
-                        AcpThread::new(
-                            None,
-                            title,
-                            Some(work_dirs.clone()),
-                            this.clone(),
-                            project,
-                            action_log,
-                            session_id.clone(),
-                            watch::Receiver::constant(
-                                this.agent_capabilities.prompt_capabilities.clone(),
-                            ),
-                            cx,
-                        )
-                    });
-
-                    let response = match this
-                        .connection
+        self.open_or_create_session(
+            session_id,
+            project,
+            work_dirs,
+            title,
+            move |connection, session_id, cwd| {
+                Box::pin(async move {
+                    let response = connection
                         .load_session(
-                            acp::LoadSessionRequest::new(session_id.clone(), cwd)
-                                .mcp_servers(mcp_servers),
+                            acp::LoadSessionRequest::new(session_id, cwd).mcp_servers(mcp_servers),
                         )
                         .await
-                    {
-                        Ok(response) => response,
-                        Err(err) => {
-                            this.pending_sessions.borrow_mut().remove(&session_id);
-                            return Err(Arc::new(map_acp_error(err)));
-                        }
-                    };
-
-                    let (modes, models, config_options) =
-                        config_state(response.modes, response.models, response.config_options);
-
-                    if let Some(config_opts) = config_options.as_ref() {
-                        this.apply_default_config_options(&session_id, config_opts, cx);
-                    }
-
-                    let ref_count = this
-                        .pending_sessions
-                        .borrow_mut()
-                        .remove(&session_id)
-                        .map_or(1, |pending| pending.ref_count);
-
-                    this.sessions.borrow_mut().insert(
-                        session_id,
-                        AcpSession {
-                            thread: thread.downgrade(),
-                            suppress_abort_err: false,
-                            session_modes: modes,
-                            models,
-                            config_options: config_options.map(ConfigOptions::new),
-                            ref_count,
-                        },
-                    );
-
-                    Ok(thread)
-                }
-            })
-            .shared();
-
-        self.pending_sessions.borrow_mut().insert(
-            session_id,
-            PendingAcpSession {
-                task: shared_task.clone(),
-                ref_count: 1,
+                        .map_err(map_acp_error)?;
+                    Ok(SessionConfigResponse {
+                        modes: response.modes,
+                        models: response.models,
+                        config_options: response.config_options,
+                    })
+                })
             },
-        );
-
-        cx.foreground_executor()
-            .spawn(async move { shared_task.await.map_err(|err| anyhow!(err)) })
+            cx,
+        )
     }
 
     fn resume_session(
@@ -895,104 +934,30 @@ impl AgentConnection for AcpConnection {
             ))));
         }
 
-        if let Some(session) = self.sessions.borrow_mut().get_mut(&session_id) {
-            session.ref_count += 1;
-            if let Some(thread) = session.thread.upgrade() {
-                return Task::ready(Ok(thread));
-            }
-        }
-
-        if let Some(pending) = self.pending_sessions.borrow_mut().get_mut(&session_id) {
-            pending.ref_count += 1;
-            let task = pending.task.clone();
-            return cx
-                .foreground_executor()
-                .spawn(async move { task.await.map_err(|err| anyhow!(err)) });
-        }
-
-        // TODO: remove this once ACP supports multiple working directories
-        let Some(cwd) = work_dirs.ordered_paths().next().cloned() else {
-            return Task::ready(Err(anyhow!("Working directory cannot be empty")));
-        };
-
         let mcp_servers = mcp_servers_for_project(&project, cx);
-        let shared_task = cx
-            .spawn({
-                let session_id = session_id.clone();
-                let this = self.clone();
-                async move |cx| {
-                    let action_log = cx.new(|_| ActionLog::new(project.clone()));
-                    let thread: Entity<AcpThread> = cx.new(|cx| {
-                        AcpThread::new(
-                            None,
-                            title,
-                            Some(work_dirs),
-                            this.clone(),
-                            project,
-                            action_log,
-                            session_id.clone(),
-                            watch::Receiver::constant(
-                                this.agent_capabilities.prompt_capabilities.clone(),
-                            ),
-                            cx,
-                        )
-                    });
-
-                    let response = match this
-                        .connection
+        self.open_or_create_session(
+            session_id,
+            project,
+            work_dirs,
+            title,
+            move |connection, session_id, cwd| {
+                Box::pin(async move {
+                    let response = connection
                         .resume_session(
-                            acp::ResumeSessionRequest::new(session_id.clone(), cwd)
+                            acp::ResumeSessionRequest::new(session_id, cwd)
                                 .mcp_servers(mcp_servers),
                         )
                         .await
-                    {
-                        Ok(response) => response,
-                        Err(err) => {
-                            this.pending_sessions.borrow_mut().remove(&session_id);
-                            return Err(Arc::new(map_acp_error(err)));
-                        }
-                    };
-
-                    let (modes, models, config_options) =
-                        config_state(response.modes, response.models, response.config_options);
-
-                    if let Some(config_opts) = config_options.as_ref() {
-                        this.apply_default_config_options(&session_id, config_opts, cx);
-                    }
-
-                    let ref_count = this
-                        .pending_sessions
-                        .borrow_mut()
-                        .remove(&session_id)
-                        .map_or(1, |pending| pending.ref_count);
-
-                    this.sessions.borrow_mut().insert(
-                        session_id,
-                        AcpSession {
-                            thread: thread.downgrade(),
-                            suppress_abort_err: false,
-                            session_modes: modes,
-                            models,
-                            config_options: config_options.map(ConfigOptions::new),
-                            ref_count,
-                        },
-                    );
-
-                    Ok(thread)
-                }
-            })
-            .shared();
-
-        self.pending_sessions.borrow_mut().insert(
-            session_id,
-            PendingAcpSession {
-                task: shared_task.clone(),
-                ref_count: 1,
+                        .map_err(map_acp_error)?;
+                    Ok(SessionConfigResponse {
+                        modes: response.modes,
+                        models: response.models,
+                        config_options: response.config_options,
+                    })
+                })
             },
-        );
-
-        cx.foreground_executor()
-            .spawn(async move { shared_task.await.map_err(|err| anyhow!(err)) })
+            cx,
+        )
     }
 
     fn supports_close_session(&self) -> bool {
