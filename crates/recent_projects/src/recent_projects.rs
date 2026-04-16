@@ -2145,7 +2145,7 @@ impl RecentProjectsDelegate {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal};
 
     use serde_json::json;
     use settings::SettingsStore;
