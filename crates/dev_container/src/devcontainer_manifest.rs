@@ -804,11 +804,13 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let Some(docker_compose_files) = dev_container.docker_compose_file.clone() else {
             return Err(DevContainerError::DevContainerParseFailed);
         };
+        log::error!("docker_compose_files: {:?}", docker_compose_files);
         let docker_compose_full_paths = docker_compose_files
             .iter()
             .map(|relative| self.config_directory.join(relative))
             .collect::<Vec<PathBuf>>();
 
+        log::error!("docker_compose file paths: {:?}", docker_compose_full_paths);
         let Some(config) = self
             .docker_client
             .get_docker_compose_config(&docker_compose_full_paths)
