@@ -2083,9 +2083,9 @@ pub(crate) async fn read_devcontainer_configuration(
     environment: HashMap<String, String>,
 ) -> Result<DevContainer, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman")
+        Docker::new("podman").await
     } else {
-        Docker::new("docker")
+        Docker::new("docker").await
     };
     let mut dev_container = DevContainerManifest::new(
         context,
@@ -2107,9 +2107,9 @@ pub(crate) async fn spawn_dev_container(
     local_project_path: &Path,
 ) -> Result<DevContainerUp, DevContainerError> {
     let docker = if context.use_podman {
-        Docker::new("podman")
+        Docker::new("podman").await
     } else {
-        Docker::new("docker")
+        Docker::new("docker").await
     };
     let mut devcontainer_manifest = DevContainerManifest::new(
         context,
