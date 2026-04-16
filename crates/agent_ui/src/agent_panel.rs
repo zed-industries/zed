@@ -2120,6 +2120,10 @@ impl AgentPanel {
             });
         }
 
+        if self.project.read(cx).is_via_collab() {
+            return;
+        }
+
         // Update metadata store so threads' path lists stay in sync with
         // the project's current worktrees. Without this, threads saved
         // before a worktree was added would have stale paths and not

@@ -10297,3 +10297,74 @@ fn test_worktree_info_missing_branch_returns_none() {
     assert_eq!(infos[0].branch_name, None);
     assert_eq!(infos[0].name, SharedString::from("myapp"));
 }
+
+#[gpui::test]
+async fn test_collab_guest_move_thread_paths_is_noop(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-a", serde_json::json!({ "src": {} }))
+        .await;
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let project = project::Project::test(fs, ["/project-a".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+    // Set up the sidebar while the project is local. This registers the
+    // WorktreePathsChanged subscription for the project.
+    let _sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let session_id = acp::SessionId::new(Arc::from("test-thread"));
+    save_named_thread_metadata("test-thread", "My Thread", &project, cx).await;
+
+    let thread_id = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&session_id)
+            .map(|e| e.thread_id)
+            .expect("thread must be in the store")
+    });
+
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let entry = store.read(cx).entry(thread_id).unwrap();
+        assert_eq!(
+            entry.folder_paths().paths(),
+            &[PathBuf::from("/project-a")],
+            "thread must be saved with /project-a before collab"
+        );
+    });
+
+    // Transition the project into collab mode. The sidebar's subscription is
+    // still active from when the project was local.
+    project.update(cx, |project, _cx| {
+        project.mark_as_collab_for_testing();
+    });
+
+    // Adding a worktree fires WorktreePathsChanged with old_paths = {/project-a}.
+    // The sidebar's subscription is still active, so move_thread_paths is called.
+    // Without the is_via_collab() guard inside move_thread_paths, this would
+    // update the stored thread paths from {/project-a} to {/project-a, /project-b}.
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/project-b", true, cx)
+        })
+        .await
+        .expect("should add worktree");
+    cx.run_until_parked();
+
+    cx.update(|_window, cx| {
+        let store = ThreadMetadataStore::global(cx);
+        let entry = store
+            .read(cx)
+            .entry(thread_id)
+            .expect("thread must still exist");
+        assert_eq!(
+            entry.folder_paths().paths(),
+            &[PathBuf::from("/project-a")],
+            "thread path must not change when project is via collab"
+        );
+    });
+}

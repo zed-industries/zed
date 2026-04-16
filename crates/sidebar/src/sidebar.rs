@@ -511,6 +511,9 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         let project = workspace.read(cx).project().clone();
+        if project.read(cx).is_via_collab() {
+            return;
+        }
 
         cx.subscribe_in(
             &project,
@@ -577,6 +580,10 @@ impl Sidebar {
         old_paths: &WorktreePaths,
         cx: &mut Context<Self>,
     ) {
+        if project.read(cx).is_via_collab() {
+            return;
+        }
+
         let new_paths = project.read(cx).worktree_paths(cx);
         let old_folder_paths = old_paths.folder_path_list().clone();
 
@@ -3188,9 +3195,14 @@ impl Sidebar {
             return None;
         }
 
+        let fs = self
+            .multi_workspace
+            .upgrade()
+            .map(|mw| mw.read(cx).workspace().read(cx).app_state().fs.clone())?;
+
         let (cancel_tx, cancel_rx) = smol::channel::bounded::<()>(1);
         let task = cx.spawn(async move |_this, cx| {
-            match Self::archive_worktree_roots(roots, cancel_rx, cx).await {
+            match Self::archive_worktree_roots(roots, fs, cancel_rx, cx).await {
                 Ok(ArchiveWorktreeOutcome::Success) => {
                     cx.update(|cx| {
                         ThreadMetadataStore::global(cx).update(cx, |store, _cx| {
@@ -3215,6 +3227,7 @@ impl Sidebar {
 
     async fn archive_worktree_roots(
         roots: Vec<thread_worktree_archive::RootPlan>,
+        fs: Arc<dyn fs::Fs>,
         cancel_rx: smol::channel::Receiver<()>,
         cx: &mut gpui::AsyncApp,
     ) -> anyhow::Result<ArchiveWorktreeOutcome> {
@@ -3247,7 +3260,9 @@ impl Sidebar {
                 return Ok(ArchiveWorktreeOutcome::Cancelled);
             }
 
-            if let Err(error) = thread_worktree_archive::remove_root(root.clone(), cx).await {
+            if let Err(error) =
+                thread_worktree_archive::remove_root(root.clone(), fs.clone(), cx).await
+            {
                 if let Some(&(id, ref completed_root)) = completed_persists.last() {
                     if completed_root.root_path == root.root_path {
                         thread_worktree_archive::rollback_persist(id, completed_root, cx).await;

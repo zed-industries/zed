@@ -33,9 +33,10 @@ use git::{
     parse_git_remote_url,
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, CreateWorktreeTarget,
-        DiffType, FetchOptions, GitRepository, GitRepositoryCheckpoint, GraphCommitData,
-        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
-        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
+        DiffType, FetchOptions, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
+        GraphCommitData, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+        RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -7058,6 +7059,19 @@ impl Repository {
         });
 
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
+    pub fn load_commit_template_text(
+        &mut self,
+    ) -> oneshot::Receiver<Result<Option<GitCommitTemplate>>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.load_commit_template().await
+                }
+                RepositoryState::Remote(_) => Ok(None),
+            }
+        })
     }
 
     fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
