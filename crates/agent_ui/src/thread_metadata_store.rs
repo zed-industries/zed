@@ -55,6 +55,31 @@ impl Column for ThreadId {
 const THREAD_REMOTE_CONNECTION_MIGRATION_KEY: &str = "thread-metadata-remote-connection-backfill";
 const THREAD_ID_MIGRATION_KEY: &str = "thread-metadata-thread-id-backfill";
 
+/// List all sidebar thread metadata from an arbitrary SQLite connection.
+///
+/// This is used to read thread metadata from another release channel's
+/// database without opening a full `ThreadSafeConnection`.
+pub(crate) fn list_thread_metadata_from_connection(
+    connection: &db::sqlez::connection::Connection,
+) -> anyhow::Result<Vec<ThreadMetadata>> {
+    connection.select::<ThreadMetadata>(ThreadMetadataDb::LIST_QUERY)?()
+}
+
+/// Run the `ThreadMetadataDb` migrations on a raw connection.
+///
+/// This is used in tests to set up the sidebar_threads schema in a
+/// temporary database.
+#[cfg(test)]
+pub(crate) fn run_thread_metadata_migrations(connection: &db::sqlez::connection::Connection) {
+    connection
+        .migrate(
+            ThreadMetadataDb::NAME,
+            ThreadMetadataDb::MIGRATIONS,
+            &mut |_, _, _| false,
+        )
+        .expect("thread metadata migrations should succeed");
+}
+
 pub fn init(cx: &mut App) {
     ThreadMetadataStore::init_global(cx);
     let migration_task = migrate_thread_metadata(cx);
@@ -1280,14 +1305,18 @@ impl ThreadMetadataDb {
         )?()
     }
 
+    const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
+        created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
+        main_worktree_paths_order, remote_connection \
+        FROM sidebar_threads \
+        WHERE session_id IS NOT NULL \
+        ORDER BY updated_at DESC";
+
     /// List all sidebar thread metadata, ordered by updated_at descending.
+    ///
+    /// Only returns threads that have a `session_id`.
     pub fn list(&self) -> anyhow::Result<Vec<ThreadMetadata>> {
-        self.select::<ThreadMetadata>(
-            "SELECT thread_id, session_id, agent_id, title, updated_at, created_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection \
-             FROM sidebar_threads \
-             WHERE session_id IS NOT NULL \
-             ORDER BY updated_at DESC"
-        )?()
+        self.select::<ThreadMetadata>(Self::LIST_QUERY)?()
     }
 
     /// Upsert metadata for a thread.
@@ -1701,7 +1730,7 @@ mod tests {
             .unwrap();
     }
 
-    fn run_thread_metadata_migrations(cx: &mut TestAppContext) {
+    fn run_store_migrations(cx: &mut TestAppContext) {
         clear_thread_metadata_remote_connection_backfill(cx);
         cx.update(|cx| {
             let migration_task = migrate_thread_metadata(cx);
@@ -1980,7 +2009,7 @@ mod tests {
             cx.run_until_parked();
         }
 
-        run_thread_metadata_migrations(cx);
+        run_store_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -2071,7 +2100,7 @@ mod tests {
         save_task.await.unwrap();
         cx.run_until_parked();
 
-        run_thread_metadata_migrations(cx);
+        run_store_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -2209,7 +2238,7 @@ mod tests {
             cx.run_until_parked();
         }
 
-        run_thread_metadata_migrations(cx);
+        run_store_migrations(cx);
 
         let list = cx.update(|cx| {
             let store = ThreadMetadataStore::global(cx);
@@ -3390,13 +3419,7 @@ mod tests {
 
         // Run all current migrations. sqlez skips the already-applied ones and
         // runs the remaining migrations.
-        connection
-            .migrate(
-                ThreadMetadataDb::NAME,
-                ThreadMetadataDb::MIGRATIONS,
-                &mut |_, _, _| false,
-            )
-            .expect("new migration should succeed");
+        run_thread_metadata_migrations(&connection);
 
         // All 3 rows should survive with non-NULL thread_ids.
         let count: i64 = connection
