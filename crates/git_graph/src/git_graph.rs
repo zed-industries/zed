@@ -927,10 +927,13 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn row_height(cx: &App) -> Pixels {
+    fn row_height(window: &Window, cx: &App) -> Pixels {
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.buffer_font_size(cx);
-        font_size + px(12.0)
+        let raw = font_size + px(12.0);
+        let scale = window.scale_factor();
+
+        (raw * scale).round() / scale
     }
 
     fn graph_canvas_content_width(&self) -> Pixels {
@@ -1035,10 +1038,10 @@ impl GitGraph {
                 ],
             )
         });
-        let mut row_height = Self::row_height(cx);
+        let mut row_height = Self::row_height(window, cx);
 
-        cx.observe_global_in::<settings::SettingsStore>(window, move |this, _window, cx| {
-            let new_row_height = Self::row_height(cx);
+        cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
+            let new_row_height = Self::row_height(window, cx);
             if new_row_height != row_height {
                 this.row_height = new_row_height;
                 this.table_interaction_state.update(cx, |state, _cx| {
@@ -3081,12 +3084,12 @@ mod tests {
     use fs::FakeFs;
     use git::Oid;
     use git::repository::InitialGraphCommitData;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use project::Project;
     use project::git_store::{GitStoreEvent, RepositoryEvent};
     use rand::prelude::*;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, ThemeSettingsContent};
     use smallvec::{SmallVec, smallvec};
     use std::path::Path;
     use std::sync::{Arc, Mutex};
@@ -4178,6 +4181,95 @@ mod tests {
                 absolute_calc_row,
                 Some(1),
                 "Row calculation should yield absolute row exactly"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_row_height_matches_uniform_list_item_height(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme = Box::new(ThemeSettingsContent {
+                        ui_font_size: Some(12.7.into()),
+                        buffer_font_size: Some(13.7.into()),
+                        ..Default::default()
+                    })
+                });
+            })
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(99);
+        let commits = generate_random_commit_dag(&mut rng, 20, false);
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        cx.draw(
+            point(px(0.), px(0.)),
+            gpui::size(px(1200.), px(800.)),
+            |_, _| git_graph.clone().into_any_element(),
+        );
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, cx| {
+            let commit_count = graph.graph_data.commits.len();
+            assert!(
+                commit_count > 0,
+                "need at least one commit to measure item height"
+            );
+
+            let table_state = graph.table_interaction_state.read(cx);
+            let item_size = table_state.scroll_handle.0.borrow().last_item_size.expect(
+                "uniform_list should have populated last_item_size after draw(); \
+                     the table has not been laid out",
+            );
+
+            let measured_item_height = item_size.contents.height / commit_count as f32;
+
+            assert_eq!(
+                graph.row_height, measured_item_height,
+                "GitGraph::row_height ({}) must exactly match the height that \
+                 uniform_list measured for each table row ({}). \
+                 A mismatch means the canvas and table rows will drift when scrolling.",
+                graph.row_height, measured_item_height,
             );
         });
     }
