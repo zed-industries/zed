@@ -1043,6 +1043,25 @@ pub struct RealGitRepository {
     is_trusted: Arc<AtomicBool>,
 }
 
+#[derive(Debug)]
+pub enum RefEdit {
+    Update { ref_name: String, commit: String },
+    Delete { ref_name: String },
+}
+
+impl RefEdit {
+    fn into_args(self) -> Vec<OsString> {
+        match self {
+            Self::Update { ref_name, commit } => {
+                vec!["update-ref".into(), ref_name.into(), commit.into()]
+            }
+            Self::Delete { ref_name } => {
+                vec!["update-ref".into(), "-d".into(), ref_name.into()]
+            }
+        }
+    }
+}
+
 impl RealGitRepository {
     pub fn new(
         dotgit_path: &Path,
@@ -1087,6 +1106,17 @@ impl RealGitRepository {
             self.executor.clone(),
             self.is_trusted(),
         ))
+    }
+
+    fn edit_ref(&self, edit: RefEdit) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let args = edit.into_args();
+                git_binary?.run(&args).await?;
+                Ok(())
+            })
+            .boxed()
     }
 
     async fn any_git_binary_help_output(&self) -> SharedString {
@@ -2316,25 +2346,11 @@ impl GitRepository for RealGitRepository {
     }
 
     fn update_ref(&self, ref_name: String, commit: String) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> = vec!["update-ref".into(), ref_name.into(), commit.into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
+        self.edit_ref(RefEdit::Update { ref_name, commit })
     }
 
     fn delete_ref(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
-        let git_binary = self.git_binary();
-        self.executor
-            .spawn(async move {
-                let args: Vec<OsString> = vec!["update-ref".into(), "-d".into(), ref_name.into()];
-                git_binary?.run(&args).await?;
-                Ok(())
-            })
-            .boxed()
+        self.edit_ref(RefEdit::Delete { ref_name })
     }
 
     fn repair_worktrees(&self) -> BoxFuture<'_, Result<()>> {

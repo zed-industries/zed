@@ -50,10 +50,6 @@ actions!(
         NextThread,
         /// Activates the previous thread in sidebar order.
         PreviousThread,
-        /// Expands the thread list for the current project to show more threads.
-        ShowMoreThreads,
-        /// Collapses the thread list for the current project to show fewer threads.
-        ShowFewerThreads,
         /// Creates a new thread in the current workspace.
         NewThread,
         /// Moves the active project to a new window.
@@ -272,20 +268,17 @@ pub struct ProjectGroup {
     pub key: ProjectGroupKey,
     pub workspaces: Vec<Entity<Workspace>>,
     pub expanded: bool,
-    pub visible_thread_count: Option<usize>,
 }
 
 pub struct SerializedProjectGroupState {
     pub key: ProjectGroupKey,
     pub expanded: bool,
-    pub visible_thread_count: Option<usize>,
 }
 
 #[derive(Clone)]
 pub struct ProjectGroupState {
     pub key: ProjectGroupKey,
     pub expanded: bool,
-    pub visible_thread_count: Option<usize>,
 }
 
 pub struct MultiWorkspace {
@@ -641,7 +634,6 @@ impl MultiWorkspace {
             ProjectGroupState {
                 key,
                 expanded: true,
-                visible_thread_count: None,
             },
         );
     }
@@ -757,23 +749,14 @@ impl MultiWorkspace {
         _cx: &mut Context<Self>,
     ) {
         let mut restored: Vec<ProjectGroupState> = Vec::new();
-        for SerializedProjectGroupState {
-            key,
-            expanded,
-            visible_thread_count,
-        } in groups
-        {
+        for SerializedProjectGroupState { key, expanded } in groups {
             if key.path_list().paths().is_empty() {
                 continue;
             }
             if restored.iter().any(|group| group.key == key) {
                 continue;
             }
-            restored.push(ProjectGroupState {
-                key,
-                expanded,
-                visible_thread_count,
-            });
+            restored.push(ProjectGroupState { key, expanded });
         }
         for existing in std::mem::take(&mut self.project_groups) {
             if !restored.iter().any(|group| group.key == existing.key) {
@@ -802,7 +785,6 @@ impl MultiWorkspace {
                     .cloned()
                     .collect(),
                 expanded: group.expanded,
-                visible_thread_count: group.visible_thread_count,
             })
             .collect()
     }
@@ -827,12 +809,6 @@ impl MultiWorkspace {
     pub fn set_all_groups_expanded(&mut self, expanded: bool) {
         for group in &mut self.project_groups {
             group.expanded = expanded;
-        }
-    }
-
-    pub fn set_all_groups_visible_thread_count(&mut self, count: Option<usize>) {
-        for group in &mut self.project_groups {
-            group.visible_thread_count = count;
         }
     }
 
@@ -1329,7 +1305,6 @@ impl MultiWorkspace {
                                 crate::persistence::model::SerializedProjectGroup::from_group(
                                     &group.key,
                                     group.expanded,
-                                    group.visible_thread_count,
                                 )
                             })
                             .collect::<Vec<_>>(),
@@ -1471,7 +1446,6 @@ impl MultiWorkspace {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test_expand_all_groups(&mut self) {
         self.set_all_groups_expanded(true);
-        self.set_all_groups_visible_thread_count(Some(10_000));
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1527,7 +1501,6 @@ impl MultiWorkspace {
         self.project_groups.push(ProjectGroupState {
             key: group.key,
             expanded: group.expanded,
-            visible_thread_count: group.visible_thread_count,
         });
     }
 

@@ -145,11 +145,6 @@ fn assert_remote_project_integration_sidebar_state(
                     title
                 );
             }
-            ListEntry::ViewMore { .. } => {
-                panic!(
-                    "unexpected `View More` entry while simulating remote project integration flicker"
-                );
-            }
         }
     }
 
@@ -427,15 +422,6 @@ fn visible_entries_as_strings(
                             format!("  {title}{worktree}{live}{status_str}{notified}{selected}")
                         }
                     }
-                    ListEntry::ViewMore {
-                        is_fully_expanded, ..
-                    } => {
-                        if *is_fully_expanded {
-                            format!("  - Collapse{}", selected)
-                        } else {
-                            format!("  + View More{}", selected)
-                        }
-                    }
                 }
             })
             .collect()
@@ -453,7 +439,7 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
 
     let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
 
-    // Set a custom width, collapse the group, and expand "View More".
+    // Set a custom width and collapse the group.
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.set_width(Some(px(420.0)), cx);
         sidebar.toggle_collapse(&project_group_key, window, cx);
@@ -636,101 +622,6 @@ async fn test_workspace_lifecycle(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_view_more_pagination(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-
-    save_n_test_threads(12, &project, cx).await;
-
-    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
-        vec![
-            //
-            "v [my-project]",
-            "  Thread 12",
-            "  Thread 11",
-            "  Thread 10",
-            "  Thread 9",
-            "  Thread 8",
-            "  + View More",
-        ]
-    );
-}
-
-#[gpui::test]
-async fn test_view_more_batched_expansion(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-
-    // Create 17 threads: initially shows 5, then 10, then 15, then all 17 with Collapse
-    save_n_test_threads(17, &project, cx).await;
-
-    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
-
-    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
-    cx.run_until_parked();
-
-    // Initially shows 5 threads + View More
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert_eq!(entries.len(), 7); // header + 5 threads + View More
-    assert!(entries.iter().any(|e| e.contains("View More")));
-
-    // Focus and navigate to View More, then confirm to expand by one batch
-    focus_sidebar(&sidebar, cx);
-    for _ in 0..7 {
-        cx.dispatch_action(SelectNext);
-    }
-    cx.dispatch_action(Confirm);
-    cx.run_until_parked();
-
-    // Now shows 10 threads + View More
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert_eq!(entries.len(), 12); // header + 10 threads + View More
-    assert!(entries.iter().any(|e| e.contains("View More")));
-
-    // Expand again by one batch
-    sidebar.update_in(cx, |s, _window, cx| {
-        s.expand_thread_group(&project_group_key, cx);
-    });
-    cx.run_until_parked();
-
-    // Now shows 15 threads + View More
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert_eq!(entries.len(), 17); // header + 15 threads + View More
-    assert!(entries.iter().any(|e| e.contains("View More")));
-
-    // Expand one more time - should show all 17 threads with Collapse button
-    sidebar.update_in(cx, |s, _window, cx| {
-        s.expand_thread_group(&project_group_key, cx);
-    });
-    cx.run_until_parked();
-
-    // All 17 threads shown with Collapse button
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert_eq!(entries.len(), 19); // header + 17 threads + Collapse
-    assert!(!entries.iter().any(|e| e.contains("View More")));
-    assert!(entries.iter().any(|e| e.contains("Collapse")));
-
-    // Click collapse - should go back to showing 5 threads
-    sidebar.update_in(cx, |s, _window, cx| {
-        s.reset_thread_group_expansion(&project_group_key, cx);
-    });
-    cx.run_until_parked();
-
-    // Back to initial state: 5 threads + View More
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert_eq!(entries.len(), 7); // header + 5 threads + View More
-    assert!(entries.iter().any(|e| e.contains("View More")));
-}
-
-#[gpui::test]
 async fn test_collapse_and_expand_group(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -853,7 +744,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             key: ProjectGroupKey::new(None, collapsed_path.clone()),
             workspaces: Vec::new(),
             expanded: false,
-            visible_thread_count: None,
         });
     });
 
@@ -992,11 +882,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
             }),
-            // View More entry
-            ListEntry::ViewMore {
-                key: ProjectGroupKey::new(None, expanded_path.clone()),
-                is_fully_expanded: false,
-            },
             // Collapsed project header
             ListEntry::ProjectHeader {
                 key: ProjectGroupKey::new(None, collapsed_path.clone()),
@@ -1023,14 +908,13 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
             "  Error thread * (error)",
             "  Waiting thread (waiting)",
             "  Notified thread * (!)",
-            "  + View More",
             "> [collapsed-project]",
         ]
     );
 
     // Move selection to the collapsed header
     sidebar.update_in(cx, |s, _window, _cx| {
-        s.selection = Some(7);
+        s.selection = Some(6);
     });
 
     assert_eq!(
@@ -1217,40 +1101,6 @@ async fn test_keyboard_confirm_on_project_header_toggles_collapse(cx: &mut TestA
             "  Thread 1",
         ]
     );
-}
-
-#[gpui::test]
-async fn test_keyboard_confirm_on_view_more_expands(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-
-    save_n_test_threads(8, &project, cx).await;
-    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
-    cx.run_until_parked();
-
-    // Should show header + 5 threads + "View More"
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert_eq!(entries.len(), 7);
-    assert!(entries.iter().any(|e| e.contains("View More")));
-
-    // Focus sidebar (selection starts at None), then navigate down to the "View More" entry (index 6)
-    focus_sidebar(&sidebar, cx);
-    for _ in 0..7 {
-        cx.dispatch_action(SelectNext);
-    }
-    assert_eq!(sidebar.read_with(cx, |s, _| s.selection), Some(6));
-
-    // Confirm on "View More" to expand
-    cx.dispatch_action(Confirm);
-    cx.run_until_parked();
-
-    // All 8 threads should now be visible with a "Collapse" button
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert_eq!(entries.len(), 10); // header + 8 threads + Collapse button
-    assert!(!entries.iter().any(|e| e.contains("View More")));
-    assert!(entries.iter().any(|e| e.contains("Collapse")));
 }
 
 #[gpui::test]
@@ -1984,60 +1834,6 @@ async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_search_finds_threads_hidden_behind_view_more(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let sidebar = setup_sidebar(&multi_workspace, cx);
-
-    // Create 8 threads. The oldest one has a unique name and will be
-    // behind View More (only 5 shown by default).
-    for i in 0..8u32 {
-        let title = if i == 0 {
-            "Hidden gem thread".to_string()
-        } else {
-            format!("Thread {}", i + 1)
-        };
-        save_thread_metadata(
-            acp::SessionId::new(Arc::from(format!("thread-{}", i))),
-            Some(title.into()),
-            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, i).unwrap(),
-            None,
-            &project,
-            cx,
-        )
-    }
-    cx.run_until_parked();
-
-    // Confirm the thread is not visible and View More is shown.
-    let entries = visible_entries_as_strings(&sidebar, cx);
-    assert!(
-        entries.iter().any(|e| e.contains("View More")),
-        "should have View More button"
-    );
-    assert!(
-        !entries.iter().any(|e| e.contains("Hidden gem")),
-        "Hidden gem should be behind View More"
-    );
-
-    // User searches for the hidden thread — it appears, and View More is gone.
-    type_in_search(&sidebar, "hidden gem", cx);
-    let filtered = visible_entries_as_strings(&sidebar, cx);
-    assert_eq!(
-        filtered,
-        vec![
-            //
-            "v [my-project]",
-            "  Hidden gem thread  <== selected",
-        ]
-    );
-    assert!(
-        !filtered.iter().any(|e| e.contains("View More")),
-        "View More should not appear when filtering"
-    );
-}
-
-#[gpui::test]
 async fn test_search_finds_threads_inside_collapsed_groups(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -2341,7 +2137,6 @@ async fn test_confirm_on_historical_thread_in_new_project_group_opens_real_threa
             key: project_b_key.clone(),
             workspaces: Vec::new(),
             expanded: true,
-            visible_thread_count: None,
         });
     });
 
@@ -3942,9 +3737,6 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                         title, worktree_name
                     );
                 }
-                ListEntry::ViewMore { .. } => {
-                    panic!("unexpected `View More` entry while opening linked worktree thread");
-                }
             }
         }
 
@@ -4757,7 +4549,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     .await;
 
     fs.insert_tree(
-        "/wt-feature-a",
+        "/worktrees/project/feature-a/project",
         serde_json::json!({
             ".git": "gitdir: /project/.git/worktrees/feature-a",
             "src": {},
@@ -4769,7 +4561,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
         Path::new("/project/.git"),
         false,
         git::repository::Worktree {
-            path: PathBuf::from("/wt-feature-a"),
+            path: PathBuf::from("/worktrees/project/feature-a/project"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
@@ -4781,7 +4573,12 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+    let worktree_project = project::Project::test(
+        fs.clone(),
+        ["/worktrees/project/feature-a/project".as_ref()],
+        cx,
+    )
+    .await;
 
     main_project
         .update(cx, |p, cx| p.git_scans_complete(cx))
@@ -4851,7 +4648,8 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
 
     // The linked worktree checkout directory should also be removed from disk.
     assert!(
-        !fs.is_dir(Path::new("/wt-feature-a")).await,
+        !fs.is_dir(Path::new("/worktrees/project/feature-a/project"))
+            .await,
         "linked worktree directory should be removed from disk after archiving its last thread"
     );
 
@@ -4885,7 +4683,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
     });
     assert_eq!(
         archived_paths.paths(),
-        &[PathBuf::from("/wt-feature-a")],
+        &[PathBuf::from("/worktrees/project/feature-a/project")],
         "archived thread must retain its folder_paths for restore"
     );
 }
@@ -10100,7 +9898,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
     .await;
 
     fs.insert_tree(
-        "/wt-feature-a",
+        "/worktrees/project/feature-a/project",
         serde_json::json!({
             ".git": "gitdir: /project/.git/worktrees/feature-a",
             "src": {
@@ -10114,7 +9912,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
         Path::new("/project/.git"),
         false,
         git::repository::Worktree {
-            path: PathBuf::from("/wt-feature-a"),
+            path: PathBuf::from("/worktrees/project/feature-a/project"),
             ref_name: Some("refs/heads/feature-a".into()),
             sha: "abc".into(),
             is_main: false,
@@ -10126,7 +9924,12 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
     cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
 
     let main_project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-    let worktree_project = project::Project::test(fs.clone(), ["/wt-feature-a".as_ref()], cx).await;
+    let worktree_project = project::Project::test(
+        fs.clone(),
+        ["/worktrees/project/feature-a/project".as_ref()],
+        cx,
+    )
+    .await;
 
     main_project
         .update(cx, |p, cx| p.git_scans_complete(cx))
@@ -10153,7 +9956,7 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
         "worktree-thread",
         "Worktree Thread",
         PathList::new(&[
-            PathBuf::from("/wt-feature-a"),
+            PathBuf::from("/worktrees/project/feature-a/project"),
             PathBuf::from("/nonexistent"),
         ]),
         PathList::new(&[PathBuf::from("/project"), PathBuf::from("/nonexistent")]),
@@ -10212,7 +10015,8 @@ async fn test_archive_removes_worktree_even_when_workspace_paths_diverge(cx: &mu
 
     // The linked worktree directory should be removed from disk.
     assert!(
-        !fs.is_dir(Path::new("/wt-feature-a")).await,
+        !fs.is_dir(Path::new("/worktrees/project/feature-a/project"))
+            .await,
         "linked worktree directory should be removed from disk"
     );
 }
@@ -10245,7 +10049,7 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
     .await;
 
     fs.insert_tree(
-        "/wt-feature-b",
+        "/worktrees/main-repo/feature-b/main-repo",
         serde_json::json!({
             ".git": "gitdir: /main-repo/.git/worktrees/feature-b",
             "src": {
@@ -10259,7 +10063,7 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
         Path::new("/main-repo/.git"),
         false,
         git::repository::Worktree {
-            path: PathBuf::from("/wt-feature-b"),
+            path: PathBuf::from("/worktrees/main-repo/feature-b/main-repo"),
             ref_name: Some("refs/heads/feature-b".into()),
             sha: "def".into(),
             is_main: false,
@@ -10274,7 +10078,10 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
     // linked worktree — this makes it a "mixed" workspace.
     let mixed_project = project::Project::test(
         fs.clone(),
-        ["/main-repo".as_ref(), "/wt-feature-b".as_ref()],
+        [
+            "/main-repo".as_ref(),
+            "/worktrees/main-repo/feature-b/main-repo".as_ref(),
+        ],
         cx,
     )
     .await;
@@ -10301,15 +10108,15 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
 
     let main_repo_wt_id = worktree_ids
         .iter()
-        .find(|(_, path)| path.ends_with("main-repo"))
+        .find(|(_, path)| path.as_ref() == Path::new("/main-repo"))
         .map(|(id, _)| *id)
         .expect("should find main-repo worktree");
 
     let feature_b_wt_id = worktree_ids
         .iter()
-        .find(|(_, path)| path.ends_with("wt-feature-b"))
+        .find(|(_, path)| path.as_ref() == Path::new("/worktrees/main-repo/feature-b/main-repo"))
         .map(|(id, _)| *id)
-        .expect("should find wt-feature-b worktree");
+        .expect("should find feature-b worktree");
 
     // Open files from both worktrees.
     let main_repo_path = project::ProjectPath {
@@ -10366,7 +10173,7 @@ async fn test_archive_mixed_workspace_closes_only_archived_worktree_items(cx: &m
         "feature-b-thread",
         "Feature B Thread",
         PathList::new(&[
-            PathBuf::from("/wt-feature-b"),
+            PathBuf::from("/worktrees/main-repo/feature-b/main-repo"),
             PathBuf::from("/nonexistent"),
         ]),
         PathList::new(&[PathBuf::from("/main-repo"), PathBuf::from("/nonexistent")]),

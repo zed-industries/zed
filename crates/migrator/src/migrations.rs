@@ -334,9 +334,3 @@ pub(crate) mod m_2026_04_10 {
 
     pub(crate) use settings::rename_web_search_to_search_web;
 }
-
-pub(crate) mod m_2026_04_15 {
-    mod settings;
-
-    pub(crate) use settings::remove_settings_from_http_context_servers;
-}

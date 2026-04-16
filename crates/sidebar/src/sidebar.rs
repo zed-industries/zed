@@ -12,8 +12,9 @@ use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
 };
 use agent_ui::{
-    AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, DEFAULT_THREAD_TITLE, NewThread,
-    RemoveSelectedThread, ThreadId, ThreadImportModal,
+    AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, CrossChannelImportOnboarding,
+    DEFAULT_THREAD_TITLE, NewThread, RemoveSelectedThread, ThreadId, ThreadImportModal,
+    channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
 use editor::Editor;
@@ -48,8 +49,8 @@ use util::path_list::PathList;
 use workspace::{
     CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, NextProject,
     NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey, SaveIntent,
-    ShowFewerThreads, ShowMoreThreads, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
-    ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
+    Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar, Workspace,
+    notifications::NotificationId, sidebar_side_context_menu,
 };
 
 use zed_actions::OpenRecent;
@@ -83,7 +84,6 @@ gpui::actions!(
 const DEFAULT_WIDTH: Pixels = px(300.0);
 const MIN_WIDTH: Pixels = px(200.0);
 const MAX_WIDTH: Pixels = px(800.0);
-const DEFAULT_THREADS_SHOWN: usize = 5;
 
 #[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum SerializedSidebarView {
@@ -227,10 +227,6 @@ enum ListEntry {
         has_threads: bool,
     },
     Thread(ThreadEntry),
-    ViewMore {
-        key: ProjectGroupKey,
-        is_fully_expanded: bool,
-    },
 }
 
 #[cfg(test)]
@@ -255,7 +251,6 @@ impl ListEntry {
             ListEntry::ProjectHeader { key, .. } => multi_workspace
                 .workspaces_for_project_group(key, cx)
                 .unwrap_or_default(),
-            ListEntry::ViewMore { .. } => Vec::new(),
         }
     }
 }
@@ -376,6 +371,12 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_ix: Option<usize>,
     _subscriptions: Vec<gpui::Subscription>,
+    /// For the thread import banners, if there is just one we show "Import
+    /// Threads" but if we are showing both the external agents and other
+    /// channels import banners then we change the text to disambiguate the
+    /// buttons. This field tracks whether we were using verbose labels so they
+    /// can stay stable after dismissing one of the banners.
+    import_banners_use_verbose_labels: Option<bool>,
 }
 
 impl Sidebar {
@@ -464,6 +465,7 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_ix: None,
             _subscriptions: Vec::new(),
+            import_banners_use_verbose_labels: None,
         }
     }
 
@@ -482,38 +484,11 @@ impl Sidebar {
             .unwrap_or(false)
     }
 
-    fn group_extra_batches(&self, key: &ProjectGroupKey, cx: &App) -> usize {
-        self.multi_workspace
-            .upgrade()
-            .and_then(|mw| {
-                mw.read(cx)
-                    .group_state_by_key(key)
-                    .and_then(|state| state.visible_thread_count)
-            })
-            .unwrap_or(0)
-    }
-
     fn set_group_expanded(&self, key: &ProjectGroupKey, expanded: bool, cx: &mut Context<Self>) {
         if let Some(mw) = self.multi_workspace.upgrade() {
             mw.update(cx, |mw, cx| {
                 if let Some(state) = mw.group_state_by_key_mut(key) {
                     state.expanded = expanded;
-                }
-                mw.serialize(cx);
-            });
-        }
-    }
-
-    fn set_group_visible_thread_count(
-        &self,
-        key: &ProjectGroupKey,
-        count: Option<usize>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(mw) = self.multi_workspace.upgrade() {
-            mw.update(cx, |mw, cx| {
-                if let Some(state) = mw.group_state_by_key_mut(key) {
-                    state.visible_thread_count = count;
                 }
                 mw.serialize(cx);
             });
@@ -1250,54 +1225,12 @@ impl Sidebar {
                     continue;
                 }
 
-                let total = threads.len();
-
-                let extra_batches = self.group_extra_batches(&group_key, cx);
-                let threads_to_show =
-                    DEFAULT_THREADS_SHOWN + (extra_batches * DEFAULT_THREADS_SHOWN);
-                let count = threads_to_show.min(total);
-
-                let mut promoted_threads: HashSet<agent_ui::ThreadId> = HashSet::new();
-
-                // Build visible entries in a single pass. Threads within
-                // the cutoff are always shown. Threads beyond it are shown
-                // only if they should be promoted (running, waiting, or
-                // focused)
-                for (index, thread) in threads.into_iter().enumerate() {
-                    let is_hidden = index >= count;
-
-                    if is_hidden {
-                        let is_notified = notified_threads.contains(&thread.metadata.thread_id);
-                        let is_promoted = thread.status == AgentThreadStatus::Running
-                            || thread.status == AgentThreadStatus::WaitingForConfirmation
-                            || is_notified
-                            || self.active_entry.as_ref().is_some_and(|active| {
-                                active.matches_entry(&ListEntry::Thread(thread.clone()))
-                            });
-                        if is_promoted {
-                            promoted_threads.insert(thread.metadata.thread_id);
-                        }
-                        let is_in_promoted = promoted_threads.contains(&thread.metadata.thread_id);
-                        if !is_in_promoted {
-                            continue;
-                        }
-                    }
-
+                for thread in threads {
                     if let Some(sid) = &thread.metadata.session_id {
                         current_session_ids.insert(sid.clone());
                     }
                     current_thread_ids.insert(thread.metadata.thread_id);
                     entries.push(thread.into());
-                }
-
-                let visible = count + promoted_threads.len();
-                let is_fully_expanded = visible >= total;
-
-                if total > DEFAULT_THREADS_SHOWN {
-                    entries.push(ListEntry::ViewMore {
-                        key: group_key.clone(),
-                        is_fully_expanded,
-                    });
                 }
             }
         }
@@ -1414,10 +1347,6 @@ impl Sidebar {
                 )
             }
             ListEntry::Thread(thread) => self.render_thread(ix, thread, is_active, is_selected, cx),
-            ListEntry::ViewMore {
-                key,
-                is_fully_expanded,
-            } => self.render_view_more(ix, key, *is_fully_expanded, is_selected, cx),
         };
 
         if is_group_header_after_first {
@@ -1485,8 +1414,6 @@ impl Sidebar {
         };
 
         let key_for_toggle = key.clone();
-        let key_for_collapse = key.clone();
-        let view_more_expanded = self.group_extra_batches(key, cx) > 0;
 
         let label = if highlight_positions.is_empty() {
             Label::new(label.clone())
@@ -1631,30 +1558,6 @@ impl Sidebar {
                                 }
                             },
                         ))
-                    })
-                    .when(has_threads && view_more_expanded && !is_collapsed, |this| {
-                        this.child(
-                            IconButton::new(
-                                SharedString::from(format!(
-                                    "{id_prefix}project-header-collapse-{ix}",
-                                )),
-                                IconName::ListCollapse,
-                            )
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Show Fewer Threads"))
-                            .on_click(cx.listener({
-                                let key_for_collapse = key_for_collapse.clone();
-                                move |this, _, _window, cx| {
-                                    this.selection = None;
-                                    this.set_group_visible_thread_count(
-                                        &key_for_collapse,
-                                        None,
-                                        cx,
-                                    );
-                                    this.update_entries(cx);
-                                }
-                            })),
-                        )
                     })
                     .child(self.render_project_header_ellipsis_menu(ix, id_prefix, key, cx)),
             )
@@ -2144,18 +2047,6 @@ impl Sidebar {
                             cx,
                         );
                     }
-                }
-            }
-            ListEntry::ViewMore {
-                key,
-                is_fully_expanded,
-                ..
-            } => {
-                let key = key.clone();
-                if *is_fully_expanded {
-                    self.reset_thread_group_expansion(&key, cx);
-                } else {
-                    self.expand_thread_group(&key, cx);
                 }
             }
         }
@@ -2718,7 +2609,7 @@ impl Sidebar {
                     self.update_entries(cx);
                 }
             }
-            Some(ListEntry::Thread(_) | ListEntry::ViewMore { .. }) => {
+            Some(ListEntry::Thread(_)) => {
                 for i in (0..ix).rev() {
                     if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(i)
                     {
@@ -2745,7 +2636,7 @@ impl Sidebar {
         // Find the group header for the current selection.
         let header_ix = match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { .. }) => Some(ix),
-            Some(ListEntry::Thread(_) | ListEntry::ViewMore { .. }) => (0..ix).rev().find(|&i| {
+            Some(ListEntry::Thread(_)) => (0..ix).rev().find(|&i| {
                 matches!(
                     self.contents.entries.get(i),
                     Some(ListEntry::ProjectHeader { .. })
@@ -3448,7 +3339,6 @@ impl Sidebar {
                         timestamp,
                     })
                 }
-                _ => None,
             })
             .collect();
 
@@ -3855,38 +3745,6 @@ impl Sidebar {
             .anchor(gpui::Corner::BottomRight)
     }
 
-    fn render_view_more(
-        &self,
-        ix: usize,
-        key: &ProjectGroupKey,
-        is_fully_expanded: bool,
-        is_selected: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let key = key.clone();
-        let id = SharedString::from(format!("view-more-{}", ix));
-
-        let label: SharedString = if is_fully_expanded {
-            "Collapse".into()
-        } else {
-            "View More".into()
-        };
-
-        ThreadItem::new(id, label)
-            .focused(is_selected)
-            .icon_visible(false)
-            .title_label_color(Color::Muted)
-            .on_click(cx.listener(move |this, _, _window, cx| {
-                this.selection = None;
-                if is_fully_expanded {
-                    this.reset_thread_group_expansion(&key, cx);
-                } else {
-                    this.expand_thread_group(&key, cx);
-                }
-            }))
-            .into_any_element()
-    }
-
     fn new_thread_in_group(
         &mut self,
         _: &NewThreadInGroup,
@@ -3943,7 +3801,7 @@ impl Sidebar {
         let ix = self.selection?;
         match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { key, .. }) => Some(key.clone()),
-            Some(ListEntry::Thread(_) | ListEntry::ViewMore { .. }) => {
+            Some(ListEntry::Thread(_)) => {
                 (0..ix)
                     .rev()
                     .find_map(|i| match self.contents.entries.get(i) {
@@ -4118,59 +3976,6 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         self.cycle_thread_impl(false, window, cx);
-    }
-
-    fn expand_thread_group(&mut self, project_group_key: &ProjectGroupKey, cx: &mut Context<Self>) {
-        let current = self.group_extra_batches(project_group_key, cx);
-        self.set_group_visible_thread_count(project_group_key, Some(current + 1), cx);
-        self.update_entries(cx);
-    }
-
-    fn reset_thread_group_expansion(
-        &mut self,
-        project_group_key: &ProjectGroupKey,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_group_visible_thread_count(project_group_key, None, cx);
-        self.update_entries(cx);
-    }
-
-    fn collapse_thread_group(
-        &mut self,
-        project_group_key: &ProjectGroupKey,
-        cx: &mut Context<Self>,
-    ) {
-        let batches = self.group_extra_batches(project_group_key, cx);
-        match batches {
-            0 => return,
-            1 => self.set_group_visible_thread_count(project_group_key, None, cx),
-            _ => self.set_group_visible_thread_count(project_group_key, Some(batches - 1), cx),
-        }
-        self.update_entries(cx);
-    }
-
-    fn on_show_more_threads(
-        &mut self,
-        _: &ShowMoreThreads,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(active_key) = self.active_project_group_key(cx) else {
-            return;
-        };
-        self.expand_thread_group(&active_key, cx);
-    }
-
-    fn on_show_fewer_threads(
-        &mut self,
-        _: &ShowFewerThreads,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(active_key) = self.active_project_group_key(cx) else {
-            return;
-        };
-        self.collapse_thread_group(&active_key, cx);
     }
 
     fn render_no_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4481,51 +4286,72 @@ impl Sidebar {
         has_external_agents && !AcpThreadImportOnboarding::dismissed(cx)
     }
 
-    fn render_acp_import_onboarding(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let description = "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client.";
+    fn render_acp_import_onboarding(
+        &mut self,
+        verbose_labels: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let on_import = cx.listener(|this, _, window, cx| {
+            this.show_archive(window, cx);
+            this.show_thread_import_modal(window, cx);
+        });
+        render_import_onboarding_banner(
+            "acp",
+            "Looking for threads from external agents?",
+            "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client.",
+            if verbose_labels {
+                "Import Threads from External Agents"
+            } else {
+                "Import Threads"
+            },
+            |_, _window, cx| AcpThreadImportOnboarding::dismiss(cx),
+            on_import,
+            cx,
+        )
+    }
 
-        let bg = cx.theme().colors().text_accent;
+    fn should_render_cross_channel_import_onboarding(&self, cx: &App) -> bool {
+        !CrossChannelImportOnboarding::dismissed(cx) && !channels_with_threads(cx).is_empty()
+    }
 
-        v_flex()
-            .min_w_0()
-            .w_full()
-            .p_2()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .bg(linear_gradient(
-                360.,
-                linear_color_stop(bg.opacity(0.06), 1.),
-                linear_color_stop(bg.opacity(0.), 0.),
-            ))
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .w_full()
-                    .gap_1()
-                    .justify_between()
-                    .child(Label::new("Looking for threads from external agents?"))
-                    .child(
-                        IconButton::new("close-onboarding", IconName::Close)
-                            .icon_size(IconSize::Small)
-                            .on_click(|_, _window, cx| AcpThreadImportOnboarding::dismiss(cx)),
-                    ),
-            )
-            .child(Label::new(description).color(Color::Muted).mb_2())
-            .child(
-                Button::new("import-acp", "Import Threads")
-                    .full_width()
-                    .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
-                    .label_size(LabelSize::Small)
-                    .start_icon(
-                        Icon::new(IconName::ThreadImport)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.show_archive(window, cx);
-                        this.show_thread_import_modal(window, cx);
-                    })),
-            )
+    fn render_cross_channel_import_onboarding(
+        &mut self,
+        verbose_labels: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let channels = channels_with_threads(cx);
+        let channel_names = channels
+            .iter()
+            .map(|channel| channel.display_name())
+            .collect::<Vec<_>>()
+            .join(" and ");
+
+        let description = format!(
+            "Import threads from {} to continue where you left off.",
+            channel_names
+        );
+
+        let on_import = cx.listener(|this, _, _window, cx| {
+            CrossChannelImportOnboarding::dismiss(cx);
+            if let Some(workspace) = this.active_workspace(cx) {
+                workspace.update(cx, |workspace, cx| {
+                    import_threads_from_other_channels(workspace, cx);
+                });
+            }
+        });
+        render_import_onboarding_banner(
+            "channel",
+            "Threads found from other channels",
+            description,
+            if verbose_labels {
+                "Import Threads from Other Channels"
+            } else {
+                "Import Threads"
+            },
+            |_, _window, cx| CrossChannelImportOnboarding::dismiss(cx),
+            on_import,
+            cx,
+        )
     }
 
     fn toggle_archive(&mut self, _: &ViewAllThreads, window: &mut Window, cx: &mut Context<Self>) {
@@ -4604,6 +4430,66 @@ impl Sidebar {
         self.serialize(cx);
         cx.notify();
     }
+}
+
+fn render_import_onboarding_banner(
+    id: impl Into<SharedString>,
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    button_label: impl Into<SharedString>,
+    on_dismiss: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_import: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> impl IntoElement {
+    let id: SharedString = id.into();
+    let bg = cx.theme().colors().text_accent;
+
+    v_flex()
+        .min_w_0()
+        .w_full()
+        .p_2()
+        .border_t_1()
+        .border_color(cx.theme().colors().border)
+        .bg(linear_gradient(
+            360.,
+            linear_color_stop(bg.opacity(0.06), 1.),
+            linear_color_stop(bg.opacity(0.), 0.),
+        ))
+        .child(
+            h_flex()
+                .min_w_0()
+                .w_full()
+                .gap_1()
+                .justify_between()
+                .flex_wrap()
+                .child(Label::new(title).size(LabelSize::Small))
+                .child(
+                    IconButton::new(
+                        SharedString::from(format!("close-{id}-onboarding")),
+                        IconName::Close,
+                    )
+                    .icon_size(IconSize::Small)
+                    .on_click(on_dismiss),
+                ),
+        )
+        .child(
+            Label::new(description)
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+                .mb_2(),
+        )
+        .child(
+            Button::new(SharedString::from(format!("import-{id}")), button_label)
+                .full_width()
+                .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
+                .label_size(LabelSize::Small)
+                .start_icon(
+                    Icon::new(IconName::ThreadImport)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .on_click(on_import),
+        )
 }
 
 impl WorkspaceSidebar for Sidebar {
@@ -4729,8 +4615,6 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::on_previous_project))
             .on_action(cx.listener(Self::on_next_thread))
             .on_action(cx.listener(Self::on_previous_thread))
-            .on_action(cx.listener(Self::on_show_more_threads))
-            .on_action(cx.listener(Self::on_show_fewer_threads))
             .on_action(cx.listener(|this, _: &OpenRecent, window, cx| {
                 this.recent_projects_popover_handle.toggle(window, cx);
             }))
@@ -4771,8 +4655,20 @@ impl Render for Sidebar {
                     }),
                 SidebarView::Archive(archive_view) => this.child(archive_view.clone()),
             })
-            .when(self.should_render_acp_import_onboarding(cx), |this| {
-                this.child(self.render_acp_import_onboarding(cx))
+            .map(|this| {
+                let show_acp = self.should_render_acp_import_onboarding(cx);
+                let show_cross_channel = self.should_render_cross_channel_import_onboarding(cx);
+
+                let verbose = *self
+                    .import_banners_use_verbose_labels
+                    .get_or_insert(show_acp && show_cross_channel);
+
+                this.when(show_acp, |this| {
+                    this.child(self.render_acp_import_onboarding(verbose, cx))
+                })
+                .when(show_cross_channel, |this| {
+                    this.child(self.render_cross_channel_import_onboarding(verbose, cx))
+                })
             })
             .child(self.render_sidebar_bottom_bar(cx))
     }
