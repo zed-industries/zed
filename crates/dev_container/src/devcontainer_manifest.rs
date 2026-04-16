@@ -224,10 +224,16 @@ impl DevContainerManifest {
             }
             DevContainerBuildType::DockerCompose => {
                 let Ok(docker_compose_manifest) = self.docker_compose_manifest().await else {
+                    log::error!("No docker compose manifest found");
                     return None;
                 };
+                log::error!(
+                    "What is the compose manifest: {:?}",
+                    &docker_compose_manifest
+                );
                 let Ok((_, main_service)) = find_primary_service(&docker_compose_manifest, self)
                 else {
+                    log::error!("Could not find primary service");
                     return None;
                 };
                 log::error!("confirmed docker compose. Main service: {:?}", main_service);
