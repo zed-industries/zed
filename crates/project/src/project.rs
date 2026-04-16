@@ -6335,6 +6335,7 @@ impl<'a> Iterator for PathMatchCandidateSetNucleoIter<'a> {
             .map(|entry| fuzzy_nucleo::PathMatchCandidate {
                 is_dir: entry.kind.is_dir(),
                 path: &entry.path,
+                char_bag: entry.char_bag,
             })
     }
 }
