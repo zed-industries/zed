@@ -1154,7 +1154,7 @@ impl ThreadMetadataStore {
         };
 
         let thread_ref = thread.read(cx);
-        if thread_ref.is_draft_thread() {
+        if thread_ref.is_draft_thread() || thread_ref.project().read(cx).is_via_collab() {
             return;
         }
 
@@ -3804,6 +3804,60 @@ mod tests {
                 &main_paths_before,
                 "archived thread must retain its main worktree paths after \
                  worktree removal + subsequent thread event"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_collab_guest_threads_not_saved_to_metadata_store(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [Path::new("/project-a")], cx).await;
+
+        let (panel, mut vcx) = setup_panel_with_project(project.clone(), cx);
+        crate::test_support::open_thread_with_connection(
+            &panel,
+            StubAgentConnection::new(),
+            &mut vcx,
+        );
+        let thread = panel.read_with(&vcx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+        let thread_id = crate::test_support::active_thread_id(&panel, &vcx);
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "hello".into(), cx);
+            thread.set_title("Thread".into(), cx).detach();
+        });
+        vcx.run_until_parked();
+
+        // Confirm the thread is in the store while the project is local.
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            assert!(
+                store.read(cx).entry(thread_id).is_some(),
+                "thread must be in the store while the project is local"
+            );
+        });
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.delete(thread_id, cx);
+            });
+        });
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+
+        thread.update_in(&mut vcx, |thread, _window, cx| {
+            thread.push_user_content_block(None, "more content".into(), cx);
+        });
+        vcx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            assert!(
+                store.read(cx).entry(thread_id).is_none(),
+                "threads must not be persisted while the project is a collab guest session"
             );
         });
     }
