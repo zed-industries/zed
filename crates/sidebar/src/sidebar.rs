@@ -4517,7 +4517,7 @@ fn render_import_onboarding_banner(
                 .style(ButtonStyle::OutlinedCustom(cx.theme().colors().border))
                 .label_size(LabelSize::Small)
                 .start_icon(
-                    Icon::new(IconName::ThreadImport)
+                    Icon::new(IconName::Download)
                         .size(IconSize::Small)
                         .color(Color::Muted),
                 )
