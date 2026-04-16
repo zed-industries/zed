@@ -1475,6 +1475,7 @@
       "enter": "notebook::EnterEditMode",
       "down": "menu::SelectNext",
       "up": "menu::SelectPrevious",
+      "ctrl-backspace": "notebook::DeleteCell",
     },
   },
   {

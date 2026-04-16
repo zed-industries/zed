@@ -814,6 +814,8 @@ pub mod notebook {
             AddMarkdownBlock,
             /// Adds a new code cell.
             AddCodeBlock,
+            /// Deletes the currently selected cell.
+            DeleteCell,
             /// Restarts the kernel.
             RestartKernel,
             /// Interrupts the current execution.

@@ -308,6 +308,44 @@ pub trait RenderableCell: Render {
 
     fn cell_position(&self) -> Option<&CellPosition>;
     fn set_cell_position(&mut self, position: CellPosition) -> &mut Self;
+
+    /// Wrap a cell's body (gutter + content) in the standard horizontal chrome
+    /// (rounded selection background, items-start alignment, base spacing).
+    /// Used by every cell type — extracting it here keeps the visual styling
+    /// consistent and avoids the per-cell duplication called out by the prior
+    /// `// TODO: Move base cell render into trait impl` comments.
+    fn cell_chrome(
+        &mut self,
+        gutter: gpui::AnyElement,
+        body: gpui::AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        h_flex()
+            .w_full()
+            .pr_6()
+            .rounded_xs()
+            .items_start()
+            .gap(DynamicSpacing::Base08.rems(cx))
+            .bg(self.selected_bg_color(window, cx))
+            .child(gutter)
+            .child(body)
+    }
+
+    /// Wrap the chrome row(s) with the position-aware top/bottom spacers used at
+    /// the first and last cells in the notebook.
+    fn cell_outer<E: IntoElement>(
+        &mut self,
+        inner: E,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        v_flex()
+            .size_full()
+            .children(self.cell_position_spacer(true, window, cx))
+            .child(inner)
+            .children(self.cell_position_spacer(false, window, cx))
+    }
 }
 
 pub trait RunnableCell: RenderableCell {
@@ -518,76 +556,46 @@ impl RenderableCell for MarkdownCell {
 
 impl Render for MarkdownCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // If editing, show the editor
-        if self.editing {
-            return v_flex()
-                .size_full()
-                .children(self.cell_position_spacer(true, window, cx))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .pr_6()
-                        .rounded_xs()
-                        .items_start()
-                        .gap(DynamicSpacing::Base08.rems(cx))
-                        .bg(self.selected_bg_color(window, cx))
-                        .child(self.gutter(window, cx))
-                        .child(
-                            div()
-                                .flex_1()
-                                .p_3()
-                                .bg(cx.theme().colors().editor_background)
-                                .rounded_sm()
-                                .child(self.editor.clone())
-                                .on_mouse_down(
-                                    gpui::MouseButton::Left,
-                                    cx.listener(|_this, _event, _window, _cx| {
-                                        // Prevent the click from propagating
-                                    }),
-                                ),
-                        ),
+        let body = if self.editing {
+            div()
+                .flex_1()
+                .p_3()
+                .bg(cx.theme().colors().editor_background)
+                .rounded_sm()
+                .child(self.editor.clone())
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|_this, _event, _window, _cx| {
+                        // Prevent the click from propagating
+                    }),
                 )
-                .children(self.cell_position_spacer(false, window, cx));
-        }
-
-        // Preview mode - show rendered markdown
-
-        let style = MarkdownStyle {
-            base_text_style: window.text_style(),
-            ..Default::default()
+                .into_any_element()
+        } else {
+            let style = MarkdownStyle {
+                base_text_style: window.text_style(),
+                ..Default::default()
+            };
+            v_flex()
+                .image_cache(self.image_cache.clone())
+                .id("markdown-content")
+                .size_full()
+                .flex_1()
+                .p_3()
+                .font_ui(cx)
+                .text_size(TextSize::Default.rems(cx))
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    this.editing = true;
+                    window.focus(&this.editor.focus_handle(cx), cx);
+                    cx.notify();
+                }))
+                .child(MarkdownElement::new(self.markdown.clone(), style))
+                .into_any_element()
         };
 
-        v_flex()
-            .size_full()
-            .children(self.cell_position_spacer(true, window, cx))
-            .child(
-                h_flex()
-                    .w_full()
-                    .pr_6()
-                    .rounded_xs()
-                    .items_start()
-                    .gap(DynamicSpacing::Base08.rems(cx))
-                    .bg(self.selected_bg_color(window, cx))
-                    .child(self.gutter(window, cx))
-                    .child(
-                        v_flex()
-                            .image_cache(self.image_cache.clone())
-                            .id("markdown-content")
-                            .size_full()
-                            .flex_1()
-                            .p_3()
-                            .font_ui(cx)
-                            .text_size(TextSize::Default.rems(cx))
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.editing = true;
-                                window.focus(&this.editor.focus_handle(cx), cx);
-                                cx.notify();
-                            }))
-                            .child(MarkdownElement::new(self.markdown.clone(), style)),
-                    ),
-            )
-            .children(self.cell_position_spacer(false, window, cx))
+        let gutter = self.gutter(window, cx).into_any_element();
+        let chrome = self.cell_chrome(gutter, body, window, cx);
+        self.cell_outer(chrome, window, cx)
     }
 }
 
@@ -1051,7 +1059,6 @@ impl Render for CodeCell {
         };
         let output_max_width =
             plain::max_width_for_columns(ReplSettings::get_global(cx).max_columns, window, cx);
-        // get the language from the editor's buffer
         let language_name = self
             .editor
             .read(cx)
@@ -1061,151 +1068,124 @@ impl Render for CodeCell {
             .and_then(|buffer| buffer.read(cx).language())
             .map(|lang| lang.name().to_string());
 
-        v_flex()
-            .size_full()
-            // TODO: Move base cell render into trait impl so we don't have to repeat this
-            .children(self.cell_position_spacer(true, window, cx))
-            // Editor portion
+        let editor_body = div()
+            .py_1p5()
+            .w_full()
             .child(
-                h_flex()
-                    .w_full()
-                    .pr_6()
-                    .rounded_xs()
-                    .items_start()
-                    .gap(DynamicSpacing::Base08.rems(cx))
-                    .bg(self.selected_bg_color(window, cx))
-                    .child(self.gutter(window, cx))
-                    .child(
-                        div().py_1p5().w_full().child(
+                div()
+                    .relative()
+                    .flex()
+                    .size_full()
+                    .flex_1()
+                    .py_3()
+                    .px_5()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(div().w_full().child(self.editor.clone()))
+                    .when_some(language_name, |this, name| {
+                        this.child(
                             div()
-                                .relative()
-                                .flex()
-                                .size_full()
-                                .flex_1()
-                                .py_3()
-                                .px_5()
-                                .rounded_lg()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().editor_background)
-                                .child(div().w_full().child(self.editor.clone()))
-                                // lang badge in top-right corner
-                                .when_some(language_name, |this, name| {
-                                    this.child(
-                                        div()
-                                            .absolute()
-                                            .top_1()
-                                            .right_2()
-                                            .px_2()
-                                            .py_0p5()
-                                            .rounded_md()
-                                            .bg(cx.theme().colors().element_background.opacity(0.7))
-                                            .text_xs()
-                                            .text_color(cx.theme().colors().text_muted)
-                                            .child(name),
-                                    )
-                                }),
-                        ),
-                    ),
+                                .absolute()
+                                .top_1()
+                                .right_2()
+                                .px_2()
+                                .py_0p5()
+                                .rounded_md()
+                                .bg(cx.theme().colors().element_background.opacity(0.7))
+                                .text_xs()
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(name),
+                        )
+                    }),
             )
-            .when(
-                self.has_outputs() || self.execution_duration.is_some() || self.is_executing,
-                |this| {
-                    let execution_time_label = self.execution_duration.map(Self::format_duration);
-                    let is_executing = self.is_executing;
-                    this.child(
-                        h_flex()
-                            .w_full()
-                            .pr_6()
-                            .rounded_xs()
-                            .items_start()
-                            .gap(DynamicSpacing::Base08.rems(cx))
-                            .bg(self.selected_bg_color(window, cx))
-                            .child(self.gutter_output(window, cx))
-                            .child(
-                                div().py_1p5().w_full().child(
-                                    v_flex()
-                                        .size_full()
-                                        .flex_1()
-                                        .py_3()
-                                        .px_5()
-                                        .rounded_lg()
-                                        .border_1()
-                                        // execution status/time at the TOP
-                                        .when(
-                                            is_executing || execution_time_label.is_some(),
-                                            |this| {
-                                                let time_element = if is_executing {
-                                                    h_flex()
-                                                        .gap_1()
-                                                        .items_center()
-                                                        .child(
-                                                            Icon::new(IconName::ArrowCircle)
-                                                                .size(IconSize::XSmall)
-                                                                .color(Color::Warning)
-                                                                .with_rotate_animation(2)
-                                                                .into_any_element(),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(
-                                                                    cx.theme().colors().text_muted,
-                                                                )
-                                                                .child("Running..."),
-                                                        )
-                                                        .into_any_element()
-                                                } else if let Some(duration_text) =
-                                                    execution_time_label.clone()
-                                                {
-                                                    h_flex()
-                                                        .gap_1()
-                                                        .items_center()
-                                                        .child(
-                                                            Icon::new(IconName::Check)
-                                                                .size(IconSize::XSmall)
-                                                                .color(Color::Success),
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .text_xs()
-                                                                .text_color(
-                                                                    cx.theme().colors().text_muted,
-                                                                )
-                                                                .child(duration_text),
-                                                        )
-                                                        .into_any_element()
-                                                } else {
-                                                    div().into_any_element()
-                                                };
-                                                this.child(div().mb_2().child(time_element))
-                                            },
+            .into_any_element();
+
+        let editor_gutter = self.gutter(window, cx).into_any_element();
+        let editor_row = self.cell_chrome(editor_gutter, editor_body, window, cx);
+
+        let show_output_row =
+            self.has_outputs() || self.execution_duration.is_some() || self.is_executing;
+        let inner = v_flex().size_full().child(editor_row).when(
+            show_output_row,
+            |this| {
+                let execution_time_label = self.execution_duration.map(Self::format_duration);
+                let is_executing = self.is_executing;
+                let output_body = div()
+                    .py_1p5()
+                    .w_full()
+                    .child(
+                        v_flex()
+                            .size_full()
+                            .flex_1()
+                            .py_3()
+                            .px_5()
+                            .rounded_lg()
+                            .border_1()
+                            .when(is_executing || execution_time_label.is_some(), |this| {
+                                let time_element = if is_executing {
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            Icon::new(IconName::ArrowCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Warning)
+                                                .with_rotate_animation(2)
+                                                .into_any_element(),
                                         )
-                                        // output at bottom
                                         .child(
                                             div()
-                                                .id((
-                                                    ElementId::from(self.id.to_string()),
-                                                    "output-scroll",
-                                                ))
-                                                .w_full()
-                                                .when_some(output_max_width, |div, max_width| {
-                                                    div.max_w(max_width).overflow_x_scroll()
-                                                })
-                                                .when_some(output_max_height, |div, max_height| {
-                                                    div.max_h(max_height).overflow_y_scroll()
-                                                })
-                                                .children(self.outputs.iter().map(|output| {
-                                                    div().children(output.content(window, cx))
-                                                })),
-                                        ),
-                                ),
+                                                .text_xs()
+                                                .text_color(cx.theme().colors().text_muted)
+                                                .child("Running..."),
+                                        )
+                                        .into_any_element()
+                                } else if let Some(duration_text) = execution_time_label.clone() {
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            Icon::new(IconName::Check)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Success),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().colors().text_muted)
+                                                .child(duration_text),
+                                        )
+                                        .into_any_element()
+                                } else {
+                                    div().into_any_element()
+                                };
+                                this.child(div().mb_2().child(time_element))
+                            })
+                            .child(
+                                div()
+                                    .id((ElementId::from(self.id.to_string()), "output-scroll"))
+                                    .w_full()
+                                    .when_some(output_max_width, |div, max_width| {
+                                        div.max_w(max_width).overflow_x_scroll()
+                                    })
+                                    .when_some(output_max_height, |div, max_height| {
+                                        div.max_h(max_height).overflow_y_scroll()
+                                    })
+                                    .children(self.outputs.iter().map(|output| {
+                                        div().children(output.content(window, cx))
+                                    })),
                             ),
                     )
-                },
-            )
-            // TODO: Move base cell render into trait impl so we don't have to repeat this
-            .children(self.cell_position_spacer(false, window, cx))
+                    .into_any_element();
+
+                let output_gutter = self.gutter_output(window, cx).into_any_element();
+                this.child(self.cell_chrome(output_gutter, output_body, window, cx))
+            },
+        );
+
+        self.cell_outer(inner, window, cx)
     }
 }
 
@@ -1269,31 +1249,17 @@ impl RenderableCell for RawCell {
 
 impl Render for RawCell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
+        let body = div()
+            .flex()
             .size_full()
-            // TODO: Move base cell render into trait impl so we don't have to repeat this
-            .children(self.cell_position_spacer(true, window, cx))
-            .child(
-                h_flex()
-                    .w_full()
-                    .pr_2()
-                    .rounded_xs()
-                    .items_start()
-                    .gap(DynamicSpacing::Base08.rems(cx))
-                    .bg(self.selected_bg_color(window, cx))
-                    .child(self.gutter(window, cx))
-                    .child(
-                        div()
-                            .flex()
-                            .size_full()
-                            .flex_1()
-                            .p_3()
-                            .font_ui(cx)
-                            .text_size(TextSize::Default.rems(cx))
-                            .child(self.source.clone()),
-                    ),
-            )
-            // TODO: Move base cell render into trait impl so we don't have to repeat this
-            .children(self.cell_position_spacer(false, window, cx))
+            .flex_1()
+            .p_3()
+            .font_ui(cx)
+            .text_size(TextSize::Default.rems(cx))
+            .child(self.source.clone())
+            .into_any_element();
+        let gutter = self.gutter(window, cx).into_any_element();
+        let chrome = self.cell_chrome(gutter, body, window, cx);
+        self.cell_outer(chrome, window, cx)
     }
 }

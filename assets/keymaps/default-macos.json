@@ -1610,6 +1610,7 @@
       "enter": "notebook::EnterEditMode",
       "down": "menu::SelectNext",
       "up": "menu::SelectPrevious",
+      "cmd-backspace": "notebook::DeleteCell",
     },
   },
   {

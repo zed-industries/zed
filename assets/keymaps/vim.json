@@ -1136,6 +1136,7 @@
       "enter": "notebook::EnterEditMode",
       "shift-enter": "notebook::RunAndAdvance",
       "ctrl-enter": "notebook::Run",
+      "d d": "notebook::DeleteCell",
     },
   },
   {
