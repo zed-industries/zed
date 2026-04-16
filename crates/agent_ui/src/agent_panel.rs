@@ -7128,12 +7128,13 @@ mod tests {
     #[gpui::test]
     async fn test_draft_replaced_when_selected_agent_changes(cx: &mut TestAppContext) {
         init_test(cx);
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
         });
 
-        let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [], cx).await;
 
         let multi_workspace =
