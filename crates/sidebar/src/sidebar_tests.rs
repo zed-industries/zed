@@ -10441,12 +10441,12 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
 
     cx.run_until_parked();
 
-    // Step 1: activate the linked-worktree workspace. This fires
-    // `ActiveWorkspaceChanged`, which the sidebar subscribes to and uses to
-    // record this workspace as the last-active one for group A. (We don't
-    // assert on the initial active workspace because `test_add_workspace`
-    // may auto-activate newly registered workspaces — what matters for this
-    // test is the explicit sequence of activations below.)
+    // Step 1: activate the linked-worktree workspace. The MultiWorkspace
+    // records this as the last-active workspace for group A on its
+    // ProjectGroupState. (We don't assert on the initial active workspace
+    // because `test_add_workspace` may auto-activate newly registered
+    // workspaces — what matters for this test is the explicit sequence of
+    // activations below.)
     multi_workspace.update_in(cx, |mw, window, cx| {
         mw.activate(worktree_workspace_a.clone(), window, cx);
     });

@@ -371,7 +371,6 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
-    last_active_workspace_by_group: HashMap<ProjectGroupKey, WeakEntity<Workspace>>,
     _subscriptions: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
     /// Threads" but if we are showing both the external agents and other
@@ -401,9 +400,8 @@ impl Sidebar {
         cx.subscribe_in(
             &multi_workspace,
             window,
-            |this, multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
+            |this, _multi_workspace, event: &MultiWorkspaceEvent, window, cx| match event {
                 MultiWorkspaceEvent::ActiveWorkspaceChanged => {
-                    this.record_active_workspace_for_group(multi_workspace, cx);
                     this.sync_active_entry_from_active_workspace(cx);
                     this.replace_archived_panel_thread(window, cx);
                     this.update_entries(cx);
@@ -447,7 +445,7 @@ impl Sidebar {
             this.update_entries(cx);
         });
 
-        let mut this = Self {
+        let this = Self {
             multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
             focus_handle,
@@ -468,15 +466,9 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
-            last_active_workspace_by_group: HashMap::new(),
             _subscriptions: Vec::new(),
             import_banners_use_verbose_labels: None,
         };
-
-        let active = multi_workspace.read(cx).workspace().clone();
-        let key = active.read(cx).project_group_key(cx);
-        this.last_active_workspace_by_group
-            .insert(key, active.downgrade());
         this
     }
 
@@ -3879,28 +3871,6 @@ impl Sidebar {
         }
     }
 
-    fn record_active_workspace_for_group(
-        &mut self,
-        multi_workspace: &Entity<MultiWorkspace>,
-        cx: &App,
-    ) {
-        let mw = multi_workspace.read(cx);
-        let active = mw.workspace().clone();
-        let key = active.read(cx).project_group_key(cx);
-        self.last_active_workspace_by_group
-            .insert(key, active.downgrade());
-    }
-
-    fn last_active_workspace_for_group(
-        &self,
-        key: &ProjectGroupKey,
-        cx: &App,
-    ) -> Option<Entity<Workspace>> {
-        let weak = self.last_active_workspace_by_group.get(key)?;
-        let workspace = weak.upgrade()?;
-        (workspace.read(cx).project_group_key(cx) == *key).then_some(workspace)
-    }
-
     pub(crate) fn activate_or_open_workspace_for_group(
         &mut self,
         key: &ProjectGroupKey,
@@ -3908,7 +3878,9 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         let workspace = self
-            .last_active_workspace_for_group(key, cx)
+            .multi_workspace
+            .upgrade()
+            .and_then(|mw| mw.read(cx).last_active_workspace_for_group(key, cx))
             .or_else(|| self.workspace_for_group(key, cx));
         if let Some(workspace) = workspace {
             self.activate_workspace(&workspace, window, cx);
