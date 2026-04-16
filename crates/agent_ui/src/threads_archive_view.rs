@@ -45,6 +45,14 @@ use workspace::{
 use zed_actions::agents_sidebar::FocusSidebarFilter;
 use zed_actions::editor::{MoveDown, MoveUp};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum ThreadFilter {
+    #[default]
+    All,
+    HideArchived,
+    HideOpen,
+}
+
 #[derive(Clone)]
 enum ArchiveListItem {
     BucketSeparator(TimeBucket),
@@ -139,7 +147,7 @@ pub struct ThreadsArchiveView {
     archived_thread_ids: HashSet<ThreadId>,
     archived_branch_names: HashMap<ThreadId, HashMap<PathBuf, String>>,
     _load_branch_names_task: Task<()>,
-    show_open_only: bool,
+    thread_filter: ThreadFilter,
 }
 
 impl ThreadsArchiveView {
@@ -213,7 +221,7 @@ impl ThreadsArchiveView {
             archived_thread_ids: HashSet::default(),
             archived_branch_names: HashMap::default(),
             _load_branch_names_task: Task::ready(()),
-            show_open_only: false,
+            thread_filter: ThreadFilter::HideOpen,
         };
 
         this.update_items(cx);
@@ -252,11 +260,15 @@ impl ThreadsArchiveView {
     }
 
     fn update_items(&mut self, cx: &mut Context<Self>) {
-        let show_open_only = self.show_open_only;
+        let thread_filter = self.thread_filter;
         let sessions = ThreadMetadataStore::global(cx)
             .read(cx)
             .entries()
-            .filter(|t| !show_open_only || !t.archived)
+            .filter(|t| match thread_filter {
+                ThreadFilter::All => true,
+                ThreadFilter::HideArchived => !t.archived,
+                ThreadFilter::HideOpen => t.archived,
+            })
             .sorted_by_cached_key(|t| t.created_at.unwrap_or(t.updated_at))
             .rev()
             .cloned()
@@ -852,20 +864,17 @@ impl ThreadsArchiveView {
             .filter(|item| matches!(item, ArchiveListItem::Entry { .. }))
             .count();
 
-        let has_archived_threads = ThreadMetadataStore::global(cx)
-            .read(cx)
-            .archived_entries()
-            .next()
-            .is_some();
+        let has_archived_threads = {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            store.archived_entries().next().is_some()
+        };
+        let has_open_threads = {
+            let store = ThreadMetadataStore::global(cx).read(cx);
+            store.entries().any(|t| !t.archived)
+        };
 
         let count_label = if entry_count == 1 {
-            if self.show_open_only {
-                "1 open thread".to_string()
-            } else {
-                "1 thread".to_string()
-            }
-        } else if self.show_open_only {
-            format!("{} open threads", entry_count)
+            "1 thread".to_string()
         } else {
             format!("{} threads", entry_count)
         };
@@ -883,20 +892,45 @@ impl ThreadsArchiveView {
                     .size(LabelSize::Small)
                     .color(Color::Muted),
             )
-            .when(has_archived_threads, |this| {
+            .when(has_archived_threads && has_open_threads, |this| {
                 this.child(
-                    IconButton::new("toggle-open-only", IconName::Filter)
-                        .icon_size(IconSize::Small)
-                        .toggle_state(self.show_open_only)
-                        .tooltip(Tooltip::text(if self.show_open_only {
-                            "Show Archived Threads"
-                        } else {
-                            "Hide Archived Threads"
-                        }))
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.show_open_only = !this.show_open_only;
-                            this.update_items(cx);
-                        })),
+                    h_flex()
+                        .child(
+                            IconButton::new("filter-hide-archived", IconName::FilterUp)
+                                .icon_size(IconSize::Small)
+                                .toggle_state(self.thread_filter == ThreadFilter::HideArchived)
+                                .tooltip(Tooltip::text(if self.thread_filter == ThreadFilter::HideArchived {
+                                    "Show All Threads"
+                                } else {
+                                    "Show Only Open Threads"
+                                }))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.thread_filter = if this.thread_filter == ThreadFilter::HideArchived {
+                                        ThreadFilter::All
+                                    } else {
+                                        ThreadFilter::HideArchived
+                                    };
+                                    this.update_items(cx);
+                                })),
+                        )
+                        .child(
+                            IconButton::new("filter-hide-open", IconName::Filter)
+                                .icon_size(IconSize::Small)
+                                .toggle_state(self.thread_filter == ThreadFilter::HideOpen)
+                                .tooltip(Tooltip::text(if self.thread_filter == ThreadFilter::HideOpen {
+                                    "Show All Threads"
+                                } else {
+                                    "Show Only Archived Threads"
+                                }))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.thread_filter = if this.thread_filter == ThreadFilter::HideOpen {
+                                        ThreadFilter::All
+                                    } else {
+                                        ThreadFilter::HideOpen
+                                    };
+                                    this.update_items(cx);
+                                })),
+                        ),
                 )
             })
     }

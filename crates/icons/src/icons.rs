@@ -132,6 +132,7 @@ pub enum IconName {
     FileToml,
     FileTree,
     Filter,
+    FilterUp,
     Flame,
     Folder,
     FolderOpen,
