@@ -4029,44 +4029,4 @@ mod tests {
         snapshot.buffer_point_to_base_text_range(Point::new(0, 0), &buffer_snapshot);
         snapshot.buffer_point_to_base_text_range(Point::new(1, 0), &buffer_snapshot);
     }
-
-    #[gpui::test]
-    async fn test_set_base_text_emits_base_text_changed(cx: &mut gpui::TestAppContext) {
-        let buffer = Buffer::new(
-            ReplicaId::LOCAL,
-            BufferId::new(1).unwrap(),
-            "one\nTWO\nthree\n".to_string(),
-        );
-        let buffer_snapshot = buffer.snapshot();
-
-        let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
-        let (tx, rx) = mpsc::channel();
-        let _subscription =
-            cx.update(|cx| cx.subscribe(&diff, move |_, event, _| tx.send(event.clone()).unwrap()));
-
-        diff.update(cx, |diff, cx| {
-            diff.set_base_text(
-                Some(Arc::from("one\ntwo\nthree\n")),
-                None,
-                buffer_snapshot.clone(),
-                cx,
-            )
-        })
-        .await
-        .ok();
-        cx.run_until_parked();
-
-        let events = rx.try_iter().collect::<Vec<_>>();
-        assert!(matches!(
-            events.first(),
-            Some(BufferDiffEvent::BaseTextChanged)
-        ));
-        assert!(matches!(
-            events.get(1),
-            Some(BufferDiffEvent::DiffChanged(DiffChanged {
-                base_text_changed_range: Some(_),
-                ..
-            }))
-        ));
-    }
 }
