@@ -12778,7 +12778,7 @@ mod tests {
 
         update_test_language_settings(cx, &|s| {
             s.defaults.preferred_line_length = Some(5_u32);
-            s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+            s.defaults.soft_wrap = Some(language_settings::SoftWrap::Bounded);
         });
 
         let editor = window.root(cx).unwrap();
@@ -13160,7 +13160,7 @@ mod tests {
                     s.defaults.tab_size = NonZeroU32::new(tab_size);
                     s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
                     s.defaults.preferred_line_length = Some(editor_width as u32);
-                    s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+                    s.defaults.soft_wrap = Some(language_settings::SoftWrap::Bounded);
                 });
 
                 let actual_invisibles = collect_invisibles_from_new_editor(
