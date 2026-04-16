@@ -2142,7 +2142,6 @@ impl Sidebar {
         let mut existing_panel = None;
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                panel.update(cx, |panel, _cx| panel.begin_loading_thread());
                 existing_panel = Some(panel);
             }
         });
@@ -2170,7 +2169,6 @@ impl Sidebar {
                     workspace.add_panel(panel.clone(), window, cx);
                     panel.clone()
                 });
-                panel.update(cx, |panel, _cx| panel.begin_loading_thread());
                 load_thread(panel, &metadata, focus, window, cx);
                 if focus {
                     workspace.focus_panel::<AgentPanel>(window, cx);

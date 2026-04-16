@@ -761,7 +761,6 @@ pub struct AgentPanel {
     new_user_onboarding: Entity<AgentPanelOnboarding>,
     new_user_onboarding_upsell_dismissed: AtomicBool,
     selected_agent: Agent,
-    pending_thread_loads: usize,
     worktree_creation_status: Option<(EntityId, WorktreeCreationStatus)>,
     _thread_view_subscription: Option<Subscription>,
     _active_thread_focus_subscription: Option<Subscription>,
@@ -1129,7 +1128,6 @@ impl AgentPanel {
             new_user_onboarding: onboarding,
             thread_store,
             selected_agent: Agent::default(),
-            pending_thread_loads: 0,
             worktree_creation_status: None,
             _thread_view_subscription: None,
             _active_thread_focus_subscription: None,
@@ -2490,10 +2488,6 @@ impl AgentPanel {
         );
     }
 
-    pub fn begin_loading_thread(&mut self) {
-        self.pending_thread_loads += 1;
-    }
-
     pub fn load_agent_thread(
         &mut self,
         agent: Agent,
@@ -2505,7 +2499,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.pending_thread_loads = self.pending_thread_loads.saturating_sub(1);
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
             let thread_id = store
                 .read(cx)
