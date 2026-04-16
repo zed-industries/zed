@@ -144,7 +144,7 @@ where
                     let segment_start = segment_idx * segment_size;
                     let segment_end = (segment_start + segment_size).min(candidates.len());
 
-                    match_string_candidates(
+                    match_string_helper(
                         &candidates[segment_start..segment_end],
                         query_bag,
                         atoms,
@@ -194,7 +194,7 @@ where
     let mut matcher = matcher::get_matcher(config);
     let mut results = Vec::with_capacity(max_results.min(candidates.len()));
 
-    match_string_candidates(
+    match_string_helper(
         candidates,
         query_bag,
         &atoms,
@@ -226,7 +226,7 @@ fn empty_query_results<T: Borrow<StringMatchCandidate>>(
         .collect()
 }
 
-fn match_string_candidates<T>(
+fn match_string_helper<T>(
     candidates: &[T],
     query_bag: CharBag,
     atoms: &[nucleo::pattern::Atom],
