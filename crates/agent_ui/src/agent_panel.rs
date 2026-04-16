@@ -3812,9 +3812,9 @@ impl AgentPanel {
             VisibleSurface::AgentThread(conversation_view) => {
                 let server_view_ref = conversation_view.read(cx);
                 let native_thread = server_view_ref.as_native_thread(cx);
-                let is_generating_title = server_view_ref.root_thread_view().map_or(false, |tv| {
-                    tv.read(cx).thread.read(cx).has_provisional_title()
-                });
+                let is_generating_title = native_thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.read(cx).is_generating_title());
                 let title_generation_failed = native_thread
                     .as_ref()
                     .is_some_and(|thread| thread.read(cx).has_failed_title_generation());

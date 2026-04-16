@@ -681,8 +681,6 @@ impl NativeAgent {
                 let task =
                     acp_thread.update(cx, |acp_thread, cx| acp_thread.set_title(title, cx))?;
                 task.await?;
-            } else {
-                acp_thread.update(cx, |acp_thread, cx| acp_thread.clear_provisional_title(cx))?;
             }
             anyhow::Ok(())
         })
@@ -2199,8 +2197,7 @@ mod internal_tests {
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
-        LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelProviderId,
-        LanguageModelProviderName,
+        LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
     };
     use serde_json::json;
     use settings::SettingsStore;
@@ -3316,69 +3313,6 @@ mod internal_tests {
         drop(second_loaded_thread);
         agent.read_with(cx, |agent, _| {
             assert!(agent.sessions.is_empty());
-        });
-    }
-
-    #[gpui::test]
-    async fn test_title_generation_failure_clears_acp_provisional_title(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/", json!({ "a": {} })).await;
-        let project = Project::test(fs.clone(), [], cx).await;
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let agent = cx.update(|cx| {
-            NativeAgent::new(thread_store.clone(), Templates::new(), None, fs.clone(), cx)
-        });
-        let connection = Rc::new(NativeAgentConnection(agent.clone()));
-
-        let acp_thread = cx
-            .update(|cx| {
-                connection
-                    .clone()
-                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
-            })
-            .await
-            .unwrap();
-
-        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
-        let thread = agent.read_with(cx, |agent, _| {
-            agent.sessions.get(&session_id).unwrap().thread.clone()
-        });
-        let summary_model = Arc::new(FakeLanguageModel::default());
-        let fake_summary_model = summary_model.as_fake();
-
-        thread.update(cx, |thread, cx| {
-            thread.set_summarization_model(Some(summary_model.clone()), cx);
-        });
-        acp_thread.update(cx, |thread, cx| {
-            thread.set_provisional_title("Hello, can you help…".into(), cx);
-        });
-
-        thread.update(cx, |thread, cx| {
-            thread.generate_title(cx);
-        });
-        cx.run_until_parked();
-
-        fake_summary_model.send_last_completion_stream_error(
-            LanguageModelCompletionError::UpstreamProviderError {
-                message: "Internal server error".to_string(),
-                status: gpui::http_client::StatusCode::INTERNAL_SERVER_ERROR,
-                retry_after: None,
-            },
-        );
-        fake_summary_model.end_last_completion_stream();
-        cx.run_until_parked();
-
-        thread.read_with(cx, |thread, _| {
-            assert!(thread.has_failed_title_generation());
-            assert_eq!(thread.title(), None);
-        });
-        acp_thread.read_with(cx, |thread, _| {
-            assert_eq!(thread.title(), None);
-            assert!(
-                !thread.has_provisional_title(),
-                "failed native title generation should clear the ACP provisional title"
-            );
         });
     }
 
