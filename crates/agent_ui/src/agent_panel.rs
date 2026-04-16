@@ -2520,8 +2520,9 @@ impl AgentPanel {
 
         let has_session = |cv: &Entity<ConversationView>| -> bool {
             cv.read(cx)
-                .active_thread()
-                .is_some_and(|tv| tv.read(cx).thread.read(cx).session_id() == &session_id)
+                .root_session_id
+                .as_ref()
+                .is_some_and(|id| id == &session_id)
         };
 
         // Check if the active view already has this session.
@@ -8186,11 +8187,7 @@ mod tests {
             &[]
         }
 
-        fn authenticate(
-            &self,
-            _method_id: acp::AuthMethodId,
-            _cx: &mut App,
-        ) -> Task<Result<()>> {
+        fn authenticate(&self, _method_id: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
 
@@ -8201,9 +8198,7 @@ mod tests {
             _cx: &mut App,
         ) -> Task<Result<acp::PromptResponse>> {
             if !self.sessions.lock().contains(&params.session_id) {
-                self.missing_prompt_sessions
-                    .lock()
-                    .push(params.session_id.clone());
+                self.missing_prompt_sessions.lock().push(params.session_id);
                 return Task::ready(Err(anyhow!("Session not found")));
             }
 
@@ -8256,9 +8251,7 @@ mod tests {
     /// dropped, its `on_release` → `close_all_sessions` removes the
     /// session from the connection, leaving the active view stranded.
     #[gpui::test]
-    async fn test_open_thread_on_visible_session_does_not_disassociate_it(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_open_thread_on_visible_session_does_not_disassociate_it(cx: &mut TestAppContext) {
         let (_workspace, panel, mut cx) = setup_workspace_panel(cx).await;
         cx.run_until_parked();
 
@@ -8359,10 +8352,10 @@ mod tests {
             );
 
             // The active view should still point at the same session.
-            panel.read_with(&cx, |panel, cx| {
-                let active_view = panel
-                    .active_conversation_view()
-                    .expect("visible duplicate should remain open after dropping the retained owner");
+            panel.read_with(&cx, |panel, _cx| {
+                let active_view = panel.active_conversation_view().expect(
+                    "visible duplicate should remain open after dropping the retained owner",
+                );
                 assert_eq!(
                     active_view.entity_id(),
                     duplicate_view_id,
@@ -8545,9 +8538,7 @@ mod tests {
     ///    removes session X.
     /// 8. C sends → "Session not found".
     #[gpui::test]
-    async fn test_retained_thread_reset_race_disassociates_session(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_retained_thread_reset_race_disassociates_session(cx: &mut TestAppContext) {
         let (_workspace, panel, mut cx) = setup_workspace_panel(cx).await;
         cx.run_until_parked();
 
