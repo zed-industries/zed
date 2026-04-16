@@ -218,48 +218,24 @@ async fn remove_root_after_worktree_removal(
         }
     }
 
-    // Delete the directory ourselves first, then tell git to clean up the
-    // metadata. This avoids a problem where `git worktree remove` can
-    // remove the metadata in `.git/worktrees/<name>` but fail to delete
-    // the directory (git continues past directory-removal errors), leaving
-    // an orphaned folder on disk. By deleting the directory first, we
-    // guarantee it's gone, and `git worktree remove --force` with a
-    // missing working tree just cleans up the admin entry.
-    //
-    // For remote projects the directory lives on the remote machine, so
-    // local `remove_dir_all` would be a no-op (NotFound). We skip it
-    // entirely and let `git worktree remove --force` on the remote
-    // server handle both the directory and the admin metadata in one shot.
-    if root.remote_connection.is_none() {
-        let root_path = root.root_path.clone();
-        cx.background_executor()
-            .spawn(async move {
-                match std::fs::remove_dir_all(&root_path) {
-                    Ok(()) => Ok(()),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                    Err(error) => Err(error),
-                }
-            })
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to delete worktree directory '{}'",
-                    root.root_path.display()
-                )
-            })?;
-    }
-
-    let (repo, _temp_project) =
+    let (repo, project) =
         find_or_create_repository(&root.main_repo_path, root.remote_connection.as_ref(), cx)
             .await?;
+
+    // `Repository::remove_worktree` with `force = true` deletes the working
+    // directory before running `git worktree remove --force`, so there's no
+    // need to touch the filesystem here. For remote projects that cleanup
+    // runs on the headless server via the `GitRemoveWorktree` RPC, which is
+    // the only code path with access to the remote machine's filesystem.
     let receiver = repo.update(cx, |repo: &mut Repository, _cx| {
         repo.remove_worktree(root.root_path.clone(), true)
     });
     let result = receiver
         .await
         .map_err(|_| anyhow!("git worktree metadata cleanup was canceled"))?;
-    // Keep _temp_project alive until after the await so the headless project isn't dropped mid-operation
-    drop(_temp_project);
+    // Keep the temporary project alive until after the await so the headless
+    // project isn't dropped mid-operation.
+    drop(project);
     result.context("git worktree metadata cleanup failed")?;
 
     // Empty-parent cleanup uses local std::fs — skip for remote projects.
@@ -346,11 +322,12 @@ fn remove_empty_ancestors(child_path: &Path, base_path: &Path) {
 /// Future improvement: decoupling `GitStore` from `Project` so that
 /// `Repository` entities can be created standalone would eliminate this
 /// temporary-project workaround.
+/// todo! update doc comment
 async fn find_or_create_repository(
     repo_path: &Path,
     remote_connection: Option<&RemoteConnectionOptions>,
     cx: &mut AsyncApp,
-) -> Result<(Entity<Repository>, Option<Entity<Project>>)> {
+) -> Result<(Entity<Repository>, Entity<Project>)> {
     let repo_path_owned = repo_path.to_path_buf();
     let remote_connection_owned = remote_connection.cloned();
 
@@ -369,21 +346,24 @@ async fn find_or_create_repository(
                 ) {
                     return None;
                 }
-                project
-                    .read(cx)
-                    .repositories(cx)
-                    .values()
-                    .find(|repo| {
-                        repo.read(cx).snapshot().work_directory_abs_path.as_ref()
-                            == repo_path_owned.as_path()
-                    })
-                    .cloned()
+                Some((
+                    project
+                        .read(cx)
+                        .repositories(cx)
+                        .values()
+                        .find(|repo| {
+                            repo.read(cx).snapshot().work_directory_abs_path.as_ref()
+                                == repo_path_owned.as_path()
+                        })
+                        .cloned()?,
+                    project.clone(),
+                ))
             })
             .next()
     });
 
-    if let Some(repo) = live_repo {
-        return Ok((repo, None));
+    if let Some((repo, project)) = live_repo {
+        return Ok((repo, project));
     }
 
     let app_state =
@@ -457,7 +437,7 @@ async fn find_or_create_repository(
     barrier
         .await
         .map_err(|_| anyhow!("temporary repository barrier canceled"))?;
-    Ok((repo, Some(temp_project)))
+    Ok((repo, temp_project))
 }
 
 /// Re-adds the worktree to every affected project after a failed
