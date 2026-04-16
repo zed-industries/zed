@@ -4693,7 +4693,7 @@ fn all_thread_infos_for_workspace(
                 .read(cx)
                 .root_thread_has_pending_tool_call(cx);
             let conversation_thread_id = conversation_view.read(cx).parent_id();
-            let thread_view = conversation_view.read(cx).root_thread(cx)?;
+            let thread_view = conversation_view.read(cx).root_thread_view()?;
             let thread_view_ref = thread_view.read(cx);
             let thread = thread_view_ref.thread.read(cx);
 
@@ -4946,7 +4946,7 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
             )
             .ok();
             for (session_id, conversation_view) in background_threads {
-                if let Some(thread_view) = conversation_view.read(cx).root_thread(cx) {
+                if let Some(thread_view) = conversation_view.read(cx).root_thread_view() {
                     let thread = thread_view.read(cx).thread.read(cx);
                     let title = thread.title().unwrap_or_else(|| "(untitled)".into());
                     let status = match thread.status() {
