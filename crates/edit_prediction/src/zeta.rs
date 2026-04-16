@@ -43,6 +43,7 @@ pub fn request_prediction_with_zeta(
         related_files,
         events,
         debug_tx,
+        mode,
         trigger,
         project,
         diagnostic_search_range,
@@ -279,6 +280,7 @@ pub fn request_prediction_with_zeta(
                         organization_id,
                         app_version,
                         trigger,
+                        mode,
                     )
                     .await?;
 
