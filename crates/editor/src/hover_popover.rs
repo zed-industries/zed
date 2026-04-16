@@ -510,6 +510,27 @@ fn show_hover(
                 })
             }
 
+            let doc_link_task = this
+                .update(cx, |editor, cx| {
+                    editor.document_links_at(buffer.clone(), buffer_position, cx)
+                })
+                .ok()
+                .flatten();
+            let doc_link_tooltips = match doc_link_task {
+                Some(task) => task
+                    .await
+                    .into_iter()
+                    .filter_map(|(_, link)| {
+                        let multi_buffer_range = snapshot
+                            .buffer_snapshot()
+                            .buffer_anchor_range_to_anchor_range(link.range.clone())?;
+                        let tooltip = link.tooltip?;
+                        Some((multi_buffer_range, tooltip))
+                    })
+                    .collect::<Vec<_>>(),
+                None => Vec::new(),
+            };
+
             for hover_result in hovers_response {
                 // Create symbol range of anchors for highlighting and filtering of future requests.
                 let range = hover_result
@@ -543,6 +564,32 @@ fn show_hover(
                     .flatten();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
+                    parsed_content,
+                    scroll_handle,
+                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                    anchor: Some(anchor),
+                    last_bounds: Rc::new(Cell::new(None)),
+                    _subscription: subscription,
+                });
+            }
+
+            for (multi_buffer_range, tooltip) in doc_link_tooltips {
+                let blocks = vec![HoverBlock {
+                    text: tooltip.to_string(),
+                    kind: HoverBlockKind::Markdown,
+                }];
+                let parsed_content = parse_blocks(&blocks, language_registry.as_ref(), None, cx);
+                let scroll_handle = ScrollHandle::new();
+                let subscription = this
+                    .update(cx, |_, cx| {
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
+                    })
+                    .ok()
+                    .flatten();
+                info_popovers.push(InfoPopover {
+                    symbol_range: RangeInEditor::Text(multi_buffer_range),
                     parsed_content,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
