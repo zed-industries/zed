@@ -1642,7 +1642,7 @@ impl Sidebar {
         PopoverMenu::new(format!("{id_prefix}project-header-menu-{ix}"))
             .with_handle(menu_handle)
             .trigger(
-                IconButton::new(trigger_id.clone(), IconName::Ellipsis)
+                IconButton::new(trigger_id, IconName::Ellipsis)
                     .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     .icon_size(IconSize::Small)
                     .when(!is_menu_open, |el| el.visible_on_hover(group_name)),
