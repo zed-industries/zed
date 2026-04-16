@@ -668,7 +668,7 @@ fn show_cross_channel_import_toast(
 ) {
     let status_toast = if imported_count == 0 {
         StatusToast::new("No new threads found to import.", cx, |this, _cx| {
-            this.icon(ToastIcon::new(IconName::Info).color(Color::Muted))
+            this.icon(Icon::new(IconName::Info).color(Color::Muted))
                 .dismiss_button(true)
         })
     } else {
@@ -678,7 +678,7 @@ fn show_cross_channel_import_toast(
             format!("Imported {imported_count} threads from other channels.")
         };
         StatusToast::new(message, cx, |this, _cx| {
-            this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+            this.icon(Icon::new(IconName::Check).color(Color::Success))
                 .dismiss_button(true)
         })
     };
