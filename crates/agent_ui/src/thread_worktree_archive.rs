@@ -225,22 +225,29 @@ async fn remove_root_after_worktree_removal(
     // an orphaned folder on disk. By deleting the directory first, we
     // guarantee it's gone, and `git worktree remove --force` with a
     // missing working tree just cleans up the admin entry.
-    let root_path = root.root_path.clone();
-    cx.background_executor()
-        .spawn(async move {
-            match std::fs::remove_dir_all(&root_path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
-        })
-        .await
-        .with_context(|| {
-            format!(
-                "failed to delete worktree directory '{}'",
-                root.root_path.display()
-            )
-        })?;
+    //
+    // For remote projects the directory lives on the remote machine, so
+    // local `remove_dir_all` would be a no-op (NotFound). We skip it
+    // entirely and let `git worktree remove --force` on the remote
+    // server handle both the directory and the admin metadata in one shot.
+    if root.remote_connection.is_none() {
+        let root_path = root.root_path.clone();
+        cx.background_executor()
+            .spawn(async move {
+                match std::fs::remove_dir_all(&root_path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error),
+                }
+            })
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to delete worktree directory '{}'",
+                    root.root_path.display()
+                )
+            })?;
+    }
 
     let (repo, _temp_project) =
         find_or_create_repository(&root.main_repo_path, root.remote_connection.as_ref(), cx)
@@ -255,12 +262,15 @@ async fn remove_root_after_worktree_removal(
     drop(_temp_project);
     result.context("git worktree metadata cleanup failed")?;
 
-    remove_empty_parent_dirs_up_to_worktrees_base(
-        root.root_path.clone(),
-        root.main_repo_path.clone(),
-        cx,
-    )
-    .await;
+    // Empty-parent cleanup uses local std::fs — skip for remote projects.
+    if root.remote_connection.is_none() {
+        remove_empty_parent_dirs_up_to_worktrees_base(
+            root.root_path.clone(),
+            root.main_repo_path.clone(),
+            cx,
+        )
+        .await;
+    }
 
     Ok(())
 }
