@@ -445,7 +445,7 @@ impl Sidebar {
             this.update_entries(cx);
         });
 
-        let this = Self {
+        Self {
             multi_workspace: multi_workspace.downgrade(),
             width: DEFAULT_WIDTH,
             focus_handle,
@@ -468,8 +468,7 @@ impl Sidebar {
             project_header_menu_ix: None,
             _subscriptions: Vec::new(),
             import_banners_use_verbose_labels: None,
-        };
-        this
+        }
     }
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
