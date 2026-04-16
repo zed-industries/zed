@@ -1,6 +1,6 @@
 use futures::future::join_all;
 use itertools::Itertools;
-use language::language_settings::language_settings;
+use language::language_settings::LanguageSettings;
 use text::BufferId;
 use ui::{Context, Window};
 
@@ -13,7 +13,7 @@ impl Editor {
         _window: &Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.mode().is_full() || !self.use_document_folding_ranges {
+        if !self.lsp_data_enabled() || !self.use_document_folding_ranges {
             return;
         }
         let Some(project) = self.project.clone() else {
@@ -21,21 +21,17 @@ impl Editor {
         };
 
         let buffers_to_query = self
-            .visible_excerpts(true, cx)
-            .into_values()
-            .map(|(buffer, ..)| buffer)
+            .visible_buffers(cx)
+            .into_iter()
+            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
             .chain(for_buffer.and_then(|id| self.buffer.read(cx).buffer(id)))
             .filter(|buffer| {
                 let id = buffer.read(cx).remote_id();
                 (for_buffer.is_none_or(|target| target == id))
                     && self.registered_buffers.contains_key(&id)
-                    && language_settings(
-                        buffer.read(cx).language().map(|l| l.name()),
-                        buffer.read(cx).file(),
-                        cx,
-                    )
-                    .document_folding_ranges
-                    .enabled()
+                    && LanguageSettings::for_buffer(buffer.read(cx), cx)
+                        .document_folding_ranges
+                        .enabled()
             })
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
@@ -104,7 +100,7 @@ impl Editor {
             .into_iter()
             .filter(|buffer| {
                 let buffer = buffer.read(cx);
-                !language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                !LanguageSettings::for_buffer(&buffer, cx)
                     .document_folding_ranges
                     .enabled()
             })
@@ -142,7 +138,7 @@ mod tests {
     async fn test_lsp_folding_ranges_populates_creases(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -270,7 +266,7 @@ mod tests {
     async fn test_lsp_folding_ranges_toggling_off_removes_creases(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -320,7 +316,7 @@ mod tests {
             assert_eq!(editor.display_text(cx), "fn main() ⋯\n",);
         });
 
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::Off);
         });
         cx.run_until_parked();
@@ -337,7 +333,7 @@ mod tests {
     async fn test_lsp_folding_ranges_nested_folds(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -427,7 +423,7 @@ mod tests {
     async fn test_lsp_folding_ranges_unsorted_from_server(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -538,7 +534,7 @@ mod tests {
                 snapshot.is_line_folded(MultiBufferRow(0)),
                 "Indentation-based fold should work on the function"
             );
-            assert_eq!(editor.display_text(cx), "fn main() {⋯\n}\n",);
+            assert_eq!(editor.display_text(cx), "fn main() {⋯}\n",);
         });
 
         cx.update_editor(|editor, window, cx| {
@@ -580,7 +576,7 @@ mod tests {
                 },
             );
 
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
         assert!(folding_request.next().await.is_some());
@@ -645,7 +641,7 @@ mod tests {
         });
 
         // Phase 3: switch back to tree-sitter by disabling LSP folding ranges.
-        update_test_language_settings(&mut cx.cx.cx, |settings| {
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::Off);
         });
         cx.run_until_parked();
@@ -666,7 +662,7 @@ mod tests {
                 snapshot.is_line_folded(MultiBufferRow(0)),
                 "Indentation-based fold should work again after switching back"
             );
-            assert_eq!(editor.display_text(cx), "fn main() {⋯\n}\n",);
+            assert_eq!(editor.display_text(cx), "fn main() {⋯}\n",);
         });
     }
 
@@ -674,7 +670,7 @@ mod tests {
     async fn test_lsp_folding_ranges_collapsed_text(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
-        update_test_language_settings(cx, |settings| {
+        update_test_language_settings(cx, &|settings| {
             settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
         });
 
@@ -859,7 +855,7 @@ mod tests {
                     "    }\n",
                     "}\n",
                     "\n",
-                    "fn newline() {   … }\n",
+                    "fn newline() { … }\n",
                 ]
                 .concat(),
             );
@@ -996,7 +992,7 @@ mod tests {
                     "\n",
                     "fn outer() { outer… }\n",
                     "\n",
-                    "fn newline() {   … }\n",
+                    "fn newline() { … }\n",
                 ]
                 .concat(),
             );
@@ -1078,6 +1074,117 @@ mod tests {
                 ]
                 .concat(),
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_lsp_folding_ranges_with_multibyte_characters(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_folding_ranges = Some(DocumentFoldingRanges::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                folding_range_provider: Some(lsp::FoldingRangeProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+
+        // √ is 3 bytes in UTF-8 but 1 code unit in UTF-16.
+        // LSP character offsets are UTF-16, so interpreting them as byte
+        // offsets lands inside a multi-byte character and panics.
+        let mut folding_request = cx
+            .set_request_handler::<lsp::request::FoldingRangeRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(vec![
+                        // Outer fold: start/end on ASCII-only lines (sanity check).
+                        FoldingRange {
+                            start_line: 0,
+                            start_character: Some(16),
+                            end_line: 8,
+                            end_character: Some(1),
+                            kind: None,
+                            collapsed_text: None,
+                        },
+                        // Inner fold whose start_character falls among multi-byte chars.
+                        // Line 1 is "    //√√√√√√√√√√"
+                        //   UTF-16 offsets: 0-3=' ', 4='/', 5='/', 6-15='√'×10
+                        //   Byte offsets:   0-3=' ', 4='/', 5='/', 6..35='√'×10 (3 bytes each)
+                        // start_character=8 (UTF-16) → after "    //√√", byte offset would be 12
+                        //   but naively using 8 as byte offset hits inside the first '√'.
+                        FoldingRange {
+                            start_line: 1,
+                            start_character: Some(8),
+                            end_line: 3,
+                            end_character: Some(5),
+                            kind: None,
+                            collapsed_text: None,
+                        },
+                    ]))
+                },
+            );
+
+        // Line 0: "fn multibyte() {"       (16 UTF-16 units)
+        // Line 1: "    //√√√√√√√√√√"       (16 UTF-16 units, 36 bytes)
+        // Line 2: "    let y = 2;"          (14 UTF-16 units)
+        // Line 3: "    //√√√|end"           (13 UTF-16 units; '|' is just a visual marker)
+        // Line 4: "    if true {"           (14 UTF-16 units)
+        // Line 5: "        let a = \"√√\";" (22 UTF-16 units, 28 bytes)
+        // Line 6: "    }"                   (5 UTF-16 units)
+        // Line 7: "    let z = 3;"          (14 UTF-16 units)
+        // Line 8: "}"                       (1 UTF-16 unit)
+        cx.set_state(
+            &[
+                "ˇfn multibyte() {\n",
+                "    //√√√√√√√√√√\n",
+                "    let y = 2;\n",
+                "    //√√√|end\n",
+                "    if true {\n",
+                "        let a = \"√√\";\n",
+                "    }\n",
+                "    let z = 3;\n",
+                "}\n",
+            ]
+            .concat(),
+        );
+        assert!(folding_request.next().await.is_some());
+        cx.run_until_parked();
+
+        // Fold the inner range whose start_character lands among √ chars.
+        // Fold spans from line 1 char 8 ("    //√√" visible) to line 3 char 5
+        // ("/√√√|end" visible after fold marker).
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_at(MultiBufferRow(1), window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                editor.display_text(cx),
+                [
+                    "fn multibyte() {\n",
+                    "    //√√⋯/√√√|end\n",
+                    "    if true {\n",
+                    "        let a = \"√√\";\n",
+                    "    }\n",
+                    "    let z = 3;\n",
+                    "}\n",
+                ]
+                .concat(),
+            );
+        });
+
+        // Unfold, then fold the outer range to make sure it works too.
+        cx.update_editor(|editor, window, cx| {
+            editor.unfold_all(&crate::actions::UnfoldAll, window, cx);
+        });
+        cx.update_editor(|editor, window, cx| {
+            editor.fold_at(MultiBufferRow(0), window, cx);
+        });
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(editor.display_text(cx), "fn multibyte() {⋯\n",);
         });
     }
 }

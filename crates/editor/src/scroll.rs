@@ -5,10 +5,10 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
+    MultiBufferSnapshot, RowExt, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
-    persistence::DB,
+    persistence::EditorDb,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
@@ -44,13 +44,13 @@ impl ScrollAnchor {
     pub(super) fn new() -> Self {
         Self {
             offset: gpui::Point::default(),
-            anchor: Anchor::min(),
+            anchor: Anchor::Min,
         }
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<ScrollOffset> {
         self.offset.apply_along(Axis::Vertical, |offset| {
-            if self.anchor == Anchor::min() {
+            if self.anchor == Anchor::Min {
                 0.
             } else {
                 let scroll_top = self.anchor.to_display_point(snapshot).row().as_f64();
@@ -70,7 +70,7 @@ pub struct OngoingScroll {
     axis: Option<Axis>,
 }
 
-/// In the side-by-side diff view, the two sides share a ScrollAnchor using this struct.
+/// In the split diff view, the two sides share a ScrollAnchor using this struct.
 /// Either side can set a ScrollAnchor that points to its own multibuffer, and we store the ID of the display map
 /// that the last-written anchor came from so that we know how to resolve it to a DisplayPoint.
 ///
@@ -196,7 +196,7 @@ pub struct ScrollManager {
     anchor: Entity<SharedScrollAnchor>,
     /// Value to be used for clamping the x component of the SharedScrollAnchor's offset.
     ///
-    /// We store this outside the SharedScrollAnchor so that the two sides of a side-by-side diff can share
+    /// We store this outside the SharedScrollAnchor so that the two sides of a split diff can share
     /// a horizontal scroll offset that may be out of range for one of the editors (when one side is wider than the other).
     /// Each side separately clamps the x component using its own scroll_max_x when reading from the SharedScrollAnchor.
     scroll_max_x: Option<f64>,
@@ -286,7 +286,7 @@ impl ScrollManager {
 
     /// Get a ScrollAnchor whose `anchor` field is guaranteed to point into the multibuffer for the provided snapshot.
     ///
-    /// For normal editors, this just retrieves the internal ScrollAnchor and is lossless. When the editor is part of a side-by-side diff,
+    /// For normal editors, this just retrieves the internal ScrollAnchor and is lossless. When the editor is part of a split diff,
     /// we may need to translate the anchor to point to the "native" multibuffer first. That translation is lossy,
     /// so this method should be used sparingly---if you just need a scroll position or display point, call the appropriate helper method instead,
     /// since they can losslessly handle the case where the ScrollAnchor was last set from the other side.
@@ -372,6 +372,7 @@ impl ScrollManager {
         &mut self,
         scroll_position: gpui::Point<ScrollOffset>,
         map: &DisplaySnapshot,
+        scroll_beyond_last_line: ScrollBeyondLastLine,
         local: bool,
         autoscroll: bool,
         workspace_id: Option<WorkspaceId>,
@@ -379,7 +380,7 @@ impl ScrollManager {
         cx: &mut Context<Editor>,
     ) -> WasScrolled {
         let scroll_top = scroll_position.y.max(0.);
-        let scroll_top = match EditorSettings::get_global(cx).scroll_beyond_last_line {
+        let scroll_top = match scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => scroll_top,
             ScrollBeyondLastLine::Off => {
                 if let Some(height_in_lines) = self.visible_line_count {
@@ -400,7 +401,6 @@ impl ScrollManager {
                 }
             }
         };
-
         let scroll_top_row = DisplayRow(scroll_top as u32);
         let scroll_top_buffer_point = map
             .clip_point(
@@ -467,12 +467,13 @@ impl ScrollManager {
             let item_id = cx.entity().entity_id().as_u64() as ItemId;
             let executor = cx.background_executor().clone();
 
+            let db = EditorDb::global(cx);
             self._save_scroll_position_task = cx.background_executor().spawn(async move {
                 executor.timer(Duration::from_millis(10)).await;
                 log::debug!(
                     "Saving scroll position for item {item_id:?} in workspace {workspace_id:?}"
                 );
-                DB.save_scroll_position(
+                db.save_scroll_position(
                     item_id,
                     workspace_id,
                     top_row,
@@ -638,6 +639,20 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin as usize
     }
 
+    pub(crate) fn scroll_beyond_last_line(&self, cx: &App) -> ScrollBeyondLastLine {
+        match self.mode {
+            EditorMode::Minimap { .. }
+            | EditorMode::Full {
+                sizing_behavior: SizingBehavior::Default,
+                ..
+            } => EditorSettings::get_global(cx).scroll_beyond_last_line,
+
+            EditorMode::Full { .. } | EditorMode::SingleLine | EditorMode::AutoHeight { .. } => {
+                ScrollBeyondLastLine::Off
+            }
+        }
+    }
+
     pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut Context<Self>) {
         self.scroll_manager.vertical_scroll_margin = margin_rows as f64;
         cx.notify();
@@ -665,16 +680,7 @@ impl Editor {
         let opened_first_time = self.scroll_manager.visible_line_count.is_none();
         self.scroll_manager.visible_line_count = Some(lines);
         if opened_first_time {
-            self.post_scroll_update = cx.spawn_in(window, async move |editor, cx| {
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.register_visible_buffers(cx);
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                        editor.update_lsp_data(None, window, cx);
-                        editor.colorize_brackets(false, cx);
-                    })
-                    .ok();
-            });
+            self.update_data_on_scroll(false, window, cx);
         }
     }
 
@@ -775,10 +781,11 @@ impl Editor {
         } else {
             scroll_position
         };
-
+        let scroll_beyond_last_line = self.scroll_beyond_last_line(cx);
         self.scroll_manager.set_scroll_position(
             adjusted_position,
             &display_map,
+            scroll_beyond_last_line,
             local,
             autoscroll,
             workspace_id,
@@ -937,7 +944,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let scroll_position = DB.get_scroll_position(item_id, workspace_id);
+        let scroll_position = EditorDb::global(cx).get_scroll_position(item_id, workspace_id);
         if let Ok(Some((top_row, x, y))) = scroll_position {
             let top_anchor = self
                 .buffer()

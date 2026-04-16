@@ -13,10 +13,10 @@
 - [Overview](./ai/overview.md)
 - [Agent Panel](./ai/agent-panel.md)
   - [Tools](./ai/tools.md)
+  - [Tool Permissions](./ai/tool-permissions.md)
   - [External Agents](./ai/external-agents.md)
 - [Inline Assistant](./ai/inline-assistant.md)
 - [Edit Prediction](./ai/edit-prediction.md)
-- [Text Threads](./ai/text-threads.md)
 - [Rules](./ai/rules.md)
 - [Model Context Protocol](./ai/mcp.md)
 - [Configuration](./ai/configuration.md)
@@ -44,6 +44,7 @@
   - [Debugger](./debugger.md)
   - [REPL](./repl.md)
 - [Git](./git.md)
+- [Modelines](./modelines.md)
 
 # Collaboration
 
@@ -160,7 +161,7 @@
 - [Debugger Extensions](./extensions/debugger-extensions.md)
 - [Theme Extensions](./extensions/themes.md)
 - [Icon Theme Extensions](./extensions/icon-themes.md)
-- [Slash Command Extensions](./extensions/slash-commands.md)
+- [Snippets Extensions](./extensions/snippets.md)
 - [Agent Server Extensions](./extensions/agent-servers.md)
 - [MCP Server Extensions](./extensions/mcp-extensions.md)
 
@@ -181,6 +182,7 @@
 # Account & Privacy
 
 - [Authenticate](./authentication.md)
+- [Roles](./roles.md)
 - [Privacy and Security](./ai/privacy-and-security.md)
   - [Worktree Trust](./worktree-trust.md)
   - [AI Improvement](./ai/ai-improvement.md)

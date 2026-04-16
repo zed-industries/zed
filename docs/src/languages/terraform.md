@@ -1,3 +1,8 @@
+---
+title: Terraform
+description: "Configure Terraform language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Terraform
 
 Terraform support is available through the [Terraform extension](https://github.com/zed-extensions/terraform).

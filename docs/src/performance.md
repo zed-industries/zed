@@ -1,3 +1,8 @@
+---
+title: Rough quick CPU profiling (Flamechart)
+description: "Performance profiling and optimization for Zed development."
+---
+
 How to use our internal tools to profile and keep Zed fast.
 
 # Rough quick CPU profiling (Flamechart)
@@ -10,7 +15,7 @@ See [samply](https://github.com/mstange/samply)'s README on how to install and r
 
 The profile.json does not contain any symbols. Firefox profiler can add the local symbols to the profile for for. To do that hit the upload local profile button in the top right corner.
 
-<img width="851" height="613" alt="image" src="https://github.com/user-attachments/assets/cbef2b51-0442-4ee9-bc5c-95f6ccf9be2c" />
+<img width="851" height="auto" alt="image" src="https://github.com/user-attachments/assets/cbef2b51-0442-4ee9-bc5c-95f6ccf9be2c" style="display: block; margin: 0 auto;" />
 
 # In depth CPU profiling (Tracing)
 
@@ -47,10 +52,47 @@ Download the profiler:
 ## Usage
 
 Open the profiler (tracy-profiler), you should see zed in the list of `Discovered clients` click it.
-<img width="392" height="287" alt="image" src="https://github.com/user-attachments/assets/b6f06fc3-6b25-41c7-ade9-558cc93d6033" />
 
-To find functions that take a long time follow this image:
-<img width="888" height="1159" alt="image" src="https://github.com/user-attachments/assets/77087617-f53a-4331-863d-e59f8a5b6f0b" />
+<img width="392" height="auto" alt="image" src="https://github.com/user-attachments/assets/b6f06fc3-6b25-41c7-ade9-558cc93d6033" style="display: block; margin: 0 auto;"/>
+
+Tracy is an incredibly powerful profiler which can do a lot however it's UI is not that friendly. This is not the place for an in depth guide to Tracy, I do however want to highlight one particular workflow that is helpful when figuring out why a piece of code is _sometimes_ slow.
+
+Here are the steps:
+
+1. Click the flamechart button at the top.
+
+<img width="1815" height="auto" alt="Click flamechart" src="https://github.com/user-attachments/assets/9b488c60-90fa-4013-a663-f4e35ea753d2" />
+
+2. Click on a function that takes a lot of time.
+
+<img width="2001" height="auto" alt="Click snapshot" src="https://github.com/user-attachments/assets/ddb838ed-2c83-4dba-a750-b8a2d4ac6202" />
+
+3. Expand the list of function calls by clicking on main thread.
+
+<img width="2313" height="auto" alt="Click main thread" src="https://github.com/user-attachments/assets/465dd883-9d3c-4384-a396-fce68b872d1a" />
+
+4. Filter that list to the slower calls then click on one of the slow calls in the list
+
+<img width="2264" height="auto" alt="Select the tail calls in the histogram to filter down the list of calls then click on one call" src="https://github.com/user-attachments/assets/a8fddc7c-f40a-4f11-a648-ca7cc193ff6f" />
+
+5. Click zoom to zone to go to that specific function call in the timeline
+
+<img width="1822" height="auto" alt="Click zoom to zone" src="https://github.com/user-attachments/assets/3391664d-7297-41d4-be17-ac9b2e2c85d1" />
+
+6. Scroll to zoom in and see more detail about the callers
+
+<img width="1964" height="auto" alt="Scroll to zoom in" src="https://github.com/user-attachments/assets/625c2bf4-a68d-40c4-becb-ade16bc9a8bc" />
+
+7. Click on a caller to to get statistics on _it_.
+
+<img width="1888" height="auto" alt="Click on any of the zones to get statistics" src="https://github.com/user-attachments/assets/7e578825-2b63-4b7f-88f7-0cb16b8a3387" />
+
+While normally the blue bars in the Tracy timeline correspond to function calls they can time any part of a codebase. In the example below we have added an extra span "for block in edits" and added metadata to it: the block_height. You can do that like this:
+
+```rust
+let span = ztracing::debug_span!("for block in edits", block_height = block.height());
+let _enter = span.enter(); // span guard, when this is dropped the span ends (and its duration is recorded)
+```
 
 # Task/Async profiling
 
@@ -73,7 +115,7 @@ Download the importer
 - `cd import && mkdir build && cd build`
 - Run cmake to generate build files: `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..`
 - Build the importer: `ninja`
-- Run the importer on the trace file: `./tracy-import-miniprofiler /path/to/trace.miniprof /path/to/output.tracy`
+- Run the importer on the trace file: `./tracy-import-miniprofiler /path/to/trace.miniprof.json /path/to/output.tracy`
 - Open the trace in tracy:
   - If you're on windows download the v0.12.2 version from the releases on the upstream repo
   - If you're on other platforms open it on the website: https://tracy.nereid.pl/ (the version might mismatch so your luck might vary, we need to host our own ideally..)
@@ -82,7 +124,7 @@ Download the importer
 
 - Run the action: `zed open performance profiler`
 - Hit the save button. This opens a save dialog or if that fails to open the trace gets saved in your working directory.
-- Convert the profile so it can be imported in tracy using the importer: `./tracy-import-miniprofiler <path to performance_profile.miniprof> output.tracy`
+- Convert the profile so it can be imported in tracy using the importer: `./tracy-import-miniprofiler <path to performance_profile.miniprof.json> output.tracy`
 - Go to <https://tracy.nereid.pl/> hit the 'power button' in the top left and then open saved trace.
 - Now zoom in to see the tasks and how long they took
 

@@ -12,8 +12,9 @@ use language::{
     Buffer, LocalFile as _, PointUtf16, point_to_lsp,
     proto::{deserialize_lsp_edit, serialize_lsp_edit},
 };
-use lsp::{LSP_REQUEST_TIMEOUT, LanguageServerId};
+use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
+use settings::Settings as _;
 use text::BufferId;
 use util::ResultExt as _;
 use worktree::File;
@@ -21,6 +22,7 @@ use worktree::File;
 use crate::{
     ColorPresentation, DocumentColor, LspStore,
     lsp_command::{GetDocumentColor, LspCommand as _, make_text_document_identifier},
+    project_settings::ProjectSettings,
 };
 
 #[derive(Debug, Default, Clone)]
@@ -227,6 +229,10 @@ impl LspStore {
             }) else {
                 return Task::ready(Ok(color));
             };
+
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
             cx.background_spawn(async move {
                 let resolve_task = lang_server.request::<lsp::request::ColorPresentationRequest>(
                     lsp::ColorPresentationParams {
@@ -236,6 +242,7 @@ impl LspStore {
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
                     },
+                    request_timeout,
                 );
                 color.color_presentations = resolve_task
                     .await
@@ -267,10 +274,13 @@ impl LspStore {
                 return Task::ready(Ok(None));
             }
 
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
             let request_task = client.request_lsp(
                 project_id,
                 None,
-                LSP_REQUEST_TIMEOUT,
+                request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );

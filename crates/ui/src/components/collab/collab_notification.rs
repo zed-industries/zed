@@ -67,7 +67,7 @@ impl Component for CollabNotification {
         let avatar = "https://avatars.githubusercontent.com/u/67129314?v=4";
         let container = || div().h(px(72.)).w(px(400.)); // Size of the actual notification window
 
-        let examples = vec![
+        let call_examples = vec![
             single_example(
                 "Incoming Call",
                 container()
@@ -129,6 +129,58 @@ impl Component for CollabNotification {
             ),
         ];
 
-        Some(example_group(examples).vertical().into_any_element())
+        let toast_examples = vec![
+            single_example(
+                "Contact Request",
+                container()
+                    .child(
+                        CollabNotification::new(
+                            avatar,
+                            Button::new("accept", "Accept"),
+                            Button::new("decline", "Decline"),
+                        )
+                        .child(Label::new("maxbrunsfeld wants to add you as a contact")),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Contact Request Accepted",
+                container()
+                    .child(
+                        CollabNotification::new(
+                            avatar,
+                            Button::new("dismiss", "Dismiss"),
+                            Button::new("close", "Close"),
+                        )
+                        .child(Label::new("maxbrunsfeld accepted your contact request")),
+                    )
+                    .into_any_element(),
+            ),
+            single_example(
+                "Channel Invitation",
+                container()
+                    .child(
+                        CollabNotification::new(
+                            avatar,
+                            Button::new("accept", "Accept"),
+                            Button::new("decline", "Decline"),
+                        )
+                        .child(Label::new(
+                            "maxbrunsfeld invited you to join the #zed channel",
+                        )),
+                    )
+                    .into_any_element(),
+            ),
+        ];
+
+        Some(
+            v_flex()
+                .gap_6()
+                .child(example_group_with_title("Calls & Projects", call_examples).vertical())
+                .child(
+                    example_group_with_title("Contact & Channel Toasts", toast_examples).vertical(),
+                )
+                .into_any_element(),
+        )
     }
 }

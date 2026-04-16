@@ -1,3 +1,8 @@
+---
+title: TypeScript
+description: "Configure TypeScript language support in Zed, including language servers, formatting, and debugging."
+---
+
 # TypeScript
 
 TypeScript and TSX support are available natively in Zed.
@@ -14,7 +19,7 @@ TBD: Document the difference between Language servers
 ## Language servers
 
 By default Zed uses [vtsls](https://github.com/yioneko/vtsls) for TypeScript, TSX, and JavaScript files.
-You can configure the use of [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) per language in your settings file:
+Configure language servers in Settings ({#kb zed::OpenSettings}) under Languages > TypeScript/TSX/JavaScript, or add to your settings file:
 
 ```json [settings]
 {
@@ -32,7 +37,7 @@ You can configure the use of [typescript-language-server](https://github.com/typ
 }
 ```
 
-Prettier will also be used for TypeScript files by default. To disable this:
+Prettier will also be used for TypeScript files by default. To disable this, configure in Settings ({#kb zed::OpenSettings}) under Languages > TypeScript, or add to your settings file:
 
 ```json [settings]
 {

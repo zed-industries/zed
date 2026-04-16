@@ -18,7 +18,7 @@ use gpui::{App, AsyncApp, Entity, SharedString, Task, prelude::FluentBuilder};
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
-    language_settings::{InlayHintKind, LanguageSettings, language_settings},
+    language_settings::{InlayHintKind, LanguageSettings},
     point_from_lsp, point_to_lsp,
     proto::{
         deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
@@ -533,7 +533,7 @@ impl LspCommand for PerformRename {
             .rename_provider
             .is_some_and(|capability| match capability {
                 OneOf::Left(enabled) => enabled,
-                OneOf::Right(_options) => true,
+                OneOf::Right(_) => true,
             })
     }
 
@@ -1706,7 +1706,7 @@ impl LspCommand for GetDocumentSymbols {
             return Ok(Vec::new());
         };
 
-        let symbols: Vec<_> = match lsp_symbols {
+        let symbols = match lsp_symbols {
             lsp::DocumentSymbolResponse::Flat(symbol_information) => symbol_information
                 .into_iter()
                 .map(|lsp_symbol| DocumentSymbol {
@@ -2636,11 +2636,10 @@ impl LspCommand for GetCodeActions {
             relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
         }
 
-        let supported =
-            Self::supported_code_action_kinds(language_server.adapter_server_capabilities());
-
         let only = if let Some(requested) = &self.kinds {
-            if let Some(supported_kinds) = supported {
+            if let Some(supported_kinds) =
+                Self::supported_code_action_kinds(language_server.adapter_server_capabilities())
+            {
                 let filtered = requested
                     .iter()
                     .filter(|requested_kind| {
@@ -2655,7 +2654,7 @@ impl LspCommand for GetCodeActions {
                 Some(requested.clone())
             }
         } else {
-            supported
+            None
         };
 
         Ok(lsp::CodeActionParams {
@@ -2937,9 +2936,7 @@ impl LspCommand for OnTypeFormatting {
             .await?;
 
         let options = buffer.update(&mut cx, |buffer, cx| {
-            lsp_formatting_options(
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx).as_ref(),
-            )
+            lsp_formatting_options(LanguageSettings::for_buffer(buffer, cx).as_ref())
         });
 
         Ok(Self {
@@ -3218,8 +3215,9 @@ impl InlayHints {
                                     Some(((uri, range), server_id)) => Some((
                                         LanguageServerId(server_id as usize),
                                         lsp::Location {
-                                            uri: lsp::Uri::from_str(&uri)
-                                                .context("invalid uri in hint part {part:?}")?,
+                                            uri: lsp::Uri::from_str(&uri).with_context(|| {
+                                                format!("invalid uri in hint part {uri:?}")
+                                            })?,
                                             range: lsp::Range::new(
                                                 point_to_lsp(PointUtf16::new(
                                                     range.start.row,
@@ -4780,34 +4778,29 @@ impl LspCommand for GetFoldingRanges {
         cx: AsyncApp,
     ) -> Result<Self::Response> {
         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-        let max_point = snapshot.max_point();
+        let max_point = snapshot.max_point_utf16();
         Ok(message
             .unwrap_or_default()
             .into_iter()
             .filter(|range| range.start_line < range.end_line)
             .filter(|range| range.start_line <= max_point.row && range.end_line <= max_point.row)
             .map(|folding_range| {
-                let start_col = folding_range
-                    .start_character
-                    .unwrap_or(snapshot.line_len(folding_range.start_line));
-                let end_col = folding_range
-                    .end_character
-                    .unwrap_or(snapshot.line_len(folding_range.end_line));
-                let start = snapshot
-                    .anchor_after(language::Point::new(folding_range.start_line, start_col));
-                let end =
-                    snapshot.anchor_before(language::Point::new(folding_range.end_line, end_col));
-                let collapsed_text =
-                    folding_range
-                        .collapsed_text
-                        .filter(|t| !t.is_empty())
-                        .map(|t| {
-                            if t.contains('\n') {
-                                SharedString::from(t.replace('\n', " "))
-                            } else {
-                                SharedString::from(t)
-                            }
-                        });
+                let start_col = folding_range.start_character.unwrap_or(u32::MAX);
+                let end_col = folding_range.end_character.unwrap_or(u32::MAX);
+                let start = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(folding_range.start_line, start_col)),
+                    Bias::Right,
+                );
+                let end = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(folding_range.end_line, end_col)),
+                    Bias::Left,
+                );
+                let start = snapshot.anchor_after(start);
+                let end = snapshot.anchor_before(end);
+                let collapsed_text = folding_range
+                    .collapsed_text
+                    .filter(|t| !t.is_empty())
+                    .map(|t| SharedString::from(crate::lsp_store::collapse_newlines(&t, " ")));
                 LspFoldingRange {
                     range: start..end,
                     collapsed_text,
@@ -4862,9 +4855,14 @@ impl LspCommand for GetFoldingRanges {
         self,
         message: proto::GetFoldingRangesResponse,
         _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> Result<Self::Response> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })
+            .await?;
         message
             .ranges
             .into_iter()

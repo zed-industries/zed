@@ -4,10 +4,10 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
+    Buffer, ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName, Uri};
@@ -44,10 +44,11 @@ pub(crate) struct JsonTaskProvider;
 impl ContextProvider for JsonTaskProvider {
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+        let file = buffer.as_ref().and_then(|buf| buf.read(cx).file());
+        let Some(file) = project::File::from_dyn(file).cloned() else {
             return Task::ready(None);
         };
         let is_package_json = file.path.ends_with(RelPath::unix("package.json").unwrap());
@@ -245,6 +246,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn initialization_options(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
             "provideFormatter": true
@@ -296,7 +298,7 @@ impl LspAdapter for JsonLspAdapter {
         });
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
-                .and_then(|s| s.settings.clone())
+                .and_then(|s| worktree_root(delegate, s.settings.clone()))
         });
 
         if let Some(override_options) = project_options {
@@ -318,6 +320,40 @@ impl LspAdapter for JsonLspAdapter {
     fn is_primary_zed_json_schema_adapter(&self) -> bool {
         true
     }
+}
+
+fn worktree_root(delegate: &Arc<dyn LspAdapterDelegate>, settings: Option<Value>) -> Option<Value> {
+    let Some(Value::Object(mut settings_map)) = settings else {
+        return settings;
+    };
+
+    let Some(Value::Object(json_config)) = settings_map.get_mut("json") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    let Some(Value::Array(schemas)) = json_config.get_mut("schemas") else {
+        return Some(Value::Object(settings_map));
+    };
+
+    for schema in schemas.iter_mut() {
+        let Value::Object(schema_map) = schema else {
+            continue;
+        };
+        let Some(Value::String(url)) = schema_map.get_mut("url") else {
+            continue;
+        };
+
+        if !url.starts_with(".") && !url.starts_with("~") {
+            continue;
+        }
+
+        *url = delegate
+            .resolve_relative_path(url.clone().into())
+            .to_string_lossy()
+            .into_owned();
+    }
+
+    Some(Value::Object(settings_map))
 }
 
 async fn get_cached_server_binary(

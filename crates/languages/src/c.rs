@@ -368,7 +368,7 @@ impl super::LspAdapter for CLspAdapter {
         Ok(original)
     }
 
-    fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, _: &App) -> bool {
+    fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic) -> bool {
         clangd_ext::is_inactive_region(previous_diagnostic)
     }
 

@@ -183,7 +183,8 @@ impl StashList {
                 .delegate
                 .show_stash_at(picker.delegate.selected_index(), window, cx);
         });
-        cx.notify();
+
+        cx.emit(DismissEvent);
     }
 
     pub fn handle_modifiers_changed(
@@ -222,6 +223,7 @@ struct StashEntryMatch {
     entry: StashEntry,
     positions: Vec<usize>,
     formatted_timestamp: String,
+    formatted_absolute_timestamp: String,
 }
 
 pub struct StashListDelegate {
@@ -263,6 +265,17 @@ impl StashListDelegate {
     }
 
     fn format_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
+        let timestamp =
+            OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
+        time_format::format_localized_timestamp(
+            timestamp,
+            OffsetDateTime::now_utc(),
+            timezone,
+            time_format::TimestampFormat::Relative,
+        )
+    }
+
+    fn format_absolute_timestamp(timestamp: i64, timezone: UtcOffset) -> String {
         let timestamp =
             OffsetDateTime::from_unix_timestamp(timestamp).unwrap_or(OffsetDateTime::now_utc());
         time_format::format_localized_timestamp(
@@ -387,11 +400,14 @@ impl PickerDelegate for StashListDelegate {
                     .into_iter()
                     .map(|entry| {
                         let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+                        let formatted_absolute_timestamp =
+                            Self::format_absolute_timestamp(entry.timestamp, timezone);
 
                         StashEntryMatch {
                             entry,
                             positions: Vec::new(),
                             formatted_timestamp,
+                            formatted_absolute_timestamp,
                         }
                     })
                     .collect()
@@ -420,11 +436,14 @@ impl PickerDelegate for StashListDelegate {
                 .map(|candidate| {
                     let entry = all_stash_entries[candidate.candidate_id].clone();
                     let formatted_timestamp = Self::format_timestamp(entry.timestamp, timezone);
+                    let formatted_absolute_timestamp =
+                        Self::format_absolute_timestamp(entry.timestamp, timezone);
 
                     StashEntryMatch {
                         entry,
                         positions: candidate.positions,
                         formatted_timestamp,
+                        formatted_absolute_timestamp,
                     }
                 })
                 .collect()
@@ -467,7 +486,7 @@ impl PickerDelegate for StashListDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
 
@@ -500,16 +519,93 @@ impl PickerDelegate for StashListDelegate {
                     .size(LabelSize::Small),
             );
 
+        let view_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("view-stash", ix), IconName::Eye)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("View Stash", &ShowStashItem, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.delegate.show_stash_at(ix, window, cx);
+                }))
+        };
+
+        let pop_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("pop-stash", ix), IconName::MaximizeAlt)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("Pop Stash", &menu::SecondaryConfirm, &focus_handle, cx)
+                })
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx);
+                })
+        };
+
+        let drop_button = {
+            let focus_handle = self.focus_handle.clone();
+            IconButton::new(("drop-stash", ix), IconName::Trash)
+                .icon_size(IconSize::Small)
+                .tooltip(move |_, cx| {
+                    Tooltip::for_action_in("Drop Stash", &DropStashItem, &focus_handle, cx)
+                })
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.delegate.drop_stash_at(ix, window, cx);
+                }))
+        };
+
         Some(
             ListItem::new(format!("stash-{ix}"))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(v_flex().w_full().child(stash_label).child(branch_info))
-                .tooltip(Tooltip::text(format!(
-                    "stash@{{{}}}",
-                    entry_match.entry.index
-                ))),
+                .child(
+                    h_flex()
+                        .min_w_0()
+                        .w_full()
+                        .gap_2p5()
+                        .child(
+                            Icon::new(IconName::BoxOpen)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            v_flex()
+                                .id(format!("stash-tooltip-{ix}"))
+                                .min_w_0()
+                                .w_full()
+                                .child(stash_label)
+                                .child(branch_info)
+                                .tooltip({
+                                    let stash_message = Self::format_message(
+                                        entry_match.entry.index,
+                                        &entry_match.entry.message,
+                                    );
+                                    let absolute_timestamp =
+                                        entry_match.formatted_absolute_timestamp.clone();
+
+                                    Tooltip::element(move |_, _| {
+                                        v_flex()
+                                            .child(Label::new(stash_message.clone()))
+                                            .child(
+                                                Label::new(absolute_timestamp.clone())
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                            .into_any_element()
+                                    })
+                                }),
+                        ),
+                )
+                .end_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .child(view_button)
+                        .child(pop_button)
+                        .child(drop_button),
+                )
+                .show_end_slot_on_hover(),
         )
     }
 
@@ -518,6 +614,10 @@ impl PickerDelegate for StashListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
+        if self.matches.is_empty() {
+            return None;
+        }
+
         let focus_handle = self.focus_handle.clone();
 
         Some(
@@ -526,6 +626,7 @@ impl PickerDelegate for StashListDelegate {
                 .p_1p5()
                 .gap_0p5()
                 .justify_end()
+                .flex_wrap()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
@@ -580,5 +681,96 @@ impl PickerDelegate for StashListDelegate {
                 )
                 .into_any(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::*;
+    use git::{Oid, stash::StashEntry};
+    use gpui::{TestAppContext, VisualTestContext, rems};
+    use picker::PickerDelegate;
+    use project::{FakeFs, Project};
+    use settings::SettingsStore;
+    use workspace::MultiWorkspace;
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        })
+    }
+
+    /// Convenience function for creating `StashEntry` instances during tests.
+    /// Feel free to update in case you need to provide extra fields.
+    fn stash_entry(index: usize, message: &str, branch: Option<&str>) -> StashEntry {
+        let oid = Oid::from_str(&format!("{:0>40x}", index)).unwrap();
+
+        StashEntry {
+            index,
+            oid,
+            message: message.to_string(),
+            branch: branch.map(Into::into),
+            timestamp: 1000 - index as i64,
+        }
+    }
+
+    #[gpui::test]
+    async fn test_show_stash_dismisses(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let cx = &mut VisualTestContext::from_window(*multi_workspace, cx);
+        let workspace = multi_workspace
+            .update(cx, |workspace, _, _| workspace.workspace().clone())
+            .unwrap();
+        let stash_entries = vec![
+            stash_entry(0, "stash #0", Some("main")),
+            stash_entry(1, "stash #1", Some("develop")),
+        ];
+
+        let stash_list = workspace.update_in(cx, |workspace, window, cx| {
+            let weak_workspace = workspace.weak_handle();
+
+            workspace.toggle_modal(window, cx, move |window, cx| {
+                StashList::new(None, weak_workspace, rems(34.), window, cx)
+            });
+
+            assert!(workspace.active_modal::<StashList>(cx).is_some());
+            workspace.active_modal::<StashList>(cx).unwrap()
+        });
+
+        cx.run_until_parked();
+        stash_list.update(cx, |stash_list, cx| {
+            stash_list.picker.update(cx, |picker, _| {
+                picker.delegate.all_stash_entries = Some(stash_entries);
+            });
+        });
+
+        stash_list
+            .update_in(cx, |stash_list, window, cx| {
+                stash_list.picker.update(cx, |picker, cx| {
+                    picker.delegate.update_matches(String::new(), window, cx)
+                })
+            })
+            .await;
+
+        cx.run_until_parked();
+        stash_list.update_in(cx, |stash_list, window, cx| {
+            assert_eq!(stash_list.picker.read(cx).delegate.matches.len(), 2);
+            stash_list.handle_show_stash(&Default::default(), window, cx);
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_modal::<StashList>(cx).is_none());
+        });
     }
 }

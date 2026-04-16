@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::{
     RemoteArch, RemoteOs, RemotePlatform,
     json_log::LogRecord,
@@ -10,7 +12,7 @@ use futures::{
 };
 use gpui::{AppContext as _, AsyncApp, Task};
 use rpc::proto::Envelope;
-use smol::process::Child;
+use util::command::Child;
 
 pub mod docker;
 #[cfg(any(test, feature = "test-support"))]
@@ -137,7 +139,12 @@ fn handle_rpc_messages_over_child_process_stdio(
                 if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
                     record.log(log::logger())
                 } else {
-                    eprintln!("(remote) {}", String::from_utf8_lossy(content));
+                    std::io::stderr()
+                        .write_fmt(format_args!(
+                            "(remote) {}\n",
+                            String::from_utf8_lossy(content)
+                        ))
+                        .ok();
                 }
             }
             stderr_buffer.drain(0..start_ix);
@@ -181,10 +188,9 @@ async fn build_remote_server_from_source(
     binary_exists_on_server: bool,
     cx: &mut AsyncApp,
 ) -> Result<Option<std::path::PathBuf>> {
-    use smol::process::{Command, Stdio};
     use std::env::VarError;
     use std::path::Path;
-    use util::command::new_smol_command;
+    use util::command::{Command, Stdio, new_command};
 
     if let Ok(path) = std::env::var("ZED_COPY_REMOTE_SERVER") {
         let path = std::path::PathBuf::from(path);
@@ -257,17 +263,13 @@ async fn build_remote_server_from_source(
             rust_flags.push_str(&format!(" -C link-arg=-L{path}"));
         }
     }
-    if build_remote_server.contains("mold") {
-        rust_flags.push_str(" -C link-arg=-fuse-ld=mold");
-    }
-
     if platform.arch.as_str() == std::env::consts::ARCH
         && platform.os.as_str() == std::env::consts::OS
     {
         delegate.set_status(Some("Building remote server binary from source"), cx);
         log::info!("building remote server binary from source");
         run_cmd(
-            new_smol_command("cargo")
+            new_command("cargo")
                 .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "build",
@@ -297,18 +299,12 @@ async fn build_remote_server_from_source(
             .context("rustup not found on $PATH, install rustup (see https://rustup.rs/)")?;
         delegate.set_status(Some("Adding rustup target for cross-compilation"), cx);
         log::info!("adding rustup target");
-        run_cmd(
-            new_smol_command(rustup)
-                .args(["target", "add"])
-                .arg(&triple),
-        )
-        .await?;
+        run_cmd(new_command(rustup).args(["target", "add"]).arg(&triple)).await?;
 
         if which("cargo-zigbuild", cx).await?.is_none() {
             delegate.set_status(Some("Installing cargo-zigbuild for cross-compilation"), cx);
             log::info!("installing cargo-zigbuild");
-            run_cmd(new_smol_command("cargo").args(["install", "--locked", "cargo-zigbuild"]))
-                .await?;
+            run_cmd(new_command("cargo").args(["install", "--locked", "cargo-zigbuild"])).await?;
         }
 
         delegate.set_status(
@@ -319,7 +315,8 @@ async fn build_remote_server_from_source(
         );
         log::info!("building remote binary from source for {triple} with Zig");
         run_cmd(
-            new_smol_command("cargo")
+            new_command("cargo")
+                .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .args([
                     "zigbuild",
                     "--package",
@@ -335,7 +332,8 @@ async fn build_remote_server_from_source(
         )
         .await?;
     };
-    let bin_path = Path::new("target")
+    let bin_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+        .join("target")
         .join("remote_server")
         .join(&triple)
         .join("debug")
@@ -347,7 +345,7 @@ async fn build_remote_server_from_source(
 
         #[cfg(not(target_os = "windows"))]
         let archive_path = {
-            run_cmd(new_smol_command("gzip").arg("-f").arg(&bin_path)).await?;
+            run_cmd(new_command("gzip").arg("-f").arg(&bin_path)).await?;
             bin_path.with_extension("gz")
         };
 
@@ -362,7 +360,7 @@ async fn build_remote_server_from_source(
                 bin_path.display(),
                 zip_path.display(),
             );
-            run_cmd(new_smol_command("powershell.exe").args([
+            run_cmd(new_command("powershell.exe").args([
                 "-NoProfile",
                 "-Command",
                 &compress_command,

@@ -1,3 +1,8 @@
+---
+title: Language Server and Tree-sitter Config - Zed
+description: Configure language support in Zed with Tree-sitter for syntax highlighting and LSP for diagnostics, completion, and formatting.
+---
+
 # Configuring Supported Languages
 
 Zed's language support is built on two technologies:
@@ -117,11 +122,40 @@ You can specify your preference using the `language_servers` setting:
 
 In this example:
 
-- `intelephense` is set as the primary language server
-- `phpactor` is disabled (note the `!` prefix)
-- `...` expands to the rest of the language servers that are registered for PHP
+- `intelephense` is set as the primary language server.
+- `phpactor` and `phptools` are disabled (note the `!` prefix).
+- `"..."` expands to the rest of the language servers registered for PHP that are not already listed.
 
-This configuration allows you to tailor the language server setup to your specific needs, ensuring that you get the most suitable functionality for your development workflow.
+The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
+
+#### Examples
+
+Suppose you're working with Ruby. The default configuration is:
+
+```json [settings]
+{
+  "language_servers": [
+    "solargraph",
+    "!ruby-lsp",
+    "!rubocop",
+    "!sorbet",
+    "!steep",
+    "!kanayago",
+    "..."
+  ]
+}
+```
+
+When you override `language_servers` in your settings, your list **replaces** the default entirely. This means default-disabled servers like `kanayago` will be re-enabled by `"..."` unless you explicitly disable them again.
+
+| Configuration                                     | Result                                                             |
+| ------------------------------------------------- | ------------------------------------------------------------------ |
+| `["..."]`                                         | `solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, `steep`, `kanayago` |
+| `["ruby-lsp", "..."]`                             | `ruby-lsp`, `solargraph`, `rubocop`, `sorbet`, `steep`, `kanayago` |
+| `["ruby-lsp", "!solargraph", "!kanayago", "..."]` | `ruby-lsp`, `rubocop`, `sorbet`, `steep`                           |
+| `["ruby-lsp", "solargraph"]`                      | `ruby-lsp`, `solargraph`                                           |
+
+> Note: In the first example, `"..."` includes `kanayago` even though it is disabled by default. The override replaced the default list, so the `"!kanayago"` entry is no longer present. To keep it disabled, you must include `"!kanayago"` in your configuration.
 
 ### Toolchains
 
@@ -130,6 +164,8 @@ An example of what Zed considers a toolchain is a virtual environment in Python.
 Not all languages in Zed support toolchain discovery and selection, but for those that do, you can specify the toolchain from a toolchain picker (via {#action toolchain::Select}). To learn more about toolchains in Zed, see [`toolchains`](./toolchains.md).
 
 ### Configuring Language Servers
+
+When configuring language servers in your `settings.json`, autocomplete suggestions include all available LSP adapters recognized by Zed, not only those currently active for loaded languages. This helps you discover and configure language servers before opening files that use them.
 
 Many language servers accept custom configuration options. You can set these in the `lsp` section of your `settings.json`:
 
@@ -314,6 +350,18 @@ To run linter fixes automatically on save:
   }
 }
 ```
+
+### Formatting Selections
+
+Zed supports formatting only the selected text via `editor: format selections` ({#kb editor::FormatSelections}). How
+this works depends on the configured formatter:
+
+- **Language server**: Sends an LSP range formatting request for each selection. This provides the most precise
+  selection-only formatting.
+- **Prettier**: Uses Prettier's built-in range formatting to format the encompassing range of all selections. Any
+  resulting edits that fall outside the selected ranges are discarded, so only the selected code is modified.
+- **External commands**: External command formatters do not support range formatting and are skipped when formatting
+  selections.
 
 ### Integrating Formatting and Linting
 

@@ -6,12 +6,12 @@ use edit_prediction_types::{
     DataCollectionState, EditPredictionDelegate, EditPredictionDiscardReason,
     EditPredictionIconSet, SuggestionDisplayType,
 };
+use feature_flags::FeatureFlagAppExt;
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
-use ui::prelude::*;
 
-use crate::{BufferEditPrediction, EditPredictionModel, EditPredictionStore};
+use crate::{BufferEditPrediction, EditPredictionStore};
 
 pub struct ZedEditPredictionDelegate {
     store: Entity<EditPredictionStore>,
@@ -63,22 +63,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
     }
 
     fn icons(&self, cx: &App) -> EditPredictionIconSet {
-        match self.store.read(cx).edit_prediction_model {
-            EditPredictionModel::Sweep => EditPredictionIconSet::new(IconName::SweepAi)
-                .with_disabled(IconName::SweepAiDisabled)
-                .with_up(IconName::SweepAiUp)
-                .with_down(IconName::SweepAiDown)
-                .with_error(IconName::SweepAiError),
-            EditPredictionModel::Mercury => EditPredictionIconSet::new(IconName::Inception),
-            EditPredictionModel::Zeta1 | EditPredictionModel::Zeta2 => {
-                EditPredictionIconSet::new(IconName::ZedPredict)
-                    .with_disabled(IconName::ZedPredictDisabled)
-                    .with_up(IconName::ZedPredictUp)
-                    .with_down(IconName::ZedPredictDown)
-                    .with_error(IconName::ZedPredictError)
-            }
-            EditPredictionModel::Ollama => EditPredictionIconSet::new(IconName::AiOllama),
-        }
+        self.store.read(cx).icons(cx)
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {
@@ -89,6 +74,24 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 self.store
                     .read(cx)
                     .is_file_open_source(&self.project, file, cx);
+
+            if let Some(organization_configuration) = self
+                .store
+                .read(cx)
+                .user_store
+                .read(cx)
+                .current_organization_configuration()
+            {
+                if !organization_configuration
+                    .edit_prediction
+                    .is_feedback_enabled
+                {
+                    return DataCollectionState::Disabled {
+                        is_project_open_source,
+                    };
+                }
+            }
+
             if self.store.read(cx).data_collection_choice.is_enabled(cx) {
                 DataCollectionState::Enabled {
                     is_project_open_source,
@@ -105,6 +108,29 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         }
     }
 
+    fn can_toggle_data_collection(&self, cx: &App) -> bool {
+        if cx.is_staff() {
+            return false;
+        }
+
+        if let Some(organization_configuration) = self
+            .store
+            .read(cx)
+            .user_store
+            .read(cx)
+            .current_organization_configuration()
+        {
+            if !organization_configuration
+                .edit_prediction
+                .is_feedback_enabled
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
     fn toggle_data_collection(&mut self, cx: &mut App) {
         self.store.update(cx, |store, cx| {
             store.toggle_data_collection_choice(cx);
@@ -119,14 +145,9 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         &self,
         _buffer: &Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        cx: &App,
+        _cx: &App,
     ) -> bool {
-        let store = self.store.read(cx);
-        if store.edit_prediction_model == EditPredictionModel::Sweep {
-            store.has_sweep_api_token(cx)
-        } else {
-            true
-        }
+        true
     }
 
     fn is_refreshing(&self, cx: &App) -> bool {
@@ -198,7 +219,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 BufferEditPrediction::Local { prediction } => prediction,
                 BufferEditPrediction::Jump { prediction } => {
                     return Some(edit_prediction_types::EditPrediction::Jump {
-                        id: Some(prediction.id.to_string().into()),
+                        id: Some(prediction.id.0.clone()),
                         snapshot: prediction.snapshot.clone(),
                         target: prediction.edits.first().unwrap().0.start,
                     });
@@ -249,7 +270,7 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             }
 
             Some(edit_prediction_types::EditPrediction::Local {
-                id: Some(prediction.id.to_string().into()),
+                id: Some(prediction.id.0.clone()),
                 edits: edits[edit_start_ix..edit_end_ix].to_vec(),
                 cursor_position: prediction.cursor_position,
                 edit_preview: Some(prediction.edit_preview.clone()),

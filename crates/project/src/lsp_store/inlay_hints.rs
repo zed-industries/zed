@@ -10,9 +10,13 @@ use language::{
 };
 use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
+use settings::Settings as _;
 use text::{BufferId, Point};
 
-use crate::{InlayHint, InlayId, LspStore, LspStoreEvent, ResolveState, lsp_command::InlayHints};
+use crate::{
+    InlayHint, InlayId, LspStore, LspStoreEvent, ResolveState, lsp_command::InlayHints,
+    project_settings::ProjectSettings,
+};
 
 pub type CacheInlayHints = HashMap<LanguageServerId, Vec<(InlayId, InlayHint)>>;
 pub type CacheInlayHintsTask = Shared<Task<Result<CacheInlayHints, Arc<anyhow::Error>>>>;
@@ -269,9 +273,13 @@ impl LspStore {
                 return Task::ready(Ok(hint));
             }
             let buffer_snapshot = buffer.read(cx).snapshot();
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
             cx.spawn(async move |_, cx| {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
                     InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
+                    request_timeout,
                 );
                 let resolved_hint = resolve_task
                     .await

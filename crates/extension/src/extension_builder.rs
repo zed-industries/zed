@@ -4,17 +4,18 @@ use crate::{
 };
 use ::fs::Fs;
 use anyhow::{Context as _, Result, bail};
-use futures::{AsyncReadExt, StreamExt};
+use futures::{StreamExt, io};
 use heck::ToSnakeCase;
 use http_client::{self, AsyncBody, HttpClient};
+use language::LanguageConfig;
 use serde::Deserialize;
 use std::{
     env, fs, mem,
     path::{Path, PathBuf},
-    process::Stdio,
     str::FromStr,
     sync::Arc,
 };
+use util::command::Stdio;
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
@@ -157,7 +158,7 @@ impl ExtensionBuilder {
             "compiling Rust crate for extension {}",
             extension_dir.display()
         );
-        let output = util::command::new_smol_command("cargo")
+        let output = util::command::new_command("cargo")
             .args(["build", "--target", RUST_TARGET])
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
@@ -263,7 +264,7 @@ impl ExtensionBuilder {
             );
         } else {
             log::info!("compiling {grammar_name} parser");
-            let clang_output = util::command::new_smol_command(&clang_path)
+            let clang_output = util::command::new_command(&clang_path)
                 .args(["-fPIC", "-shared", "-Os"])
                 .arg(format!("-Wl,--export=tree_sitter_{grammar_name}"))
                 .arg("-o")
@@ -292,19 +293,15 @@ impl ExtensionBuilder {
         let git_dir = directory.join(".git");
 
         if directory.exists() {
-            let remotes_output = util::command::new_smol_command("git")
+            let remotes_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
-                .args(["remote", "-v"])
+                .args(["remote", "get-url", "origin"])
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
                 .output()
                 .await?;
             let has_remote = remotes_output.status.success()
-                && String::from_utf8_lossy(&remotes_output.stdout)
-                    .lines()
-                    .any(|line| {
-                        let mut parts = line.split(|c: char| c.is_whitespace());
-                        parts.next() == Some("origin") && parts.any(|part| part == url)
-                    });
+                && String::from_utf8_lossy(&remotes_output.stdout).trim() == url;
             if !has_remote {
                 bail!(
                     "grammar directory '{}' already exists, but is not a git clone of '{}'",
@@ -316,7 +313,7 @@ impl ExtensionBuilder {
             fs::create_dir_all(directory).with_context(|| {
                 format!("failed to create grammar directory {}", directory.display(),)
             })?;
-            let init_output = util::command::new_smol_command("git")
+            let init_output = util::command::new_command("git")
                 .arg("init")
                 .current_dir(directory)
                 .output()
@@ -328,7 +325,7 @@ impl ExtensionBuilder {
                 );
             }
 
-            let remote_add_output = util::command::new_smol_command("git")
+            let remote_add_output = util::command::new_command("git")
                 .arg("--git-dir")
                 .arg(&git_dir)
                 .args(["remote", "add", "origin", url])
@@ -343,7 +340,7 @@ impl ExtensionBuilder {
             }
         }
 
-        let fetch_output = util::command::new_smol_command("git")
+        let fetch_output = util::command::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["fetch", "--depth", "1", "origin", rev])
@@ -351,7 +348,7 @@ impl ExtensionBuilder {
             .await
             .context("failed to execute `git fetch`")?;
 
-        let checkout_output = util::command::new_smol_command("git")
+        let checkout_output = util::command::new_command("git")
             .arg("--git-dir")
             .arg(&git_dir)
             .args(["checkout", rev])
@@ -379,7 +376,7 @@ impl ExtensionBuilder {
     }
 
     async fn install_rust_wasm_target_if_needed(&self) -> Result<()> {
-        let rustc_output = util::command::new_smol_command("rustc")
+        let rustc_output = util::command::new_command("rustc")
             .arg("--print")
             .arg("sysroot")
             .output()
@@ -397,7 +394,7 @@ impl ExtensionBuilder {
             return Ok(());
         }
 
-        let output = util::command::new_smol_command("rustup")
+        let output = util::command::new_command("rustup")
             .args(["target", "add", RUST_TARGET])
             .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
@@ -441,18 +438,20 @@ impl ExtensionBuilder {
 
         // Write the response to a temporary file
         let tar_gz_path = self.cache_dir.join("wasi-sdk.tar.gz");
-        let mut tar_gz_file =
+        let tar_gz_file =
             fs::File::create(&tar_gz_path).context("failed to create temporary tar.gz file")?;
         let response_body = response.body_mut();
-        let mut body_bytes = Vec::new();
-        response_body.read_to_end(&mut body_bytes).await?;
-        std::io::Write::write_all(&mut tar_gz_file, &body_bytes)?;
-        drop(tar_gz_file);
+
+        let mut async_file = io::AllowStdIo::new(tar_gz_file);
+        io::copy(response_body, &mut async_file)
+            .await
+            .context("failed to stream response to file")?;
+        drop(async_file);
 
         log::info!("un-tarring wasi-sdk to {}", tar_out_dir.display());
 
         // Shell out to tar to extract the archive
-        let tar_output = util::command::new_smol_command("tar")
+        let tar_output = util::command::new_command("tar")
             .arg("-xzf")
             .arg(&tar_gz_path)
             .arg("-C")
@@ -581,7 +580,7 @@ async fn populate_defaults(
 
         while let Some(language_dir) = language_dir_entries.next().await {
             let language_dir = language_dir?;
-            let config_path = language_dir.join("config.toml");
+            let config_path = language_dir.join(LanguageConfig::FILE_NAME);
             if fs.is_file(config_path.as_path()).await {
                 let relative_language_dir =
                     language_dir.strip_prefix(extension_path)?.to_path_buf();
