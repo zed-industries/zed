@@ -8263,13 +8263,11 @@ mod tests {
         let (_workspace, panel, mut cx) = setup_workspace_panel(cx).await;
         cx.run_until_parked();
 
-        let agent_id = 
-        
         let connection = DisassociationTrackingConnection::new();
         panel.update(&mut cx, |panel, cx| {
             panel.connection_store.update(cx, |store, cx| {
                 store.restart_connection(
-                    Agent::NativeAgent,
+                    Agent::Stub,
                     Rc::new(StubAgentServer::new(connection.clone())),
                     cx,
                 );
@@ -8280,7 +8278,7 @@ mod tests {
         // Step 1: Open thread A and send a message.
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.external_thread(
-                Some(Agent::NativeAgent),
+                Some(Agent::Stub),
                 None,
                 None,
                 None,
@@ -8300,7 +8298,7 @@ mod tests {
         // Step 2: Open thread B → A goes to retained_threads.
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.external_thread(
-                Some(Agent::NativeAgent),
+                Some(Agent::Stub),
                 None,
                 None,
                 None,
