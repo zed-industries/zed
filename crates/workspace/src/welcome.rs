@@ -399,18 +399,21 @@ impl WelcomePage {
         location: &SerializedWorkspaceLocation,
         paths: &PathList,
     ) -> impl IntoElement {
+        let paths = paths
+            .paths()
+            .iter()
+            .filter_map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let name = if paths.is_empty() {
+            "Untitled".to_string()
+        } else {
+            paths
+        };
+
         let (icon, title) = match location {
-            SerializedWorkspaceLocation::Local => {
-                let path = paths.paths().first().map(|p| p.as_path());
-                let name = path
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Untitled".to_string());
-                (IconName::Folder, name)
-            }
-            SerializedWorkspaceLocation::Remote(_) => {
-                (IconName::Server, "Remote Project".to_string())
-            }
+            SerializedWorkspaceLocation::Local => (IconName::Folder, name),
+            SerializedWorkspaceLocation::Remote(_) => (IconName::Server, name),
         };
 
         SectionButton::new(
