@@ -274,6 +274,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "piper",
  "project",
  "release_channel",
  "remote",
