@@ -9,8 +9,8 @@ Kotlin language support in Zed is provided by the community-maintained [Kotlin e
 Report issues to: [https://github.com/zed-extensions/kotlin/issues](https://github.com/zed-extensions/kotlin/issues)
 
 - Tree-sitter: [fwcd/tree-sitter-kotlin](https://github.com/fwcd/tree-sitter-kotlin)
-- Language Server: [fwcd/kotlin-language-server](https://github.com/fwcd/kotlin-language-server)
-- Alternate Language Server: [kotlin/kotlin-lsp](https://github.com/kotlin/kotlin-lsp)
+- Language Server: [kotlin/kotlin-lsp](https://github.com/kotlin/kotlin-lsp)
+- Alternate Language Server: [fwcd/kotlin-language-server](https://github.com/fwcd/kotlin-language-server)
 
 ## Configuration
 
