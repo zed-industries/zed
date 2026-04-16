@@ -4087,13 +4087,15 @@ impl BackgroundScanner {
     fn normalized_events_for_worktree(
         state: &BackgroundScannerState,
         root_canonical_path: &SanitizedPath,
-        events: Vec<PathEvent>,
+        mut events: Vec<PathEvent>,
     ) -> Vec<PathEvent> {
-        let mut normalized_events = Vec::new();
+        if state.symlink_paths_by_target.is_empty() {
+            return events;
+        }
+        let mut mapped_events = Vec::new();
 
-        for event in events {
+        for event in &events {
             let abs_path = SanitizedPath::new(&event.path);
-            normalized_events.push(event.clone());
 
             let mut best_target_root: Option<&Arc<Path>> = None;
             let mut best_depth = 0;
@@ -4131,14 +4133,15 @@ impl BackgroundScanner {
                         .join(suffix)
                 };
                 if mapped_path != event.path {
-                    normalized_events.push(PathEvent {
+                    mapped_events.push(PathEvent {
                         path: mapped_path,
                         kind: event.kind,
                     });
                 }
             }
         }
-        normalized_events
+        events.extend(mapped_events);
+        events
     }
 
     async fn process_events(&self, mut events: Vec<PathEvent>) {

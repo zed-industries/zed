@@ -60,8 +60,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_watch_config_file_reloads_when_parent_dir_is_symlink (cx: &mut TestAppContext){
-
+    async fn test_watch_config_file_reloads_when_parent_dir_is_symlink(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
         let fs = FakeFs::new(cx.background_executor.clone());
         let config_settings_path = PathBuf::from("/root/.config/zed/settings.json");
@@ -76,7 +75,7 @@ mod tests {
                         "settings.json": "A"
                     }
                 }
-            })
+            }),
         )
         .await;
 
@@ -93,7 +92,6 @@ mod tests {
 
         fs.insert_file(&target_settings_path, b"B".to_vec()).await;
         assert_eq!(rx.next().await.as_deref(), Some("B"));
-
     }
 }
 
