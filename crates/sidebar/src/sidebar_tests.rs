@@ -271,7 +271,6 @@ fn save_thread_metadata(
             updated_at,
             created_at,
             worktree_paths,
-            last_user_interaction: updated_at,
             archived: false,
             remote_connection,
         };
@@ -306,7 +305,6 @@ fn save_thread_metadata_with_main_paths(
         updated_at,
         created_at: None,
         worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, folder_paths).unwrap(),
-        last_user_interaction: updated_at,
         archived: false,
         remote_connection: None,
     };
@@ -772,7 +770,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Completed thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    last_user_interaction: Utc::now(),
                     archived: false,
                     remote_connection: None,
                 },
@@ -797,7 +794,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Running thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    last_user_interaction: Utc::now(),
                     archived: false,
                     remote_connection: None,
                 },
@@ -822,7 +818,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Error thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    last_user_interaction: Utc::now(),
                     archived: false,
                     remote_connection: None,
                 },
@@ -848,7 +843,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Waiting thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    last_user_interaction: Utc::now(),
                     archived: false,
                     remote_connection: None,
                 },
@@ -874,7 +868,6 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     title: Some("Notified thread".into()),
                     updated_at: Utc::now(),
                     created_at: Some(Utc::now()),
-                    last_user_interaction: Utc::now(),
                     archived: false,
                     remote_connection: None,
                 },
@@ -3924,7 +3917,6 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                     "/project-b",
                 )])),
-                last_user_interaction: Utc::now(),
                 archived: false,
                 remote_connection: None,
             },
@@ -3993,7 +3985,6 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[
                     std::path::PathBuf::from("/project-b"),
                 ])),
-                last_user_interaction: Utc::now(),
                 archived: false,
                 remote_connection: None,
             },
@@ -4058,7 +4049,6 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
                 updated_at: Utc::now(),
                 created_at: None,
                 worktree_paths: WorktreePaths::default(),
-                last_user_interaction: Utc::now(),
                 archived: false,
                 remote_connection: None,
             },
@@ -4115,7 +4105,6 @@ async fn test_activate_archived_thread_saved_paths_opens_new_workspace(cx: &mut 
                 updated_at: Utc::now(),
                 created_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
-                last_user_interaction: Utc::now(),
                 archived: false,
                 remote_connection: None,
             },
@@ -4173,7 +4162,6 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                     "/project-b",
                 )])),
-                last_user_interaction: Utc::now(),
                 archived: false,
                 remote_connection: None,
             },
@@ -4254,7 +4242,6 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                     "/project-b",
                 )])),
-                last_user_interaction: Utc::now(),
                 archived: false,
                 remote_connection: None,
             },
@@ -4338,7 +4325,6 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
                 worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                     "/project-a",
                 )])),
-                last_user_interaction: Utc::now(),
                 archived: false,
                 remote_connection: None,
             },
@@ -5264,8 +5250,6 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
             worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                 "/wt-feature-a",
             )])),
-            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0)
-                .unwrap(),
             archived: false,
             remote_connection: Some(remote_host),
         };
@@ -5570,6 +5554,8 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(switcher_selected_id(&sidebar, cx), session_id_c);
 
+    assert!(sidebar.update(cx, |sidebar, _cx| sidebar.thread_last_accessed.is_empty()));
+
     // Confirm on Thread C.
     sidebar.update_in(cx, |sidebar, window, cx| {
         let switcher = sidebar.thread_switcher.as_ref().unwrap();
@@ -5586,7 +5572,14 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
         );
     });
 
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.update(cx, |sidebar, _cx| {
+        let last_accessed = sidebar
+            .thread_last_accessed
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(last_accessed.len(), 1);
+        assert!(last_accessed.contains(&session_id_c));
         assert!(
             is_active_session(&sidebar, &session_id_c),
             "active_entry should be Thread({session_id_c:?})"
@@ -5615,7 +5608,15 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.update(cx, |sidebar, _cx| {
+        let last_accessed = sidebar
+            .thread_last_accessed
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(last_accessed.len(), 2);
+        assert!(last_accessed.contains(&session_id_c));
+        assert!(last_accessed.contains(&session_id_a));
         assert!(
             is_active_session(&sidebar, &session_id_a),
             "active_entry should be Thread({session_id_a:?})"
@@ -5650,7 +5651,16 @@ async fn test_thread_switcher_ordering(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    sidebar.read_with(cx, |sidebar, _cx| {
+    sidebar.update(cx, |sidebar, _cx| {
+        let last_accessed = sidebar
+            .thread_last_accessed
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(last_accessed.len(), 3);
+        assert!(last_accessed.contains(&session_id_c));
+        assert!(last_accessed.contains(&session_id_a));
+        assert!(last_accessed.contains(&session_id_b));
         assert!(
             is_active_session(&sidebar, &session_id_b),
             "active_entry should be Thread({session_id_b:?})"
@@ -6003,7 +6013,6 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
                     updated_at: Utc::now(),
                     created_at: None,
                     worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
-                    last_user_interaction: Utc::now(),
                     archived: true,
                     remote_connection: None,
                 },
@@ -6096,7 +6105,6 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
                     updated_at: Utc::now(),
                     created_at: None,
                     worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
-                    last_user_interaction: Utc::now(),
                     archived: true,
                     remote_connection: None,
                 },
@@ -6324,7 +6332,6 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
                     worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[
                         PathBuf::from("/project-b"),
                     ])),
-                    last_user_interaction: Utc::now(),
                     archived: true,
                     remote_connection: None,
                 },
@@ -7169,7 +7176,6 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
                         folder_paths.clone(),
                     )
                     .expect("main and folder paths should be well-formed"),
-                    last_user_interaction: Utc::now(),
                     archived: true,
                     remote_connection: None,
                 },
@@ -7829,8 +7835,6 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                 "/project",
             )])),
-            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0)
-                .unwrap(),
             archived: false,
             remote_connection: None,
         };
@@ -8813,7 +8817,6 @@ mod property_test {
             updated_at,
             created_at: None,
             worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, path_list).unwrap(),
-            last_user_interaction: updated_at,
             archived: false,
             remote_connection: None,
         };
@@ -9716,8 +9719,6 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
                 PathList::new(&[PathBuf::from("/project-wt-1")]),
             )
             .unwrap(),
-            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1)
-                .unwrap(),
             archived: false,
             remote_connection,
         };
