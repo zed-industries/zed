@@ -1509,16 +1509,25 @@ impl GitRepository for RealGitRepository {
     }
 
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
-        let working_directory = self.working_directory();
-        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory_and_git_binary = self.working_directory().map(|working_directory| {
+            (
+                working_directory.clone(),
+                GitBinary::new(
+                    self.any_git_binary_path.clone(),
+                    working_directory,
+                    self.path(),
+                    self.executor.clone(),
+                    self.is_trusted(),
+                ),
+            )
+        });
 
         self.executor
             .spawn(async move {
-                let working_directory = working_directory?;
+                let (working_directory, git_binary) = working_directory_and_git_binary?;
 
-                let output = util::command::new_command(git_binary_path)
-                    .current_dir(&working_directory)
-                    .args(["config", "--get", "commit.template"])
+                let output = git_binary
+                    .build_command(&["config", "--get", "commit.template"])
                     .output()
                     .await
                     .context("failed to run git config --get commit.template")?;
