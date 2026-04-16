@@ -37,7 +37,7 @@ use std::{
 /// Strategy injected into `#[gpui::property_test]` tests to control the seed
 /// given to the scheduler. Doesn't shrink, since all scheduler seeds are
 /// equivalent in complexity. If `$SEED` is set, it always uses that value.
-/// 
+///
 /// Note: this function is not intended to be used directly. Rather, it is
 /// public so that it can be used from the `property_test` macro.
 pub fn seed_strategy() -> impl Strategy<Value = u64> {
@@ -51,7 +51,7 @@ pub fn seed_strategy() -> impl Strategy<Value = u64> {
 /// is deterministic. Uses `$SEED` if set, otherwise defaults to `0`.
 /// This bridges the GPUI `SEED` env var to proptest's RNG seed, so that
 /// a single variable controls both the scheduler seed and case generation.
-/// 
+///
 /// Note: this function is not intended to be used directly. Rather, it is
 /// public so that it can be used from the `property_test` macro.
 pub fn apply_seed_to_proptest_config(

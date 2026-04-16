@@ -123,7 +123,7 @@ impl Parse for Args {
         for pair in pairs {
             match pair.path.get_ident().map(Ident::to_string).as_deref() {
                 Some("config") => config = Some(pair.value),
-                Some("proptest_path") => errors.extend(quote_spanned! {pair.span() => 
+                Some("proptest_path") => errors.extend(quote_spanned! {pair.span() =>
                     compile_error!("`gpui::property_test` overrides the `proptest_path` parameter")
                 }),
                 _ => remaining_args.push(pair),
