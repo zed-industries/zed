@@ -910,12 +910,19 @@ mod tests {
         let thread_id = uuid::Uuid::new_v4();
         let session_id = uuid::Uuid::new_v4().to_string();
         connection
-            .exec_bound::<(uuid::Uuid, &str, &str, &str, bool)>(
+            .exec_bound::<(uuid::Uuid, &str, &str, &str, bool, &str)>(
                 "INSERT INTO sidebar_threads \
-                 (thread_id, session_id, title, updated_at, archived) \
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                 (thread_id, session_id, title, updated_at, archived, last_user_interaction) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
-            .unwrap()((thread_id, session_id.as_str(), title, updated_at, archived))
+            .unwrap()((
+            thread_id,
+            session_id.as_str(),
+            title,
+            updated_at,
+            archived,
+            updated_at,
+        ))
         .unwrap();
     }
 
