@@ -530,6 +530,9 @@ impl Markdown {
         source_index: usize,
         cx: &mut Context<Self>,
     ) {
+        if self.autoscroll_request == Some(source_index) {
+            return;
+        }
         self.autoscroll_request = Some(source_index);
         cx.refresh_windows();
     }
@@ -1380,7 +1383,7 @@ impl MarkdownElement {
                                     markdown.selection = Selection::default();
                                     markdown.pressed_link = None;
                                     window.prevent_default();
-                                    cx.notify();
+                                    cx.refresh_windows();
                                     return;
                                 }
                             }
@@ -1417,12 +1420,12 @@ impl MarkdownElement {
                         }
 
                         window.prevent_default();
-                        cx.notify();
+                        cx.refresh_windows();
                     }
                 } else if phase.capture() && event.button == MouseButton::Left {
                     markdown.selection = Selection::default();
                     markdown.pressed_link = None;
-                    cx.notify();
+                    cx.refresh_windows();
                 }
             }
         });
@@ -1442,8 +1445,8 @@ impl MarkdownElement {
                     };
                     markdown.selection.set_head(source_index, &rendered_text);
                     markdown.autoscroll_code_block(source_index, event.position);
-                    markdown.autoscroll_request = Some(source_index);
-                    cx.notify();
+                    markdown.request_autoscroll_to_source_index(source_index, cx);
+                    cx.refresh_windows();
                 } else {
                     let is_hovering_clickable = hitbox.is_hovered(window)
                         && rendered_text
@@ -1456,7 +1459,7 @@ impl MarkdownElement {
                                         .is_some()
                             });
                     if is_hovering_clickable != was_hovering_clickable {
-                        cx.notify();
+                        cx.refresh_windows();
                     }
                 }
             }
@@ -1474,8 +1477,8 @@ impl MarkdownElement {
                         if let Some(source_index) =
                             markdown.footnote_definition_content_start(&pressed_footnote_ref.label)
                         {
-                            markdown.autoscroll_request = Some(source_index);
-                            cx.notify();
+                            markdown.request_autoscroll_to_source_index(source_index, cx);
+                            cx.refresh_windows();
                         }
                     } else if let Some(pressed_link) = markdown.pressed_link.take()
                         && source_index.and_then(|ix| rendered_text.link_for_source_index(ix))
@@ -1495,7 +1498,7 @@ impl MarkdownElement {
                             .text_for_range(markdown.selection.start..markdown.selection.end);
                         cx.write_to_primary(ClipboardItem::new_string(text))
                     }
-                    cx.notify();
+                    cx.refresh_windows();
                 }
             }
         });

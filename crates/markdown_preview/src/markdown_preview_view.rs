@@ -48,6 +48,8 @@ pub struct MarkdownPreviewView {
     image_cache: Entity<RetainAllImageCache>,
     base_directory: Option<PathBuf>,
     pending_update_task: Option<Task<Result<()>>>,
+    pending_selection_sync_request: Option<SelectionSyncRequest>,
+    selection_sync_scheduled: bool,
     mode: MarkdownPreviewMode,
 }
 
@@ -62,6 +64,12 @@ pub enum MarkdownPreviewMode {
 struct EditorState {
     editor: Entity<Editor>,
     _subscription: Subscription,
+}
+
+#[derive(Clone, Copy)]
+struct SelectionSyncRequest {
+    source_index: usize,
+    reveal: bool,
 }
 
 impl MarkdownPreviewView {
@@ -242,6 +250,8 @@ impl MarkdownPreviewView {
                 image_cache: RetainAllImageCache::new(cx),
                 base_directory: None,
                 pending_update_task: None,
+                pending_selection_sync_request: None,
+                selection_sync_scheduled: false,
                 mode,
             };
 
@@ -313,8 +323,12 @@ impl MarkdownPreviewView {
                                 let focused = editor.focus_handle(cx).is_focused(window);
                                 (index, focused)
                             });
-                        this.sync_preview_to_source_index(selection_start, editor_is_focused, cx);
-                        cx.notify();
+                        this.schedule_selection_sync(
+                            selection_start,
+                            editor_is_focused,
+                            window,
+                            cx,
+                        );
                     }
                     _ => {}
                 };
@@ -322,6 +336,8 @@ impl MarkdownPreviewView {
         );
 
         self.base_directory = Self::get_folder_for_active_editor(editor.read(cx), cx);
+        self.pending_selection_sync_request = None;
+        self.selection_sync_scheduled = false;
         self.active_editor = Some(EditorState {
             editor,
             _subscription: subscription,
@@ -407,12 +423,48 @@ impl MarkdownPreviewView {
             .0
     }
 
+    fn schedule_selection_sync(
+        &mut self,
+        source_index: usize,
+        reveal: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_selection_sync_request = Some(SelectionSyncRequest {
+            source_index,
+            reveal,
+        });
+
+        if self.selection_sync_scheduled {
+            return;
+        }
+
+        self.selection_sync_scheduled = true;
+        cx.on_next_frame(window, |this, _window, cx| {
+            this.flush_pending_selection_sync(cx);
+        });
+    }
+
+    fn flush_pending_selection_sync(&mut self, cx: &mut Context<Self>) {
+        self.selection_sync_scheduled = false;
+
+        let Some(request) = self.pending_selection_sync_request.take() else {
+            return;
+        };
+
+        self.sync_preview_to_source_index(request.source_index, request.reveal, cx);
+    }
+
     fn sync_preview_to_source_index(
         &mut self,
         source_index: usize,
         reveal: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.active_source_index == Some(source_index) && !reveal {
+            return;
+        }
+
         self.active_source_index = Some(source_index);
         self.sync_active_root_block(cx);
         self.markdown.update(cx, |markdown, cx| {
@@ -477,7 +529,7 @@ impl MarkdownPreviewView {
         }
 
         self.scroll_by_amount(-viewport_height);
-        cx.notify();
+        cx.refresh_windows();
     }
 
     fn scroll_page_down(
@@ -492,7 +544,7 @@ impl MarkdownPreviewView {
         }
 
         self.scroll_by_amount(viewport_height);
-        cx.notify();
+        cx.refresh_windows();
     }
 
     fn scroll_up(&mut self, _: &ScrollUp, window: &mut Window, cx: &mut Context<Self>) {
@@ -511,7 +563,7 @@ impl MarkdownPreviewView {
                 self.scroll_by_amount(-scroll_height);
             }
         }
-        cx.notify();
+        cx.refresh_windows();
     }
 
     fn scroll_down(&mut self, _: &ScrollDown, window: &mut Window, cx: &mut Context<Self>) {
@@ -530,7 +582,7 @@ impl MarkdownPreviewView {
                 self.scroll_by_amount(scroll_height);
             }
         }
-        cx.notify();
+        cx.refresh_windows();
     }
 
     fn scroll_up_by_item(
@@ -545,7 +597,7 @@ impl MarkdownPreviewView {
         {
             self.scroll_by_amount(-bounds.size.height);
         }
-        cx.notify();
+        cx.refresh_windows();
     }
 
     fn scroll_down_by_item(
@@ -560,12 +612,12 @@ impl MarkdownPreviewView {
         {
             self.scroll_by_amount(bounds.size.height);
         }
-        cx.notify();
+        cx.refresh_windows();
     }
 
     fn scroll_to_top(&mut self, _: &ScrollToTop, _window: &mut Window, cx: &mut Context<Self>) {
         self.scroll_handle.scroll_to_item(0);
-        cx.notify();
+        cx.refresh_windows();
     }
 
     fn scroll_to_bottom(
@@ -575,7 +627,7 @@ impl MarkdownPreviewView {
         cx: &mut Context<Self>,
     ) {
         self.scroll_handle.scroll_to_bottom();
-        cx.notify();
+        cx.refresh_windows();
     }
 
     fn render_markdown_element(
