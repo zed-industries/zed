@@ -102,14 +102,6 @@ use zed_actions::{
 };
 
 actions!(
-    dev,
-    [
-        /// Opens a buffer showing the input-to-frame latency histogram for the current window.
-        DumpInputLatencyHistogram,
-    ]
-);
-
-actions!(
     zed,
     [
         /// Opens the element inspector for debugging UI.
@@ -775,10 +767,11 @@ fn register_actions(
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
         .register_action(
             |workspace: &mut Workspace,
-             _: &DumpInputLatencyHistogram,
+             _: &input_latency_ui::DumpInputLatencyHistogram,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
-                let report = window.format_input_latency_report();
+                let report =
+                    input_latency_ui::format_input_latency_report(window, cx);
                 let project = workspace.project().clone();
                 let buffer = project.update(cx, |project, cx| {
                     project.create_local_buffer(&report, None, true, cx)

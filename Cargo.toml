@@ -102,6 +102,7 @@ members = [
     "crates/http_client_tls",
     "crates/icons",
     "crates/image_viewer",
+    "crates/input_latency_ui",
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/journal",
@@ -356,6 +357,7 @@ image_viewer = { path = "crates/image_viewer" }
 edit_prediction_types = { path = "crates/edit_prediction_types" }
 edit_prediction_ui = { path = "crates/edit_prediction_ui" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
+input_latency_ui = { path = "crates/input_latency_ui" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
