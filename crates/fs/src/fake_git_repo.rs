@@ -4,6 +4,7 @@ use crate::{FakeFs, FakeFsEntry, Fs, RemoveOptions, RenameOptions};
 use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
+use git::repository::GitCommitTemplate;
 use git::{
     Oid, RunHook,
     blame::Blame,
@@ -169,6 +170,10 @@ impl GitRepository for FakeGitRepository {
                 .cloned()
         });
         self.executor.spawn(async move { fut.await.ok() }).boxed()
+    }
+
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
+        async { Ok(None) }.boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {

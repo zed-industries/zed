@@ -2939,9 +2939,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         }]),
                 ),
             )
-            .child(section_label(
-                "Main worktree with branch (branch only, no icon)",
-            ))
+            .child(section_label("Main worktree with branch (nothing shown)"))
             .child(
                 container().child(
                     ThreadItem::new("ti-main-branch", "Request for Long Classic Poem")
@@ -3043,7 +3041,9 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                         }]),
                 ),
             )
-            .child(section_label("Main branch + diff stats + timestamp"))
+            .child(section_label(
+                "Main worktree with branch + diff stats + timestamp (branch hidden)",
+            ))
             .child(
                 container().child(
                     ThreadItem::new("ti-main-full", "Main worktree with everything")

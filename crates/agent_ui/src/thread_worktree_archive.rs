@@ -4,6 +4,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
+use fs::{Fs, RemoveOptions};
 use gpui::{App, AsyncApp, Entity, Task};
 use project::{
     LocalProjectFlags, Project, WorktreeId,
@@ -174,7 +175,7 @@ pub fn build_root_plan(
 /// each project to fully release it, then asks the main repository to
 /// delete the worktree directory. If the git removal fails, the worktree
 /// is re-added to each project via [`rollback_root`].
-pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
+pub async fn remove_root(root: RootPlan, fs: Arc<dyn Fs>, cx: &mut AsyncApp) -> Result<()> {
     let release_tasks: Vec<_> = root
         .affected_projects
         .iter()
@@ -189,7 +190,7 @@ pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
         })
         .collect();
 
-    if let Err(error) = remove_root_after_worktree_removal(&root, release_tasks, cx).await {
+    if let Err(error) = remove_root_after_worktree_removal(&root, fs, release_tasks, cx).await {
         rollback_root(&root, cx).await;
         return Err(error);
     }
@@ -199,6 +200,7 @@ pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
 
 async fn remove_root_after_worktree_removal(
     root: &RootPlan,
+    fs: Arc<dyn Fs>,
     release_tasks: Vec<Task<Result<()>>>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
@@ -215,22 +217,20 @@ async fn remove_root_after_worktree_removal(
     // an orphaned folder on disk. By deleting the directory first, we
     // guarantee it's gone, and `git worktree remove --force` with a
     // missing working tree just cleans up the admin entry.
-    let root_path = root.root_path.clone();
-    cx.background_executor()
-        .spawn(async move {
-            match std::fs::remove_dir_all(&root_path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
-        })
-        .await
-        .with_context(|| {
-            format!(
-                "failed to delete worktree directory '{}'",
-                root.root_path.display()
-            )
-        })?;
+    fs.remove_dir(
+        &root.root_path,
+        RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "failed to delete worktree directory '{}'",
+            root.root_path.display()
+        )
+    })?;
 
     let (repo, _temp_project) = find_or_create_repository(&root.main_repo_path, cx).await?;
     let receiver = repo.update(cx, |repo: &mut Repository, _cx| {
@@ -828,7 +828,7 @@ fn current_app_state(cx: &mut AsyncApp) -> Option<Arc<AppState>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::{FakeFs, Fs as _};
+    use fs::FakeFs;
     use git::repository::Worktree as GitWorktree;
     use gpui::{BorrowAppContext, TestAppContext};
     use project::Project;
@@ -1309,13 +1309,13 @@ mod tests {
         );
 
         // Remove the root.
-        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
+        let fs_clone = fs.clone();
+        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, fs_clone, cx).await));
         task.await.expect("remove_root should succeed");
 
         cx.run_until_parked();
 
-        // The FakeFs directory should be gone (removed by the FakeGitRepository
-        // backend's remove_worktree implementation).
+        // The FakeFs directory should be gone.
         assert!(
             !fs.is_dir(Path::new("/worktrees/project/feature/project"))
                 .await,
@@ -1401,49 +1401,122 @@ mod tests {
                 .await
         );
 
-        // remove_root should still succeed — the std::fs::remove_dir_all
-        // handles NotFound, and git worktree remove handles a missing
-        // working tree directory.
-        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
+        // remove_root should still succeed — fs.remove_dir with
+        // ignore_if_not_exists handles NotFound, and git worktree remove
+        // handles a missing working tree directory.
+        let fs_clone = fs.clone();
+        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, fs_clone, cx).await));
         task.await
             .expect("remove_root should succeed even when directory is already gone");
     }
 
-    #[test]
-    fn test_remove_dir_all_deletes_real_directory() {
-        let tmp = TempDir::new().unwrap();
-        let worktree_dir = tmp.path().join("linked-worktree");
-        std::fs::create_dir_all(worktree_dir.join("src")).unwrap();
-        std::fs::write(worktree_dir.join("src/main.rs"), "fn main() {}").unwrap();
-        std::fs::write(worktree_dir.join("README.md"), "# Hello").unwrap();
+    #[gpui::test]
+    async fn test_remove_root_returns_error_and_rolls_back_on_remove_dir_failure(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
 
-        assert!(worktree_dir.is_dir());
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
 
-        // This is the same pattern used in remove_root_after_worktree_removal.
-        match std::fs::remove_dir_all(&worktree_dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => panic!("unexpected error: {error}"),
-        }
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let root = workspace
+            .read_with(cx, |_workspace, cx| {
+                build_root_plan(
+                    Path::new("/worktrees/project/feature/project"),
+                    std::slice::from_ref(&workspace),
+                    cx,
+                )
+            })
+            .expect("should produce a root plan for the linked worktree");
+
+        // Replace the worktree directory with a file so that fs.remove_dir
+        // fails with a "not a directory" error.
+        let worktree_path = Path::new("/worktrees/project/feature/project");
+        fs.remove_dir(
+            worktree_path,
+            fs::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        fs.create_file(worktree_path, fs::CreateOptions::default())
+            .await
+            .unwrap();
+        assert!(
+            fs.is_file(worktree_path).await,
+            "path should now be a file, not a directory"
+        );
+
+        let fs_clone = fs.clone();
+        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, fs_clone, cx).await));
+        let result = task.await;
 
         assert!(
-            !worktree_dir.exists(),
-            "worktree directory should be deleted"
+            result.is_err(),
+            "remove_root should return an error when fs.remove_dir fails"
         );
-    }
+        let error_message = format!("{:#}", result.unwrap_err());
+        assert!(
+            error_message.contains("failed to delete worktree directory"),
+            "error should mention the directory deletion failure, got: {error_message}"
+        );
 
-    #[test]
-    fn test_remove_dir_all_handles_not_found() {
-        let tmp = TempDir::new().unwrap();
-        let nonexistent = tmp.path().join("does-not-exist");
+        cx.run_until_parked();
 
-        assert!(!nonexistent.exists());
-
-        // Should not panic — NotFound is handled gracefully.
-        match std::fs::remove_dir_all(&nonexistent) {
-            Ok(()) => panic!("expected NotFound error"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => panic!("unexpected error: {error}"),
-        }
+        // After rollback, the worktree should be re-added to the project.
+        let has_worktree = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .any(|wt| wt.read(cx).abs_path().as_ref() == worktree_path)
+        });
+        assert!(
+            has_worktree,
+            "rollback should have re-added the worktree to the project"
+        );
     }
 }
