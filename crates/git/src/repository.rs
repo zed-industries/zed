@@ -983,7 +983,7 @@ pub trait GitRepository: Send + Sync {
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>>;
 
-    fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>>;
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>>;
 
     fn default_branch(
         &self,
@@ -1150,7 +1150,7 @@ pub struct GitCommitter {
 
 #[derive(Clone, Debug)]
 pub struct GitCommitTemplate {
-    pub template: Option<String>,
+    pub template: String,
 }
 
 pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
@@ -1508,7 +1508,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>> {
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.any_git_binary_path.clone();
 
@@ -1516,7 +1516,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
 
-                let output = new_smol_command(git_binary_path)
+                let output = util::command::new_command(git_binary_path)
                     .current_dir(&working_directory)
                     .args(["config", "--get", "commit.template"])
                     .output()
@@ -1525,7 +1525,7 @@ impl GitRepository for RealGitRepository {
 
                 let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !output.status.success() || path.is_empty() {
-                    return Ok(GitCommitTemplate { template: None });
+                    return Ok(None);
                 }
 
                 let mut path_buf = PathBuf::from(&path);
@@ -1548,7 +1548,7 @@ impl GitRepository for RealGitRepository {
                     _ => None,
                 };
 
-                Ok(GitCommitTemplate { template })
+                Ok(template.map(|template| GitCommitTemplate { template }))
             })
             .boxed()
     }

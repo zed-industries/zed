@@ -172,13 +172,8 @@ impl GitRepository for FakeGitRepository {
         self.executor.spawn(async move { fut.await.ok() }).boxed()
     }
 
-    fn load_commit_template(&self) -> BoxFuture<'_, Result<GitCommitTemplate>> {
-        async {
-            Ok(GitCommitTemplate {
-                template: Some(String::new()),
-            })
-        }
-        .boxed()
+    fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
+        async { Ok(None) }.boxed()
     }
 
     fn load_blob_content(&self, oid: git::Oid) -> BoxFuture<'_, Result<String>> {

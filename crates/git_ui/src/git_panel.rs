@@ -3492,12 +3492,12 @@ impl GitPanel {
             let template = load_template.await?;
 
             git_panel.update_in(cx, |git_panel, window, cx| {
-                git_panel.commit_template = Some(template);
+                git_panel.commit_template = template;
                 if buffer.read(cx).text().trim().is_empty() {
                     let template_text = git_panel
                         .commit_template
                         .as_ref()
-                        .and_then(|t| t.template.as_deref())
+                        .map(|t| t.template.clone())
                         .unwrap_or_default();
                     if !template_text.is_empty() {
                         buffer.update(cx, |buffer, cx| {
@@ -5532,7 +5532,7 @@ impl GitPanel {
     pub fn load_commit_template(
         &self,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<GitCommitTemplate>> {
+    ) -> Task<anyhow::Result<Option<GitCommitTemplate>>> {
         let Some(repo) = self.active_repository.clone() else {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
