@@ -8771,7 +8771,7 @@ impl ThreadView {
     }
 
     fn render_token_limit_callout(&self, cx: &mut Context<Self>) -> Option<Callout> {
-        if self.token_limit_callout_dismissed {
+        if self.token_limit_callout_dismissed || self.as_native_thread(cx).is_none() {
             return None;
         }
 
