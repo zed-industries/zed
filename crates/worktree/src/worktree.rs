@@ -4094,32 +4094,32 @@ impl BackgroundScanner {
         }
         let mut mapped_events = Vec::new();
 
-        for event in &events {
+        events.retain(|event| {
             let abs_path = SanitizedPath::new(&event.path);
 
-            let mut best_target_root: Option<&Arc<Path>> = None;
+            let mut best_match: Option<(&Arc<Path>, &SmallVec<[Arc<RelPath>; 1]>)> = None;
             let mut best_depth = 0;
-            for target_root in state.symlink_paths_by_target.keys() {
+            for (target_root, symlink_paths) in &state.symlink_paths_by_target {
                 if abs_path.as_path().starts_with(target_root.as_ref()) {
                     let depth = target_root.as_ref().components().count();
                     if depth > best_depth {
                         best_depth = depth;
-                        best_target_root = Some(target_root);
+                        best_match = Some((target_root, symlink_paths));
                     }
                 }
             }
 
-            let Some(target_root) = best_target_root else {
-                continue;
-            };
-
-            let Some(symlink_paths) = state.symlink_paths_by_target.get(target_root) else {
-                continue;
+            let Some((target_root, symlink_paths)) = best_match else {
+                return true;
             };
 
             let Ok(suffix) = abs_path.as_path().strip_prefix(target_root.as_ref()) else {
-                continue;
+                return true;
             };
+
+            // If the symlink's real target is outside this worktree, the original path
+            // isn't visible to the worktree. Keep only the remapped symlink events.
+            let keep_original = target_root.starts_with(root_canonical_path.as_path());
 
             for symlink_path in symlink_paths {
                 let mapped_path = if suffix.as_os_str().is_empty() {
@@ -4139,7 +4139,8 @@ impl BackgroundScanner {
                     });
                 }
             }
-        }
+            keep_original
+        });
         events.extend(mapped_events);
         events
     }
