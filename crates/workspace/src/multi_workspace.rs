@@ -3,8 +3,8 @@ use fs::Fs;
 
 use gpui::{
     AnyView, App, Context, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, Window, WindowId,
-    actions, deferred, px,
+    ManagedView, MouseButton, Pixels, Render, Subscription, Task, Tiling, WeakEntity, Window,
+    WindowId, actions, deferred, px,
 };
 pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
@@ -279,6 +279,7 @@ pub struct SerializedProjectGroupState {
 pub struct ProjectGroupState {
     pub key: ProjectGroupKey,
     pub expanded: bool,
+    pub last_active_workspace: Option<WeakEntity<Workspace>>,
 }
 
 pub struct MultiWorkspace {
@@ -634,6 +635,7 @@ impl MultiWorkspace {
             ProjectGroupState {
                 key,
                 expanded: true,
+                last_active_workspace: None,
             },
         );
     }
@@ -756,7 +758,11 @@ impl MultiWorkspace {
             if restored.iter().any(|group| group.key == key) {
                 continue;
             }
-            restored.push(ProjectGroupState { key, expanded });
+            restored.push(ProjectGroupState {
+                key,
+                expanded,
+                last_active_workspace: None,
+            });
         }
         for existing in std::mem::take(&mut self.project_groups) {
             if !restored.iter().any(|group| group.key == existing.key) {
@@ -791,6 +797,17 @@ impl MultiWorkspace {
 
     pub fn project_groups(&self, cx: &App) -> Vec<ProjectGroup> {
         self.derived_project_groups(cx)
+    }
+
+    pub fn last_active_workspace_for_group(
+        &self,
+        key: &ProjectGroupKey,
+        cx: &App,
+    ) -> Option<Entity<Workspace>> {
+        let group = self.project_groups.iter().find(|g| g.key == *key)?;
+        let weak = group.last_active_workspace.as_ref()?;
+        let workspace = weak.upgrade()?;
+        (workspace.read(cx).project_group_key(cx) == *key).then_some(workspace)
     }
 
     pub fn group_state_by_key(&self, key: &ProjectGroupKey) -> Option<&ProjectGroupState> {
@@ -1214,6 +1231,11 @@ impl MultiWorkspace {
 
         self.active_workspace = workspace;
 
+        let active_key = self.active_workspace.read(cx).project_group_key(cx);
+        if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == active_key) {
+            group.last_active_workspace = Some(self.active_workspace.downgrade());
+        }
+
         if !self.sidebar_open && !old_active_was_retained {
             self.detach_workspace(&old_active_workspace, cx);
         }
@@ -1501,6 +1523,7 @@ impl MultiWorkspace {
         self.project_groups.push(ProjectGroupState {
             key: group.key,
             expanded: group.expanded,
+            last_active_workspace: None,
         });
     }
 

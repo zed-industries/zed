@@ -1574,13 +1574,7 @@ impl Sidebar {
             .on_click(
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                     if event.modifiers().secondary() {
-                        if let Some(workspace) = this.workspace_for_group(&key_for_focus, cx) {
-                            this.activate_workspace(&workspace, window, cx);
-                        } else {
-                            this.open_workspace_for_group(&key_for_focus, window, cx);
-                        }
-                        this.selection = None;
-                        this.active_entry = None;
+                        this.activate_or_open_workspace_for_group(&key_for_focus, window, cx);
                     } else {
                         this.toggle_collapse(&key_for_toggle, window, cx);
                     }
@@ -3872,6 +3866,26 @@ impl Sidebar {
         } else {
             mw.workspace_for_paths(key.path_list(), key.host().as_ref(), cx)
         }
+    }
+
+    pub(crate) fn activate_or_open_workspace_for_group(
+        &mut self,
+        key: &ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self
+            .multi_workspace
+            .upgrade()
+            .and_then(|mw| mw.read(cx).last_active_workspace_for_group(key, cx))
+            .or_else(|| self.workspace_for_group(key, cx));
+        if let Some(workspace) = workspace {
+            self.activate_workspace(&workspace, window, cx);
+        } else {
+            self.open_workspace_for_group(key, window, cx);
+        }
+        self.selection = None;
+        self.active_entry = None;
     }
 
     fn active_project_group_key(&self, cx: &App) -> Option<ProjectGroupKey> {
