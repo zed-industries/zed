@@ -38,6 +38,7 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = ["dep:embed-resource"]
+input-latency-histogram = ["dep:hdrhistogram"]
 
 [lib]
 path = "src/gpui.rs"
@@ -96,6 +97,7 @@ sum_tree.workspace = true
 taffy = "=0.9.0"
 thiserror.workspace = true
 gpui_util.workspace = true
+hdrhistogram = { workspace = true, optional = true }
 waker-fn = "1.2.0"
 lyon = "1.0"
 pin-project = "1.1.10"

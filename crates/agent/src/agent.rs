@@ -944,7 +944,7 @@ impl NativeAgent {
         if let Some(pending) = self.pending_sessions.get_mut(&id) {
             pending.ref_count += 1;
             let task = pending.task.clone();
-            return cx.spawn(async move |_, _cx| task.await.map_err(|err| anyhow!(err)));
+            return cx.background_spawn(async move { task.await.map_err(|err| anyhow!(err)) });
         }
 
         let task = self.load_thread(id.clone(), project.clone(), cx);

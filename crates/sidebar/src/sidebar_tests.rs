@@ -1385,7 +1385,7 @@ async fn test_subagent_permission_request_marks_parent_sidebar_thread_waiting(
     let subagent_thread = panel.read_with(cx, |panel, cx| {
         panel
             .active_conversation_view()
-            .and_then(|conversation| conversation.read(cx).thread_view(&subagent_session_id, cx))
+            .and_then(|conversation| conversation.read(cx).thread_view(&subagent_session_id))
             .map(|thread_view| thread_view.read(cx).thread.clone())
             .expect("Expected subagent thread to be loaded into the conversation")
     });
