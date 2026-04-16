@@ -7,7 +7,7 @@ use crate::agent_connection_store::AgentConnectionStore;
 use crate::thread_metadata_store::{
     ThreadId, ThreadMetadata, ThreadMetadataStore, worktree_info_from_thread_paths,
 };
-use crate::{Agent, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
+use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
 use agent_client_protocol as acp;
@@ -399,6 +399,24 @@ impl ThreadsArchiveView {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.archive(thread_id, None, cx));
     }
 
+    fn archive_selected_thread(
+        &mut self,
+        _: &ArchiveSelectedThread,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else { return };
+        let Some(ArchiveListItem::Entry { thread, .. }) = self.items.get(ix) else {
+            return;
+        };
+
+        if thread.archived {
+            return;
+        }
+
+        self.archive_thread(thread.thread_id, cx);
+    }
+
     fn unarchive_thread(
         &mut self,
         thread: ThreadMetadata,
@@ -705,7 +723,16 @@ impl ThreadsArchiveView {
                         IconButton::new("archive-thread", IconName::Archive)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Archive Thread"))
+                            .tooltip({
+                                move |_window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Archive Thread",
+                                        &ArchiveSelectedThread,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
                             .on_click({
                                 let thread_id = thread.thread_id;
                                 cx.listener(move |this, _, _, cx| {
@@ -1002,6 +1029,7 @@ impl Render for ThreadsArchiveView {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::remove_selected_thread))
+            .on_action(cx.listener(Self::archive_selected_thread))
             .size_full()
             .child(self.render_header(window, cx))
             .when(!has_query, |this| this.child(self.render_toolbar(cx)))

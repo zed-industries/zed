@@ -432,6 +432,12 @@
     },
   },
   {
+    "context": "ThreadsArchiveView",
+    "bindings": {
+      "backspace": "agent::ArchiveSelectedThread",
+    },
+  },
+  {
     "context": "RulesLibrary",
     "use_key_equivalents": true,
     "bindings": {
