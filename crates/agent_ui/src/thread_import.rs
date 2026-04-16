@@ -954,6 +954,18 @@ mod tests {
         cx.run_until_parked();
     }
 
+    /// Returns two release channels that are not the current one and not Dev.
+    /// This ensures tests work regardless of which release channel branch
+    /// they run on.
+    fn foreign_channels(cx: &TestAppContext) -> (ReleaseChannel, ReleaseChannel) {
+        let current = cx.update(|cx| ReleaseChannel::global(cx));
+        let mut channels = ReleaseChannel::ALL
+            .iter()
+            .copied()
+            .filter(|ch| *ch != current && *ch != ReleaseChannel::Dev);
+        (channels.next().unwrap(), channels.next().unwrap())
+    }
+
     #[gpui::test]
     async fn test_import_threads_from_other_channels(cx: &mut TestAppContext) {
         init_test(cx);
@@ -961,26 +973,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let database_dir = dir.path().to_path_buf();
 
-        // Set up a "preview" database with two threads.
-        let preview_db = create_channel_db(dir.path(), ReleaseChannel::Preview);
-        insert_thread(
-            &preview_db,
-            "Preview Thread 1",
-            "2025-01-15T10:00:00Z",
-            false,
-        );
-        insert_thread(
-            &preview_db,
-            "Preview Thread 2",
-            "2025-01-15T11:00:00Z",
-            true,
-        );
-        drop(preview_db);
+        let (channel_a, channel_b) = foreign_channels(cx);
 
-        // Set up a "nightly" database with one thread.
-        let nightly_db = create_channel_db(dir.path(), ReleaseChannel::Nightly);
-        insert_thread(&nightly_db, "Nightly Thread", "2025-01-15T12:00:00Z", false);
-        drop(nightly_db);
+        // Set up databases for two foreign channels.
+        let db_a = create_channel_db(dir.path(), channel_a);
+        insert_thread(&db_a, "Thread A1", "2025-01-15T10:00:00Z", false);
+        insert_thread(&db_a, "Thread A2", "2025-01-15T11:00:00Z", true);
+        drop(db_a);
+
+        let db_b = create_channel_db(dir.path(), channel_b);
+        insert_thread(&db_b, "Thread B1", "2025-01-15T12:00:00Z", false);
+        drop(db_b);
 
         // Create a workspace and run the import.
         let fs = fs::FakeFs::new(cx.executor());
@@ -1007,22 +1010,22 @@ mod tests {
                 .collect();
 
             assert_eq!(titles.len(), 3);
-            assert!(titles.contains("Preview Thread 1"));
-            assert!(titles.contains("Preview Thread 2"));
-            assert!(titles.contains("Nightly Thread"));
+            assert!(titles.contains("Thread A1"));
+            assert!(titles.contains("Thread A2"));
+            assert!(titles.contains("Thread B1"));
 
             // Verify archived state is preserved.
-            let preview_2 = store
+            let thread_a2 = store
                 .entries()
-                .find(|m| m.display_title().as_ref() == "Preview Thread 2")
+                .find(|m| m.display_title().as_ref() == "Thread A2")
                 .unwrap();
-            assert!(preview_2.archived);
+            assert!(thread_a2.archived);
 
-            let nightly = store
+            let thread_b1 = store
                 .entries()
-                .find(|m| m.display_title().as_ref() == "Nightly Thread")
+                .find(|m| m.display_title().as_ref() == "Thread B1")
                 .unwrap();
-            assert!(!nightly.archived);
+            assert!(!thread_b1.archived);
         });
     }
 
@@ -1033,16 +1036,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let database_dir = dir.path().to_path_buf();
 
-        // Set up a "preview" database with threads.
-        let preview_db = create_channel_db(dir.path(), ReleaseChannel::Preview);
-        insert_thread(&preview_db, "Thread A", "2025-01-15T10:00:00Z", false);
-        insert_thread(&preview_db, "Thread B", "2025-01-15T11:00:00Z", false);
-        drop(preview_db);
+        let (channel_a, _) = foreign_channels(cx);
+
+        // Set up a database for a foreign channel.
+        let db_a = create_channel_db(dir.path(), channel_a);
+        insert_thread(&db_a, "Thread A", "2025-01-15T10:00:00Z", false);
+        insert_thread(&db_a, "Thread B", "2025-01-15T11:00:00Z", false);
+        drop(db_a);
 
         // Read the threads so we can pre-populate one into the store.
-        let preview_threads =
-            read_threads_from_channel(dir.path(), ReleaseChannel::Preview).unwrap();
-        let thread_a = preview_threads
+        let foreign_threads = read_threads_from_channel(dir.path(), channel_a).unwrap();
+        let thread_a = foreign_threads
             .iter()
             .find(|t| t.display_title().as_ref() == "Thread A")
             .unwrap()
