@@ -1220,7 +1220,6 @@ impl Sidebar {
                 }
 
                 for thread in threads {
-
                     current_thread_ids.insert(thread.metadata.thread_id);
                     entries.push(thread.into());
                 }

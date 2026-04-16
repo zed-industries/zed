@@ -5264,7 +5264,8 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
             worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                 "/wt-feature-a",
             )])),
-            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0)
+                .unwrap(),
             archived: false,
             remote_connection: Some(remote_host),
         };
@@ -7828,7 +7829,8 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                 "/project",
             )])),
-            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0)
+                .unwrap(),
             archived: false,
             remote_connection: None,
         };
@@ -9714,7 +9716,8 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
                 PathList::new(&[PathBuf::from("/project-wt-1")]),
             )
             .unwrap(),
-            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1).unwrap(),
+            last_user_interaction: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 1)
+                .unwrap(),
             archived: false,
             remote_connection,
         };

@@ -1593,8 +1593,7 @@ impl Column for ThreadMetadata {
             Column::column(statement, next)?;
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
-        let (last_user_interaction_str, next): (String, i32) =
-            Column::column(statement, next)?;
+        let (last_user_interaction_str, next): (String, i32) = Column::column(statement, next)?;
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
