@@ -483,7 +483,7 @@ async fn test_restore_serialized_archive_view_does_not_panic(cx: &mut TestAppCon
 
     let serialized = serde_json::to_string(&SerializedSidebar {
         width: Some(400.0),
-        active_view: SerializedSidebarView::Archive,
+        active_view: SerializedSidebarView::History,
     })
     .expect("serialization should succeed");
 
