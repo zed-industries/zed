@@ -8,38 +8,80 @@ description: "Configure Proto language support in Zed, including language server
 Proto/proto3 (Protocol Buffers definition language) support is available through the [Proto extension](https://github.com/zed-industries/zed/tree/main/extensions/proto).
 
 - Tree-sitter: [coder3101/tree-sitter-proto](https://github.com/coder3101/tree-sitter-proto)
-- Language Servers: [protobuf-language-server](https://github.com/lasorda/protobuf-language-server)
+- Language Servers:
+  - [bufbuild/buf](https://github.com/bufbuild/buf) (`buf`)
+  - [lasorda/protobuf-language-server](https://github.com/lasorda/protobuf-language-server) (`protobuf-language-server`)
+  - [coder3101/protols](https://github.com/coder3101/protols) (`protols`)
 
-<!--
-TBD: Clarify which language server(s) to use / Feature support.
+## Language Servers
 
-## Setup
+The Proto extension supports three language servers: Buf, Protobuf Language Server, and Protols.
+Buf is enabled by default and is downloaded automatically.
+You can change the enabled language servers in your settings ({#kb zed::OpenSettings}).
 
-### Install protobuf-language-server
+### Using Buf
 
-Install protobuf-language-server and make sure it's in your PATH:
+Buf is downloaded automatically from [GitHub Releases](https://github.com/bufbuild/buf/releases).
 
-```
-go install github.com/lasorda/protobuf-language-server@latest
-which protobuf-language-server
-```
-
-### Install ProtoLS
-
-Install protols and make sure it's in your PATH:
-
-```
-cargo install protols
-which protols
-```
-
-## Configuration
+To use a custom Buf binary, add the following to your settings:
 
 ```json [settings]
-"lsp": {
-  "protobuf-language-server": {
-    "binary": {
-      "path": "protols"
+{
+  "lsp": {
+    "buf": {
+      "binary": {
+        "path": "/path/to/buf"
+      }
+    }
+  }
+}
+```
+
+### Using Protols
+
+Protols is downloaded automatically from [GitHub Releases](https://github.com/coder3101/protols/releases).
+
+Enable Protols by adding the following to your settings:
+
+```json [settings]
+{
+  "languages": {
+    "Proto": {
+      "language_servers": ["protols", "!buf", "!protobuf-language-server", "..."]
+    }
+  }
+}
+```
+
+To use a custom Protols binary:
+
+```json [settings]
+{
+  "lsp": {
+    "protols": {
+      "binary": {
+        "path": "/path/to/protols"
+      }
+    }
+  }
+}
+```
+
+### Using Protobuf Language Server
+
+Protobuf Language Server must be installed manually and available in your PATH:
+
+```sh
+go install github.com/lasorda/protobuf-language-server@latest
+```
+
+Enable it by adding the following to your settings:
+
+```json [settings]
+{
+  "languages": {
+    "Proto": {
+      "language_servers": ["protobuf-language-server", "!buf", "!protols", "..."]
     }
   }
 }
@@ -47,10 +89,10 @@ which protols
 
 ## Formatting
 
-ProtoLS supports formatting if you have `clang-format` installed.
+Protols supports formatting via `clang-format`. Install it first:
 
 ```sh
-# MacOS:
+# macOS
 brew install clang-format
 # Ubuntu
 sudo apt-get install clang-format
@@ -58,16 +100,17 @@ sudo apt-get install clang-format
 sudo dnf install clang-tools-extra
 ```
 
-To customize your formatting preferences, create a `.clang-format` file, e.g.:
+To customize formatting, create a `.clang-format` file, for example:
 
-```clang-format
+```yaml
 IndentWidth: 4
 ColumnLimit: 120
 ```
 
-Or you can have zed directly invoke `clang-format` by specifying it as a [formatter](https://zed.dev/docs/reference/all-settings#formatter) in your settings:
+Alternatively, invoke `clang-format` directly as an [external formatter](../reference/all-settings.md#formatter):
 
 ```json [settings]
+{
   "languages": {
     "Proto": {
       "format_on_save": "on",
@@ -78,7 +121,7 @@ Or you can have zed directly invoke `clang-format` by specifying it as a [format
           "arguments": ["-style={IndentWidth: 4, ColumnLimit: 0}"]
         }
       }
-    },
+    }
   }
+}
 ```
--->
