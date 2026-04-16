@@ -54,6 +54,10 @@ pub enum SpawnAgentToolOutput {
         session_id: acp::SessionId,
         output: String,
         session_info: SubagentSessionInfo,
+        /// The depth of the spawned sub-agent (0 = root, 1 = first delegate, etc.).
+        /// The orchestrating agent can inspect this to decide whether further
+        /// recursive delegation is possible before hitting the configured ceiling.
+        subagent_depth: u8,
     },
     Error {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,6 +65,9 @@ pub enum SpawnAgentToolOutput {
         session_id: Option<acp::SessionId>,
         error: String,
         session_info: Option<SubagentSessionInfo>,
+        /// Depth at which the error occurred, if a session was created before failure.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        subagent_depth: Option<u8>,
     },
 }
 
