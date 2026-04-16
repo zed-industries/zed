@@ -10,9 +10,9 @@ use dev_container::{
     start_dev_container_with_config,
 };
 use editor::Editor;
-
 use extension_host::ExtensionStore;
 use futures::{FutureExt, StreamExt as _, channel::oneshot, future::Shared};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task,
@@ -38,13 +38,14 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{self, AtomicUsize},
+        atomic::{self, AtomicBool, AtomicUsize},
     },
 };
 
 use ui::{
-    CommonAnimationExt, IconButtonShape, KeyBinding, List, ListItem, ListSeparator, Modal,
-    ModalFooter, ModalHeader, Navigable, NavigableEntry, ScrollAxes, Scrollbars, Section, Tooltip,
+    CommonAnimationExt, HighlightedLabel, IconButtonShape, KeyBinding, List, ListItem,
+    ListSeparator, Modal, ModalFooter, ModalHeader, Navigable, NavigableEntry, ScrollAxes,
+    Scrollbars, Section, Tooltip,
     WithScrollbar, prelude::*,
 };
 use util::{
@@ -61,13 +62,16 @@ use workspace::{
 pub struct RemoteServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
+    filter_editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
     retained_connections: Vec<Entity<RemoteClient>>,
     ssh_config_updates: Task<()>,
     ssh_config_servers: BTreeSet<SharedString>,
     create_new_window: bool,
     dev_container_picker: Option<Entity<Picker<DevContainerPickerDelegate>>>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
+    filter_cancel: Arc<AtomicBool>,
+    _filter_task: Task<()>,
     allow_dismissal: bool,
 }
 
@@ -623,23 +627,51 @@ impl From<WslServerIndex> for ServerIndex {
 }
 
 #[derive(Clone)]
+struct ProjectEntry {
+    navigation: NavigableEntry,
+    project: RemoteProject,
+    highlight_positions: Vec<usize>,
+}
+
+#[derive(Clone)]
 enum RemoteEntry {
     Project {
         open_folder: NavigableEntry,
-        projects: Vec<(NavigableEntry, RemoteProject)>,
+        projects: Vec<ProjectEntry>,
         configure: NavigableEntry,
         connection: Connection,
         index: ServerIndex,
+        host_positions: Vec<usize>,
     },
     SshConfig {
         open_folder: NavigableEntry,
         host: SharedString,
+        host_positions: Vec<usize>,
     },
 }
 
 impl RemoteEntry {
     fn is_from_zed(&self) -> bool {
         matches!(self, Self::Project { .. })
+    }
+
+    fn host_name(&self) -> &str {
+        match self {
+            Self::Project { connection, .. } => match connection {
+                Connection::Ssh(c) => c.nickname.as_deref().unwrap_or(&c.host),
+                Connection::Wsl(c) => &c.distro_name,
+                Connection::DevContainer(c) => &c.name,
+            },
+            Self::SshConfig { host, .. } => host,
+        }
+    }
+
+    fn host_positions(&self) -> &[usize] {
+        match self {
+            Self::Project { host_positions, .. } | Self::SshConfig { host_positions, .. } => {
+                host_positions
+            }
+        }
     }
 
     fn connection(&self) -> Cow<'_, Connection> {
@@ -663,6 +695,8 @@ struct DefaultState {
     add_new_devcontainer: NavigableEntry,
     add_new_wsl: NavigableEntry,
     servers: Vec<RemoteEntry>,
+    filtered_servers: Option<Vec<RemoteEntry>>,
+    filter_data: Arc<FilterData>,
 }
 
 impl DefaultState {
@@ -684,7 +718,11 @@ impl DefaultState {
                 let projects = connection
                     .projects
                     .iter()
-                    .map(|project| (NavigableEntry::new(&handle, cx), project.clone()))
+                    .map(|project| ProjectEntry {
+                        navigation: NavigableEntry::new(&handle, cx),
+                        project: project.clone(),
+                        highlight_positions: Vec::new(),
+                    })
                     .collect();
                 RemoteEntry::Project {
                     open_folder,
@@ -692,6 +730,7 @@ impl DefaultState {
                     projects,
                     index: ServerIndex::Ssh(SshServerIndex(index)),
                     connection: connection.into(),
+                    host_positions: Vec::new(),
                 }
             });
 
@@ -704,7 +743,11 @@ impl DefaultState {
                 let projects = connection
                     .projects
                     .iter()
-                    .map(|project| (NavigableEntry::new(&handle, cx), project.clone()))
+                    .map(|project| ProjectEntry {
+                        navigation: NavigableEntry::new(&handle, cx),
+                        project: project.clone(),
+                        highlight_positions: Vec::new(),
+                    })
                     .collect();
                 RemoteEntry::Project {
                     open_folder,
@@ -712,6 +755,7 @@ impl DefaultState {
                     projects,
                     index: ServerIndex::Wsl(WslServerIndex(index)),
                     connection: connection.into(),
+                    host_positions: Vec::new(),
                 }
             });
 
@@ -732,18 +776,202 @@ impl DefaultState {
                 RemoteEntry::SshConfig {
                     open_folder: NavigableEntry::new(&handle, cx),
                     host,
+                    host_positions: Vec::new(),
                 }
             }));
         }
 
+        let filter_data = Arc::new(FilterData::build(&servers));
         Self {
             scroll_handle: handle,
             add_new_server,
             add_new_devcontainer,
             add_new_wsl,
             servers,
+            filtered_servers: None,
+            filter_data,
         }
     }
+
+    fn active_servers(&self) -> &[RemoteEntry] {
+        self.filtered_servers.as_deref().unwrap_or(&self.servers)
+    }
+
+    fn apply_filter_results(&mut self, results: &[FilteredServer]) {
+        self.filtered_servers = Some(
+            results
+                .iter()
+                .filter(|r| r.server_index < self.servers.len())
+                .map(|result| {
+                    let mut entry = self.servers[result.server_index].clone();
+                    match &mut entry {
+                        RemoteEntry::Project {
+                            projects,
+                            host_positions,
+                            ..
+                        } => {
+                            *host_positions = result.host_positions.clone();
+                            let all_projects = std::mem::take(projects);
+                            *projects = result
+                                .project_matches
+                                .iter()
+                                .filter(|pm| pm.project_index < all_projects.len())
+                                .map(|pm| ProjectEntry {
+                                    highlight_positions: pm.path_positions.clone(),
+                                    ..all_projects[pm.project_index].clone()
+                                })
+                                .collect();
+                        }
+                        RemoteEntry::SshConfig { host_positions, .. } => {
+                            *host_positions = result.host_positions.clone();
+                        }
+                    }
+                    entry
+                })
+                .collect(),
+        );
+    }
+
+    fn filter_sync(&mut self, query: &str) {
+        if query.is_empty() {
+            self.filtered_servers = None;
+            return;
+        }
+        let case = fuzzy_nucleo::Case::from_smart(query.chars().any(|c| c.is_uppercase()));
+        let matches = fuzzy_nucleo::match_strings(
+            &self.filter_data.candidates,
+            query,
+            case,
+            fuzzy_nucleo::LengthPenalty::Off,
+            self.filter_data.candidates.len(),
+        );
+        let mut results = build_filter_results(matches, &self.filter_data);
+        results.sort_by(|a, b| b.score.total_cmp(&a.score));
+        self.apply_filter_results(&results);
+    }
+}
+
+#[derive(Debug)]
+struct FilterData {
+    candidates: Vec<StringMatchCandidate>,
+    meta: Vec<CandidateMeta>,
+    server_count: usize,
+}
+
+impl FilterData {
+    fn build(servers: &[RemoteEntry]) -> Self {
+        let mut candidates = Vec::new();
+        let mut meta = Vec::new();
+        for (server_index, server) in servers.iter().enumerate() {
+            let host = server.host_name();
+            let host_byte_len = host.len();
+            match server {
+                RemoteEntry::Project { projects, .. } if !projects.is_empty() => {
+                    for (project_index, entry) in projects.iter().enumerate() {
+                        let combined = format!("{host} {}", entry.project.paths.join(", "));
+                        meta.push(CandidateMeta {
+                            server_index,
+                            project_index: Some(project_index),
+                            host_byte_len,
+                        });
+                        candidates.push(StringMatchCandidate::from_string(
+                            candidates.len(),
+                            combined,
+                        ));
+                    }
+                }
+                RemoteEntry::Project { .. } | RemoteEntry::SshConfig { .. } => {
+                    meta.push(CandidateMeta {
+                        server_index,
+                        project_index: None,
+                        host_byte_len,
+                    });
+                    candidates.push(StringMatchCandidate::new(candidates.len(), host));
+                }
+            }
+        }
+        Self {
+            candidates,
+            meta,
+            server_count: servers.len(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct FilteredServer {
+    server_index: usize,
+    host_positions: Vec<usize>,
+    project_matches: Vec<FilteredProject>,
+    score: f64,
+}
+
+#[derive(Debug)]
+struct FilteredProject {
+    project_index: usize,
+    path_positions: Vec<usize>,
+}
+
+#[derive(Debug)]
+struct CandidateMeta {
+    server_index: usize,
+    project_index: Option<usize>,
+    host_byte_len: usize,
+}
+
+fn build_filter_results(
+    matches: Vec<StringMatch>,
+    filter_data: &FilterData,
+) -> Vec<FilteredServer> {
+    let mut server_map: Vec<Option<FilteredServer>> =
+        (0..filter_data.server_count).map(|_| None).collect();
+
+    for m in matches {
+        let meta = &filter_data.meta[m.candidate_id];
+
+        let entry = server_map[meta.server_index].get_or_insert_with(|| FilteredServer {
+            server_index: meta.server_index,
+            host_positions: Vec::new(),
+            project_matches: Vec::new(),
+            score: f64::NEG_INFINITY,
+        });
+
+        entry.score = entry.score.max(m.score);
+
+        match meta.project_index {
+            None => {
+                entry.host_positions = m.positions;
+            }
+            Some(project_index) => {
+                // +1 accounts for the single-byte space separator in format!("{host} {paths}").
+                let host_prefix_len = meta.host_byte_len + 1;
+                entry.host_positions.extend(
+                    m.positions
+                        .iter()
+                        .copied()
+                        .filter(|&p| p < meta.host_byte_len),
+                );
+                entry.project_matches.push(FilteredProject {
+                    project_index,
+                    path_positions: m
+                        .positions
+                        .into_iter()
+                        .filter_map(|p| p.checked_sub(host_prefix_len))
+                        .collect(),
+                });
+            }
+        }
+    }
+
+    server_map
+        .into_iter()
+        .flatten()
+        .map(|mut server| {
+            server.host_positions.sort_unstable();
+            server.host_positions.dedup();
+            server
+        })
+        .collect()
 }
 
 #[derive(Clone)]
@@ -886,6 +1114,11 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let filter_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Filter remote projects...", window, cx);
+            editor
+        });
         let mut read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
             spawn_ssh_config_watch(fs.clone(), cx)
@@ -899,7 +1132,7 @@ impl RemoteServerProjects {
             ..Default::default()
         });
 
-        let _subscription =
+        let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |recent_projects, _, cx| {
                 let new_read_ssh_config = RemoteSettings::get_global(cx).read_ssh_config;
                 if read_ssh_config != new_read_ssh_config {
@@ -913,16 +1146,23 @@ impl RemoteServerProjects {
                 }
             });
 
+        let filter_subscription = cx.observe(&filter_editor, |this, _, cx| {
+            this.recompute_filter(cx);
+        });
+
         Self {
             mode,
             focus_handle,
+            filter_editor,
             workspace,
             retained_connections: Vec::new(),
             ssh_config_updates,
             ssh_config_servers: BTreeSet::new(),
             create_new_window,
             dev_container_picker: None,
-            _subscription,
+            _subscriptions: vec![settings_subscription, filter_subscription],
+            filter_cancel: Arc::new(AtomicBool::new(false)),
+            _filter_task: Task::ready(()),
             allow_dismissal: true,
         }
     }
@@ -1296,7 +1536,16 @@ impl RemoteServerProjects {
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         match &self.mode {
-            Mode::Default(_) => cx.emit(DismissEvent),
+            Mode::Default(_) => {
+                if !self.filter_editor.read(cx).text(cx).is_empty() {
+                    self.filter_editor.update(cx, |editor, cx| {
+                        editor.set_text("", window, cx);
+                    });
+                    cx.notify();
+                } else {
+                    cx.emit(DismissEvent);
+                }
+            }
             Mode::CreateRemoteServer(state) if state.ssh_prompt.is_some() => {
                 let new_state = CreateRemoteServer::new(window, cx);
                 let old_prompt = state.address_editor.read(cx).text(cx);
@@ -1322,14 +1571,68 @@ impl RemoteServerProjects {
         }
     }
 
+    fn recompute_filter(&mut self, cx: &mut Context<Self>) {
+        let Mode::Default(state) = &mut self.mode else {
+            return;
+        };
+        let query = self.filter_editor.read(cx).text(cx);
+        let query = query.trim().to_string();
+
+        self.filter_cancel.store(true, atomic::Ordering::Release);
+
+        if query.is_empty() {
+            state.filtered_servers = None;
+            self._filter_task = Task::ready(());
+            cx.notify();
+            return;
+        }
+
+        let filter_data = Arc::clone(&state.filter_data);
+        let case = fuzzy_nucleo::Case::from_smart(query.chars().any(|c| c.is_uppercase()));
+        let max_results = filter_data.candidates.len();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.filter_cancel = cancel.clone();
+        let executor = cx.background_executor().clone();
+
+        self._filter_task = cx.spawn(async move |this, cx| {
+            let matches = fuzzy_nucleo::match_strings_async(
+                &filter_data.candidates,
+                &query,
+                case,
+                fuzzy_nucleo::LengthPenalty::Off,
+                max_results,
+                &cancel,
+                executor,
+            )
+            .await;
+
+            if cancel.load(atomic::Ordering::Acquire) {
+                return;
+            }
+
+            let mut results = build_filter_results(matches, &filter_data);
+            results.sort_by(|a, b| b.score.total_cmp(&a.score));
+
+            this.update(cx, |this, cx| {
+                if let Mode::Default(state) = &mut this.mode {
+                    state.apply_filter_results(&results);
+                    cx.notify();
+                }
+            })
+            .ok();
+        });
+    }
+
     fn render_remote_connection(
         &mut self,
         ix: usize,
         remote_server: RemoteEntry,
+        show_top_separator: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let connection = remote_server.connection().into_owned();
+        let host_positions = remote_server.host_positions().to_vec();
 
         let (main_label, aux_label, is_wsl) = match &connection {
             Connection::Ssh(connection) => {
@@ -1349,7 +1652,7 @@ impl RemoteServerProjects {
         };
         v_flex()
             .w_full()
-            .child(ListSeparator)
+            .when(show_top_separator, |this| this.child(ListSeparator))
             .child(
                 h_flex()
                     .group("ssh-server")
@@ -1372,7 +1675,7 @@ impl RemoteServerProjects {
                                 )
                             })
                             .child(
-                                Label::new(main_label)
+                                HighlightedLabel::new(main_label, host_positions)
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             ),
@@ -1390,6 +1693,7 @@ impl RemoteServerProjects {
                     configure,
                     connection,
                     index,
+                    ..
                 } => {
                     let index = *index;
                     List::new()
@@ -1481,7 +1785,9 @@ impl RemoteServerProjects {
                                 ),
                         )
                 }
-                RemoteEntry::SshConfig { open_folder, host } => List::new().child(
+                RemoteEntry::SshConfig {
+                    open_folder, host, ..
+                } => List::new().child(
                     h_flex()
                         .id(("new-remote-project-container", ix))
                         .track_focus(&open_folder.focus_handle)
@@ -1528,7 +1834,7 @@ impl RemoteServerProjects {
         server_ix: ServerIndex,
         server: RemoteEntry,
         ix: usize,
-        (navigation, project): &(NavigableEntry, RemoteProject),
+        entry: &ProjectEntry,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -1545,7 +1851,7 @@ impl RemoteServerProjects {
             SharedString::from(format!("remote-project-container-{element_id_base}"));
 
         let callback = Rc::new({
-            let project = project.clone();
+            let project = entry.project.clone();
             move |remote_server_projects: &mut Self,
                   secondary_confirm: bool,
                   window: &mut Window,
@@ -1598,8 +1904,8 @@ impl RemoteServerProjects {
 
         div()
             .id((container_element_id_base, ix))
-            .track_focus(&navigation.focus_handle)
-            .anchor_scroll(navigation.scroll_anchor.clone())
+            .track_focus(&entry.navigation.focus_handle)
+            .anchor_scroll(entry.navigation.scroll_anchor.clone())
             .on_action(cx.listener({
                 let callback = callback.clone();
                 move |this, _: &menu::Confirm, window, cx| {
@@ -1614,7 +1920,7 @@ impl RemoteServerProjects {
             }))
             .child(
                 ListItem::new((element_id_base, ix))
-                    .toggle_state(navigation.focus_handle.contains_focused(window, cx))
+                    .toggle_state(entry.navigation.focus_handle.contains_focused(window, cx))
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(
@@ -1622,19 +1928,25 @@ impl RemoteServerProjects {
                             .color(Color::Muted)
                             .size(IconSize::Small),
                     )
-                    .child(Label::new(project.paths.join(", ")).truncate_start())
+                    .child(
+                        HighlightedLabel::new(
+                            entry.project.paths.join(", "),
+                            entry.highlight_positions.clone(),
+                        )
+                        .truncate_start(),
+                    )
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                         let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
-                    .tooltip(Tooltip::text(project.paths.join("\n")))
+                    .tooltip(Tooltip::text(entry.project.paths.join("\n")))
                     .when(is_from_zed, |server_list_item| {
                         server_list_item
                             .end_slot(
                                 div()
                                     .mr_2()
                                     .child({
-                                        let project = project.clone();
+                                        let project = entry.project.clone();
                                         IconButton::new("remove-remote-project", IconName::Trash)
                                             .icon_size(IconSize::Small)
                                             .shape(IconButtonShape::Square)
@@ -2614,11 +2926,19 @@ impl RemoteServerProjects {
         }
 
         if should_rebuild {
+            self.filter_cancel.store(true, atomic::Ordering::Release);
+            self._filter_task = Task::ready(());
             self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
-            if let Mode::Default(new_state) = &self.mode {
+            if let Mode::Default(new_state) = &mut self.mode {
+                let query = self.filter_editor.read(cx).text(cx);
+                new_state.filter_sync(query.trim());
                 state = new_state.clone();
             }
         }
+
+        let query = self.filter_editor.read(cx).text(cx);
+        let query = query.trim();
+        let filtered_servers = state.active_servers();
 
         let connect_button = div()
             .id("ssh-connect-new-server-container")
@@ -2722,14 +3042,16 @@ impl RemoteServerProjects {
             .unwrap_or(true);
 
         let modal_section = v_flex()
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .id("ssh-server-list")
             .overflow_y_scroll()
             .track_scroll(&state.scroll_handle)
             .size_full()
-            .child(connect_button)
-            .when(has_open_project && is_local, |this| {
-                this.child(connect_dev_container_button)
+            .when(query.is_empty(), |this| {
+                this.child(connect_button)
+                    .when(has_open_project && is_local, |this| {
+                        this.child(connect_dev_container_button)
+                    })
             });
 
         #[cfg(target_os = "windows")]
@@ -2754,9 +3076,16 @@ impl RemoteServerProjects {
                                 )
                                 .into_any_element(),
                         )
-                        .children(state.servers.iter().enumerate().map(|(ix, connection)| {
-                            self.render_remote_connection(ix, connection.clone(), window, cx)
-                                .into_any_element()
+                        .children(filtered_servers.iter().enumerate().map(|(ix, connection)| {
+                            let show_top_separator = ix > 0 || query.is_empty();
+                            self.render_remote_connection(
+                                ix,
+                                connection.clone(),
+                                show_top_separator,
+                                window,
+                                cx,
+                            )
+                            .into_any_element()
                         })),
                 )
                 .into_any_element(),
@@ -2771,7 +3100,7 @@ impl RemoteServerProjects {
             modal_section = modal_section.entry(state.add_new_wsl.clone());
         }
 
-        for server in &state.servers {
+        for server in filtered_servers {
             match server {
                 RemoteEntry::Project {
                     open_folder,
@@ -2779,8 +3108,8 @@ impl RemoteServerProjects {
                     configure,
                     ..
                 } => {
-                    for (navigation_state, _) in projects {
-                        modal_section = modal_section.entry(navigation_state.clone());
+                    for entry in projects {
+                        modal_section = modal_section.entry(entry.navigation.clone());
                     }
                     modal_section = modal_section
                         .entry(open_folder.clone())
@@ -2793,12 +3122,14 @@ impl RemoteServerProjects {
         }
         let mut modal_section = modal_section.render(window, cx).into_any_element();
 
-        let is_project_selected = state.servers.iter().any(|server| match server {
+        let is_project_selected = filtered_servers.iter().any(|server| match server {
             RemoteEntry::Project { projects, .. } => projects
                 .iter()
-                .any(|(entry, _)| entry.focus_handle.contains_focused(window, cx)),
+                .any(|entry| entry.navigation.focus_handle.contains_focused(window, cx)),
             RemoteEntry::SshConfig { .. } => false,
         });
+
+        let filter_editor = self.filter_editor.clone();
 
         Modal::new("remote-projects", None)
             .header(ModalHeader::new().headline("Remote Projects"))
@@ -2808,6 +3139,7 @@ impl RemoteServerProjects {
                         .min_h(rems(20.))
                         .size_full()
                         .relative()
+                        .child(div().px_2().py_1().child(filter_editor))
                         .child(ListSeparator)
                         .child(
                             canvas(
@@ -2974,6 +3306,7 @@ impl ModalView for RemoteServerProjects {
 impl Focusable for RemoteServerProjects {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
+            Mode::Default(_) => self.filter_editor.focus_handle(cx),
             Mode::ProjectPicker(picker) => picker.focus_handle(cx),
             _ => self.focus_handle.clone(),
         }
@@ -3020,5 +3353,276 @@ impl Render for RemoteServerProjects {
                     .render_add_wsl_distro(state, window, cx)
                     .into_any_element(),
             })
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    struct MockServer {
+        host: String,
+        project_paths: Vec<String>,
+    }
+
+    fn mock(host: &str, project_paths: &[&str]) -> MockServer {
+        MockServer {
+            host: host.to_string(),
+            project_paths: project_paths.iter().map(|p| p.to_string()).collect(),
+        }
+    }
+
+    fn build(servers: &[MockServer]) -> FilterData {
+        let mut candidates = Vec::new();
+        let mut meta = Vec::new();
+        for (server_index, server) in servers.iter().enumerate() {
+            let host_byte_len = server.host.len();
+            if server.project_paths.is_empty() {
+                meta.push(CandidateMeta {
+                    server_index,
+                    project_index: None,
+                    host_byte_len,
+                });
+                candidates.push(StringMatchCandidate::new(candidates.len(), &server.host));
+            } else {
+                for (project_index, path) in server.project_paths.iter().enumerate() {
+                    let combined = format!("{} {path}", server.host);
+                    meta.push(CandidateMeta {
+                        server_index,
+                        project_index: Some(project_index),
+                        host_byte_len,
+                    });
+                    candidates.push(StringMatchCandidate::from_string(
+                        candidates.len(),
+                        combined,
+                    ));
+                }
+            }
+        }
+        FilterData {
+            candidates,
+            meta,
+            server_count: servers.len(),
+        }
+    }
+
+    fn filter(data: &FilterData, query: &str) -> Vec<FilteredServer> {
+        let case = fuzzy_nucleo::Case::from_smart(query.chars().any(|c| c.is_uppercase()));
+        let matches = fuzzy_nucleo::match_strings(
+            &data.candidates,
+            query,
+            case,
+            fuzzy_nucleo::LengthPenalty::Off,
+            data.candidates.len(),
+        );
+        build_filter_results(matches, data)
+    }
+
+    #[test]
+    fn test_filter_host_only() {
+        let servers = [mock("myhost", &[])];
+        let results = filter(&build(&servers), "myh");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].server_index, 0);
+        assert!(!results[0].host_positions.is_empty());
+    }
+
+    #[test]
+    fn test_filter_no_match() {
+        let servers = [mock("myhost", &["/home/project"])];
+        let results = filter(&build(&servers), "zzz");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_filter_project_path_match() {
+        let servers = [mock("myhost", &["/home/user/project"])];
+        let results = filter(&build(&servers), "project");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].project_matches.len(), 1);
+        assert_eq!(results[0].project_matches[0].project_index, 0);
+    }
+
+    #[test]
+    fn test_filter_host_match_includes_all_projects() {
+        let servers = [mock("myhost", &["/path/a", "/path/b"])];
+        let results = filter(&build(&servers), "myhost");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].project_matches.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_excludes_non_matching_servers() {
+        let servers = [mock("alpha", &["/path/a"]), mock("beta", &["/path/b"])];
+        let results = filter(&build(&servers), "alpha");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].server_index, 0);
+    }
+
+    #[test]
+    fn test_position_mapping_splits_host_and_path() {
+        let servers = [mock("dev", &["/src/app"])];
+        let results = filter(&build(&servers), "dev app");
+
+        assert_eq!(results.len(), 1);
+        let result = &results[0];
+        let host = &servers[result.server_index].host;
+        let path = &servers[result.server_index].project_paths[0];
+
+        assert!(
+            result.host_positions.iter().all(|&p| p < host.len()),
+            "host positions {:?} must be within host {:?} (len {})",
+            result.host_positions,
+            host,
+            host.len(),
+        );
+
+        assert_eq!(result.project_matches.len(), 1);
+        let proj = &result.project_matches[0];
+        assert_eq!(proj.project_index, 0);
+        assert!(
+            proj.path_positions.iter().all(|&p| p < path.len()),
+            "path positions {:?} must be within path {:?} (len {})",
+            proj.path_positions,
+            path,
+            path.len(),
+        );
+
+        assert!(
+            !result.host_positions.is_empty(),
+            "query 'dev' should match host 'dev'"
+        );
+        assert!(
+            !proj.path_positions.is_empty(),
+            "query 'app' should match path '/src/app'"
+        );
+    }
+
+    #[test]
+    fn test_position_mapping_host_only_server() {
+        let servers = [mock("myhost", &[])];
+        let results = filter(&build(&servers), "myh");
+
+        assert_eq!(results.len(), 1);
+        let host = &servers[0].host;
+        assert!(
+            results[0].host_positions.iter().all(|&p| p < host.len()),
+            "host positions {:?} out of bounds for {:?}",
+            results[0].host_positions,
+            host,
+        );
+        assert!(results[0].project_matches.is_empty());
+    }
+
+    #[test]
+    fn test_unicode_host_and_path_positions() {
+        let servers = [mock("señor", &["/código/app"])];
+        let results = filter(&build(&servers), "señ app");
+
+        assert_eq!(results.len(), 1);
+        let result = &results[0];
+        let host = &servers[0].host;
+        let path = &servers[0].project_paths[0];
+
+        assert!(
+            result
+                .host_positions
+                .iter()
+                .all(|&p| p < host.len() && host.is_char_boundary(p)),
+            "host positions {:?} must be valid char boundaries in {:?}",
+            result.host_positions,
+            host,
+        );
+
+        assert_eq!(result.project_matches.len(), 1);
+        let proj = &result.project_matches[0];
+        assert!(
+            proj.path_positions
+                .iter()
+                .all(|&p| p < path.len() && path.is_char_boundary(p)),
+            "path positions {:?} must be valid char boundaries in {:?}",
+            proj.path_positions,
+            path,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_filter_data_build_from_real_entries(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let handle = ScrollHandle::new();
+            let entries = vec![
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    host: SharedString::new_static("alpha"),
+                    host_positions: Vec::new(),
+                },
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    host: SharedString::new_static("beta"),
+                    host_positions: Vec::new(),
+                },
+            ];
+
+            let filter_data = FilterData::build(&entries);
+            assert_eq!(filter_data.server_count, 2);
+            assert_eq!(filter_data.candidates.len(), 2);
+            assert_eq!(filter_data.candidates[0].string, "alpha");
+            assert_eq!(filter_data.candidates[1].string, "beta");
+
+            let results = filter(&filter_data, "alp");
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].server_index, 0);
+            assert!(!results[0].host_positions.is_empty());
+
+            let empty = filter(&filter_data, "zzz");
+            assert!(empty.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_filter_sync_repopulates_after_rebuild(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let handle = ScrollHandle::new();
+            let entries = vec![
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    host: SharedString::new_static("alpha"),
+                    host_positions: Vec::new(),
+                },
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    host: SharedString::new_static("beta"),
+                    host_positions: Vec::new(),
+                },
+            ];
+
+            let mut state = DefaultState {
+                scroll_handle: handle.clone(),
+                add_new_server: NavigableEntry::new(&handle, cx),
+                add_new_devcontainer: NavigableEntry::new(&handle, cx),
+                add_new_wsl: NavigableEntry::new(&handle, cx),
+                filter_data: Arc::new(FilterData::build(&entries)),
+                servers: entries,
+                filtered_servers: None,
+            };
+
+            state.filter_sync("alp");
+            let filtered = state.filtered_servers.as_ref().expect("should filter");
+            assert_eq!(filtered.len(), 1);
+            match &filtered[0] {
+                RemoteEntry::SshConfig {
+                    host,
+                    host_positions,
+                    ..
+                } => {
+                    assert_eq!(host.as_ref(), "alpha");
+                    assert!(!host_positions.is_empty());
+                }
+                _ => panic!("expected SshConfig"),
+            }
+
+            state.filter_sync("");
+            assert!(state.filtered_servers.is_none());
+        });
     }
 }
