@@ -101,15 +101,26 @@ fn worktrees_base_for_repo(main_repo_path: &Path, cx: &App) -> Option<PathBuf> {
 /// cannot be archived to disk) or if no open project has it loaded.
 pub fn build_root_plan(
     path: &Path,
+    remote_connection: Option<&RemoteConnectionOptions>,
     workspaces: &[Entity<Workspace>],
     cx: &App,
 ) -> Option<RootPlan> {
     let path = path.to_path_buf();
 
+    let matches_target_connection = |project: &Entity<Project>, cx: &App| {
+        same_remote_connection_identity(
+            project.read(cx).remote_connection_options(cx).as_ref(),
+            remote_connection,
+        )
+    };
+
     let affected_projects = workspaces
         .iter()
         .filter_map(|workspace| {
             let project = workspace.read(cx).project().clone();
+            if !matches_target_connection(&project, cx) {
+                return None;
+            }
             let worktree = project
                 .read(cx)
                 .visible_worktrees(cx)
@@ -128,6 +139,7 @@ pub fn build_root_plan(
 
     let linked_repo = workspaces
         .iter()
+        .filter(|workspace| matches_target_connection(workspace.read(cx).project(), cx))
         .flat_map(|workspace| {
             workspace
                 .read(cx)
@@ -162,9 +174,6 @@ pub fn build_root_plan(
         .branch
         .as_ref()
         .map(|branch| branch.name().to_string());
-    let remote_connection = affected_projects
-        .first()
-        .and_then(|affected| affected.project.read(cx).remote_connection_options(cx));
 
     Some(RootPlan {
         root_path: path,
@@ -172,7 +181,7 @@ pub fn build_root_plan(
         affected_projects,
         worktree_repo: repo,
         branch_name,
-        remote_connection,
+        remote_connection: remote_connection.cloned(),
     })
 }
 
@@ -1047,7 +1056,12 @@ mod tests {
 
         // The main worktree should NOT produce a root plan.
         workspace.read_with(cx, |_workspace, cx| {
-            let plan = build_root_plan(Path::new("/project"), std::slice::from_ref(&workspace), cx);
+            let plan = build_root_plan(
+                Path::new("/project"),
+                None,
+                std::slice::from_ref(&workspace),
+                cx,
+            );
             assert!(
                 plan.is_none(),
                 "build_root_plan should return None for a main worktree",
@@ -1109,6 +1123,7 @@ mod tests {
             // The linked worktree SHOULD produce a root plan.
             let plan = build_root_plan(
                 Path::new("/worktrees/project/feature/project"),
+                None,
                 std::slice::from_ref(&workspace),
                 cx,
             );
@@ -1124,8 +1139,12 @@ mod tests {
             assert_eq!(plan.main_repo_path, PathBuf::from("/project"));
 
             // The main worktree should still return None.
-            let main_plan =
-                build_root_plan(Path::new("/project"), std::slice::from_ref(&workspace), cx);
+            let main_plan = build_root_plan(
+                Path::new("/project"),
+                None,
+                std::slice::from_ref(&workspace),
+                cx,
+            );
             assert!(
                 main_plan.is_none(),
                 "build_root_plan should return None for the main worktree \
@@ -1186,6 +1205,7 @@ mod tests {
         workspace.read_with(cx, |_workspace, cx| {
             let plan = build_root_plan(
                 Path::new("/external-worktree"),
+                None,
                 std::slice::from_ref(&workspace),
                 cx,
             );
@@ -1280,6 +1300,7 @@ mod tests {
             // Worktree inside the custom managed directory SHOULD be archivable.
             let plan = build_root_plan(
                 Path::new("/custom-worktrees/project/feature/project"),
+                None,
                 std::slice::from_ref(&workspace),
                 cx,
             );
@@ -1293,6 +1314,7 @@ mod tests {
             // because the setting points elsewhere.
             let plan = build_root_plan(
                 Path::new("/worktrees/project/feature2/project"),
+                None,
                 std::slice::from_ref(&workspace),
                 cx,
             );
@@ -1359,6 +1381,7 @@ mod tests {
             .read_with(cx, |_workspace, cx| {
                 build_root_plan(
                     Path::new("/worktrees/project/feature/project"),
+                    None,
                     std::slice::from_ref(&workspace),
                     cx,
                 )
@@ -1438,6 +1461,7 @@ mod tests {
             .read_with(cx, |_workspace, cx| {
                 build_root_plan(
                     Path::new("/worktrees/project/feature/project"),
+                    None,
                     std::slice::from_ref(&workspace),
                     cx,
                 )
@@ -1526,6 +1550,7 @@ mod tests {
             .read_with(cx, |_workspace, cx| {
                 build_root_plan(
                     Path::new("/worktrees/project/feature/project"),
+                    None,
                     std::slice::from_ref(&workspace),
                     cx,
                 )

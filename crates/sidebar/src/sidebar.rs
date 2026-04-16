@@ -2811,7 +2811,12 @@ impl Sidebar {
                     .folder_paths()
                     .ordered_paths()
                     .filter_map(|path| {
-                        thread_worktree_archive::build_root_plan(path, &workspaces, cx)
+                        thread_worktree_archive::build_root_plan(
+                            path,
+                            metadata.remote_connection.as_ref(),
+                            &workspaces,
+                            cx,
+                        )
                     })
                     .filter(|plan| {
                         thread_id.map_or(true, |tid| {
