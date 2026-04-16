@@ -20,7 +20,7 @@ pub enum SoftWrap {
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
-    #[serde(alias = "preffered_line_length")]
+    #[serde(alias = "preferred_line_length")]
     Bounded,
 }
 
